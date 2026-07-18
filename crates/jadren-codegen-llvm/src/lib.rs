@@ -2,7 +2,7 @@
 
 #[cfg(any(windows, target_os = "linux"))]
 mod debug;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod link;
 #[cfg(any(windows, target_os = "linux"))]
 mod module;
@@ -13,10 +13,11 @@ mod types;
 
 #[cfg(any(windows, target_os = "linux"))]
 pub use debug::{DebugInfoConfig, DebugInfoError};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub use link::{
-    LinkError, WindowsLinkOptions, WindowsSubsystem, create_windows_static_library,
-    link_windows_executable, link_windows_shared_library,
+    LinkError, LinuxLinkOptions, WindowsLinkOptions, WindowsSubsystem,
+    create_windows_static_library, link_linux_executable, link_windows_executable,
+    link_windows_shared_library,
 };
 #[cfg(any(windows, target_os = "linux"))]
 pub use module::{CodegenError, lower_module, lower_module_with_debug};

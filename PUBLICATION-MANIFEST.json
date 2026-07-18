@@ -2,13 +2,13 @@
   "schema": "jadren-public-export-0.1",
   "default_language": "en",
   "source_policy": "explicit-allowlist",
-  "file_count": 365,
+  "file_count": 366,
   "files": [
     {
-      "path": ".editorconfig",
-      "source": ".editorconfig",
-      "bytes": 221,
-      "sha256": "ff4a245e02db63212a13f358408a60ab71f076d655c694a28d478cfcd26bb51b"
+      "path": ".gitattributes",
+      "source": ".gitattributes",
+      "bytes": 18,
+      "sha256": "ae88614a2d82604b69a4df0b1de37a170dfd3d1fbee271ee4efcf4b8e36634e4"
     },
     {
       "path": "unity/com.jadren.animation/Runtime/JadrenAnimationPlayer.cs.meta",
@@ -763,8 +763,8 @@
     {
       "path": "docs/GETTING_STARTED.md",
       "source": "docs/public/en/GETTING_STARTED.md",
-      "bytes": 1509,
-      "sha256": "2083ac46ee5abd921aaea6ab789126374b49ae8b11a678ff149c10079f1c4f73"
+      "bytes": 2253,
+      "sha256": "6a13c58a8682aa007ff1d69b833df540284bf39063bd851ea3ddcdfb174954f3"
     },
     {
       "path": "README.md",
@@ -1091,16 +1091,16 @@
       "sha256": "5c024bbe116be2b54a82e3412b1d95d03c1d95459d7b8d1595d319ce860c52ef"
     },
     {
-      "path": "unity/com.jadren.unity/README.md",
-      "source": "docs/public/en/UNITY_INTEGRATION.md",
-      "bytes": 1714,
-      "sha256": "e82b9dc67e98e1b7dc18ae5fe2d605d2460ccbc98c5dc45f1c6946703dc77247"
-    },
-    {
       "path": "fuzz/Cargo.toml",
       "source": "fuzz/Cargo.toml",
       "bytes": 588,
       "sha256": "ceb6b510359fd2b259aa88465819562e051ec61bff0671bf1039651e82a0e518"
+    },
+    {
+      "path": "fuzz/Cargo.lock",
+      "source": "fuzz/Cargo.lock",
+      "bytes": 2991,
+      "sha256": "35468d69096713d38044bb3081d94080d61aea92a79f9a03793d13dbd8bc78ff"
     },
     {
       "path": "examples/vector-slice8.jdn",
@@ -1157,16 +1157,16 @@
       "sha256": "da5cbc77cbf06335c63b870b3fdbbb685a26aee1789cbb9b5c37ab6085102a77"
     },
     {
-      "path": "crates/jadren-installer/src/bin/jadren-release-manifest.rs",
-      "source": "crates/jadren-installer/src/bin/jadren-release-manifest.rs",
-      "bytes": 5853,
-      "sha256": "b3a7b5177330c13583d2fd85c46ff73a2377f85cc838050a19c77980c997eeba"
-    },
-    {
       "path": "crates/jadren-format/src/lib.rs",
       "source": "crates/jadren-format/src/lib.rs",
       "bytes": 12537,
       "sha256": "12555424a4ea1c798b88d554d7e545439fec6de3580fa6f41700762d3576d8af"
+    },
+    {
+      "path": "crates/jadren-format/Cargo.toml",
+      "source": "crates/jadren-format/Cargo.toml",
+      "bytes": 375,
+      "sha256": "48bc800f8097228b68b013987d0a29385364414137c690988362032d51cb84a0"
     },
     {
       "path": "crates/jadren-effects/src/lib.rs",
@@ -1217,22 +1217,28 @@
       "sha256": "e8696994603a6b0ab25b0697000cb13b2c060f0f3f3a7e3fb6283dacc4db646e"
     },
     {
-      "path": "crates/jadren-format/Cargo.toml",
-      "source": "crates/jadren-format/Cargo.toml",
-      "bytes": 375,
-      "sha256": "48bc800f8097228b68b013987d0a29385364414137c690988362032d51cb84a0"
+      "path": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-3d-write-artifact-smoke.rs",
+      "source": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-3d-write-artifact-smoke.rs",
+      "bytes": 6951,
+      "sha256": "90a469c29f6bbbae1aac67069c0acbf0c62b7148da9a9aa5ef8326025e6860a2"
+    },
+    {
+      "path": "crates/jadren-installer/src/bin/jadren-release-manifest.rs",
+      "source": "crates/jadren-installer/src/bin/jadren-release-manifest.rs",
+      "bytes": 5853,
+      "sha256": "b3a7b5177330c13583d2fd85c46ff73a2377f85cc838050a19c77980c997eeba"
+    },
+    {
+      "path": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-3d-strided-write-artifact-smoke.rs",
+      "source": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-3d-strided-write-artifact-smoke.rs",
+      "bytes": 5963,
+      "sha256": "33e560d5fca823b953e6655dee383c1ca6a8211778a171041c687d09bc1e65d4"
     },
     {
       "path": "crates/jadren-installer/src/bin/jadren-toolchain-smoke.rs",
       "source": "crates/jadren-installer/src/bin/jadren-toolchain-smoke.rs",
       "bytes": 2733,
       "sha256": "b30626cfef91a40db3c20ed43a407326dcfdcbe66841f090353ed603807c155b"
-    },
-    {
-      "path": "crates/jadren-installer/src/lib.rs",
-      "source": "crates/jadren-installer/src/lib.rs",
-      "bytes": 18134,
-      "sha256": "78d387157781951412dacedb58f85fd26f5123325e0117b2324d654a738fe408"
     },
     {
       "path": "crates/jadren-jir/Cargo.toml",
@@ -1355,16 +1361,16 @@
       "sha256": "a153bd95b6d76ae3c7bbab8782d4664feae27144106222d0b5fee8d37e20fdbb"
     },
     {
-      "path": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-3d-write-artifact-smoke.rs",
-      "source": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-3d-write-artifact-smoke.rs",
-      "bytes": 6951,
-      "sha256": "90a469c29f6bbbae1aac67069c0acbf0c62b7148da9a9aa5ef8326025e6860a2"
+      "path": "crates/jadren-installer/src/lib.rs",
+      "source": "crates/jadren-installer/src/lib.rs",
+      "bytes": 18134,
+      "sha256": "78d387157781951412dacedb58f85fd26f5123325e0117b2324d654a738fe408"
     },
     {
-      "path": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-3d-strided-write-artifact-smoke.rs",
-      "source": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-3d-strided-write-artifact-smoke.rs",
-      "bytes": 5963,
-      "sha256": "33e560d5fca823b953e6655dee383c1ca6a8211778a171041c687d09bc1e65d4"
+      "path": "crates/jadren-migration/src/lib.rs",
+      "source": "crates/jadren-migration/src/lib.rs",
+      "bytes": 6050,
+      "sha256": "9e5470668d83131507e90351986b72248716efdcb3b2c7e69153ffd0583e2749"
     },
     {
       "path": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-2d-write-artifact-smoke.rs",
@@ -1373,16 +1379,10 @@
       "sha256": "de4a0a89a17f776d09d5a1cd5fd62327bedff597b325b1259b342e42ce178cfb"
     },
     {
-      "path": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-2d-strided-write-artifact-smoke.rs",
-      "source": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-2d-strided-write-artifact-smoke.rs",
-      "bytes": 6450,
-      "sha256": "32241476cb4c4528fab5dd2744ab20987e6f30eb0e9ee198b2530cc7da953c91"
-    },
-    {
-      "path": "crates/jadren-codegen-llvm/src/lib.rs",
-      "source": "crates/jadren-codegen-llvm/src/lib.rs",
-      "bytes": 1760,
-      "sha256": "3a75de1dffc881fe3edb2eb8a477e9a0a506cc15795c3beccbc87721c5db7b2e"
+      "path": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-f32-vector-lanes-artifact-smoke.rs",
+      "source": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-f32-vector-lanes-artifact-smoke.rs",
+      "bytes": 8723,
+      "sha256": "3417fcc04084d134a929a6a59733db2051622f9e7b7e84c5943d252fcf6888ac"
     },
     {
       "path": "crates/jadren-codegen-llvm/src/differential.rs",
@@ -1411,14 +1411,14 @@
     {
       "path": "crates/jadren-cli/tests/cli.rs",
       "source": "crates/jadren-cli/tests/cli.rs",
-      "bytes": 31190,
-      "sha256": "05fb30db8763ab5d1dea94548de3486bbd4da808e3d7ad64f8df0a1e8ab90b1c"
+      "bytes": 33208,
+      "sha256": "66653ceaee0de92aa1f742ffc51f2a8d4bf02ee759829739ddf7a1a98fd3b30d"
     },
     {
       "path": "crates/jadren-cli/src/main.rs",
       "source": "crates/jadren-cli/src/main.rs",
-      "bytes": 77136,
-      "sha256": "ba48e4f4ee3ef0b15d4324daea38ffc11a099f29259435a99ab28c66b6bd42c4"
+      "bytes": 94193,
+      "sha256": "ea9adf8f8238e8db8df8818dfeb8e3509dc35551621796ab82b98b9c5ba8c8c8"
     },
     {
       "path": "crates/jadren-cli/Cargo.toml",
@@ -1493,34 +1493,34 @@
       "sha256": "dc4e7e64ec8b176d1f3cf153fba7d5ee73d9683f28bda8014e190920445aaa48"
     },
     {
+      "path": ".editorconfig",
+      "source": ".editorconfig",
+      "bytes": 221,
+      "sha256": "ff4a245e02db63212a13f358408a60ab71f076d655c694a28d478cfcd26bb51b"
+    },
+    {
+      "path": "crates/jadren-codegen-llvm/src/lib.rs",
+      "source": "crates/jadren-codegen-llvm/src/lib.rs",
+      "bytes": 1850,
+      "sha256": "227608f9dddcfb8fcc32529aabeb96d949d2ef43a56ebe4d0ce31edb628afd48"
+    },
+    {
+      "path": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-2d-strided-write-artifact-smoke.rs",
+      "source": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-2d-strided-write-artifact-smoke.rs",
+      "bytes": 6450,
+      "sha256": "32241476cb4c4528fab5dd2744ab20987e6f30eb0e9ee198b2530cc7da953c91"
+    },
+    {
       "path": "crates/jadren-codegen-llvm/src/link.rs",
       "source": "crates/jadren-codegen-llvm/src/link.rs",
-      "bytes": 13284,
-      "sha256": "c03645d9c1e939e2d6b85e023560f95c05b70f369cc3aa9bdaa54d0b41959b0f"
+      "bytes": 14497,
+      "sha256": "12a37ef0fce29a2853a3f8dae60099f938a2a1cc0152a6eb87f7fdeee51c8fab"
     },
     {
-      "path": "crates/jadren-migration/src/lib.rs",
-      "source": "crates/jadren-migration/src/lib.rs",
-      "bytes": 6050,
-      "sha256": "9e5470668d83131507e90351986b72248716efdcb3b2c7e69153ffd0583e2749"
-    },
-    {
-      "path": "crates/jadren-codegen-llvm/src/module.rs",
-      "source": "crates/jadren-codegen-llvm/src/module.rs",
-      "bytes": 144802,
-      "sha256": "cd1166ad675ad5d038dc39ba06631524ff87ab4e806f322890928c581dc2b470"
-    },
-    {
-      "path": "crates/jadren-codegen-llvm/src/target_wrappers.c",
-      "source": "crates/jadren-codegen-llvm/src/target_wrappers.c",
-      "bytes": 1534,
-      "sha256": "883b9871cd53a90631ffe1c68fbab060a8a48a9bdb0ca282fe8a8f06456a2931"
-    },
-    {
-      "path": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-f32-vector-lanes-artifact-smoke.rs",
-      "source": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-f32-vector-lanes-artifact-smoke.rs",
-      "bytes": 8723,
-      "sha256": "3417fcc04084d134a929a6a59733db2051622f9e7b7e84c5943d252fcf6888ac"
+      "path": "crates/jadren-codegen-llvm/src/object.rs",
+      "source": "crates/jadren-codegen-llvm/src/object.rs",
+      "bytes": 33034,
+      "sha256": "399e71e08aaf42e67e82ae13a15dc7e32a0b78a5ddaaf7823f73019eaa2f5e3c"
     },
     {
       "path": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-f32-vector-artifact-smoke.rs",
@@ -1631,22 +1631,28 @@
       "sha256": "bfdb12165cd8f5e8da81afdf54145e6cc61d24cf3eaf2f5fda627da308a778db"
     },
     {
-      "path": "crates/jadren-codegen-llvm/src/object.rs",
-      "source": "crates/jadren-codegen-llvm/src/object.rs",
-      "bytes": 33034,
-      "sha256": "399e71e08aaf42e67e82ae13a15dc7e32a0b78a5ddaaf7823f73019eaa2f5e3c"
+      "path": "crates/jadren-codegen-llvm/src/target_wrappers.c",
+      "source": "crates/jadren-codegen-llvm/src/target_wrappers.c",
+      "bytes": 1534,
+      "sha256": "883b9871cd53a90631ffe1c68fbab060a8a48a9bdb0ca282fe8a8f06456a2931"
+    },
+    {
+      "path": "crates/jadren-codegen-llvm/src/module.rs",
+      "source": "crates/jadren-codegen-llvm/src/module.rs",
+      "bytes": 144802,
+      "sha256": "cd1166ad675ad5d038dc39ba06631524ff87ab4e806f322890928c581dc2b470"
+    },
+    {
+      "path": "unity/com.jadren.unity/README.md",
+      "source": "docs/public/en/UNITY_INTEGRATION.md",
+      "bytes": 1714,
+      "sha256": "e82b9dc67e98e1b7dc18ae5fe2d605d2460ccbc98c5dc45f1c6946703dc77247"
     },
     {
       "path": "crates/jadren-mir/Cargo.toml",
       "source": "crates/jadren-mir/Cargo.toml",
       "bytes": 673,
       "sha256": "c1f1c503759f782a45844565de804688c414d0575f0ec708297d60ba7e1fa76e"
-    },
-    {
-      "path": "crates/jadren-mir/src/lib.rs",
-      "source": "crates/jadren-mir/src/lib.rs",
-      "bytes": 175628,
-      "sha256": "361cb9879ad25f9985804c902506164c9f24889cd0c31ca6a355eee164e433a8"
     },
     {
       "path": "crates/jadren-package/Cargo.toml",
@@ -1771,8 +1777,8 @@
     {
       "path": "examples/hello.jdn",
       "source": "examples/hello.jdn",
-      "bytes": 67,
-      "sha256": "0e054e4bda5860b06d9ec83015036f0faa338e968d104c939ac83cbd514a93d1"
+      "bytes": 63,
+      "sha256": "98b52aed15685ca1bd11627c89ff2aa22bc962e6f5459b8f0955d53d5a9537eb"
     },
     {
       "path": "crates/jadren-vulkan-runtime/src/bin/jadren-vulkan-global-write-u32-smoke.rs",
@@ -1913,10 +1919,10 @@
       "sha256": "b93cedc1807e24b17cc1bfe38435fc1bd524e966124501c7196c630cb37c4ca2"
     },
     {
-      "path": "fuzz/Cargo.lock",
-      "source": "fuzz/Cargo.lock",
-      "bytes": 2991,
-      "sha256": "35468d69096713d38044bb3081d94080d61aea92a79f9a03793d13dbd8bc78ff"
+      "path": "crates/jadren-mir/src/lib.rs",
+      "source": "crates/jadren-mir/src/lib.rs",
+      "bytes": 175628,
+      "sha256": "361cb9879ad25f9985804c902506164c9f24889cd0c31ca6a355eee164e433a8"
     },
     {
       "path": "crates/jadren-vulkan-runtime/src/bin/jadren-vulkan-global-u32-smoke.rs",

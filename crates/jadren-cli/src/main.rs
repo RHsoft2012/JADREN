@@ -49,6 +49,8 @@ fn run(arguments: Vec<OsString>) -> Result<(), String> {
         }
         "doctor" => doctor(&arguments[1..]),
         "check" => check(&arguments[1..]),
+        "build" => build_executable(&arguments[1..]),
+        "run" => run_executable(&arguments[1..]),
         "test" => test_sources(&arguments[1..]),
         "doc" => generate_docs(&arguments[1..]),
         "init" => init_package(&arguments[1..]),
@@ -107,6 +109,8 @@ fn verify_llvm_toolchain() -> Result<PathBuf, String> {
             .unwrap_or_else(default_llvm_prefix);
         for required in [
             prefix.join("bin").join("clang.exe"),
+            prefix.join("bin").join("lld-link.exe"),
+            prefix.join("bin").join("llvm-dlltool.exe"),
             prefix.join("bin").join("LLVM-C.dll"),
             prefix.join("lib").join("LLVM-C.lib"),
         ] {
@@ -148,7 +152,7 @@ fn verify_llvm_toolchain() -> Result<PathBuf, String> {
             .parent()
             .ok_or_else(|| "llvm-config bin directory has no prefix".to_owned())?
             .to_owned();
-        for name in ["clang", "llvm-readobj", "llvm-strings"] {
+        for name in ["clang", "ld.lld", "llvm-readobj", "llvm-strings"] {
             let tool = bin.join(name);
             if !tool.is_file() {
                 return Err(format!(
@@ -1224,6 +1228,536 @@ struct ObjectEmitArguments {
     cpu: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ExecutableArguments {
+    source: PathBuf,
+    output: Option<PathBuf>,
+    profile: BuildProfile,
+    cpu: String,
+}
+
+fn executable_usage(command: &str) -> String {
+    format!(
+        "usage: jadren {command} <file.jdn> [-o <output.exe>] [--profile debug|release] [--cpu baseline|avx2]"
+    )
+}
+
+fn parse_executable_arguments(
+    command: &str,
+    arguments: &[OsString],
+) -> Result<ExecutableArguments, String> {
+    let Some(source) = arguments.first() else {
+        return Err(executable_usage(command));
+    };
+    if source.to_str().is_some_and(|value| value.starts_with('-')) {
+        return Err(executable_usage(command));
+    }
+
+    let mut parsed = ExecutableArguments {
+        source: PathBuf::from(source),
+        output: None,
+        profile: BuildProfile::Debug,
+        cpu: "baseline".to_owned(),
+    };
+    let mut index = 1;
+    while index < arguments.len() {
+        let flag = arguments[index]
+            .to_str()
+            .ok_or_else(|| "executable option must be UTF-8".to_owned())?;
+        let value = arguments.get(index + 1);
+        match flag {
+            "-o" | "--output" => {
+                let value = value.ok_or_else(|| format!("`{flag}` requires a value"))?;
+                parsed.output = Some(PathBuf::from(value));
+            }
+            "--profile" => {
+                parsed.profile = match value.and_then(|value| value.to_str()) {
+                    Some("debug") => BuildProfile::Debug,
+                    Some("release") => BuildProfile::Release,
+                    Some(other) => {
+                        return Err(format!(
+                            "unsupported executable profile `{other}`; use `debug` or `release`"
+                        ));
+                    }
+                    None => return Err("`--profile` requires a value".to_owned()),
+                };
+            }
+            "--cpu" => {
+                parsed.cpu = match value.and_then(|value| value.to_str()) {
+                    Some("baseline") => "baseline".to_owned(),
+                    Some("avx2") => "avx2".to_owned(),
+                    Some(other) => {
+                        return Err(format!(
+                            "unsupported executable CPU `{other}`; use `baseline` or `avx2`"
+                        ));
+                    }
+                    None => return Err("`--cpu` requires a value".to_owned()),
+                };
+            }
+            _ => return Err(format!("unknown executable option `{flag}`")),
+        }
+        index += 2;
+    }
+    Ok(parsed)
+}
+
+fn build_executable(arguments: &[OsString]) -> Result<(), String> {
+    let arguments = parse_executable_arguments("build", arguments)?;
+    let output = build_host_executable(&arguments)?;
+    println!("built {}", output.display());
+    Ok(())
+}
+
+fn run_executable(arguments: &[OsString]) -> Result<(), String> {
+    let arguments = parse_executable_arguments("run", arguments)?;
+    let output = build_host_executable(&arguments)?;
+    println!("running {}", output.display());
+    let status = Command::new(&output)
+        .status()
+        .map_err(|error| format!("failed to run `{}`: {error}", output.display()))?;
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, String> {
+    use inkwell::context::Context;
+    use jadren_codegen_llvm::{
+        CpuVariant, ObjectOptimization, ObjectOptions, TypeLoweringConfig, WindowsLinkOptions,
+        link_windows_executable, lower_to_object, write_object,
+    };
+
+    let target = TargetTriple::from_str("x86_64-pc-windows-msvc")
+        .expect("the Windows host target must be valid");
+    let mut jir = checked_jir_for_target(&arguments.source, target, arguments.profile)?;
+    prepare_executable_entry(&mut jir)?;
+
+    let profile_name = match arguments.profile {
+        BuildProfile::Debug => "debug",
+        BuildProfile::Release => "release",
+        BuildProfile::Check => unreachable!("executable build does not use check profile"),
+    };
+    let output = arguments.output.clone().unwrap_or_else(|| {
+        let name = arguments
+            .source
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("jadren-program");
+        Path::new("target")
+            .join("jadren")
+            .join(profile_name)
+            .join(format!("{name}.exe"))
+    });
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create executable output directory `{}`: {error}",
+                parent.display()
+            )
+        })?;
+    }
+    let object = output.with_extension("obj");
+    let optimization = match arguments.profile {
+        BuildProfile::Debug => ObjectOptimization::Debug,
+        BuildProfile::Release => ObjectOptimization::Release,
+        BuildProfile::Check => unreachable!("executable build does not use check profile"),
+    };
+    let variant = match arguments.cpu.as_str() {
+        "baseline" => CpuVariant::X86_64Baseline,
+        "avx2" => CpuVariant::X86_64Avx2,
+        other => return Err(format!("unsupported executable CPU `{other}`")),
+    };
+    let object_options = ObjectOptions::for_variant_with_optimization(variant, optimization);
+    let context = Context::create();
+    let module_name = arguments
+        .source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("jadren_program");
+    let bytes = lower_to_object(
+        &context,
+        &jir,
+        module_name,
+        &TypeLoweringConfig::x86_64_windows_msvc(),
+        &object_options,
+    )
+    .map_err(|error| {
+        format!(
+            "failed to emit executable object for `{}`: {error}",
+            arguments.source.display()
+        )
+    })?;
+    write_object(&object, &bytes)
+        .map_err(|error| format!("failed to write `{}`: {error}", object.display()))?;
+    let mut link_inputs = vec![object];
+    if jir
+        .functions
+        .iter()
+        .any(|function| function.name == "print" && function.linkage == jadren_jir::Linkage::Import)
+    {
+        link_inputs.extend(build_windows_console_runtime(&output)?);
+    }
+    link_windows_executable(&output, &link_inputs, &WindowsLinkOptions::default())
+        .map_err(|error| format!("failed to link `{}`: {error}", output.display()))?;
+    Ok(output)
+}
+
+#[cfg(windows)]
+fn build_windows_console_runtime(output: &Path) -> Result<Vec<PathBuf>, String> {
+    const CONSOLE_LLVM: &str = r#"target triple = "x86_64-pc-windows-msvc"
+
+%JadrenString = type { ptr, i64 }
+
+@jadren.newline = private unnamed_addr constant [2 x i8] c"\0D\0A", align 1
+
+declare dllimport ptr @GetStdHandle(i32)
+declare dllimport i32 @WriteFile(ptr, ptr, i32, ptr, ptr)
+
+define void @print(%JadrenString %value) {
+entry:
+  %data = extractvalue %JadrenString %value, 0
+  %length64 = extractvalue %JadrenString %value, 1
+  %length = trunc i64 %length64 to i32
+  %handle = call ptr @GetStdHandle(i32 -11)
+  %written = alloca i32, align 4
+  %ignored = call i32 @WriteFile(ptr %handle, ptr %data, i32 %length, ptr %written, ptr null)
+  %newline = call i32 @WriteFile(ptr %handle, ptr @jadren.newline, i32 2, ptr %written, ptr null)
+  ret void
+}
+"#;
+    const KERNEL32_DEF: &str = "LIBRARY kernel32.dll\nEXPORTS\nGetStdHandle\nWriteFile\n";
+
+    let stem = output.with_extension("");
+    let llvm_path = stem.with_extension("console.ll");
+    let object_path = stem.with_extension("console.obj");
+    let definition_path = stem.with_extension("kernel32.def");
+    let import_library_path = stem.with_extension("kernel32.lib");
+    fs::write(&llvm_path, CONSOLE_LLVM)
+        .map_err(|error| format!("failed to write `{}`: {error}", llvm_path.display()))?;
+    fs::write(&definition_path, KERNEL32_DEF)
+        .map_err(|error| format!("failed to write `{}`: {error}", definition_path.display()))?;
+
+    let llvm_prefix = verify_llvm_toolchain()?;
+    run_native_tool(
+        &llvm_prefix.join("bin").join("clang.exe"),
+        &[
+            OsString::from("--target=x86_64-pc-windows-msvc"),
+            OsString::from("-O2"),
+            OsString::from("-c"),
+            llvm_path.as_os_str().to_owned(),
+            OsString::from("-o"),
+            object_path.as_os_str().to_owned(),
+        ],
+        "compile the Jadren console runtime",
+    )?;
+    run_native_tool(
+        &llvm_prefix.join("bin").join("llvm-dlltool.exe"),
+        &[
+            OsString::from("-m"),
+            OsString::from("i386:x86-64"),
+            OsString::from("-d"),
+            definition_path.as_os_str().to_owned(),
+            OsString::from("-l"),
+            import_library_path.as_os_str().to_owned(),
+            OsString::from("-D"),
+            OsString::from("kernel32.dll"),
+        ],
+        "create the kernel32 import library",
+    )?;
+    for path in [&object_path, &import_library_path] {
+        if !path.is_file() {
+            return Err(format!(
+                "native console runtime tool succeeded without `{}`",
+                path.display()
+            ));
+        }
+    }
+    Ok(vec![object_path, import_library_path])
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn run_native_tool(path: &Path, arguments: &[OsString], action: &str) -> Result<(), String> {
+    if !path.is_file() {
+        return Err(format!(
+            "cannot {action}; tool is missing: `{}`",
+            path.display()
+        ));
+    }
+    let output = Command::new(path)
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("failed to {action} with `{}`: {error}", path.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "failed to {action}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, String> {
+    use inkwell::context::Context;
+    use jadren_codegen_llvm::{
+        CpuVariant, LinuxLinkOptions, ObjectOptimization, ObjectOptions, TypeLoweringConfig,
+        link_linux_executable, lower_to_object, write_object,
+    };
+
+    let target = TargetTriple::from_str("x86_64-unknown-linux-gnu")
+        .expect("the Linux host target must be valid");
+    let mut jir = checked_jir_for_target(&arguments.source, target, arguments.profile)?;
+    prepare_executable_entry(&mut jir)?;
+
+    let profile_name = match arguments.profile {
+        BuildProfile::Debug => "debug",
+        BuildProfile::Release => "release",
+        BuildProfile::Check => unreachable!("executable build does not use check profile"),
+    };
+    let output = arguments.output.clone().unwrap_or_else(|| {
+        let name = arguments
+            .source
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("jadren-program");
+        Path::new("target")
+            .join("jadren")
+            .join(profile_name)
+            .join(name)
+    });
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create executable output directory `{}`: {error}",
+                parent.display()
+            )
+        })?;
+    }
+    let object = output.with_extension("o");
+    let optimization = match arguments.profile {
+        BuildProfile::Debug => ObjectOptimization::Debug,
+        BuildProfile::Release => ObjectOptimization::Release,
+        BuildProfile::Check => unreachable!("executable build does not use check profile"),
+    };
+    let variant = match arguments.cpu.as_str() {
+        "baseline" => CpuVariant::X86_64Baseline,
+        "avx2" => CpuVariant::X86_64Avx2,
+        other => return Err(format!("unsupported executable CPU `{other}`")),
+    };
+    let object_options = ObjectOptions::for_variant_with_optimization(variant, optimization);
+    let context = Context::create();
+    let module_name = arguments
+        .source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("jadren_program");
+    let bytes = lower_to_object(
+        &context,
+        &jir,
+        module_name,
+        &TypeLoweringConfig::x86_64_linux_gnu(),
+        &object_options,
+    )
+    .map_err(|error| {
+        format!(
+            "failed to emit executable object for `{}`: {error}",
+            arguments.source.display()
+        )
+    })?;
+    write_object(&object, &bytes)
+        .map_err(|error| format!("failed to write `{}`: {error}", object.display()))?;
+    let runtime = build_linux_console_runtime(&output)?;
+    link_linux_executable(&output, &[object, runtime], &LinuxLinkOptions::default())
+        .map_err(|error| format!("failed to link `{}`: {error}", output.display()))?;
+    Ok(output)
+}
+
+#[cfg(target_os = "linux")]
+fn build_linux_console_runtime(output: &Path) -> Result<PathBuf, String> {
+    const CONSOLE_C: &str = r#"#include <stddef.h>
+#include <stdint.h>
+#include <unistd.h>
+
+typedef struct JadrenString {
+    const unsigned char *data;
+    uint64_t length;
+} JadrenString;
+
+extern int32_t jadren_entry(void);
+
+void print(JadrenString value) {
+    const unsigned char *cursor = value.data;
+    uint64_t remaining = value.length;
+    while (remaining > 0) {
+        size_t chunk = remaining > UINT32_MAX ? UINT32_MAX : (size_t)remaining;
+        ssize_t written = write(STDOUT_FILENO, cursor, chunk);
+        if (written <= 0) {
+            break;
+        }
+        cursor += (size_t)written;
+        remaining -= (uint64_t)written;
+    }
+    static const unsigned char newline = '\n';
+    (void)write(STDOUT_FILENO, &newline, 1);
+}
+
+int main(void) {
+    return jadren_entry();
+}
+"#;
+
+    let stem = output.with_extension("");
+    let source_path = stem.with_extension("runtime.c");
+    let object_path = stem.with_extension("runtime.o");
+    fs::write(&source_path, CONSOLE_C)
+        .map_err(|error| format!("failed to write `{}`: {error}", source_path.display()))?;
+    let llvm_prefix = verify_llvm_toolchain()?;
+    run_native_tool(
+        &llvm_prefix.join("bin").join("clang"),
+        &[
+            OsString::from("--target=x86_64-unknown-linux-gnu"),
+            OsString::from("-std=c11"),
+            OsString::from("-O2"),
+            OsString::from("-fno-ident"),
+            OsString::from("-fno-stack-protector"),
+            OsString::from("-fno-pie"),
+            OsString::from("-Wall"),
+            OsString::from("-Wextra"),
+            OsString::from("-Werror"),
+            OsString::from("-c"),
+            source_path.as_os_str().to_owned(),
+            OsString::from("-o"),
+            object_path.as_os_str().to_owned(),
+        ],
+        "compile the Jadren Linux console runtime",
+    )?;
+    if !object_path.is_file() {
+        return Err(format!(
+            "native console runtime tool succeeded without `{}`",
+            object_path.display()
+        ));
+    }
+    Ok(object_path)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn build_host_executable(_arguments: &ExecutableArguments) -> Result<PathBuf, String> {
+    Err("`jadren build` and `jadren run` currently support Windows and Linux x86-64".to_owned())
+}
+
+fn prepare_executable_entry(module: &mut jadren_jir::Module) -> Result<(), String> {
+    use jadren_jir::{
+        Block, BlockId, Constant, Function, FunctionId, Instruction, InstructionKind, Linkage,
+        Terminator, Type, TypeId, TypedValue, ValueId, verify,
+    };
+
+    let int32 = module
+        .types
+        .iter()
+        .position(|ty| {
+            matches!(
+                ty,
+                Type::Integer {
+                    signed: true,
+                    bits: 32
+                }
+            )
+        })
+        .map(TypeId::new)
+        .unwrap_or_else(|| {
+            let id = TypeId::new(module.types.len());
+            module.types.push(Type::Integer {
+                signed: true,
+                bits: 32,
+            });
+            id
+        });
+
+    if let Some(entry) = module
+        .functions
+        .iter()
+        .find(|function| function.name == "jadren_entry")
+    {
+        if entry.linkage != Linkage::Export || !entry.parameters.is_empty() || entry.result != int32
+        {
+            return Err(
+                "explicit `jadren_entry` must be `export fn jadren_entry() -> Int32`".to_owned(),
+            );
+        }
+        return Ok(());
+    }
+
+    let main = module
+        .functions
+        .iter()
+        .find(|function| function.name == "main" && function.linkage != Linkage::Import)
+        .ok_or_else(|| "executable source must define `fn main()`".to_owned())?;
+    if !main.parameters.is_empty() {
+        return Err("Jadren 0.1 executable `main` must not accept parameters".to_owned());
+    }
+    let main_id = main.id;
+    let main_result = main.result;
+    let main_returns_unit = matches!(module.types.get(main_result.index()), Some(Type::Unit));
+    let main_returns_int32 = main_result == int32;
+    if !main_returns_unit && !main_returns_int32 {
+        return Err("Jadren 0.1 executable `main` must return `Unit` or `Int32`".to_owned());
+    }
+
+    let result_value = ValueId::new(0);
+    let mut instructions = Vec::with_capacity(if main_returns_unit { 2 } else { 1 });
+    instructions.push(Instruction {
+        result: main_returns_int32.then_some(TypedValue {
+            value: result_value,
+            ty: int32,
+        }),
+        kind: InstructionKind::Call {
+            function: main_id,
+            arguments: Vec::new(),
+        },
+        span: None,
+    });
+    if main_returns_unit {
+        instructions.push(Instruction {
+            result: Some(TypedValue {
+                value: result_value,
+                ty: int32,
+            }),
+            kind: InstructionKind::Constant(Constant::Integer { value: 0 }),
+            span: None,
+        });
+    }
+    module.functions.push(Function {
+        id: FunctionId::new(module.functions.len()),
+        name: "jadren_entry".to_owned(),
+        linkage: Linkage::Export,
+        parameters: Vec::new(),
+        result: int32,
+        blocks: vec![Block {
+            id: BlockId::new(0),
+            parameters: Vec::new(),
+            instructions,
+            terminator: Terminator::Return {
+                value: Some(result_value),
+            },
+            span: None,
+        }],
+        span: None,
+    });
+    let errors = verify(module);
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("generated executable entry is invalid: {errors:?}"))
+    }
+}
+
 fn parse_object_arguments(arguments: &[OsString]) -> Result<ObjectEmitArguments, String> {
     if arguments.len() < 3 {
         return Err(emit_usage());
@@ -1926,6 +2460,8 @@ fn print_help() {
            jadren version\n  \
            jadren doctor\n  \
            jadren check <file.jdn> [--format text|json] [--target <triple>] [--edition <edition>] [--warnings-as-errors]\n  \
+           jadren build <file.jdn> [-o <output>] [--profile debug|release] [--cpu baseline|avx2]\n  \
+           jadren run <file.jdn> [-o <output>] [--profile debug|release] [--cpu baseline|avx2]\n  \
            jadren test <file.jdn|directory> [--format text|json] [--target <triple>] [--edition <edition>] [--warnings-as-errors]\n  \
            jadren doc <file.jdn|directory> [--output <file.md>] [--target <triple>] [--edition <edition>] [--warnings-as-errors]\n  \
            jadren init [directory] [--name <package>]\n  \
