@@ -1,0 +1,68 @@
+name: Public Sanitizers
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 4 * * 6"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-sanitizers-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SANITIZER_TOOLCHAIN: nightly-2026-07-12
+
+jobs:
+  linux-sanitizers:
+    name: Linux ASan, UBSan capability, and TSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout public source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install pinned nightly toolchain
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends clang util-linux
+          rustup toolchain install "$SANITIZER_TOOLCHAIN" --profile minimal
+          rustup component add rust-src --toolchain "$SANITIZER_TOOLCHAIN"
+
+      - name: Run baseline runtime tests
+        run: cargo +${{ env.SANITIZER_TOOLCHAIN }} test --locked -p jadren-runtime --lib
+
+      - name: Run AddressSanitizer
+        shell: bash
+        run: RUSTFLAGS='-Zsanitizer=address' cargo +"$SANITIZER_TOOLCHAIN" test --locked -p jadren-runtime --lib
+
+      - name: Verify UndefinedBehaviorSanitizer capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          printf '%s\n' 'fn main() {}' | rustc +"$SANITIZER_TOOLCHAIN" -Zsanitizer=undefined --crate-name jadren_ubsan_probe --emit=metadata - 2> "$RUNNER_TEMP/ubsan-probe.log"
+          probe_exit=$?
+          set -e
+          if test "$probe_exit" -eq 0; then
+            RUSTFLAGS='-Zsanitizer=undefined' cargo +"$SANITIZER_TOOLCHAIN" test --locked -p jadren-runtime --lib
+          else
+            grep -Eiq 'incorrect value.*sanitizer|unknown.*sanitizer' "$RUNNER_TEMP/ubsan-probe.log"
+            echo '::notice::The pinned nightly does not expose the undefined sanitizer; ASan and TSan remain mandatory.'
+          fi
+
+      - name: Run ThreadSanitizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUSTFLAGS='-Zsanitizer=thread' setarch x86_64 -R cargo +"$SANITIZER_TOOLCHAIN" test --locked -p jadren-concurrency --test stress -Zbuild-std --target x86_64-unknown-linux-gnu -- --test-threads=1
