@@ -1,3 +1,4 @@
+use std::env;
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -156,6 +157,14 @@ fn validate_objects(objects: &[PathBuf]) -> Result<(), LinkError> {
 }
 
 fn pinned_tool(name: &str) -> Result<PathBuf, LinkError> {
+    for variable in ["JADREN_LLVM_PREFIX", "LLVM_SYS_221_PREFIX"] {
+        if let Some(prefix) = env::var_os(variable) {
+            let tool = PathBuf::from(prefix).join("bin").join(name);
+            if tool.is_file() {
+                return Ok(tool);
+            }
+        }
+    }
     let tool = Path::new(env!("JADREN_LLVM_BIN")).join(name);
     if tool.is_file() {
         Ok(tool)

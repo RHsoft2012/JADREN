@@ -45,6 +45,87 @@ fn prints_version() {
     assert!(String::from_utf8_lossy(&output.stdout).starts_with("jadren 0.1.0"));
 }
 
+#[cfg(windows)]
+#[test]
+fn builds_and_runs_windows_executables_from_main() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-executable-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    fs::create_dir_all(&directory).expect("temporary directory should be writable");
+
+    let exit_source = directory.join("exit_code.jdn");
+    let exit_executable = directory.join("exit_code.exe");
+    fs::write(&exit_source, "fn main() -> Int32 { return 42 }")
+        .expect("temporary source should be writable");
+    let build = Command::new(binary())
+        .arg("build")
+        .arg(&exit_source)
+        .args(["--profile", "release", "--cpu", "baseline", "-o"])
+        .arg(&exit_executable)
+        .output()
+        .expect("jadren build should start");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(String::from_utf8_lossy(&build.stdout).contains("built"));
+    assert_eq!(
+        fs::read(&exit_executable)
+            .expect("built executable should be readable")
+            .get(..2),
+        Some(b"MZ".as_slice())
+    );
+    assert_eq!(
+        Command::new(&exit_executable)
+            .status()
+            .expect("built executable should run")
+            .code(),
+        Some(42)
+    );
+
+    let unit_source = directory.join("unit_main.jdn");
+    let unit_executable = directory.join("unit_main.exe");
+    fs::write(&unit_source, "fn main() {}").expect("temporary source should be writable");
+    let run = Command::new(binary())
+        .arg("run")
+        .arg(&unit_source)
+        .args(["-o"])
+        .arg(&unit_executable)
+        .output()
+        .expect("jadren run should start");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(String::from_utf8_lossy(&run.stdout).contains("running"));
+
+    let hello_source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/hello.jdn");
+    let hello_executable = directory.join("hello.exe");
+    let hello = Command::new(binary())
+        .arg("run")
+        .arg(hello_source)
+        .args(["-o"])
+        .arg(&hello_executable)
+        .output()
+        .expect("jadren run should execute hello.jdn");
+    assert!(
+        hello.status.success(),
+        "{}",
+        String::from_utf8_lossy(&hello.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&hello.stdout).contains("Hello, Jadren"),
+        "{}",
+        String::from_utf8_lossy(&hello.stdout)
+    );
+
+    let _ = fs::remove_dir_all(directory);
+}
+
 #[test]
 fn checks_hello_world() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/hello.jdn");
