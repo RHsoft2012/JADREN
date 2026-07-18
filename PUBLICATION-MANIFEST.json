@@ -763,8 +763,8 @@
     {
       "path": "docs/GETTING_STARTED.md",
       "source": "docs/public/en/GETTING_STARTED.md",
-      "bytes": 2184,
-      "sha256": "54205b877b6834f3a7996229c5c87338a0a856dc5dd7fec05344c47c316a7cd3"
+      "bytes": 2253,
+      "sha256": "6a13c58a8682aa007ff1d69b833df540284bf39063bd851ea3ddcdfb174954f3"
     },
     {
       "path": "README.md",
@@ -1411,14 +1411,14 @@
     {
       "path": "crates/jadren-cli/tests/cli.rs",
       "source": "crates/jadren-cli/tests/cli.rs",
-      "bytes": 32896,
-      "sha256": "b4a6ae58e65f14d6647979cf6702512fdce754050bfc4100d541f4b651e57fad"
+      "bytes": 33208,
+      "sha256": "66653ceaee0de92aa1f742ffc51f2a8d4bf02ee759829739ddf7a1a98fd3b30d"
     },
     {
       "path": "crates/jadren-cli/src/main.rs",
       "source": "crates/jadren-cli/src/main.rs",
-      "bytes": 89053,
-      "sha256": "cd4bcafd9634692704b976007227e639242c16c1c929339fb036f319dd9cf28b"
+      "bytes": 94193,
+      "sha256": "ea9adf8f8238e8db8df8818dfeb8e3509dc35551621796ab82b98b9c5ba8c8c8"
     },
     {
       "path": "crates/jadren-cli/Cargo.toml",
@@ -1501,8 +1501,8 @@
     {
       "path": "crates/jadren-codegen-llvm/src/lib.rs",
       "source": "crates/jadren-codegen-llvm/src/lib.rs",
-      "bytes": 1760,
-      "sha256": "3a75de1dffc881fe3edb2eb8a477e9a0a506cc15795c3beccbc87721c5db7b2e"
+      "bytes": 1850,
+      "sha256": "227608f9dddcfb8fcc32529aabeb96d949d2ef43a56ebe4d0ce31edb628afd48"
     },
     {
       "path": "crates/jadren-directx12-runtime/src/bin/jadren-directx12-global-2d-strided-write-artifact-smoke.rs",
@@ -1513,8 +1513,8 @@
     {
       "path": "crates/jadren-codegen-llvm/src/link.rs",
       "source": "crates/jadren-codegen-llvm/src/link.rs",
-      "bytes": 13584,
-      "sha256": "c4167fedd4159dbddac908b79aa470e4a21e13e3ee94b34d6c64e40b82eecd59"
+      "bytes": 14497,
+      "sha256": "12a37ef0fce29a2853a3f8dae60099f938a2a1cc0152a6eb87f7fdeee51c8fab"
     },
     {
       "path": "crates/jadren-codegen-llvm/src/object.rs",

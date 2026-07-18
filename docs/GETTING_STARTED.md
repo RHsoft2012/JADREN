@@ -5,10 +5,11 @@ installer is not available yet.
 
 ## Requirements
 
-- Windows x86-64 for the current primary development path;
+- Windows or Linux x86-64 for native CLI development;
 - Rust 1.97.0, selected by `rust-toolchain.toml`;
 - LLVM 22.1.x for native LLVM code generation;
-- PowerShell 7 for the repository helper commands.
+- PowerShell 7 for the repository helper commands; Docker Desktop is used by
+  the repeatable local Linux gate when developing on Windows.
 
 ## Build the compiler
 
@@ -40,12 +41,13 @@ cargo run -p jadren-cli -- build hello.jdn
 cargo run -p jadren-cli -- run hello.jdn
 ```
 
-`build` creates a Windows x86-64 executable under
-`target/jadren/debug/hello.exe` by default. Use `-o <path>`,
+`build` creates a native x86-64 executable under
+`target/jadren/debug/hello.exe` on Windows or `target/jadren/debug/hello` on
+Linux. Use `-o <path>`,
 `--profile release`, or `--cpu avx2` to select another output, optimized build,
 or explicit AVX2 code generation. The executable entry is a parameterless
 `fn main()` returning either `Unit` or `Int32`; an `Int32` result becomes the
-process exit code. The current Windows console runtime supports the built-in
+process exit code. The Windows and Linux console runtimes support the built-in
 `print(String)` used by this example.
 
 The development CLI also exposes formatting and intermediate-representation
@@ -63,8 +65,7 @@ cargo run -p jadren-cli -- emit jir hello.jdn
 
 - The language specification is still a draft.
 - The installer and release artifacts are not yet signed for public use.
-- Native `build` and `run` currently target Windows x86-64. Linux executable
-  linking remains a separate validation gate.
+- Native `build` and `run` currently target Windows and Linux x86-64.
 - Target support differs by platform and workload.
 - GPU and mobile targets require their own execution validation.
 - Benchmark results are meaningful only for the exact published workload,

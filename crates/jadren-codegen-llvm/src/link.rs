@@ -19,6 +19,18 @@ pub struct WindowsLinkOptions {
     pub subsystem: WindowsSubsystem,
 }
 
+/// Deterministic Clang/lld inputs for a Linux x86-64 executable.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LinuxLinkOptions {
+    pub disable_pie: bool,
+}
+
+impl Default for LinuxLinkOptions {
+    fn default() -> Self {
+        Self { disable_pie: true }
+    }
+}
+
 impl Default for WindowsLinkOptions {
     fn default() -> Self {
         Self {
@@ -45,17 +57,19 @@ impl fmt::Display for LinkError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidEntrySymbol(symbol) => {
-                write!(formatter, "invalid Windows entry symbol `{symbol}`")
+                write!(formatter, "invalid native entry symbol `{symbol}`")
             }
             Self::MissingObject(path) => write!(formatter, "object file does not exist: `{path}`"),
             Self::NoObjects => formatter.write_str("executable link requires at least one object"),
             Self::NoExports => {
                 formatter.write_str("shared library link requires at least one export")
             }
-            Self::LinkerMissing(path) => write!(formatter, "pinned lld-link is missing: `{path}`"),
-            Self::Launch(message) => write!(formatter, "failed to launch lld-link: {message}"),
+            Self::LinkerMissing(path) => {
+                write!(formatter, "pinned native linker is missing: `{path}`")
+            }
+            Self::Launch(message) => write!(formatter, "failed to launch native linker: {message}"),
             Self::Failed { code, output } => {
-                write!(formatter, "lld-link failed with {code:?}: {output}")
+                write!(formatter, "native linker failed with {code:?}: {output}")
             }
             Self::MissingOutput(path) => {
                 write!(formatter, "lld-link succeeded without output `{path}`")
@@ -144,6 +158,24 @@ pub fn link_windows_executable(
     run_link_tool(command, output)
 }
 
+/// Links x86-64 ELF objects into a Linux GNU executable through pinned Clang/lld.
+pub fn link_linux_executable(
+    output: &Path,
+    objects: &[PathBuf],
+    options: &LinuxLinkOptions,
+) -> Result<(), LinkError> {
+    validate_objects(objects)?;
+    let linker = pinned_tool("clang")?;
+    let mut command = Command::new(linker);
+    command.args(["-fuse-ld=lld", "-Wl,--build-id=none", "-Wl,-z,noexecstack"]);
+    if options.disable_pie {
+        command.arg("-no-pie");
+    }
+    command.args(objects);
+    command.arg("-o").arg(output);
+    run_link_tool(command, output)
+}
+
 fn validate_objects(objects: &[PathBuf]) -> Result<(), LinkError> {
     if objects.is_empty() {
         return Err(LinkError::NoObjects);
@@ -207,7 +239,7 @@ fn valid_symbol(symbol: &str) -> bool {
         })
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use std::fs;
     use std::path::Path;

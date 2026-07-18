@@ -152,7 +152,7 @@ fn verify_llvm_toolchain() -> Result<PathBuf, String> {
             .parent()
             .ok_or_else(|| "llvm-config bin directory has no prefix".to_owned())?
             .to_owned();
-        for name in ["clang", "llvm-readobj", "llvm-strings"] {
+        for name in ["clang", "ld.lld", "llvm-readobj", "llvm-strings"] {
             let tool = bin.join(name);
             if !tool.is_file() {
                 return Err(format!(
@@ -1303,14 +1303,14 @@ fn parse_executable_arguments(
 
 fn build_executable(arguments: &[OsString]) -> Result<(), String> {
     let arguments = parse_executable_arguments("build", arguments)?;
-    let output = build_windows_executable(&arguments)?;
+    let output = build_host_executable(&arguments)?;
     println!("built {}", output.display());
     Ok(())
 }
 
 fn run_executable(arguments: &[OsString]) -> Result<(), String> {
     let arguments = parse_executable_arguments("run", arguments)?;
-    let output = build_windows_executable(&arguments)?;
+    let output = build_host_executable(&arguments)?;
     println!("running {}", output.display());
     let status = Command::new(&output)
         .status()
@@ -1322,7 +1322,7 @@ fn run_executable(arguments: &[OsString]) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn build_windows_executable(arguments: &ExecutableArguments) -> Result<PathBuf, String> {
+fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, String> {
     use inkwell::context::Context;
     use jadren_codegen_llvm::{
         CpuVariant, ObjectOptimization, ObjectOptions, TypeLoweringConfig, WindowsLinkOptions,
@@ -1479,7 +1479,7 @@ entry:
     Ok(vec![object_path, import_library_path])
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn run_native_tool(path: &Path, arguments: &[OsString], action: &str) -> Result<(), String> {
     if !path.is_file() {
         return Err(format!(
@@ -1501,9 +1501,155 @@ fn run_native_tool(path: &Path, arguments: &[OsString], action: &str) -> Result<
     Ok(())
 }
 
-#[cfg(not(windows))]
-fn build_windows_executable(_arguments: &ExecutableArguments) -> Result<PathBuf, String> {
-    Err("`jadren build` and `jadren run` currently support Windows x86-64; Linux executable linking is the next platform gate".to_owned())
+#[cfg(target_os = "linux")]
+fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, String> {
+    use inkwell::context::Context;
+    use jadren_codegen_llvm::{
+        CpuVariant, LinuxLinkOptions, ObjectOptimization, ObjectOptions, TypeLoweringConfig,
+        link_linux_executable, lower_to_object, write_object,
+    };
+
+    let target = TargetTriple::from_str("x86_64-unknown-linux-gnu")
+        .expect("the Linux host target must be valid");
+    let mut jir = checked_jir_for_target(&arguments.source, target, arguments.profile)?;
+    prepare_executable_entry(&mut jir)?;
+
+    let profile_name = match arguments.profile {
+        BuildProfile::Debug => "debug",
+        BuildProfile::Release => "release",
+        BuildProfile::Check => unreachable!("executable build does not use check profile"),
+    };
+    let output = arguments.output.clone().unwrap_or_else(|| {
+        let name = arguments
+            .source
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("jadren-program");
+        Path::new("target")
+            .join("jadren")
+            .join(profile_name)
+            .join(name)
+    });
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create executable output directory `{}`: {error}",
+                parent.display()
+            )
+        })?;
+    }
+    let object = output.with_extension("o");
+    let optimization = match arguments.profile {
+        BuildProfile::Debug => ObjectOptimization::Debug,
+        BuildProfile::Release => ObjectOptimization::Release,
+        BuildProfile::Check => unreachable!("executable build does not use check profile"),
+    };
+    let variant = match arguments.cpu.as_str() {
+        "baseline" => CpuVariant::X86_64Baseline,
+        "avx2" => CpuVariant::X86_64Avx2,
+        other => return Err(format!("unsupported executable CPU `{other}`")),
+    };
+    let object_options = ObjectOptions::for_variant_with_optimization(variant, optimization);
+    let context = Context::create();
+    let module_name = arguments
+        .source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("jadren_program");
+    let bytes = lower_to_object(
+        &context,
+        &jir,
+        module_name,
+        &TypeLoweringConfig::x86_64_linux_gnu(),
+        &object_options,
+    )
+    .map_err(|error| {
+        format!(
+            "failed to emit executable object for `{}`: {error}",
+            arguments.source.display()
+        )
+    })?;
+    write_object(&object, &bytes)
+        .map_err(|error| format!("failed to write `{}`: {error}", object.display()))?;
+    let runtime = build_linux_console_runtime(&output)?;
+    link_linux_executable(&output, &[object, runtime], &LinuxLinkOptions::default())
+        .map_err(|error| format!("failed to link `{}`: {error}", output.display()))?;
+    Ok(output)
+}
+
+#[cfg(target_os = "linux")]
+fn build_linux_console_runtime(output: &Path) -> Result<PathBuf, String> {
+    const CONSOLE_C: &str = r#"#include <stddef.h>
+#include <stdint.h>
+#include <unistd.h>
+
+typedef struct JadrenString {
+    const unsigned char *data;
+    uint64_t length;
+} JadrenString;
+
+extern int32_t jadren_entry(void);
+
+void print(JadrenString value) {
+    const unsigned char *cursor = value.data;
+    uint64_t remaining = value.length;
+    while (remaining > 0) {
+        size_t chunk = remaining > UINT32_MAX ? UINT32_MAX : (size_t)remaining;
+        ssize_t written = write(STDOUT_FILENO, cursor, chunk);
+        if (written <= 0) {
+            break;
+        }
+        cursor += (size_t)written;
+        remaining -= (uint64_t)written;
+    }
+    static const unsigned char newline = '\n';
+    (void)write(STDOUT_FILENO, &newline, 1);
+}
+
+int main(void) {
+    return jadren_entry();
+}
+"#;
+
+    let stem = output.with_extension("");
+    let source_path = stem.with_extension("runtime.c");
+    let object_path = stem.with_extension("runtime.o");
+    fs::write(&source_path, CONSOLE_C)
+        .map_err(|error| format!("failed to write `{}`: {error}", source_path.display()))?;
+    let llvm_prefix = verify_llvm_toolchain()?;
+    run_native_tool(
+        &llvm_prefix.join("bin").join("clang"),
+        &[
+            OsString::from("--target=x86_64-unknown-linux-gnu"),
+            OsString::from("-std=c11"),
+            OsString::from("-O2"),
+            OsString::from("-fno-ident"),
+            OsString::from("-fno-stack-protector"),
+            OsString::from("-fno-pie"),
+            OsString::from("-Wall"),
+            OsString::from("-Wextra"),
+            OsString::from("-Werror"),
+            OsString::from("-c"),
+            source_path.as_os_str().to_owned(),
+            OsString::from("-o"),
+            object_path.as_os_str().to_owned(),
+        ],
+        "compile the Jadren Linux console runtime",
+    )?;
+    if !object_path.is_file() {
+        return Err(format!(
+            "native console runtime tool succeeded without `{}`",
+            object_path.display()
+        ));
+    }
+    Ok(object_path)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn build_host_executable(_arguments: &ExecutableArguments) -> Result<PathBuf, String> {
+    Err("`jadren build` and `jadren run` currently support Windows and Linux x86-64".to_owned())
 }
 
 fn prepare_executable_entry(module: &mut jadren_jir::Module) -> Result<(), String> {
@@ -2314,8 +2460,8 @@ fn print_help() {
            jadren version\n  \
            jadren doctor\n  \
            jadren check <file.jdn> [--format text|json] [--target <triple>] [--edition <edition>] [--warnings-as-errors]\n  \
-           jadren build <file.jdn> [-o <output.exe>] [--profile debug|release] [--cpu baseline|avx2]\n  \
-           jadren run <file.jdn> [-o <output.exe>] [--profile debug|release] [--cpu baseline|avx2]\n  \
+           jadren build <file.jdn> [-o <output>] [--profile debug|release] [--cpu baseline|avx2]\n  \
+           jadren run <file.jdn> [-o <output>] [--profile debug|release] [--cpu baseline|avx2]\n  \
            jadren test <file.jdn|directory> [--format text|json] [--target <triple>] [--edition <edition>] [--warnings-as-errors]\n  \
            jadren doc <file.jdn|directory> [--output <file.md>] [--target <triple>] [--edition <edition>] [--warnings-as-errors]\n  \
            jadren init [directory] [--name <package>]\n  \
