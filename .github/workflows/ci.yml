@@ -1,0 +1,114 @@
+name: Public CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: 1.97.0
+  LLVM_VERSION: 22.1.8
+
+jobs:
+  rust-quality:
+    name: Rust quality (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2022
+
+    steps:
+      - name: Checkout public source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust quality tools
+        shell: bash
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+
+      - name: Check formatting
+        run: cargo +${{ env.RUST_TOOLCHAIN }} fmt --all -- --check
+
+      - name: Run Clippy without the native LLVM boundary
+        run: cargo +${{ env.RUST_TOOLCHAIN }} clippy --locked --workspace --all-targets --exclude jadren-codegen-llvm --exclude jadren-cli -- -D warnings
+
+      - name: Run portable workspace tests
+        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --workspace --all-targets --exclude jadren-codegen-llvm --exclude jadren-cli
+
+  linux-native:
+    name: Linux native build and run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout public source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy
+
+      - name: Install Linux archive prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ca-certificates curl xz-utils
+
+      - name: Bootstrap verified LLVM toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/LLVM-$LLVM_VERSION-Linux-X64.tar.xz"
+          prefix="$RUNNER_TEMP/llvm-$LLVM_VERSION"
+          url="https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/LLVM-$LLVM_VERSION-Linux-X64.tar.xz"
+          curl --fail --location --proto '=https' --tlsv1.2 --output "$archive" "$url"
+          printf '%s  %s\n' 'df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384' "$archive" | sha256sum --check --strict
+          mkdir -p "$prefix"
+          tar -xJf "$archive" --strip-components=1 --directory "$prefix"
+          test "$("$prefix/bin/llvm-config" --version)" = "$LLVM_VERSION"
+          echo "JADREN_LLVM_PREFIX=$prefix" >> "$GITHUB_ENV"
+          echo "LLVM_SYS_221_PREFIX=$prefix" >> "$GITHUB_ENV"
+          echo 'LLVM_SYS_221_STRICT_VERSIONING=1' >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$prefix/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Run native backend Clippy
+        run: cargo +${{ env.RUST_TOOLCHAIN }} clippy --locked -p jadren-codegen-llvm -p jadren-cli --all-targets -- -D warnings
+
+      - name: Run native backend tests
+        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked -p jadren-codegen-llvm -p jadren-cli --all-targets
+
+      - name: Build and run Hello Jadren
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +"$RUST_TOOLCHAIN" run --locked -p jadren-cli -- run examples/hello.jdn --profile release -o "$RUNNER_TEMP/hello-jadren"
+          test -x "$RUNNER_TEMP/hello-jadren"
+          test "$("$RUNNER_TEMP/hello-jadren")" = 'Hello, Jadren'
+
+      - name: Verify Int32 process exit code
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'fn main() -> Int32 { return 42 }' > "$RUNNER_TEMP/exit-42.jdn"
+          cargo +"$RUST_TOOLCHAIN" run --locked -p jadren-cli -- build "$RUNNER_TEMP/exit-42.jdn" --profile release -o "$RUNNER_TEMP/exit-42"
+          set +e
+          "$RUNNER_TEMP/exit-42"
+          exit_code=$?
+          set -e
+          test "$exit_code" -eq 42
