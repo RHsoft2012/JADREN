@@ -1,0 +1,5 @@
+module examples.native_add
+
+pub fn add_values(left: Int32, right: Int32) -> Int32 {
+  return left + right
+}

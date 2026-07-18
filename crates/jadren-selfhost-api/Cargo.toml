@@ -1,0 +1,12 @@
+[package]
+name = "jadren-selfhost-api"
+description = "Versioned C-compatible frontend contract for future Jadren self-hosting"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+{
+  "name": "com.jadren.animation",
+  "version": "0.1.0",
+  "displayName": "Jadren Animation System",
+  "description": "Independent data-oriented animation assets and runtime for Jadren.",
+  "unity": "2022.3",
+  "documentationUrl": "../../docs/public/en/ANIMATION_SYSTEM.md",
+  "keywords": [
+    "jadren",
+    "animation",
+    "crowd",
+    "native"
+  ],
+  "samples": [
+    {
+      "displayName": "Jadren Animation Sample",
+      "description": "Authoring/player, capability-gate and procedural GPU crowd sample.",
+      "path": "Samples~/JadrenAnimationSample"
+    }
+  ],
+  "author": {
+    "name": "Jadren contributors"
+  },
+  "dependencies": {}
+}

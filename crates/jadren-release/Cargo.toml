@@ -1,0 +1,15 @@
+[package]
+name = "jadren-release"
+description = "Deterministic Jadren SBOM and release provenance generator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-determinism = { path = "../jadren-determinism" }
+
+[lints]
+workspace = true

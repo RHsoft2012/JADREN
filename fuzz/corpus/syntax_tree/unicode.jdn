@@ -1,0 +1,2 @@
+module skúška.unicode
+fn pozdrav() { print("Ahoj, svet 👋") }

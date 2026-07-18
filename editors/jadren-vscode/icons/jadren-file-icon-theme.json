@@ -1,0 +1,10 @@
+{
+  "iconDefinitions": {
+    "_jadrenFile": {
+      "iconPath": "./JADREN_FILE.png"
+    }
+  },
+  "fileExtensions": {
+    "jdn": "_jadrenFile"
+  }
+}

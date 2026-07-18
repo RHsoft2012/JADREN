@@ -1,0 +1,6 @@
+module invalid.use_after_move
+
+fn consume(data: Buffer<Int32>) {
+    let moved = data
+    print(data)
+}

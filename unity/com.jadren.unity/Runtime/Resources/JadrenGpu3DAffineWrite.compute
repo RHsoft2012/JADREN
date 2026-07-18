@@ -1,0 +1,31 @@
+#pragma kernel AffineWrite
+
+RWStructuredBuffer<uint> Output;
+
+int JadrenWidth;
+int JadrenHeight;
+int JadrenDepth;
+int JadrenStrideX;
+int JadrenStrideY;
+int JadrenStrideZ;
+int JadrenCapacity;
+int JadrenValue;
+
+[numthreads(4, 4, 2)]
+void AffineWrite(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)JadrenWidth
+        || id.y >= (uint)JadrenHeight
+        || id.z >= (uint)JadrenDepth)
+    {
+        return;
+    }
+
+    uint physicalIndex = id.x * (uint)JadrenStrideX
+        + id.y * (uint)JadrenStrideY
+        + id.z * (uint)JadrenStrideZ;
+    if (physicalIndex < (uint)JadrenCapacity)
+    {
+        Output[physicalIndex] = (uint)JadrenValue;
+    }
+}

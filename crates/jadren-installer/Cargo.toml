@@ -1,0 +1,16 @@
+[package]
+name = "jadren-toolchain"
+description = "Signed, deterministic Jadren toolchain artifact verification and installation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+ed25519-dalek = { version = "2.1", default-features = false, features = ["std", "zeroize"] }
+sha2 = "0.10"
+
+[lints]
+workspace = true

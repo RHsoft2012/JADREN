@@ -1,0 +1,15 @@
+[package]
+name = "jadren-diagnostics"
+description = "Structured text and JSON diagnostics for the Jadren compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-source = { path = "../jadren-source" }
+
+[lints]
+workspace = true

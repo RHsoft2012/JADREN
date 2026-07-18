@@ -1,0 +1,10 @@
+module examples.vector_slice8;
+
+/// Target-neutral eight-lane f32 slice operation for AVX2-capable targets.
+/// The scalar tail remains the caller's responsibility in this small fixture.
+@noalloc
+pub fn add8(values: write Slice<Float32>, index: UIntSize, delta: Float32) {
+    let current: Float8 = vector_load8(values, index)
+    let amount: Float8 = vector_splat8(delta)
+    vector_store8(values, index, current + amount)
+}

@@ -1,0 +1,26 @@
+[package]
+name = "jadren-lsp"
+description = "Language Server Protocol diagnostics and document symbols for Jadren"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-diagnostics = { path = "../jadren-diagnostics" }
+jadren-determinism = { path = "../jadren-determinism" }
+jadren-effects = { path = "../jadren-effects" }
+jadren-driver = { path = "../jadren-driver" }
+jadren-lexer = { path = "../jadren-lexer" }
+jadren-resolve = { path = "../jadren-resolve" }
+jadren-parser = { path = "../jadren-parser" }
+jadren-source = { path = "../jadren-source" }
+jadren-typeck = { path = "../jadren-typeck" }
+jadren-types = { path = "../jadren-types" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[lints]
+workspace = true

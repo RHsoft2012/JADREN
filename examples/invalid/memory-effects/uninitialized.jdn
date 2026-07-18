@@ -1,0 +1,6 @@
+module invalid.uninitialized
+
+fn main() {
+    let value: Int32
+    print(value)
+}

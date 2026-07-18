@@ -1,0 +1,18 @@
+[package]
+name = "jadren-bindgen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+jadren-parser = { path = "../jadren-parser" }
+jadren-lexer = { path = "../jadren-lexer" }
+jadren-resolve = { path = "../jadren-resolve" }
+jadren-source = { path = "../jadren-source" }
+jadren-typeck = { path = "../jadren-typeck" }
+jadren-types = { path = "../jadren-types" }
+
+[lints]
+workspace = true

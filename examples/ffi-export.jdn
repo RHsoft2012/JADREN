@@ -1,0 +1,13 @@
+module examples.ffi;
+
+@repr(C)
+pub struct Vec3 {
+    pub x: Float32,
+    pub y: Float32,
+    pub z: Float32,
+}
+
+@export(name: "jadren_add", abi: "C")
+pub fn add(a: Int32, b: Int32) -> Int32 {
+    return a + b
+}

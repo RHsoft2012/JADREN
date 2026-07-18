@@ -1,0 +1,29 @@
+// Rename this file to .cs in a Unity Player host after enabling the optional
+// Burst sample sources.
+#if JADREN_HAS_BURST
+using Unity.Burst;
+using Unity.Collections;
+using Unity.Jobs;
+
+namespace Jadren.Unity.Samples.AgentSimulation
+{
+    [BurstCompile]
+    public struct AgentSimulationSoaBurstJob : IJobParallelFor
+    {
+        public NativeArray<float> PositionX;
+        public NativeArray<float> PositionY;
+        public NativeArray<float> PositionZ;
+        [ReadOnly] public NativeArray<float> VelocityX;
+        [ReadOnly] public NativeArray<float> VelocityY;
+        [ReadOnly] public NativeArray<float> VelocityZ;
+        public float DeltaTime;
+
+        public void Execute(int index)
+        {
+            PositionX[index] += VelocityX[index] * DeltaTime;
+            PositionY[index] += VelocityY[index] * DeltaTime;
+            PositionZ[index] += VelocityZ[index] * DeltaTime;
+        }
+    }
+}
+#endif

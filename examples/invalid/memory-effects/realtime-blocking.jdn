@@ -1,0 +1,6 @@
+module invalid.realtime_blocking
+
+@realtime
+fn update(value: Int32) {
+    print(value)
+}

@@ -1,0 +1,15 @@
+[package]
+name = "jadren-codegen-spirv"
+description = "Deterministic minimal SPIR-V compute emitter for Jadren"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-jir = { path = "../jadren-jir" }
+
+[lints]
+workspace = true

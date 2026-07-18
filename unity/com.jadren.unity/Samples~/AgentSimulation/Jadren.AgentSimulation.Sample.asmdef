@@ -1,0 +1,19 @@
+{
+  "name": "Jadren.AgentSimulation.Sample",
+  "rootNamespace": "Jadren.Unity.Samples.AgentSimulation",
+  "references": [
+    "Jadren.Unity.Runtime",
+    "Jadren.Unity.Collections",
+    "Unity.Collections",
+    "Unity.Collections.LowLevel.Unsafe"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": true,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

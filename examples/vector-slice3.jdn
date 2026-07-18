@@ -1,0 +1,7 @@
+module examples.vector_slice3
+
+@noalloc
+pub fn add3(values: write Slice<Float32>, index: UIntSize, delta: Float32) {
+    let current: Float3 = vector_load3(values, index)
+    vector_store3(values, index, current + vector_splat3(delta))
+}

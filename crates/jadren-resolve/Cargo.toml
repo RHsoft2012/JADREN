@@ -1,0 +1,22 @@
+[package]
+name = "jadren-resolve"
+description = "Deterministic symbol and lexical scope resolution for Jadren AST"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-determinism = { path = "../jadren-determinism" }
+jadren-diagnostics = { path = "../jadren-diagnostics" }
+jadren-parser = { path = "../jadren-parser" }
+jadren-source = { path = "../jadren-source" }
+jadren-types = { path = "../jadren-types" }
+
+[dev-dependencies]
+jadren-lexer = { path = "../jadren-lexer" }
+
+[lints]
+workspace = true

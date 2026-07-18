@@ -1,0 +1,29 @@
+module examples.parser_tour
+
+@repr(C)
+pub struct Vec3 {
+  x: Float32,
+  y: Float32,
+  z: Float32,
+}
+
+component Position {
+  value: Vec3,
+}
+
+enum LoadResult<T, E> {
+  Ok(T),
+  Error(message: E),
+}
+
+@export (targets: [cpu, simd, gpu], fallback: cpu)
+fn inspect(values: Slice<Position>) -> Int32 {
+  let fallback = Position { value: Vec3 { x: 0.0f32, y: 0.0f32, z: 0.0f32 } }
+
+  match load(values[0]) {
+    Ok(value) => print(value.value.x),
+    Error(_) => print(fallback.value.x),
+  }
+
+  return 0
+}

@@ -1,0 +1,517 @@
+// Rename this file to .cs in a Unity Player host after enabling the optional
+// Burst sample sources. The default mode is a short smoke; the explicit
+// measured mode is driven only by the publishable benchmark script.
+#if JADREN_HAS_BURST
+using System;
+using System.Collections.Generic;
+using Stopwatch = System.Diagnostics.Stopwatch;
+using System.IO;
+using Unity.Collections;
+using UnityEngine;
+
+namespace Jadren.Unity.Samples.AgentSimulation
+{
+    public sealed class AgentSimulationPlayerBenchmark : MonoBehaviour
+    {
+        [Serializable]
+        private sealed class Metadata
+        {
+            public string compiler_version;
+            public string commit;
+            public string jadren_cpu_variant;
+            public string unity_version;
+            public string platform;
+            public string cpu;
+            public string os;
+        }
+
+        [Serializable]
+        private sealed class Workload
+        {
+            public string name;
+            public int count;
+            public int steps;
+            public float delta_time;
+            public string layout;
+            public string checksum;
+            public double tolerance;
+        }
+
+        [Serializable]
+        private sealed class Protocol
+        {
+            public double warmup_seconds;
+            public double measure_seconds;
+            public int repetitions;
+            public string measurement_scope;
+            public bool release_player;
+            public bool rendering_excluded;
+            public string notes;
+        }
+
+        [Serializable]
+        private sealed class Variant
+        {
+            public string name;
+            public string kind;
+            public double[] samples_ms;
+            public double median_ms;
+            public double p95_ms;
+            public double p99_ms;
+            public double checksum;
+            public bool checksum_match;
+            public bool included_in_comparison;
+        }
+
+        [Serializable]
+        private sealed class Report
+        {
+            public string schema;
+            public string status;
+            public bool publishable;
+            public Metadata metadata;
+            public Workload workload;
+            public Protocol protocol;
+            public Variant[] variants;
+        }
+
+        private sealed class BenchmarkConfiguration
+        {
+            public string Status;
+            public bool Publishable;
+            public double WarmupSeconds;
+            public double MeasureSeconds;
+            public int MinimumSamples;
+            public string MeasurementScope;
+            public string ReportFileName;
+            public string SourceRevision;
+            public string CpuVariant;
+            public string Layout;
+            public string Notes;
+
+            public static BenchmarkConfiguration FromCommandLine(int smokeRepetitions)
+            {
+                var mode = ReadArgument("-jadren-benchmark-mode=");
+                if (string.Equals(mode, "measured", StringComparison.OrdinalIgnoreCase))
+                {
+                    var revision = ReadArgument("-jadren-benchmark-revision=");
+                    if (string.IsNullOrWhiteSpace(revision))
+                    {
+                        throw new InvalidOperationException(
+                            "Measured benchmark requires -jadren-benchmark-revision=<git-commit>.");
+                    }
+
+                    return new BenchmarkConfiguration
+                    {
+                        Status = "measured",
+                        Publishable = true,
+                        WarmupSeconds = 5.0,
+                        MeasureSeconds = 30.0,
+                        MinimumSamples = 5,
+                        MeasurementScope = "per-variant-total",
+                        ReportFileName = ReadReportFileName("jadren-unity-benchmark-measured.json"),
+                        SourceRevision = revision,
+                        CpuVariant = ReadCpuVariant(),
+                        Layout = ReadLayout(),
+                        Notes = "Each raw sample measures 10000 agents × 120 update steps; initialization and rendering are excluded. Each variant warms up for at least 5 seconds and accumulates at least 30 seconds of update time."
+                    };
+                }
+
+                if (!string.IsNullOrWhiteSpace(mode))
+                {
+                    throw new ArgumentOutOfRangeException(
+                        "-jadren-benchmark-mode", mode, "Supported modes are smoke and measured.");
+                }
+
+                return new BenchmarkConfiguration
+                {
+                    Status = "smoke",
+                    Publishable = false,
+                    WarmupSeconds = 0.0,
+                    MeasureSeconds = 1.0,
+                    MinimumSamples = Math.Max(3, smokeRepetitions),
+                    MeasurementScope = "per-variant-total",
+                    ReportFileName = ReadReportFileName("jadren-unity-benchmark-smoke.json"),
+                    SourceRevision = "working-tree",
+                    CpuVariant = ReadCpuVariant(),
+                    Layout = ReadLayout(),
+                    Notes = "Smoke-only fixed workload with one Jadren native batch boundary per step; the 30-second publication gate is intentionally not satisfied."
+                };
+            }
+
+            private static string ReadArgument(string prefix)
+            {
+                foreach (var argument in Environment.GetCommandLineArgs())
+                {
+                    if (argument.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return argument.Substring(prefix.Length);
+                    }
+                }
+
+                return null;
+            }
+
+            private static string ReadReportFileName(string fallback)
+            {
+                var value = ReadArgument("-jadren-benchmark-report-file=");
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    return fallback;
+                }
+
+                if (value.IndexOfAny(new[] { '/', '\\' }) >= 0
+                    || string.Equals(value, ".", StringComparison.Ordinal)
+                    || string.Equals(value, "..", StringComparison.Ordinal)
+                    || value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                {
+                    throw new ArgumentException(
+                        "Benchmark report file must be a single safe file name.",
+                        "-jadren-benchmark-report-file");
+                }
+
+                return value;
+            }
+
+            private static string ReadCpuVariant()
+            {
+                var value = ReadArgument("-jadren-cpu-variant=");
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    return "baseline";
+                }
+                if (!string.Equals(value, "baseline", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(value, "avx2", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ArgumentOutOfRangeException(
+                        "-jadren-cpu-variant", value, "Supported variants are baseline and avx2.");
+                }
+                return value.ToLowerInvariant();
+            }
+
+            private static string ReadLayout()
+            {
+                var value = ReadArgument("-jadren-benchmark-layout=");
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    return "aos";
+                }
+                    if (!string.Equals(value, "aos", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(value, "soa", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(value, "soa-simd", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(value, "soa-simd8", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(value, "aosoa8", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new ArgumentOutOfRangeException(
+                            "-jadren-benchmark-layout", value, "Supported layouts are aos, soa, soa-simd, soa-simd8 and aosoa8.");
+                }
+                return value.ToLowerInvariant();
+            }
+        }
+
+        private sealed class Measurement
+        {
+            public List<double> Samples;
+            public double Checksum;
+        }
+
+        public int Count = 10000;
+        public int Steps = 120;
+        public int Repetitions = 3;
+        public float DeltaTime = 1.0f / 60.0f;
+        public double Tolerance = 0.000001;
+
+        private void Start()
+        {
+            try
+            {
+                var configuration = BenchmarkConfiguration.FromCommandLine(Repetitions);
+                var report = Run(configuration);
+                var output = Path.Combine(
+                    Directory.GetParent(Application.dataPath).FullName,
+                    configuration.ReportFileName);
+                File.WriteAllText(output, JsonUtility.ToJson(report, prettyPrint: true));
+                Debug.Log("JADREN_BENCHMARK report=" + output + " status=" + report.status);
+                Application.Quit(0);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception);
+                Application.Quit(1);
+            }
+        }
+
+        private Report Run(BenchmarkConfiguration configuration)
+        {
+            if (Count <= 0 || Steps <= 0 || configuration.MinimumSamples < 3)
+            {
+                throw new ArgumentOutOfRangeException(
+                    "Benchmark workload must be positive and have at least 3 samples.");
+            }
+
+            if (configuration.Layout == "aos")
+            {
+                return RunAos(configuration);
+            }
+            if (configuration.Layout == "aosoa8")
+            {
+                return RunAosoa8(configuration);
+            }
+            return RunSoa(configuration);
+        }
+
+        private Report RunAos(BenchmarkConfiguration configuration)
+        {
+
+            Measurement managedMeasurement;
+            Measurement burstMeasurement;
+            Measurement nativeMeasurement;
+            using (var managed = new NativeArray<AgentState>(Count, Allocator.Persistent))
+            using (var burst = new NativeArray<AgentState>(Count, Allocator.Persistent))
+            using (var native = new NativeArray<AgentState>(Count, Allocator.Persistent))
+            using (var nativeRunner = new AgentSimulationNativeRunner(native))
+            {
+                managedMeasurement = Measure(
+                    configuration,
+                    () => AgentSimulationWorkload.Initialize(managed),
+                    () => AgentSimulationWorkload.StepManaged(managed, DeltaTime),
+                    () => AgentSimulationWorkload.Checksum(managed));
+                burstMeasurement = Measure(
+                    configuration,
+                    () => AgentSimulationWorkload.Initialize(burst),
+                    () => AgentSimulationBurstRunner.Step(burst, DeltaTime),
+                    () => AgentSimulationWorkload.Checksum(burst));
+                nativeMeasurement = Measure(
+                    configuration,
+                    () => AgentSimulationWorkload.Initialize(native),
+                    () => nativeRunner.Step(DeltaTime),
+                    () => AgentSimulationWorkload.Checksum(native));
+            }
+
+            return CreateReport(
+                configuration,
+                "agent-simulation",
+                "AgentState.sequential.v1",
+                managedMeasurement,
+                burstMeasurement,
+                nativeMeasurement);
+        }
+
+        private Report RunSoa(BenchmarkConfiguration configuration)
+        {
+            Measurement managedMeasurement;
+            Measurement burstMeasurement;
+            Measurement nativeMeasurement;
+            using (var managed = new AgentSimulationSoaState(Count, Allocator.Persistent))
+            using (var burst = new AgentSimulationSoaState(Count, Allocator.Persistent))
+            using (var native = new AgentSimulationSoaState(Count, Allocator.Persistent))
+            using (var nativeRunner = new AgentSimulationSoaNativeRunner(
+                       native, configuration.Layout == "soa-simd" ? 4 : configuration.Layout == "soa-simd8" ? 8 : 0))
+            {
+                managedMeasurement = Measure(
+                    configuration,
+                    () => AgentSimulationSoaWorkload.Initialize(managed),
+                    () => AgentSimulationSoaWorkload.StepManaged(managed, DeltaTime),
+                    () => AgentSimulationSoaWorkload.Checksum(managed));
+                burstMeasurement = Measure(
+                    configuration,
+                    () => AgentSimulationSoaWorkload.Initialize(burst),
+                    () => AgentSimulationSoaBurstRunner.Step(burst, DeltaTime),
+                    () => AgentSimulationSoaWorkload.Checksum(burst));
+                nativeMeasurement = Measure(
+                    configuration,
+                    () => AgentSimulationSoaWorkload.Initialize(native),
+                    () => nativeRunner.Step(DeltaTime),
+                    () => AgentSimulationSoaWorkload.Checksum(native));
+            }
+
+            var simd = configuration.Layout == "soa-simd";
+            var simd8 = configuration.Layout == "soa-simd8";
+            return CreateReport(
+                configuration,
+                simd8 ? "agent-simulation-soa-simd8" : simd ? "agent-simulation-soa-simd" : "agent-simulation-soa",
+                simd8 ? "AgentState.soa.simd8.v1" : simd ? "AgentState.soa.simd.v1" : "AgentState.soa.v1",
+                managedMeasurement,
+                burstMeasurement,
+                nativeMeasurement,
+                simd8 ? "jadren-native-batch-simd8" : simd ? "jadren-native-batch-simd" : "jadren-native-batch",
+                simd8 ? "jadren-c-abi-slice-simd8" : simd ? "jadren-c-abi-slice-simd" : "jadren-c-abi-slice");
+        }
+
+        private Report RunAosoa8(BenchmarkConfiguration configuration)
+        {
+            Measurement managedMeasurement;
+            Measurement burstMeasurement;
+            Measurement nativeMeasurement;
+            using (var managed = new AgentSimulationAosoa8State(Count, Allocator.Persistent))
+            using (var burst = new AgentSimulationAosoa8State(Count, Allocator.Persistent))
+            using (var native = new AgentSimulationAosoa8State(Count, Allocator.Persistent))
+            using (var nativeRunner = new AgentSimulationAosoa8NativeRunner(native))
+            {
+                managedMeasurement = Measure(
+                    configuration,
+                    () => AgentSimulationAosoa8Workload.Initialize(managed),
+                    () => AgentSimulationAosoa8Workload.StepManaged(managed, DeltaTime),
+                    () => AgentSimulationAosoa8Workload.Checksum(managed));
+                burstMeasurement = Measure(
+                    configuration,
+                    () => AgentSimulationAosoa8Workload.Initialize(burst),
+                    () => AgentSimulationAosoa8BurstRunner.Step(burst, DeltaTime),
+                    () => AgentSimulationAosoa8Workload.Checksum(burst));
+                nativeMeasurement = Measure(
+                    configuration,
+                    () => AgentSimulationAosoa8Workload.Initialize(native),
+                    () => nativeRunner.Step(DeltaTime),
+                    () => AgentSimulationAosoa8Workload.Checksum(native));
+            }
+
+            return CreateReport(
+                configuration,
+                "agent-simulation-aosoa8",
+                "AgentState.aosoa8.v1",
+                managedMeasurement,
+                burstMeasurement,
+                nativeMeasurement,
+                "jadren-native-batch-aosoa8",
+                "jadren-c-abi-aosoa8");
+        }
+
+        private Report CreateReport(
+            BenchmarkConfiguration configuration,
+            string workloadName,
+            string layout,
+            Measurement managedMeasurement,
+            Measurement burstMeasurement,
+            Measurement nativeMeasurement,
+            string nativeVariantName = "jadren-native-batch",
+            string nativeVariantKind = "jadren-c-abi-slice")
+        {
+            var burstChecksumMatch = Math.Abs(managedMeasurement.Checksum - burstMeasurement.Checksum) <= Tolerance;
+            var nativeChecksumMatch = Math.Abs(managedMeasurement.Checksum - nativeMeasurement.Checksum) <= Tolerance;
+            return new Report
+            {
+                schema = "jadren-unity-benchmark-0.1",
+                status = configuration.Status,
+                publishable = configuration.Publishable,
+                metadata = new Metadata
+                {
+                    compiler_version = "jadren-agent-batch-0.1",
+                    commit = configuration.SourceRevision,
+                    jadren_cpu_variant = configuration.CpuVariant,
+                    unity_version = Application.unityVersion,
+                    platform = Application.platform.ToString(),
+                    cpu = SystemInfo.processorType,
+                    os = SystemInfo.operatingSystem
+                },
+                workload = new Workload
+                {
+                    name = workloadName,
+                    count = Count,
+                    steps = Steps,
+                    delta_time = DeltaTime,
+                    layout = layout,
+                    checksum = "weighted-position-f64-v1",
+                    tolerance = Tolerance
+                },
+                protocol = new Protocol
+                {
+                    warmup_seconds = configuration.WarmupSeconds,
+                    measure_seconds = configuration.MeasureSeconds,
+                    repetitions = configuration.MinimumSamples,
+                    measurement_scope = configuration.MeasurementScope,
+                    release_player = true,
+                    rendering_excluded = true,
+                    notes = configuration.Notes
+                },
+                variants = new[]
+                {
+                    CreateVariant("managed-nativearray", "managed-baseline", managedMeasurement, burstChecksumMatch && nativeChecksumMatch),
+                    CreateVariant("unity-burst", "unity-jobs-burst", burstMeasurement, burstChecksumMatch),
+                    CreateVariant(nativeVariantName, nativeVariantKind, nativeMeasurement, nativeChecksumMatch)
+                }
+            };
+        }
+
+        private Measurement Measure(
+            BenchmarkConfiguration configuration,
+            Action initialize,
+            Action step,
+            Func<double> checksum)
+        {
+            WarmUp(configuration, initialize, step);
+            var samples = new List<double>(configuration.MinimumSamples);
+            var elapsedMilliseconds = 0.0;
+            var requiredMilliseconds = configuration.MeasureSeconds * 1000.0;
+            var measuredChecksum = 0.0;
+            while (elapsedMilliseconds < requiredMilliseconds || samples.Count < configuration.MinimumSamples)
+            {
+                initialize();
+                var timer = Stopwatch.StartNew();
+                ExecuteSteps(step);
+                timer.Stop();
+                measuredChecksum = checksum();
+                var sampleMilliseconds = timer.Elapsed.TotalMilliseconds;
+                if (sampleMilliseconds <= 0.0)
+                {
+                    throw new InvalidOperationException("Benchmark timer produced a non-positive sample.");
+                }
+
+                samples.Add(sampleMilliseconds);
+                elapsedMilliseconds += sampleMilliseconds;
+            }
+
+            return new Measurement { Samples = samples, Checksum = measuredChecksum };
+        }
+
+        private void WarmUp(BenchmarkConfiguration configuration, Action initialize, Action step)
+        {
+            var elapsedMilliseconds = 0.0;
+            var requiredMilliseconds = configuration.WarmupSeconds * 1000.0;
+            while (elapsedMilliseconds < requiredMilliseconds)
+            {
+                initialize();
+                var timer = Stopwatch.StartNew();
+                ExecuteSteps(step);
+                timer.Stop();
+                elapsedMilliseconds += timer.Elapsed.TotalMilliseconds;
+            }
+        }
+
+        private void ExecuteSteps(Action step)
+        {
+            for (var stepIndex = 0; stepIndex < Steps; stepIndex++)
+            {
+                step();
+            }
+        }
+
+        private static Variant CreateVariant(
+            string name,
+            string kind,
+            Measurement measurement,
+            bool checksumMatch)
+        {
+            var ordered = new List<double>(measurement.Samples);
+            ordered.Sort();
+            return new Variant
+            {
+                name = name,
+                kind = kind,
+                samples_ms = measurement.Samples.ToArray(),
+                median_ms = NearestRank(ordered, 0.50),
+                p95_ms = NearestRank(ordered, 0.95),
+                p99_ms = NearestRank(ordered, 0.99),
+                checksum = measurement.Checksum,
+                checksum_match = checksumMatch,
+                included_in_comparison = checksumMatch
+            };
+        }
+
+        private static double NearestRank(List<double> ordered, double percentile)
+        {
+            var rank = Math.Max(1, (int)Math.Ceiling(percentile * ordered.Count));
+            return ordered[rank - 1];
+        }
+    }
+}
+#endif

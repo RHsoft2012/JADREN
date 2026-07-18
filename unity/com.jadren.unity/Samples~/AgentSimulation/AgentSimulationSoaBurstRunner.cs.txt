@@ -1,0 +1,25 @@
+// Rename this file to .cs together with AgentSimulationSoaBurstJob.cs.txt in a
+// Unity project that has com.unity.burst and Unity.Jobs installed.
+#if JADREN_HAS_BURST
+using Unity.Jobs;
+
+namespace Jadren.Unity.Samples.AgentSimulation
+{
+    public static class AgentSimulationSoaBurstRunner
+    {
+        public static void Step(AgentSimulationSoaState agents, float deltaTime)
+        {
+            new AgentSimulationSoaBurstJob
+            {
+                PositionX = agents.PositionX,
+                PositionY = agents.PositionY,
+                PositionZ = agents.PositionZ,
+                VelocityX = agents.VelocityX,
+                VelocityY = agents.VelocityY,
+                VelocityZ = agents.VelocityZ,
+                DeltaTime = deltaTime
+            }.Schedule(agents.Length, 64).Complete();
+        }
+    }
+}
+#endif

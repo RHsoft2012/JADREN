@@ -1,0 +1,12 @@
+module invalid.noalloc_allocation
+
+fn allocate() {
+    region frame {
+        let values: Buffer<Int32> = frame.allocate(4)
+    }
+}
+
+@noalloc
+fn update() {
+    allocate()
+}

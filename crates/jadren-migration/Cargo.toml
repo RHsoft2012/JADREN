@@ -1,0 +1,12 @@
+[package]
+name = "jadren-migration"
+description = "Explicit Jadren edition migration planning"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true

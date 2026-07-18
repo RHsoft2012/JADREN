@@ -1,0 +1,32 @@
+[package]
+name = "jadren-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+jadren-lexer = { path = "../crates/jadren-lexer" }
+jadren-parser = { path = "../crates/jadren-parser" }
+jadren-source = { path = "../crates/jadren-source" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "lexer_parser"
+path = "fuzz_targets/lexer_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "syntax_tree"
+path = "fuzz_targets/syntax_tree.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

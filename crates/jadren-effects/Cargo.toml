@@ -1,0 +1,23 @@
+[package]
+name = "jadren-effects"
+description = "Deterministic source-level effect inference for Jadren HIR"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-hir = { path = "../jadren-hir" }
+jadren-lexer = { path = "../jadren-lexer" }
+jadren-resolve = { path = "../jadren-resolve" }
+jadren-source = { path = "../jadren-source" }
+jadren-types = { path = "../jadren-types" }
+
+[dev-dependencies]
+jadren-parser = { path = "../jadren-parser" }
+jadren-typeck = { path = "../jadren-typeck" }
+
+[lints]
+workspace = true

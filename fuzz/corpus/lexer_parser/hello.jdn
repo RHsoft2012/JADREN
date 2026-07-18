@@ -1,0 +1,5 @@
+module fuzz.hello
+
+fn main() {
+  print("Hello")
+}

@@ -1,0 +1,24 @@
+[package]
+name = "jadren-jir"
+description = "Target-neutral typed SSA intermediate representation for Jadren"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-lexer = { path = "../jadren-lexer" }
+jadren-mir = { path = "../jadren-mir" }
+jadren-resolve = { path = "../jadren-resolve" }
+jadren-source = { path = "../jadren-source" }
+jadren-types = { path = "../jadren-types" }
+
+[dev-dependencies]
+jadren-hir = { path = "../jadren-hir" }
+jadren-parser = { path = "../jadren-parser" }
+jadren-typeck = { path = "../jadren-typeck" }
+
+[lints]
+workspace = true

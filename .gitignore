@@ -1,0 +1,32 @@
+# Rust build outputs
+**/target/
+
+# Cargo fuzz generated artifacts
+/fuzz/artifacts/
+
+# IDE
+/.idea/
+/.vscode/
+**/node_modules/
+
+# Native debug and profiling files
+*.pdb
+*.ilk
+*.dSYM/
+*.profraw
+*.profdata
+
+# Local environment and temporary files
+.env
+*.log
+*.tmp
+*.bak
+__pycache__/
+*.py[cod]
+
+# Generated test result exports
+/reports/*.xml
+
+# Operating systems
+.DS_Store
+Thumbs.db

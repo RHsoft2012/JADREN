@@ -1,0 +1,21 @@
+[package]
+name = "jadren-hir"
+description = "Typed high-level intermediate representation and verifier for Jadren"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-diagnostics = { path = "../jadren-diagnostics" }
+jadren-lexer = { path = "../jadren-lexer" }
+jadren-parser = { path = "../jadren-parser" }
+jadren-resolve = { path = "../jadren-resolve" }
+jadren-source = { path = "../jadren-source" }
+jadren-typeck = { path = "../jadren-typeck" }
+jadren-types = { path = "../jadren-types" }
+
+[lints]
+workspace = true

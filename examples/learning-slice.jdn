@@ -1,0 +1,12 @@
+module examples.learning_slice
+
+/// Bezpečný priechod caller-owned slice bez alokácie.
+@export(name: "jadren_learning_sum", abi: "C")
+@noalloc
+pub fn sum_values(values: read Slice<Int32>) -> Int32 {
+    var total: Int32 = 0
+    for index in values.indices {
+        total = total + values[index]
+    }
+    return total
+}

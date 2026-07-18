@@ -1,0 +1,20 @@
+[package]
+name = "jadren-codegen-llvm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+inkwell = { version = "=0.9.0", default-features = false, features = ["llvm22-1-no-llvm-linking", "target-x86", "target-aarch64"] }
+jadren-determinism = { path = "../jadren-determinism" }
+jadren-jir = { path = "../jadren-jir" }
+jadren-source = { path = "../jadren-source" }
+llvm-sys = { version = "=221.0.0", features = ["disable-alltargets-init", "no-llvm-linking"] }
+
+[build-dependencies]
+cc = "=1.2.67"
+
+[lints]
+workspace = true

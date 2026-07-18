@@ -1,0 +1,22 @@
+[package]
+name = "jadren-typeck"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+jadren-determinism = { path = "../jadren-determinism" }
+jadren-diagnostics = { path = "../jadren-diagnostics" }
+jadren-lexer = { path = "../jadren-lexer" }
+jadren-parser = { path = "../jadren-parser" }
+jadren-resolve = { path = "../jadren-resolve" }
+jadren-source = { path = "../jadren-source" }
+jadren-types = { path = "../jadren-types" }
+
+[dev-dependencies]
+jadren-lexer = { path = "../jadren-lexer" }
+
+[lints]
+workspace = true

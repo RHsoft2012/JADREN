@@ -1,0 +1,3 @@
+unknown tokens
+fn broken() { match value { Ok => 1 let recovered = 2; return recovered }
+fn good() {}

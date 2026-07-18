@@ -1,0 +1,4 @@
+module invalid.compute_string
+
+@compute
+fn kernel(value: String) {}

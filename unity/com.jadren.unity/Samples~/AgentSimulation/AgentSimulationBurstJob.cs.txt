@@ -1,0 +1,25 @@
+// Rename this file to .cs in a Unity project that has com.unity.burst and
+// Unity.Jobs installed. Add Unity.Burst and Unity.Jobs to the sample asmdef
+// references and define JADREN_HAS_BURST for the optional comparison path.
+#if JADREN_HAS_BURST
+using Unity.Burst;
+using Unity.Collections;
+using Unity.Jobs;
+
+namespace Jadren.Unity.Samples.AgentSimulation
+{
+    [BurstCompile]
+    public struct AgentSimulationBurstJob : IJobParallelFor
+    {
+        public NativeArray<AgentState> Agents;
+        public float DeltaTime;
+
+        public void Execute(int index)
+        {
+            var agent = Agents[index];
+            AgentSimulationMath.Integrate(ref agent, DeltaTime);
+            Agents[index] = agent;
+        }
+    }
+}
+#endif

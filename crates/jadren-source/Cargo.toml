@@ -1,0 +1,15 @@
+[package]
+name = "jadren-source"
+description = "Source files, spans, and stable source locations for the Jadren compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-determinism = { path = "../jadren-determinism" }
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+module examples.vector_slice;
+
+/// Minimal explicit SIMD probe. The caller must provide at least four
+/// contiguous Float32 elements starting at `index`; the intrinsic emits a
+/// checked vector access before touching memory.
+@export(name: "jadren_vector_probe", abi: "C")
+@noalloc
+pub fn vector_probe(
+    values: write Slice<Float32>,
+    index: UIntSize,
+    delta: Float32,
+) {
+    let current: Float4 = vector_load4(values, index)
+    let amount: Float4 = vector_splat4(delta)
+    vector_store4(values, index, current + amount)
+}

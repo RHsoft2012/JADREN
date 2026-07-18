@@ -1,0 +1,7 @@
+module invalid.borrow_conflict
+
+fn update(first: read Buffer<Int32>, second: write Buffer<Int32>) {}
+
+fn run(data: Buffer<Int32>) {
+    update(data, data)
+}

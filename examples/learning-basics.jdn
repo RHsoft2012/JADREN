@@ -1,0 +1,21 @@
+module examples.learning_basics
+
+/// Základný príklad premenných, typov, podmienky a návratovej hodnoty.
+pub fn score_with_bonus(start: Int32, bonus: Int32) -> Int32 {
+    let base: Int32 = start
+    var multiplier: Int32 = 1
+
+    if base > 0 {
+        multiplier = 2
+    }
+
+    return base + bonus * multiplier
+}
+
+/// Rovnaká funkcia bez exportu je vhodná na prvý `jadren check`.
+fn positive_or_zero(value: Int32) -> Int32 {
+    if value < 0 {
+        return 0
+    }
+    return value
+}

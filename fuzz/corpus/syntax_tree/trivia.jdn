@@ -1,0 +1,2 @@
+// leading trivia
+fn main() { /* nested /* comment */ still */ return [1, 2, 3] }

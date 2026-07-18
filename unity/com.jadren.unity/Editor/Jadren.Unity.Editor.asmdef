@@ -1,0 +1,19 @@
+{
+  "name": "Jadren.Unity.Editor",
+  "rootNamespace": "Jadren.Unity.Editor",
+  "references": [
+    "Jadren.Unity.Runtime",
+    "Jadren.Unity.Collections"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

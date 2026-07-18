@@ -1,0 +1,53 @@
+module examples.camera_controller;
+
+/// Blittable camera state owned by the Unity host.
+@repr(C)
+pub struct CameraState {
+    pub x: Float32,
+    pub y: Float32,
+    pub z: Float32,
+    pub yaw: Float32,
+    pub pitch: Float32,
+    pub target_x: Float32,
+    pub target_y: Float32,
+    pub target_z: Float32,
+    pub target_yaw: Float32,
+    pub target_pitch: Float32,
+}
+
+/// Updates camera math without touching Unity objects or allocating.
+///
+/// Unity remains responsible for input sampling and applying the returned
+/// pose to Transform. This export is intentionally a small, auditable demo of
+/// the Unity -> Jadren -> Unity ABI boundary.
+@export(name: "jadren_camera_step", abi: "C")
+@noalloc
+pub fn camera_step(
+    state: write Slice<CameraState>,
+    move_x: Float32,
+    move_y: Float32,
+    move_z: Float32,
+    mouse_x: Float32,
+    mouse_y: Float32,
+    delta_time: Float32,
+    speed_scale: Float32,
+    mouse_sensitivity: Float32,
+    position_lerp: Float32,
+    rotation_lerp: Float32,
+) {
+    var current: CameraState = state[0]
+    let delta_scale: Float32 = delta_time * speed_scale
+
+    current.target_x = current.target_x + move_x * delta_scale
+    current.target_y = current.target_y + move_y * delta_scale
+    current.target_z = current.target_z + move_z * delta_scale
+    current.target_yaw = current.target_yaw + mouse_x * mouse_sensitivity
+    current.target_pitch = current.target_pitch + mouse_y * mouse_sensitivity
+
+    current.x = current.x + (current.target_x - current.x) * position_lerp
+    current.y = current.y + (current.target_y - current.y) * position_lerp
+    current.z = current.z + (current.target_z - current.z) * position_lerp
+    current.yaw = current.yaw + (current.target_yaw - current.yaw) * rotation_lerp
+    current.pitch = current.pitch + (current.target_pitch - current.pitch) * rotation_lerp
+    state[0] = current
+}

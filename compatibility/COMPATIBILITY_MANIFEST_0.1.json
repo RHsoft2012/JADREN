@@ -1,0 +1,70 @@
+{
+  "schema": "jadren-compatibility-0.1",
+  "edition": "2026",
+  "targets": [
+    "x86_64-pc-windows-msvc",
+    "aarch64-linux-android",
+    "x86_64-unknown-linux-gnu"
+  ],
+  "cases": [
+    {
+      "name": "hello-syntax",
+      "command": "emit syntax examples/hello.jdn",
+      "sha256": "088abea05ddfc1c3ad4261062d414625a2e22889c2ba2a6a4419f5f3ac63b59b",
+      "bytes": 952
+    },
+    {
+      "name": "hello-hir",
+      "command": "emit hir examples/hello.jdn",
+      "sha256": "9fcec3b5b99645b8f32b6ac56adbcdfb8c6737e36967bd72ad783bb5efcaa450",
+      "bytes": 5475
+    },
+    {
+      "name": "hello-mir",
+      "command": "emit mir examples/hello.jdn",
+      "sha256": "c2de8234e0249fa9f52f722c3dcbb932978c5195b5d9d14362eb80efe06c91cf",
+      "bytes": 5760
+    },
+    {
+      "name": "hello-jir",
+      "command": "emit jir examples/hello.jdn",
+      "sha256": "d8a7465772ed59eff13b3e9d03f60e363bcb101072334cdbbcb5cbcb4c4b5be5",
+      "bytes": 276
+    },
+    {
+      "name": "parser-tour-format",
+      "command": "format examples/parser-tour.jdn",
+      "sha256": "7a5eac27016139ce3f0ad755cfb16348995b56e2eb0bcd3f3fb14071881dfc04",
+      "bytes": 603
+    },
+    {
+      "name": "ffi-header",
+      "command": "emit header examples/ffi-export.jdn",
+      "sha256": "fcfc42e363815dc457baf41add791c732bbb233e527fd7fafba58e89d6239311",
+      "bytes": 954
+    },
+    {
+      "name": "ffi-csharp",
+      "command": "emit csharp examples/ffi-export.jdn",
+      "sha256": "17e809513a05f9ce365f261d0acee833d00ea252d926a390bdd02ff01a751e64",
+      "bytes": 1481
+    },
+    {
+      "name": "ffi-facade",
+      "command": "emit facade examples/ffi-export.jdn",
+      "sha256": "54b388693c2be7feefb93bdbbdee2d85a7abf87d8dd0d64959241b799bf67f8e",
+      "bytes": 2614
+    },
+    {
+      "name": "ffi-abi-tests",
+      "command": "emit abi-tests examples/ffi-export.jdn",
+      "sha256": "483748b1643448feb6a8bedaa6a790a6d07420c7471350a16b47075f8f2c1309",
+      "bytes": 964
+    }
+  ],
+  "negative": {
+    "source": "examples/invalid/invalid-character.jdn",
+    "diagnostic_code": "J0001",
+    "exit_code": 1
+  }
+}

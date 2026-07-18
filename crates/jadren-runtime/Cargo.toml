@@ -1,0 +1,15 @@
+[package]
+name = "jadren-runtime"
+description = "Small native runtime and versioned host ABI for Jadren"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[lints]
+workspace = true

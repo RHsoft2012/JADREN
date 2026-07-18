@@ -1,0 +1,35 @@
+[package]
+name = "jadren-cli"
+description = "Command-line driver for the Jadren compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "jadren"
+path = "src/main.rs"
+
+[dependencies]
+jadren-bindgen = { path = "../jadren-bindgen" }
+jadren-format = { path = "../jadren-format" }
+jadren-lsp = { path = "../jadren-lsp" }
+jadren-driver = { path = "../jadren-driver" }
+jadren-diagnostics = { path = "../jadren-diagnostics" }
+jadren-lexer = { path = "../jadren-lexer" }
+jadren-parser = { path = "../jadren-parser" }
+jadren-package = { path = "../jadren-package" }
+jadren-toolchain = { path = "../jadren-installer" }
+jadren-release = { path = "../jadren-release" }
+jadren-migration = { path = "../jadren-migration" }
+jadren-source = { path = "../jadren-source" }
+jadren-jir = { path = "../jadren-jir" }
+
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+inkwell = { version = "=0.9.0", default-features = false, features = ["llvm22-1-no-llvm-linking", "target-x86"] }
+jadren-codegen-llvm = { path = "../jadren-codegen-llvm" }
+
+[lints]
+workspace = true

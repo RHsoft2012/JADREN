@@ -1,0 +1,20 @@
+// Rename this file to .cs together with AgentSimulationAosoa8BurstJob.cs.txt.
+#if JADREN_HAS_BURST
+using Unity.Jobs;
+
+namespace Jadren.Unity.Samples.AgentSimulation
+{
+    public static class AgentSimulationAosoa8BurstRunner
+    {
+        public static void Step(AgentSimulationAosoa8State agents, float deltaTime)
+        {
+            new AgentSimulationAosoa8BurstJob
+            {
+                Tiles = agents.Tiles,
+                Count = agents.Count,
+                DeltaTime = deltaTime
+            }.Schedule(agents.TileCount, 1).Complete();
+        }
+    }
+}
+#endif

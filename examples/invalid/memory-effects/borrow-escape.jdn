@@ -1,0 +1,6 @@
+module invalid.borrow_escape
+
+fn borrow(data: Buffer<Int32>) -> read Buffer<Int32> {
+    let view: read Buffer<Int32> = data
+    return view
+}

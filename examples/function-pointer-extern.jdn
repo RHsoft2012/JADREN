@@ -1,0 +1,8 @@
+extern "C" {
+    fn external_adjust(value: Int32) -> Int32;
+}
+
+pub fn apply_external(value: Int32) -> Int32 {
+    let callback = external_adjust;
+    return callback(value);
+}

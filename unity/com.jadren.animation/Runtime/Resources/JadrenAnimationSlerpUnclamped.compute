@@ -1,0 +1,61 @@
+#pragma kernel SlerpUnclamped
+
+StructuredBuffer<float4> PreviousRotation;
+StructuredBuffer<float4> CurrentRotation;
+StructuredBuffer<float> FadeWeight;
+RWStructuredBuffer<float4> OutputRotation;
+int JadrenElementCount;
+
+float4 NormalizeOrIdentity(float4 value)
+{
+    float lengthSquared = dot(value, value);
+    if (lengthSquared > 0.000000000001)
+    {
+        return value * rsqrt(lengthSquared);
+    }
+    return float4(0.0, 0.0, 0.0, 1.0);
+}
+
+[numthreads(64, 1, 1)]
+void SlerpUnclamped(uint3 dispatchId : SV_DispatchThreadID)
+{
+    if (dispatchId.x >= (uint)JadrenElementCount)
+    {
+        return;
+    }
+
+    float4 a = PreviousRotation[dispatchId.x];
+    float4 b = CurrentRotation[dispatchId.x];
+    float t = FadeWeight[dispatchId.x];
+    float dotValue = dot(a, b);
+    if (dotValue < 0.0)
+    {
+        b = -b;
+        dotValue = -dotValue;
+    }
+
+    dotValue = clamp(dotValue, -1.0, 1.0);
+    float4 result;
+    if (dotValue > 0.9995)
+    {
+        result = NormalizeOrIdentity(lerp(a, b, t));
+    }
+    else
+    {
+        float theta0 = acos(dotValue);
+        float sinTheta0 = sin(theta0);
+        if (abs(sinTheta0) < 0.000001)
+        {
+            result = NormalizeOrIdentity(lerp(a, b, t));
+        }
+        else
+        {
+            float theta = theta0 * t;
+            float sinTheta = sin(theta);
+            float s0 = cos(theta) - dotValue * sinTheta / sinTheta0;
+            float s1 = sinTheta / sinTheta0;
+            result = a * s0 + b * s1;
+        }
+    }
+    OutputRotation[dispatchId.x] = NormalizeOrIdentity(result);
+}

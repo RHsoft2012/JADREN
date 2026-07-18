@@ -1,0 +1,60 @@
+{
+  "name": "jadren-vscode",
+  "displayName": "Jadren Language Support",
+  "description": "Jadren syntax highlighting and LSP diagnostics/navigation.",
+  "version": "0.1.0",
+  "publisher": "jadren",
+  "icon": "icons/JADREN.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:jadren"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "jadren",
+        "aliases": [
+          "Jadren",
+          "jdn"
+        ],
+        "extensions": [
+          ".jdn"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "jadren",
+        "scopeName": "source.jadren",
+        "path": "./syntaxes/jadren.tmLanguage.json"
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "jadren-file-icons",
+        "label": "Jadren file icons",
+        "path": "./icons/jadren-file-icon-theme.json"
+      }
+    ],
+    "configuration": {
+      "title": "Jadren",
+      "properties": {
+        "jadren.lspPath": {
+          "type": "string",
+          "default": "jadren",
+          "description": "Path or command name for the Jadren CLI with `jadren lsp` support."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

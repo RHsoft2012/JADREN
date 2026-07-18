@@ -1,0 +1,13 @@
+[package]
+name = "jadren-types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+jadren-determinism = { path = "../jadren-determinism" }
+
+[lints]
+workspace = true

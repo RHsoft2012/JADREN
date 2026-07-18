@@ -1,0 +1,12 @@
+/// Explicit callback type syntax used by the frontend/type-check regression.
+fn increment(value: Int32) -> Int32 {
+    return value + 1;
+}
+
+fn apply(callback: fn(Int32) -> Int32, value: Int32) -> Int32 {
+    return callback(value);
+}
+
+pub fn apply_increment(value: Int32) -> Int32 {
+    return apply(increment, value);
+}

@@ -1,0 +1,449 @@
+module examples.animation_batch;
+
+/// Target math supplied by `jadren_runtime.dll`. Keeping the transcendental
+/// operations behind the runtime makes the packed pose kernel portable across
+/// the baseline, AVX2 and NEON objects while retaining one Slerp contract.
+extern "C" {
+    unsafe fn jadren_rt_math_acos_f32(value: Float32) -> Float32;
+    unsafe fn jadren_rt_math_sin_f32(value: Float32) -> Float32;
+    unsafe fn jadren_rt_math_cos_f32(value: Float32) -> Float32;
+    unsafe fn jadren_rt_math_sqrt_f32(value: Float32) -> Float32;
+}
+
+/// Versioned native animation-controller batch ABI.
+///
+/// This first native boundary deliberately owns controller state only. Pose
+/// sampling remains in the managed reference kernel until the packed clip
+/// stream ABI is frozen. The layout is still the one used by the future pose
+/// backend: a stable AoS state record, explicit SoA slices, and an AoSoA8 tile.
+/// Stable 32-byte controller state record. Unity may pass an array of these
+/// records without exposing any Unity object or allocator to Jadren.
+@repr(C)
+pub struct AnimationAgentState {
+    pub clip_index: UInt32,
+    pub previous_clip_index: UInt32,
+    pub time: Float32,
+    pub previous_time: Float32,
+    pub fade_weight: Float32,
+    pub speed: Float32,
+    pub lod: UInt32,
+    pub flags: UInt32,
+}
+
+/// Stable clip metadata header. Frame payloads are intentionally not part of
+/// this milestone; offsets are byte/element offsets in a future packed stream.
+@repr(C)
+pub struct AnimationClipHeader {
+    pub frame_offset: UInt32,
+    pub frame_count: UInt32,
+    pub bone_count: UInt32,
+    pub sample_rate: Float32,
+    pub duration: Float32,
+    pub flags: UInt32,
+}
+
+/// Packed local TRS output record. One record is exactly ten Float32 values
+/// (40 B) and is intentionally independent of UnityEngine types.
+@repr(C)
+pub struct AnimationPose {
+    pub position_x: Float32,
+    pub position_y: Float32,
+    pub position_z: Float32,
+    pub rotation_x: Float32,
+    pub rotation_y: Float32,
+    pub rotation_z: Float32,
+    pub rotation_w: Float32,
+    pub scale_x: Float32,
+    pub scale_y: Float32,
+    pub scale_z: Float32,
+}
+
+/// Eight-lane AoSoA tile for the controller hot path. The tile is a private
+/// packed representation; the public AoS record above remains the ABI used by
+/// Unity authoring and diagnostics.
+@repr(C)
+pub struct AnimationStateTile8 {
+    pub previous_time: Float8,
+    pub time: Float8,
+    pub speed: Float8,
+    pub fade_weight: Float8,
+}
+
+@export(name: "jadren_animation_batch_abi_version", abi: "C")
+pub fn animation_batch_abi_version() -> UInt32 {
+    return 1u32
+}
+
+/// Scalar reference step. The operation is intentionally deterministic and
+/// allocation-free: previous_time captures the input time and time advances by
+/// speed * delta. Clip selection, looping and pose sampling are next ABI layer.
+@export(name: "jadren_animation_state_step_scalar", abi: "C")
+@noalloc
+pub fn animation_state_step_scalar(state: write Slice<AnimationAgentState>, delta: Float32) {
+    for index in state.indices {
+        state[index].previous_clip_index = state[index].clip_index
+        state[index].previous_time = state[index].time
+        state[index].time = state[index].time + state[index].speed * delta
+    }
+}
+
+/// AoS batch fallback. This is the correctness reference for the vector
+/// layouts and the backend differential smoke.
+@export(name: "jadren_animation_state_batch", abi: "C")
+@noalloc
+pub fn animation_state_batch(states: write Slice<AnimationAgentState>, delta: Float32) {
+    for index in states.indices {
+        states[index].previous_clip_index = states[index].clip_index
+        states[index].previous_time = states[index].time
+        states[index].time = states[index].time + states[index].speed * delta
+    }
+}
+
+/// Explicit SoA layout. The separate slices expose the alias contract and let
+/// an AVX2/NEON code generator use packed loads without changing the C ABI.
+@export(name: "jadren_animation_state_batch_soa", abi: "C")
+@disjoint
+@noalloc
+pub fn animation_state_batch_soa(
+    previous_time: write Slice<Float32>,
+    time: write Slice<Float32>,
+    speed: read Slice<Float32>,
+    count: UIntSize,
+    delta: Float32,
+) {
+    var index: UIntSize = 0usize
+    while index < count {
+        previous_time[index] = time[index]
+        time[index] = time[index] + speed[index] * delta
+        index = index + 1usize
+    }
+}
+
+/// Eight-lane SIMD SoA layout. The scalar tail is part of the ABI contract,
+/// so arbitrary agent counts produce the same result as the AoS reference.
+@export(name: "jadren_animation_state_batch_soa_simd8", abi: "C")
+@disjoint
+@noalloc
+pub fn animation_state_batch_soa_simd8(
+    previous_time: write Slice<Float32>,
+    time: write Slice<Float32>,
+    speed: read Slice<Float32>,
+    count: UIntSize,
+    delta: Float32,
+) {
+    let amount: Float8 = vector_splat8(delta)
+    var index: UIntSize = 0usize
+    while index + 8usize <= count {
+        let current: Float8 = vector_load8(time, index)
+        let velocity: Float8 = vector_load8(speed, index)
+        vector_store8(previous_time, index, current)
+        vector_store8(time, index, current + velocity * amount)
+        index = index + 8usize
+    }
+    while index < count {
+        previous_time[index] = time[index]
+        time[index] = time[index] + speed[index] * delta
+        index = index + 1usize
+    }
+}
+
+/// AoSoA8 tile backend. A future pose kernel will extend this tile with packed
+/// clip/frame fields; the controller state layout is already frozen here.
+@export(name: "jadren_animation_state_batch_aosoa8", abi: "C")
+@noalloc
+pub fn animation_state_batch_aosoa8(tiles: write Slice<AnimationStateTile8>, delta: Float32) {
+    let amount: Float8 = vector_splat8(delta)
+    for index in tiles.indices {
+        var tile: AnimationStateTile8 = tiles[index]
+        tile.previous_time = tile.time
+        tile.time = tile.time + tile.speed * amount
+        tiles[index] = tile
+    }
+}
+
+/// Copies one packed TRS frame into caller-owned pose records. `frame_bone_offset`
+/// is measured in bones (not floats), so the clip stream remains a simple
+/// frame-major `[frame][bone][xyz]` layout. The caller supplies the frame index
+/// after applying the managed clip's exact time/loop policy; interpolation is a
+/// separate gate so this first native pose contract can be differentially tested
+/// without hidden math or allocations.
+@export(name: "jadren_animation_pose_copy_frame", abi: "C")
+@noalloc
+pub fn animation_pose_copy_frame(
+    translations: read Slice<Float32>,
+    rotations: read Slice<Float32>,
+    scales: read Slice<Float32>,
+    output: write Slice<AnimationPose>,
+    frame_bone_offset: UIntSize,
+    bone_count: UIntSize,
+    lod: UInt32,
+) -> UIntSize {
+    if lod == 2u32 {
+        return 0usize
+    }
+
+    var sampled: UIntSize = 0usize
+    for index in output.indices {
+        if index >= bone_count {
+            continue
+        }
+        if lod == 1u32 {
+            if (index & 1usize) != 0usize {
+                continue
+            }
+        }
+
+        let bone = frame_bone_offset + index
+        let translation = bone * 3usize
+        let rotation = bone * 4usize
+        let scale = bone * 3usize
+        var pose: AnimationPose = output[index]
+        pose.position_x = translations[translation]
+        pose.position_y = translations[translation + 1usize]
+        pose.position_z = translations[translation + 2usize]
+        pose.rotation_x = rotations[rotation]
+        pose.rotation_y = rotations[rotation + 1usize]
+        pose.rotation_z = rotations[rotation + 2usize]
+        pose.rotation_w = rotations[rotation + 3usize]
+        pose.scale_x = scales[scale]
+        pose.scale_y = scales[scale + 1usize]
+        pose.scale_z = scales[scale + 2usize]
+        output[index] = pose
+        sampled = sampled + 1usize
+    }
+    return sampled
+}
+
+/// Blends two already-sampled packed poses without allocation. Translation,
+/// scale and quaternion components use the same unclamped linear rule; the
+/// endpoint branches keep fade 0/1 bitwise identical to the source pose. This
+/// is intentionally named `linear`: exact Unity Quaternion.Slerp parity is a
+/// later math-runtime gate.
+@export(name: "jadren_animation_pose_blend_linear", abi: "C")
+@noalloc
+pub fn animation_pose_blend_linear(
+    previous: read Slice<AnimationPose>,
+    current: read Slice<AnimationPose>,
+    output: write Slice<AnimationPose>,
+    count: UIntSize,
+    fade_weight: Float32,
+    lod: UInt32,
+) -> UIntSize {
+    if lod == 2u32 {
+        return 0usize
+    }
+
+    var blend = fade_weight
+    if blend < 0.0f32 {
+        blend = 0.0f32
+    }
+    if blend > 1.0f32 {
+        blend = 1.0f32
+    }
+
+    var sampled: UIntSize = 0usize
+    for index in output.indices {
+        if index >= count {
+            continue
+        }
+        if lod == 1u32 {
+            if (index & 1usize) != 0usize {
+                continue
+            }
+        }
+
+        var pose: AnimationPose = output[index]
+        if blend <= 0.0f32 {
+            pose.position_x = previous[index].position_x
+            pose.position_y = previous[index].position_y
+            pose.position_z = previous[index].position_z
+            pose.rotation_x = previous[index].rotation_x
+            pose.rotation_y = previous[index].rotation_y
+            pose.rotation_z = previous[index].rotation_z
+            pose.rotation_w = previous[index].rotation_w
+            pose.scale_x = previous[index].scale_x
+            pose.scale_y = previous[index].scale_y
+            pose.scale_z = previous[index].scale_z
+        } else {
+            if blend >= 1.0f32 {
+                pose.position_x = current[index].position_x
+                pose.position_y = current[index].position_y
+                pose.position_z = current[index].position_z
+                pose.rotation_x = current[index].rotation_x
+                pose.rotation_y = current[index].rotation_y
+                pose.rotation_z = current[index].rotation_z
+                pose.rotation_w = current[index].rotation_w
+                pose.scale_x = current[index].scale_x
+                pose.scale_y = current[index].scale_y
+                pose.scale_z = current[index].scale_z
+            } else {
+                pose.position_x = previous[index].position_x + (current[index].position_x - previous[index].position_x) * blend
+                pose.position_y = previous[index].position_y + (current[index].position_y - previous[index].position_y) * blend
+                pose.position_z = previous[index].position_z + (current[index].position_z - previous[index].position_z) * blend
+                pose.rotation_x = previous[index].rotation_x + (current[index].rotation_x - previous[index].rotation_x) * blend
+                pose.rotation_y = previous[index].rotation_y + (current[index].rotation_y - previous[index].rotation_y) * blend
+                pose.rotation_z = previous[index].rotation_z + (current[index].rotation_z - previous[index].rotation_z) * blend
+                pose.rotation_w = previous[index].rotation_w + (current[index].rotation_w - previous[index].rotation_w) * blend
+                pose.scale_x = previous[index].scale_x + (current[index].scale_x - previous[index].scale_x) * blend
+                pose.scale_y = previous[index].scale_y + (current[index].scale_y - previous[index].scale_y) * blend
+                pose.scale_z = previous[index].scale_z + (current[index].scale_z - previous[index].scale_z) * blend
+            }
+        }
+        output[index] = pose
+        sampled = sampled + 1usize
+    }
+    return sampled
+}
+
+/// Blends packed poses with the shortest-arc Unity `Quaternion.SlerpUnclamped`
+/// rule. Translation and scale use the matching unclamped linear rule. The
+/// endpoint branches preserve source values exactly; the runtime owns acos,
+/// sin, cos and sqrt so every native CPU object uses the same math contract.
+/// `fade_weight` is intentionally not clamped: callers that need a bounded
+/// cross-fade must clamp it before entering this Unclamped API.
+@export(name: "jadren_animation_pose_blend_slerp_unclamped", abi: "C")
+@noalloc
+pub fn animation_pose_blend_slerp_unclamped(
+    previous: read Slice<AnimationPose>,
+    current: read Slice<AnimationPose>,
+    output: write Slice<AnimationPose>,
+    count: UIntSize,
+    fade_weight: Float32,
+    lod: UInt32,
+) -> UIntSize {
+    if lod == 2u32 {
+        return 0usize
+    }
+
+    var sampled: UIntSize = 0usize
+    for index in output.indices {
+        if index >= count {
+            continue
+        }
+        if lod == 1u32 {
+            if (index & 1usize) != 0usize {
+                continue
+            }
+        }
+
+        var pose: AnimationPose = output[index]
+        if fade_weight == 0.0f32 {
+            pose.position_x = previous[index].position_x
+            pose.position_y = previous[index].position_y
+            pose.position_z = previous[index].position_z
+            pose.rotation_x = previous[index].rotation_x
+            pose.rotation_y = previous[index].rotation_y
+            pose.rotation_z = previous[index].rotation_z
+            pose.rotation_w = previous[index].rotation_w
+            pose.scale_x = previous[index].scale_x
+            pose.scale_y = previous[index].scale_y
+            pose.scale_z = previous[index].scale_z
+        } else {
+            if fade_weight == 1.0f32 {
+                pose.position_x = current[index].position_x
+                pose.position_y = current[index].position_y
+                pose.position_z = current[index].position_z
+                pose.rotation_x = current[index].rotation_x
+                pose.rotation_y = current[index].rotation_y
+                pose.rotation_z = current[index].rotation_z
+                pose.rotation_w = current[index].rotation_w
+                pose.scale_x = current[index].scale_x
+                pose.scale_y = current[index].scale_y
+                pose.scale_z = current[index].scale_z
+            } else {
+                pose.position_x = previous[index].position_x + (current[index].position_x - previous[index].position_x) * fade_weight
+                pose.position_y = previous[index].position_y + (current[index].position_y - previous[index].position_y) * fade_weight
+                pose.position_z = previous[index].position_z + (current[index].position_z - previous[index].position_z) * fade_weight
+                pose.scale_x = previous[index].scale_x + (current[index].scale_x - previous[index].scale_x) * fade_weight
+                pose.scale_y = previous[index].scale_y + (current[index].scale_y - previous[index].scale_y) * fade_weight
+                pose.scale_z = previous[index].scale_z + (current[index].scale_z - previous[index].scale_z) * fade_weight
+
+                let ax = previous[index].rotation_x
+                let ay = previous[index].rotation_y
+                let az = previous[index].rotation_z
+                let aw = previous[index].rotation_w
+                var bx = current[index].rotation_x
+                var by = current[index].rotation_y
+                var bz = current[index].rotation_z
+                var bw = current[index].rotation_w
+                var dot = ax * bx + ay * by + az * bz + aw * bw
+                if dot < 0.0f32 {
+                    bx = -bx
+                    by = -by
+                    bz = -bz
+                    bw = -bw
+                    dot = -dot
+                }
+                if dot > 1.0f32 {
+                    dot = 1.0f32
+                }
+                if dot < -1.0f32 {
+                    dot = -1.0f32
+                }
+
+                var qx: Float32 = ax + (bx - ax) * fade_weight
+                var qy: Float32 = ay + (by - ay) * fade_weight
+                var qz: Float32 = az + (bz - az) * fade_weight
+                var qw: Float32 = aw + (bw - aw) * fade_weight
+                // Keep the boundary identical to JadrenQuaternionMath and
+                // Unity's shortest-arc contract: only a strictly larger dot
+                // takes the normalized nlerp fallback.
+                if dot <= 0.9995f32 {
+                    let theta_0 = jadren_rt_math_acos_f32(dot)
+                    let sin_theta_0 = jadren_rt_math_sin_f32(theta_0)
+                    var near_linear: Bool = false
+                    if sin_theta_0 < 0.000001f32 {
+                        if sin_theta_0 > -0.000001f32 {
+                            near_linear = true
+                        }
+                    }
+                    if near_linear {
+                        let magnitude = jadren_rt_math_sqrt_f32(qx * qx + qy * qy + qz * qz + qw * qw)
+                        if magnitude > 0.000001f32 {
+                            let inverse = 1.0f32 / magnitude
+                            qx = qx * inverse
+                            qy = qy * inverse
+                            qz = qz * inverse
+                            qw = qw * inverse
+                        } else {
+                            qx = 0.0f32
+                            qy = 0.0f32
+                            qz = 0.0f32
+                            qw = 1.0f32
+                        }
+                    } else {
+                        let theta = theta_0 * fade_weight
+                        let sin_theta = jadren_rt_math_sin_f32(theta)
+                        let s0 = jadren_rt_math_cos_f32(theta) - dot * sin_theta / sin_theta_0
+                        let s1 = sin_theta / sin_theta_0
+                        qx = ax * s0 + bx * s1
+                        qy = ay * s0 + by * s1
+                        qz = az * s0 + bz * s1
+                        qw = aw * s0 + bw * s1
+                    }
+                } else {
+                    let magnitude = jadren_rt_math_sqrt_f32(qx * qx + qy * qy + qz * qz + qw * qw)
+                    if magnitude > 0.000001f32 {
+                        let inverse = 1.0f32 / magnitude
+                        qx = qx * inverse
+                        qy = qy * inverse
+                        qz = qz * inverse
+                        qw = qw * inverse
+                    } else {
+                        qx = 0.0f32
+                        qy = 0.0f32
+                        qz = 0.0f32
+                        qw = 1.0f32
+                    }
+                }
+                pose.rotation_x = qx
+                pose.rotation_y = qy
+                pose.rotation_z = qz
+                pose.rotation_w = qw
+            }
+        }
+        output[index] = pose
+        sampled = sampled + 1usize
+    }
+    return sampled
+}

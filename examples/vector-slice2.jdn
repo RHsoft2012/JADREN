@@ -1,0 +1,7 @@
+module examples.vector_slice2
+
+@noalloc
+pub fn add2(values: write Slice<Float32>, index: UIntSize, delta: Float32) {
+    let current: Float2 = vector_load2(values, index)
+    vector_store2(values, index, current + vector_splat2(delta))
+}

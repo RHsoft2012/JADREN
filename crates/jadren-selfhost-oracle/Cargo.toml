@@ -1,0 +1,20 @@
+[package]
+name = "jadren-selfhost-oracle"
+description = "Deterministic Rust oracle for the Jadren self-hosting bootstrap slice"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "jadren-selfhost-oracle"
+path = "src/main.rs"
+
+[dependencies]
+jadren-selfhost-api = { path = "../jadren-selfhost-api" }
+jadren-determinism = { path = "../jadren-determinism" }
+
+[lints]
+workspace = true

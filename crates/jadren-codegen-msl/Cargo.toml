@@ -1,0 +1,17 @@
+[package]
+name = "jadren-codegen-msl"
+description = "Deterministic minimal Metal Shading Language compute emitter for Jadren"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-codegen-spirv = { path = "../jadren-codegen-spirv" }
+jadren-gpu-runtime = { path = "../jadren-gpu-runtime" }
+jadren-jir = { path = "../jadren-jir" }
+
+[lints]
+workspace = true

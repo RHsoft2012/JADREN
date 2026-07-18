@@ -1,0 +1,16 @@
+[package]
+name = "jadren-format"
+description = "Canonical token-preserving formatter for Jadren"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-lexer = { path = "../jadren-lexer" }
+jadren-source = { path = "../jadren-source" }
+
+[lints]
+workspace = true

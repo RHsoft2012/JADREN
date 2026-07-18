@@ -1,0 +1,54 @@
+#pragma kernel SkinVertices
+
+struct JadrenGpuSkinningVertex
+{
+    float3 Position;
+    float4 BoneWeights;
+    float4 BoneIndices;
+};
+
+StructuredBuffer<JadrenGpuSkinningVertex> Vertices;
+StructuredBuffer<float4x4> BoneMatrices;
+RWStructuredBuffer<float3> OutputPosition;
+
+int JadrenVertexCount;
+int JadrenBoneCount;
+
+[numthreads(64, 1, 1)]
+void SkinVertices(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    uint vertexIndex = dispatchThreadId.x;
+    if (vertexIndex >= (uint)JadrenVertexCount)
+    {
+        return;
+    }
+
+    JadrenGpuSkinningVertex vertex = Vertices[vertexIndex];
+    float4 weights = max(vertex.BoneWeights, 0.0f);
+    float weightSum = weights.x + weights.y + weights.z + weights.w;
+    if (weightSum <= 0.000001f)
+    {
+        OutputPosition[vertexIndex] = vertex.Position;
+        return;
+    }
+
+    uint4 indices = (uint4)round(vertex.BoneIndices);
+    float3 skinned = 0.0f;
+    if (weights.x > 0.0f && indices.x < (uint)JadrenBoneCount)
+    {
+        skinned += mul(BoneMatrices[indices.x], float4(vertex.Position, 1.0f)).xyz * weights.x;
+    }
+    if (weights.y > 0.0f && indices.y < (uint)JadrenBoneCount)
+    {
+        skinned += mul(BoneMatrices[indices.y], float4(vertex.Position, 1.0f)).xyz * weights.y;
+    }
+    if (weights.z > 0.0f && indices.z < (uint)JadrenBoneCount)
+    {
+        skinned += mul(BoneMatrices[indices.z], float4(vertex.Position, 1.0f)).xyz * weights.z;
+    }
+    if (weights.w > 0.0f && indices.w < (uint)JadrenBoneCount)
+    {
+        skinned += mul(BoneMatrices[indices.w], float4(vertex.Position, 1.0f)).xyz * weights.w;
+    }
+    OutputPosition[vertexIndex] = skinned / weightSum;
+}

@@ -1,0 +1,26 @@
+[package]
+name = "jadren-driver"
+description = "Compiler configuration, session ownership, and deterministic frontend orchestration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-determinism = { path = "../jadren-determinism" }
+jadren-diagnostics = { path = "../jadren-diagnostics" }
+jadren-effects = { path = "../jadren-effects" }
+jadren-lexer = { path = "../jadren-lexer" }
+jadren-hir = { path = "../jadren-hir" }
+jadren-jir = { path = "../jadren-jir" }
+jadren-mir = { path = "../jadren-mir" }
+jadren-parser = { path = "../jadren-parser" }
+jadren-resolve = { path = "../jadren-resolve" }
+jadren-source = { path = "../jadren-source" }
+jadren-syntax = { path = "../jadren-syntax" }
+jadren-typeck = { path = "../jadren-typeck" }
+
+[lints]
+workspace = true

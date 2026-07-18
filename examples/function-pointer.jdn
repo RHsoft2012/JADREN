@@ -1,0 +1,9 @@
+/// Small first-class function value example used by the JIR/LLVM regression.
+fn increment(value: Int32) -> Int32 {
+    return value + 1;
+}
+
+pub fn apply_increment(value: Int32) -> Int32 {
+    let callback = increment;
+    return callback(value);
+}

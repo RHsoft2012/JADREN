@@ -1,0 +1,23 @@
+[package]
+name = "jadren-vulkan-runtime"
+description = "Explicit Vulkan instance, compute-queue and fence smoke runtime for Jadren"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+ash = { version = "=0.38.0", default-features = false, features = ["loaded"] }
+jadren-codegen-spirv = { path = "../jadren-codegen-spirv" }
+jadren-gpu-runtime = { path = "../jadren-gpu-runtime" }
+jadren-jir = { path = "../jadren-jir" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[lints]
+workspace = true

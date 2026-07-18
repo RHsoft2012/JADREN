@@ -1,0 +1,90 @@
+{
+  "name": "Jadren",
+  "scopeName": "source.jadren",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#functions"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "match": "//.*$",
+          "name": "comment.line.double-slash.jadren"
+        },
+        {
+          "begin": "/\\*",
+          "end": "\\*/",
+          "name": "comment.block.jadren"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.jadren",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.jadren"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "match": "\\b(?:0x[0-9A-Fa-f_]+|[0-9][0-9_]*(?:\\.[0-9][0-9_]*)?)(?:u8|u16|u32|u64|i8|i16|i32|i64|f16|f32|f64)?\\b",
+          "name": "constant.numeric.jadren"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "match": "\\b(?:module|import|pub|extern|unsafe|fn|return|let|var|if|else|match|region|true|false|as|where)\\b",
+          "name": "keyword.control.jadren"
+        },
+        {
+          "match": "@[A-Za-z_][A-Za-z0-9_]*",
+          "name": "storage.modifier.annotation.jadren"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "match": "\\b(?:Bool|Char|String|Int8|Int16|Int32|Int64|UInt8|UInt16|UInt32|UInt64|Float16|Float32|Float64|Buffer|Slice|Option|Result)\\b",
+          "name": "storage.type.jadren"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()",
+          "name": "entity.name.function.jadren"
+        }
+      ]
+    }
+  }
+}

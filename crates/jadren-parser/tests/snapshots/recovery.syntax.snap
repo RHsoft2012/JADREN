@@ -1,0 +1,20 @@
+diagnostic J0100 0..7
+diagnostic J0104 51..54
+items 2
+Root 0..102
+  Error 0..14
+  FunctionDeclaration 15..88
+    ParameterList 24..26
+    Block 27..88
+      MatchExpression 29..50
+        NameExpression 35..40
+        MatchArm 43..50
+          PathPattern 43..45
+          LiteralExpression 49..50
+      BindingStatement 51..69
+        LiteralExpression 67..68
+      ReturnStatement 70..86
+        NameExpression 77..86
+  FunctionDeclaration 89..101
+    ParameterList 96..98
+    Block 99..101

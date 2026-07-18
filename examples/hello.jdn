@@ -1,0 +1,4 @@
+module examples.hello
+fn main() {
+    print("Hello, Jadren")
+}

@@ -1,0 +1,51 @@
+[workspace]
+members = [
+    "crates/jadren-cli",
+    "crates/jadren-codegen-llvm",
+    "crates/jadren-codegen-msl",
+    "crates/jadren-codegen-spirv",
+    "crates/jadren-metal-runtime",
+    "crates/jadren-gpu-runtime",
+    "crates/jadren-concurrency",
+    "crates/jadren-directx12-runtime",
+    "crates/jadren-bindgen",
+    "crates/jadren-determinism",
+    "crates/jadren-diagnostics",
+    "crates/jadren-driver",
+    "crates/jadren-effects",
+    "crates/jadren-format",
+    "crates/jadren-lsp",
+    "crates/jadren-vulkan-runtime",
+    "crates/jadren-hir",
+    "crates/jadren-jir",
+    "crates/jadren-lexer",
+    "crates/jadren-mir",
+    "crates/jadren-parser",
+    "crates/jadren-package",
+    "crates/jadren-installer",
+    "crates/jadren-release",
+    "crates/jadren-migration",
+    "crates/jadren-resolve",
+    "crates/jadren-runtime",
+    "crates/jadren-selfhost-api",
+    "crates/jadren-selfhost-oracle",
+    "crates/jadren-source",
+    "crates/jadren-syntax",
+    "crates/jadren-types",
+    "crates/jadren-typeck",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+authors = ["Jadren contributors"]
+license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = "warn"

@@ -1,0 +1,18 @@
+[package]
+name = "jadren-parser"
+description = "Recovering parser and initial AST for the Jadren programming language"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-diagnostics = { path = "../jadren-diagnostics" }
+jadren-lexer = { path = "../jadren-lexer" }
+jadren-source = { path = "../jadren-source" }
+jadren-syntax = { path = "../jadren-syntax" }
+
+[lints]
+workspace = true

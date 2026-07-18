@@ -1,0 +1,37 @@
+// Rename this file to .cs together with AgentSimulationBurstJob.cs.txt in a
+// Unity project that has com.unity.burst and Unity.Jobs installed.
+#if JADREN_HAS_BURST
+using Unity.Collections;
+using Unity.Jobs;
+
+namespace Jadren.Unity.Samples.AgentSimulation
+{
+    public static class AgentSimulationBurstRunner
+    {
+        public static void Step(NativeArray<AgentState> agents, float deltaTime)
+        {
+            new AgentSimulationBurstJob
+            {
+                Agents = agents,
+                DeltaTime = deltaTime
+            }.Schedule(agents.Length, 64).Complete();
+        }
+
+        public static AgentSimulationComparisonResult Compare(
+            int count,
+            int steps,
+            float deltaTime,
+            Allocator allocator,
+            double tolerance = 0.000001)
+        {
+            return AgentSimulationComparison.Run(
+                count,
+                steps,
+                deltaTime,
+                allocator,
+                Step,
+                tolerance);
+        }
+    }
+}
+#endif

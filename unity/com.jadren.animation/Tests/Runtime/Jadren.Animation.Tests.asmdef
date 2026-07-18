@@ -1,0 +1,21 @@
+{
+  "name": "Jadren.Animation.Tests",
+  "rootNamespace": "Jadren.Animation.Tests",
+  "references": [
+    "Jadren.Animation.Runtime"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "nunit.framework.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": []
+}

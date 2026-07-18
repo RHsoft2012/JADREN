@@ -1,0 +1,8 @@
+module invalid.region_escape
+
+fn leak() -> Buffer<Int32> {
+    region frame {
+        let values: Buffer<Int32> = frame.allocate(4)
+        return values
+    }
+}

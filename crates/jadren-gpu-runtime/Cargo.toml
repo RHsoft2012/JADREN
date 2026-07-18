@@ -1,0 +1,18 @@
+[package]
+name = "jadren-gpu-runtime"
+description = "Safe host-side GPU residency and synchronization state model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-codegen-spirv = { path = "../jadren-codegen-spirv" }
+jadren-jir = { path = "../jadren-jir" }
+
+[dev-dependencies]
+
+[lints]
+workspace = true
