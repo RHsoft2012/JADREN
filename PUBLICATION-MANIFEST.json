@@ -1153,8 +1153,8 @@
     {
       "path": "examples/selfhost/token_counter.jdn",
       "source": "examples/selfhost/token_counter.jdn",
-      "bytes": 454010,
-      "sha256": "802a19d1880b24180e5230b3a4a247c7ead52c4580d95cdc5dfbed94437f2c82"
+      "bytes": 457631,
+      "sha256": "7fa9ea4aa27d8646a0073a492ab88baf75ab0125c21ad945e9167b47abebf979"
     },
     {
       "path": "examples/vector-slice.jdn",

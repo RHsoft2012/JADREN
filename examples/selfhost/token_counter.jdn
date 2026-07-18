@@ -40,6 +40,26 @@ pub struct ParseSummary {
     pub errors: UIntSize,
 }
 
+/// Composite result produced by the first stage-2 frontend candidate.
+///
+/// The candidate deliberately owns no memory: every detailed record is
+/// written into caller-provided slices and this 64-byte summary only reports
+/// the records that were actually emitted. `status_flags` uses bit 0 for a
+/// structurally balanced source range and bit 1 when the token output covered
+/// the complete range. This is a bounded frontend hand-off, not a self-hosted
+/// compiler or a replacement for the Rust bootstrap.
+@repr(C)
+pub struct FrontendStage2Summary {
+    pub source_bytes: UIntSize,
+    pub tokens_emitted: UIntSize,
+    pub ast_items_emitted: UIntSize,
+    pub function_headers_emitted: UIntSize,
+    pub statements_emitted: UIntSize,
+    pub calls_emitted: UIntSize,
+    pub syntax_errors: UIntSize,
+    pub status_flags: UIntSize,
+}
+
 /// Small enum fixture for the parser-shaped variant stage. Payload types are
 /// intentionally syntax-only here; the resolver remains the Rust bootstrap.
 enum TokenKind<T> {
@@ -11176,4 +11196,80 @@ pub fn parse_pattern_diagnostics(
         return output_index
     }
     return output_index
+}
+
+/// Executes the complete currently-supported frontend slice through one
+/// stable C ABI entry point. The implementation composes the existing Jadren
+/// lexer, structural summary, root AST index, function/statement scanners and
+/// call-expression scanner. Detailed records stay in caller-owned storage so
+/// the same contract is usable by static, dynamic and portable hosts.
+@export(name: "jadren_selfhost_compile_frontend_stage2", abi: "C")
+@noalloc
+pub fn compile_frontend_stage2(
+    bytes: read Slice<UInt8>,
+    start: UIntSize,
+    end: UIntSize,
+    tokens: write Slice<TokenInfo>,
+    ast_items: write Slice<AstItemHeader>,
+    function_headers: write Slice<FunctionHeader>,
+    statements: write Slice<StatementHeader>,
+    calls: write Slice<ExpressionCallHeader>,
+) -> FrontendStage2Summary {
+    var source_length: UIntSize = 0usize
+    for index in bytes.indices {
+        source_length = source_length + 1usize
+    }
+    if start > end {
+        return FrontendStage2Summary {
+            source_bytes: 0usize,
+            tokens_emitted: 0usize,
+            ast_items_emitted: 0usize,
+            function_headers_emitted: 0usize,
+            statements_emitted: 0usize,
+            calls_emitted: 0usize,
+            syntax_errors: 1usize,
+            status_flags: 0usize,
+        }
+    }
+    if end > source_length {
+        return FrontendStage2Summary {
+            source_bytes: 0usize,
+            tokens_emitted: 0usize,
+            ast_items_emitted: 0usize,
+            function_headers_emitted: 0usize,
+            statements_emitted: 0usize,
+            calls_emitted: 0usize,
+            syntax_errors: 1usize,
+            status_flags: 0usize,
+        }
+    }
+
+    let source_summary: ParseSummary = summarize_source(bytes, start, end)
+    let token_count: UIntSize = lex_tokens(bytes, start, end, tokens)
+    let ast_item_count: UIntSize = parse_ast_items(bytes, start, end, ast_items)
+    let function_header_count: UIntSize = parse_function_headers(
+        bytes,
+        start,
+        end,
+        function_headers,
+    )
+    let statement_count: UIntSize = parse_statements(bytes, start, end, statements)
+    let call_count: UIntSize = parse_expression_calls(bytes, start, end, calls)
+    var status: UIntSize = 0usize
+    if source_summary.errors == 0usize {
+        status = 1usize
+    }
+    if token_count == source_summary.tokens {
+        status = status + 2usize
+    }
+    return FrontendStage2Summary {
+        source_bytes: end - start,
+        tokens_emitted: token_count,
+        ast_items_emitted: ast_item_count,
+        function_headers_emitted: function_header_count,
+        statements_emitted: statement_count,
+        calls_emitted: call_count,
+        syntax_errors: source_summary.errors,
+        status_flags: status,
+    }
 }
