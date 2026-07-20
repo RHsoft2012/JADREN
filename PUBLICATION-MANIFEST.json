@@ -19,8 +19,8 @@
     {
       "path": ".github/workflows/ci.yml",
       "source": "publication/public-ci/ci.yml",
-      "bytes": 4167,
-      "sha256": "2275387d51e307160ad5fa7026bbc36be1dde9bdd03fead47ebb00a4120b9383"
+      "bytes": 4403,
+      "sha256": "5123711a50f650a8b00c578b197482e9af25c745663e4b052d5039edfdd922b7"
     },
     {
       "path": ".github/workflows/sanitizers.yml",
