@@ -21,6 +21,27 @@ cargo run -p jadren-cli -- version
 cargo run -p jadren-cli -- doctor
 ```
 
+## Linux developer archive
+
+The repository can produce an unsigned `jadren-0.1-dev-linux-x64.tar.gz`
+developer archive. It contains the native x86-64 CLI, runtime, a statically
+linked LLVM CLI backend, the minimal bundled Clang tools and resource headers,
+public documentation, and examples. After extracting it on Linux:
+
+```bash
+tar -xzf jadren-0.1-dev-linux-x64.tar.gz
+cd jadren-0.1-dev-linux-x64
+bin/jadren version
+bin/jadren doctor
+bin/jadren run examples/hello.jdn
+```
+
+The current archive passed checksum validation plus `version`, `doctor`,
+`check`, `format`, native Hello build/run and exit-code `42` checks in a clean
+Debian 12 container. The host still needs standard glibc development files,
+GCC runtime files, libstdc++, zlib, libxml2 and ICU. This is not a signed public
+release or evidence for every Linux distribution and bare-metal configuration.
+
 ## Run the first program
 
 Create `hello.jdn`:

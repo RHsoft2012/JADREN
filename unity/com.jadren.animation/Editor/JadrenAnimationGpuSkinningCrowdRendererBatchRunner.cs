@@ -102,7 +102,7 @@ namespace Jadren.Animation.Editor
                 host = hostObject.AddComponent<JadrenGpuSkinningCrowdRenderer>();
                 host.SetSkinningShader(computeShader);
                 host.SetDrawBounds(new Bounds(Vector3.zero, Vector3.one * 20.0f));
-                if (!host.TrySetCrowdData(mesh, null, vertices, matrices, out var configurationFailure))
+                if (!host.TrySetCrowdData(mesh, null, vertices, matrices, 1, out var configurationFailure))
                 {
                     throw new InvalidOperationException("Crowd renderer configuration failed: " + configurationFailure);
                 }
@@ -218,7 +218,9 @@ namespace Jadren.Animation.Editor
             for (var agent = 0; agent < AgentCount; agent++)
             {
                 var offset = agent * VerticesPerAgent;
-                var index = new Vector4(agent, agent, agent, agent);
+                // One local bone per agent; the renderer packs matrices as
+                // [agent][bone] and applies the instance offset on the GPU.
+                var index = Vector4.zero;
                 var weights = new Vector4(1.0f, 0.0f, 0.0f, 0.0f);
                 vertices[offset] = new JadrenGpuSkinningVertex(new Vector3(-0.25f, -0.25f, 0.0f), weights, index);
                 vertices[offset + 1] = new JadrenGpuSkinningVertex(new Vector3(0.25f, -0.25f, 0.0f), weights, index);

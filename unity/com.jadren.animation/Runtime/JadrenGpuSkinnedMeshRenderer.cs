@@ -34,6 +34,7 @@ namespace Jadren.Animation
         private Material[] proxyMaterials;
         private MaterialPropertyBlock propertyBlock;
         private bool sourceRendererWasEnabled;
+        private bool hasRenderedFrame;
         private bool initialized;
         private bool disposed;
 
@@ -42,6 +43,12 @@ namespace Jadren.Animation
         public bool IsReady { get { return initialized && !disposed; } }
         public bool GpuSkinningEnabled { get { return gpuSkinningEnabled; } }
         public bool PresentationEnabled { get { return presentationEnabled; } }
+        /// <summary>
+        /// True only after a complete GPU dispatch has been bound to the proxy.
+        /// Until then the source SkinnedMeshRenderer remains the safe visible
+        /// fallback, including during the first Play-mode frame.
+        /// </summary>
+        public bool HasRenderedFrame { get { return hasRenderedFrame; } }
         public int VertexCount { get { return vertices == null ? 0 : vertices.Length; } }
         public int ProxyMaterialCount
         {
@@ -146,7 +153,7 @@ namespace Jadren.Animation
                 }
                 if (sourceRenderer != null && initialized && disableSourceRenderer)
                 {
-                    sourceRenderer.enabled = false;
+                    sourceRenderer.enabled = hasRenderedFrame ? false : sourceRendererWasEnabled;
                 }
                 return;
             }
@@ -159,7 +166,7 @@ namespace Jadren.Animation
                 }
                 return;
             }
-            if (sourceRenderer != null && disableSourceRenderer)
+            if (sourceRenderer != null && disableSourceRenderer && hasRenderedFrame)
             {
                 sourceRenderer.enabled = false;
             }
@@ -246,10 +253,10 @@ namespace Jadren.Animation
                 BuildProxyMesh(sourceMesh);
                 propertyBlock = new MaterialPropertyBlock();
                 sourceRendererWasEnabled = sourceRenderer.enabled;
-                if (disableSourceRenderer)
-                {
-                    sourceRenderer.enabled = false;
-                }
+                // Keep the source renderer enabled until the first successful
+                // dispatch. A shader/compute failure must not make Play mode
+                // render an empty character while the proxy is still warming.
+                hasRenderedFrame = false;
                 initialized = true;
                 LastFailureReason = string.Empty;
                 return true;
@@ -308,7 +315,12 @@ namespace Jadren.Animation
                 return false;
             }
             proxyRenderer.SetPropertyBlock(propertyBlock);
+            if (disableSourceRenderer)
+            {
+                sourceRenderer.enabled = false;
+            }
             proxyRenderer.enabled = true;
+            hasRenderedFrame = true;
             LastFailureReason = string.Empty;
             return true;
         }
@@ -451,6 +463,7 @@ namespace Jadren.Animation
             vertices = null;
             boneMatrices = null;
             sourceMesh = null;
+            hasRenderedFrame = false;
             initialized = false;
         }
 

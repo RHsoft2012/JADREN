@@ -27,6 +27,10 @@ __pycache__/
 # Generated test result exports
 /reports/*.xml
 
+# Local visual diagnostics and imported Codex foundation source material
+/reports/*.png
+/JADREN_CODEX_FOUNDATION/
+
 # Operating systems
 .DS_Store
 Thumbs.db

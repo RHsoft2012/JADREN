@@ -81,7 +81,7 @@ namespace Jadren.Animation.Samples
 
             var extent = Mathf.Max(20.0f, spacing * Mathf.Sqrt(count) * 2.0f);
             rendererHost.SetDrawBounds(new Bounds(Vector3.zero, Vector3.one * extent));
-            if (!rendererHost.TrySetCrowdData(mesh, null, vertices, boneMatrices, out failureReason))
+            if (!rendererHost.TrySetCrowdData(mesh, null, vertices, boneMatrices, 1, out failureReason))
             {
                 built = false;
                 return false;
@@ -121,7 +121,9 @@ namespace Jadren.Animation.Samples
             for (var agent = 0; agent < count; agent++)
             {
                 var offset = agent * 3;
-                var indices = new Vector4(agent, agent, agent, agent);
+                // Each repeated mesh copy addresses its local bone zero; the
+                // GPU crowd layout supplies the per-agent matrix offset.
+                var indices = Vector4.zero;
                 vertices[offset] = new JadrenGpuSkinningVertex(
                     new Vector3(-0.25f, -0.25f, 0.0f), weights, indices);
                 vertices[offset + 1] = new JadrenGpuSkinningVertex(

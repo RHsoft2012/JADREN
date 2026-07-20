@@ -55,6 +55,44 @@ namespace Jadren.Animation
         public const int ByteSize = 40;
     }
 
+    /// <summary>Blittable eight-lane Float8 memory payload.</summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    public struct JadrenAnimationNativeFloat8
+    {
+        public float Lane0;
+        public float Lane1;
+        public float Lane2;
+        public float Lane3;
+        public float Lane4;
+        public float Lane5;
+        public float Lane6;
+        public float Lane7;
+
+        public const int ByteSize = 32;
+    }
+
+    /// <summary>
+    /// Eight-lane packed local TRS pose. This is a memory-only AoSoA payload;
+    /// the scalar <see cref="JadrenAnimationNativePose"/> remains the safe
+    /// fallback for tails and low-count callers.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    public struct JadrenAnimationNativePoseTile8
+    {
+        public JadrenAnimationNativeFloat8 PositionX;
+        public JadrenAnimationNativeFloat8 PositionY;
+        public JadrenAnimationNativeFloat8 PositionZ;
+        public JadrenAnimationNativeFloat8 RotationX;
+        public JadrenAnimationNativeFloat8 RotationY;
+        public JadrenAnimationNativeFloat8 RotationZ;
+        public JadrenAnimationNativeFloat8 RotationW;
+        public JadrenAnimationNativeFloat8 ScaleX;
+        public JadrenAnimationNativeFloat8 ScaleY;
+        public JadrenAnimationNativeFloat8 ScaleZ;
+
+        public const int ByteSize = 320;
+    }
+
     /// <summary>
     /// Minimal managed bridge for the native controller-state batch. The
     /// baseline DLL is shipped with the package; AVX2 and NEON artifacts are
@@ -249,6 +287,113 @@ namespace Jadren.Animation
             }
             finally
             {
+                outputHandle.Free();
+                currentHandle.Free();
+                previousHandle.Free();
+            }
+        }
+
+        /// <summary>
+        /// Blends caller-owned eight-lane pose tiles. The native path clamps
+        /// the linear weight like the AoS linear contract; callers handle a
+        /// scalar tail with <see cref="BlendLinear"/>.
+        /// </summary>
+        public static int BlendLinearAoSoA8(
+            JadrenAnimationNativePoseTile8[] previous,
+            JadrenAnimationNativePoseTile8[] current,
+            JadrenAnimationNativePoseTile8[] output,
+            int count,
+            float fadeWeight)
+        {
+            if (previous == null) throw new ArgumentNullException(nameof(previous));
+            if (current == null) throw new ArgumentNullException(nameof(current));
+            if (output == null) throw new ArgumentNullException(nameof(output));
+            if (count < 0 || count > previous.Length || count > current.Length || count > output.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(count));
+            }
+            if (float.IsNaN(fadeWeight) || float.IsInfinity(fadeWeight))
+            {
+                throw new ArgumentOutOfRangeException(nameof(fadeWeight));
+            }
+            if (count == 0)
+            {
+                return 0;
+            }
+
+            var previousHandle = GCHandle.Alloc(previous, GCHandleType.Pinned);
+            var currentHandle = GCHandle.Alloc(current, GCHandleType.Pinned);
+            var outputHandle = GCHandle.Alloc(output, GCHandleType.Pinned);
+            try
+            {
+                var sampled = BlendLinearAoSoA8Native(
+                    previousHandle.AddrOfPinnedObject(), new UIntPtr((uint)previous.Length),
+                    currentHandle.AddrOfPinnedObject(), new UIntPtr((uint)current.Length),
+                    outputHandle.AddrOfPinnedObject(), new UIntPtr((uint)output.Length),
+                    new UIntPtr((uint)count), fadeWeight);
+                return checked((int)sampled.ToUInt64());
+            }
+            finally
+            {
+                outputHandle.Free();
+                currentHandle.Free();
+                previousHandle.Free();
+            }
+        }
+
+        /// <summary>
+        /// Blends tiles from multiple agents in one native call. Every tile
+        /// has an explicit weight, allowing the caller to concatenate agents
+        /// without requiring identical transition progress.
+        /// </summary>
+        public static int BlendLinearAoSoA8Weighted(
+            JadrenAnimationNativePoseTile8[] previous,
+            JadrenAnimationNativePoseTile8[] current,
+            JadrenAnimationNativePoseTile8[] output,
+            float[] fadeWeights,
+            int count)
+        {
+            if (previous == null) throw new ArgumentNullException(nameof(previous));
+            if (current == null) throw new ArgumentNullException(nameof(current));
+            if (output == null) throw new ArgumentNullException(nameof(output));
+            if (fadeWeights == null) throw new ArgumentNullException(nameof(fadeWeights));
+            if (count < 0
+                || count > previous.Length
+                || count > current.Length
+                || count > output.Length
+                || count > fadeWeights.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(count));
+            }
+            for (var index = 0; index < count; index++)
+            {
+                if (float.IsNaN(fadeWeights[index]) || float.IsInfinity(fadeWeights[index]))
+                {
+                    throw new ArgumentOutOfRangeException(nameof(fadeWeights));
+                }
+            }
+            if (count == 0)
+            {
+                return 0;
+            }
+
+            var previousHandle = GCHandle.Alloc(previous, GCHandleType.Pinned);
+            var currentHandle = GCHandle.Alloc(current, GCHandleType.Pinned);
+            var outputHandle = GCHandle.Alloc(output, GCHandleType.Pinned);
+            var weightHandle = GCHandle.Alloc(fadeWeights, GCHandleType.Pinned);
+            try
+            {
+                var sampled = BlendLinearAoSoA8WeightedNative(
+                    previousHandle.AddrOfPinnedObject(), new UIntPtr((uint)previous.Length),
+                    currentHandle.AddrOfPinnedObject(), new UIntPtr((uint)current.Length),
+                    outputHandle.AddrOfPinnedObject(), new UIntPtr((uint)output.Length),
+                    weightHandle.AddrOfPinnedObject(), new UIntPtr((uint)fadeWeights.Length),
+                    new UIntPtr((uint)count));
+                return checked((int)sampled.ToUInt64());
+            }
+            finally
+            {
+                weightHandle.Free();
                 outputHandle.Free();
                 currentHandle.Free();
                 previousHandle.Free();
@@ -484,6 +629,37 @@ namespace Jadren.Animation
             UIntPtr count,
             float fadeWeight,
             uint lod);
+
+        [DllImport(
+            "jadren_animation_native",
+            EntryPoint = "jadren_animation_pose_blend_linear_aosoa8",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        private static extern UIntPtr BlendLinearAoSoA8Native(
+            IntPtr previousPointer,
+            UIntPtr previousLength,
+            IntPtr currentPointer,
+            UIntPtr currentLength,
+            IntPtr outputPointer,
+            UIntPtr outputLength,
+            UIntPtr count,
+            float fadeWeight);
+
+        [DllImport(
+            "jadren_animation_native",
+            EntryPoint = "jadren_animation_pose_blend_linear_aosoa8_weighted",
+            CallingConvention = CallingConvention.Cdecl,
+            ExactSpelling = true)]
+        private static extern UIntPtr BlendLinearAoSoA8WeightedNative(
+            IntPtr previousPointer,
+            UIntPtr previousLength,
+            IntPtr currentPointer,
+            UIntPtr currentLength,
+            IntPtr outputPointer,
+            UIntPtr outputLength,
+            IntPtr fadeWeightsPointer,
+            UIntPtr fadeWeightsLength,
+            UIntPtr count);
 
         [DllImport(
             "jadren_animation_native",

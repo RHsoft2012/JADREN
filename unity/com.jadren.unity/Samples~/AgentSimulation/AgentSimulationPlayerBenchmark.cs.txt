@@ -149,7 +149,40 @@ namespace Jadren.Unity.Samples.AgentSimulation
                     }
                 }
 
+                // Android players launched through adb do not append custom
+                // command-line tokens. Accept the same keys as Intent
+                // string extras so a release APK can select measured/layout
+                // variants without rebuilding the benchmark source.
+                var intentKey = prefix.TrimStart('-').TrimEnd('=');
+                return ReadAndroidIntentExtra(intentKey);
+            }
+
+            private static string ReadAndroidIntentExtra(string key)
+            {
+#if UNITY_ANDROID && !UNITY_EDITOR
+                AndroidJavaClass unityPlayer = null;
+                AndroidJavaObject activity = null;
+                AndroidJavaObject intent = null;
+                try
+                {
+                    unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
+                    activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
+                    intent = activity.Call<AndroidJavaObject>("getIntent");
+                    return intent.Call<string>("getStringExtra", key);
+                }
+                catch (Exception)
+                {
+                    return null;
+                }
+                finally
+                {
+                    intent?.Dispose();
+                    activity?.Dispose();
+                    unityPlayer?.Dispose();
+                }
+#else
                 return null;
+#endif
             }
 
             private static string ReadReportFileName(string fallback)
@@ -227,9 +260,14 @@ namespace Jadren.Unity.Samples.AgentSimulation
             {
                 var configuration = BenchmarkConfiguration.FromCommandLine(Repetitions);
                 var report = Run(configuration);
-                var output = Path.Combine(
-                    Directory.GetParent(Application.dataPath).FullName,
-                    configuration.ReportFileName);
+                // Application.dataPath points beside the read-only APK on
+                // Android. Use the app-private persistent directory there so
+                // the measured JSON can be pulled with adb/run-as; desktop
+                // players keep the historical beside-build location.
+                var reportDirectory = Application.platform == RuntimePlatform.Android
+                    ? Application.persistentDataPath
+                    : Directory.GetParent(Application.dataPath).FullName;
+                var output = Path.Combine(reportDirectory, configuration.ReportFileName);
                 File.WriteAllText(output, JsonUtility.ToJson(report, prettyPrint: true));
                 Debug.Log("JADREN_BENCHMARK report=" + output + " status=" + report.status);
                 Application.Quit(0);

@@ -30,6 +30,23 @@ namespace Jadren.Animation
 
         public JadrenAnimationState State { get { return state; } }
         public bool IsReady { get { return authoring != null && authoring.IsConfigured && activeState >= 0; } }
+        /// <summary>
+        /// Indicates that the baked authoring, pose worker and main-thread
+        /// applier are all available before a host disables Unity Animator.
+        /// This is a capability check, not a claim that a frame was applied.
+        /// </summary>
+        public bool CanDriveJadren
+        {
+            get
+            {
+                EnsureInitialized();
+                return authoring != null
+                    && authoring.IsConfigured
+                    && poseWorker != null
+                    && applier != null
+                    && applier.BoundBoneCount == authoring.Rig.BoneCount;
+            }
+        }
         public Vector3 RootMotionDelta { get; private set; }
         public ulong PoseChecksum { get; private set; }
         public int SampledBoneCount { get; private set; }

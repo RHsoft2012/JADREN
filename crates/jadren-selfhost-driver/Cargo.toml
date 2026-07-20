@@ -1,0 +1,21 @@
+[package]
+name = "jadren-selfhost-driver"
+description = "Bounded developer driver from a loaded Jadren stage-2 capture to a native object"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-jir = { path = "../jadren-jir" }
+jadren-selfhost-stage2 = { path = "../jadren-selfhost-stage2" }
+jadren-source = { path = "../jadren-source" }
+
+[target.'cfg(windows)'.dependencies]
+inkwell = { version = "=0.9.0", default-features = false, features = ["llvm22-1-no-llvm-linking", "target-x86"] }
+jadren-codegen-llvm = { path = "../jadren-codegen-llvm" }
+
+[lints]
+workspace = true

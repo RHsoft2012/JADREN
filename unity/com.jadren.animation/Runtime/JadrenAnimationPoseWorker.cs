@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using UnityEngine;
 
 namespace Jadren.Animation
@@ -10,6 +11,16 @@ namespace Jadren.Animation
     /// </summary>
     public sealed class JadrenAnimationClipSnapshot
     {
+        private static readonly ConditionalWeakTable<JadrenClipAsset, JadrenAnimationClipSnapshot> Cache
+            = new ConditionalWeakTable<JadrenClipAsset, JadrenAnimationClipSnapshot>();
+
+        internal struct SampleCursor
+        {
+            public int First;
+            public int Second;
+            public float Weight;
+        }
+
         private readonly Vector3[] translations;
         private readonly Quaternion[] rotations;
         private readonly Vector3[] scales;
@@ -47,6 +58,14 @@ namespace Jadren.Animation
                 return null;
             }
 
+            // A crowd commonly shares one controller/clip asset. Keep the
+            // snapshot immutable and reuse it across all workers instead of
+            // copying every TRS frame once per instantiated character.
+            return Cache.GetValue(asset, CreateFromAsset);
+        }
+
+        private static JadrenAnimationClipSnapshot CreateFromAsset(JadrenClipAsset asset)
+        {
             asset.CopyBakedData(out var copiedTranslations, out var copiedRotations, out var copiedScales);
             return new JadrenAnimationClipSnapshot(
                 asset.RigBoneCount,
@@ -74,6 +93,12 @@ namespace Jadren.Animation
                 return false;
             }
 
+            var cursor = PrepareSample(time);
+            return SampleBone(cursor, boneIndex, out position, out rotation, out scale);
+        }
+
+        internal SampleCursor PrepareSample(float time)
+        {
             var sampleTime = Duration <= 0.0f ? 0.0f : time;
             if (Loop && Duration > 0.0f)
             {
@@ -91,7 +116,32 @@ namespace Jadren.Animation
             var frame = sampleTime * SampleRate;
             var first = Mathf.Clamp(Mathf.FloorToInt(frame), 0, FrameCount - 1);
             var second = Mathf.Min(first + 1, FrameCount - 1);
-            var weight = Mathf.Clamp01(frame - first);
+            return new SampleCursor
+            {
+                First = first,
+                Second = second,
+                Weight = Mathf.Clamp01(frame - first)
+            };
+        }
+
+        internal bool SampleBone(
+            SampleCursor cursor,
+            int boneIndex,
+            out Vector3 position,
+            out Quaternion rotation,
+            out Vector3 scale)
+        {
+            position = Vector3.zero;
+            rotation = Quaternion.identity;
+            scale = Vector3.one;
+            if (RigBoneCount <= 0 || FrameCount <= 0 || boneIndex < 0 || boneIndex >= RigBoneCount)
+            {
+                return false;
+            }
+
+            var first = cursor.First;
+            var second = cursor.Second;
+            var weight = cursor.Weight;
             var firstIndex = first * RigBoneCount + boneIndex;
             var secondIndex = second * RigBoneCount + boneIndex;
             if (secondIndex >= translations.Length || secondIndex >= rotations.Length || secondIndex >= scales.Length)
@@ -106,6 +156,18 @@ namespace Jadren.Animation
         }
     }
 
+    /// <summary>Caller-owned input for one agent in an aggregated pose pass.</summary>
+    public struct JadrenAnimationPoseBatchRequest
+    {
+        public int CurrentState;
+        public float CurrentTime;
+        public float CurrentPreviousTime;
+        public int PreviousState;
+        public float PreviousTime;
+        public float FadeWeight;
+        public JadrenAnimationLod Lod;
+    }
+
     /// <summary>
     /// Pure pose evaluator. The constructor is called on the main thread to
     /// snapshot assets; Evaluate only touches worker-owned arrays and the
@@ -115,13 +177,21 @@ namespace Jadren.Animation
     {
         private readonly int boneCount;
         private readonly JadrenAnimationClipSnapshot[] clips;
-        private readonly JadrenAnimationPoseNativeBridge nativeSlerp;
+        private readonly JadrenAnimationPoseNativeBridge nativePoseBridge;
+        private readonly bool preferNativeSlerp;
+        private readonly bool preferNativePoseTiles;
+        private JadrenAnimationPoseCrowdNativeBridge nativeCrowdPoseBridge;
+        private JadrenAnimationLod[] batchLods = Array.Empty<JadrenAnimationLod>();
+        private bool[] batchUsesAggregate = Array.Empty<bool>();
 
         public JadrenAnimationPoseWorker(
             JadrenRigAsset rig,
             JadrenControllerAsset controller,
-            bool preferNativeSlerp = false)
+            bool preferNativeSlerp = false,
+            bool preferNativePoseTiles = false)
         {
+            this.preferNativeSlerp = preferNativeSlerp;
+            this.preferNativePoseTiles = preferNativePoseTiles;
             boneCount = rig == null ? 0 : rig.BoneCount;
             var stateCount = controller == null ? 0 : controller.StateCount;
             clips = new JadrenAnimationClipSnapshot[stateCount];
@@ -129,14 +199,211 @@ namespace Jadren.Animation
             {
                 clips[i] = JadrenAnimationClipSnapshot.FromAsset(controller.GetState(i).clip);
             }
-            nativeSlerp = preferNativeSlerp
+            nativePoseBridge = preferNativeSlerp || preferNativePoseTiles
                 ? new JadrenAnimationPoseNativeBridge(boneCount)
                 : null;
         }
 
         public bool UsesNativeSlerp
         {
-            get { return nativeSlerp != null && nativeSlerp.IsAvailable; }
+            get
+            {
+                return preferNativeSlerp
+                    && nativePoseBridge != null
+                    && nativePoseBridge.IsAvailable;
+            }
+        }
+
+        public bool UsesNativePoseTiles
+        {
+            get
+            {
+                return preferNativePoseTiles
+                    && nativePoseBridge != null
+                    && nativePoseBridge.IsTileAvailable;
+            }
+        }
+
+        public bool UsesNativeCrowdPoseTiles
+        {
+            get
+            {
+                return preferNativePoseTiles
+                    && nativeCrowdPoseBridge != null
+                    && nativeCrowdPoseBridge.IsAvailable;
+            }
+        }
+
+        /// <summary>
+        /// Evaluates a caller-owned crowd and crosses the weighted AoSoA8
+        /// boundary once for all interior transition position/scale values.
+        /// Rotation keeps the managed exact Slerp contract in this first crowd
+        /// path; scalar endpoints and extrapolation remain managed.
+        /// </summary>
+        public int EvaluateBatch(
+            JadrenAnimationPoseBatchRequest[] requests,
+            JadrenPoseBuffer[] outputs,
+            int count)
+        {
+            if (requests == null) throw new ArgumentNullException(nameof(requests));
+            if (outputs == null) throw new ArgumentNullException(nameof(outputs));
+            if (count < 0 || count > requests.Length || count > outputs.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(count));
+            }
+            if (count == 0)
+            {
+                return 0;
+            }
+
+            EnsureBatchCapacity(count);
+            var aggregateAvailable = preferNativePoseTiles
+                && nativeCrowdPoseBridge != null
+                && nativeCrowdPoseBridge.IsAvailable;
+            if (!aggregateAvailable)
+            {
+                var fallbackTotal = 0;
+                for (var agent = 0; agent < count; agent++)
+                {
+                    var request = requests[agent];
+                    fallbackTotal += Evaluate(
+                        request.CurrentState,
+                        request.CurrentTime,
+                        request.CurrentPreviousTime,
+                        request.PreviousState,
+                        request.PreviousTime,
+                        request.FadeWeight,
+                        request.Lod,
+                        outputs[agent]);
+                }
+                return fallbackTotal;
+            }
+
+            nativeCrowdPoseBridge.Begin(count);
+            var sampledTotal = 0;
+            for (var agent = 0; agent < count; agent++)
+            {
+                var request = requests[agent];
+                ValidateFadeWeight(request.FadeWeight);
+                batchLods[agent] = request.Lod;
+                batchUsesAggregate[agent] = false;
+                var output = outputs[agent];
+                if (output == null)
+                {
+                    throw new ArgumentNullException(nameof(outputs));
+                }
+                output.EnsureCapacity(boneCount);
+                output.SampledBoneCount = 0;
+                output.RootMotionDelta = Vector3.zero;
+                output.Checksum = 0UL;
+                if (boneCount == 0 || request.Lod == JadrenAnimationLod.Hidden)
+                {
+                    continue;
+                }
+
+                var currentClip = GetClip(request.CurrentState);
+                if (currentClip == null)
+                {
+                    continue;
+                }
+                var previousClip = GetClip(request.PreviousState);
+                var currentCursor = currentClip.PrepareSample(request.CurrentTime);
+                var previousCursor = previousClip == null
+                    ? default(JadrenAnimationClipSnapshot.SampleCursor)
+                    : previousClip.PrepareSample(request.PreviousTime);
+                var hasPrevious = previousClip != null;
+                var blend = request.FadeWeight;
+                var useAggregate = hasPrevious && blend > 0.0f && blend < 1.0f;
+                batchUsesAggregate[agent] = useAggregate;
+
+                for (var bone = 0; bone < boneCount; bone++)
+                {
+                    if (request.Lod == JadrenAnimationLod.Reduced && (bone & 1) != 0)
+                    {
+                        continue;
+                    }
+                    if (!currentClip.SampleBone(
+                            currentCursor,
+                            bone,
+                            out var currentPosition,
+                            out var currentRotation,
+                            out var currentScale))
+                    {
+                        continue;
+                    }
+
+                    var position = currentPosition;
+                    var rotation = currentRotation;
+                    var scale = currentScale;
+                    if (hasPrevious
+                        && previousClip.SampleBone(
+                            previousCursor,
+                            bone,
+                            out var previousPosition,
+                            out var previousRotation,
+                            out var previousScale))
+                    {
+                        if (blend == 0.0f)
+                        {
+                            position = previousPosition;
+                            rotation = previousRotation;
+                            scale = previousScale;
+                        }
+                        else
+                        {
+                            if (useAggregate)
+                            {
+                                nativeCrowdPoseBridge.SetLinear(
+                                    agent,
+                                    bone,
+                                    blend,
+                                    previousPosition,
+                                    previousRotation,
+                                    previousScale,
+                                    currentPosition,
+                                    currentRotation,
+                                    currentScale);
+                            }
+                            else
+                            {
+                                position = Vector3.LerpUnclamped(previousPosition, currentPosition, blend);
+                                scale = Vector3.LerpUnclamped(previousScale, currentScale, blend);
+                            }
+                            rotation = JadrenQuaternionMath.SlerpUnclamped(
+                                previousRotation,
+                                currentRotation,
+                                blend);
+                        }
+                    }
+
+                    output.Positions[bone] = position;
+                    output.Rotations[bone] = rotation;
+                    output.Scales[bone] = scale;
+                    output.SampledBoneCount++;
+                }
+
+                var rootBeforeCursor = currentClip.PrepareSample(request.CurrentPreviousTime);
+                if (currentClip.SampleBone(currentCursor, 0, out var rootNow, out _, out _)
+                    && currentClip.SampleBone(rootBeforeCursor, 0, out var rootBefore, out _, out _))
+                {
+                    output.RootMotionDelta = rootNow - rootBefore;
+                }
+                sampledTotal += output.SampledBoneCount;
+            }
+
+            var nativeApplied = nativeCrowdPoseBridge.TryApplyLinear(outputs, batchLods, count);
+            if (!nativeApplied)
+            {
+                RecomputeBatchLinearFallback(requests, outputs, count);
+            }
+            for (var agent = 0; agent < count; agent++)
+            {
+                outputs[agent].Checksum = JadrenPoseKernel.ComputeChecksum(
+                    outputs[agent],
+                    boneCount,
+                    requests[agent].Lod);
+            }
+            return sampledTotal;
         }
 
         public int Evaluate(
@@ -170,16 +437,29 @@ namespace Jadren.Animation
             }
 
             var previousClip = GetClip(previousState);
+            var currentCursor = currentClip.PrepareSample(currentTime);
+            var previousCursor = previousClip == null
+                ? default(JadrenAnimationClipSnapshot.SampleCursor)
+                : previousClip.PrepareSample(previousTime);
             ValidateFadeWeight(fadeWeight);
             // Keep the value unclamped. The public pose contract deliberately
             // supports extrapolation, so both negative and >1 weights must
             // reach the same Slerp/Lerp math as the native bridge.
             var blend = fadeWeight;
             var hasPrevious = previousClip != null;
-            var useNativeSlerp = hasPrevious && nativeSlerp != null && nativeSlerp.IsAvailable;
-            if (useNativeSlerp)
+            var useNativeSlerp = hasPrevious
+                && preferNativeSlerp
+                && nativePoseBridge != null
+                && nativePoseBridge.IsAvailable;
+            var useNativePoseTiles = hasPrevious
+                && preferNativePoseTiles
+                && blend > 0.0f
+                && blend < 1.0f
+                && nativePoseBridge != null
+                && nativePoseBridge.IsTileAvailable;
+            if (useNativeSlerp || useNativePoseTiles)
             {
-                nativeSlerp.Begin();
+                nativePoseBridge.Begin();
             }
             for (var boneIndex = 0; boneIndex < boneCount; boneIndex++)
             {
@@ -187,7 +467,7 @@ namespace Jadren.Animation
                 {
                     continue;
                 }
-                if (!currentClip.SampleBone(boneIndex, currentTime, out var currentPosition, out var currentRotation, out var currentScale))
+                if (!currentClip.SampleBone(currentCursor, boneIndex, out var currentPosition, out var currentRotation, out var currentScale))
                 {
                     continue;
                 }
@@ -200,8 +480,8 @@ namespace Jadren.Animation
                 var previousScale = Vector3.one;
                 var hasSampledPrevious = hasPrevious
                     && previousClip.SampleBone(
+                        previousCursor,
                         boneIndex,
-                        previousTime,
                         out previousPosition,
                         out previousRotation,
                         out previousScale);
@@ -215,21 +495,35 @@ namespace Jadren.Animation
                     }
                     else
                     {
-                        position = Vector3.LerpUnclamped(previousPosition, currentPosition, blend);
+                        if (useNativePoseTiles)
+                        {
+                            nativePoseBridge.SetLinear(
+                                boneIndex,
+                                previousPosition,
+                                previousRotation,
+                                previousScale,
+                                currentPosition,
+                                currentRotation,
+                                currentScale);
+                        }
+                        else
+                        {
+                            position = Vector3.LerpUnclamped(previousPosition, currentPosition, blend);
+                            scale = Vector3.LerpUnclamped(previousScale, currentScale, blend);
+                        }
                         if (useNativeSlerp)
                         {
-                            nativeSlerp.Set(boneIndex, previousRotation, currentRotation);
+                            nativePoseBridge.Set(boneIndex, previousRotation, currentRotation);
                         }
                         else
                         {
                             rotation = JadrenQuaternionMath.SlerpUnclamped(previousRotation, currentRotation, blend);
                         }
-                        scale = Vector3.LerpUnclamped(previousScale, currentScale, blend);
                     }
                 }
                 else if (useNativeSlerp)
                 {
-                    nativeSlerp.Set(boneIndex, currentRotation, currentRotation);
+                    nativePoseBridge.Set(boneIndex, currentRotation, currentRotation);
                 }
 
                 output.Positions[boneIndex] = position;
@@ -238,8 +532,50 @@ namespace Jadren.Animation
                 output.SampledBoneCount++;
             }
 
+            var nativeTilesApplied = !useNativePoseTiles
+                || nativePoseBridge.TryApplyLinear(
+                    output.Positions,
+                    output.Scales,
+                    boneCount,
+                    blend,
+                    lod);
+            if (useNativePoseTiles && !nativeTilesApplied)
+            {
+                // Preserve the exact managed pose if a validated tile export
+                // disappears between capability probing and execution.
+                for (var boneIndex = 0; boneIndex < boneCount; boneIndex++)
+                {
+                    if (lod == JadrenAnimationLod.Reduced && (boneIndex & 1) != 0)
+                    {
+                        continue;
+                    }
+                    if (previousClip.SampleBone(
+                            previousCursor,
+                            boneIndex,
+                            out var previousPosition,
+                            out _,
+                            out var previousScale)
+                        && currentClip.SampleBone(
+                            currentCursor,
+                            boneIndex,
+                            out var currentPosition,
+                            out _,
+                            out var currentScale))
+                    {
+                        output.Positions[boneIndex] = Vector3.LerpUnclamped(
+                            previousPosition,
+                            currentPosition,
+                            blend);
+                        output.Scales[boneIndex] = Vector3.LerpUnclamped(
+                            previousScale,
+                            currentScale,
+                            blend);
+                    }
+                }
+            }
+
             var nativeApplied = !useNativeSlerp
-                || nativeSlerp.TryApply(output.Rotations, boneCount, blend, lod);
+                || nativePoseBridge.TryApply(output.Rotations, boneCount, blend, lod);
             if (useNativeSlerp && !nativeApplied)
             {
                 // The bridge disables itself when a plugin/export disappears
@@ -252,8 +588,8 @@ namespace Jadren.Animation
                     {
                         continue;
                     }
-                    if (previousClip.SampleBone(boneIndex, previousTime, out _, out var previousRotation, out _)
-                        && currentClip.SampleBone(boneIndex, currentTime, out _, out var currentRotation, out _))
+                    if (previousClip.SampleBone(previousCursor, boneIndex, out _, out var previousRotation, out _)
+                        && currentClip.SampleBone(currentCursor, boneIndex, out _, out var currentRotation, out _))
                     {
                         output.Rotations[boneIndex] = blend == 0.0f
                             ? previousRotation
@@ -262,8 +598,9 @@ namespace Jadren.Animation
                 }
             }
 
-            if (currentClip.SampleBone(0, currentTime, out var rootNow, out _, out _)
-                && currentClip.SampleBone(0, currentPreviousTime, out var rootBefore, out _, out _))
+            var rootBeforeCursor = currentClip.PrepareSample(currentPreviousTime);
+            if (currentClip.SampleBone(currentCursor, 0, out var rootNow, out _, out _)
+                && currentClip.SampleBone(rootBeforeCursor, 0, out var rootBefore, out _, out _))
             {
                 output.RootMotionDelta = rootNow - rootBefore;
             }
@@ -308,6 +645,10 @@ namespace Jadren.Animation
             }
 
             var previousClip = GetClip(previousState);
+            var currentCursor = currentClip.PrepareSample(currentTime);
+            var previousCursor = previousClip == null
+                ? default(JadrenAnimationClipSnapshot.SampleCursor)
+                : previousClip.PrepareSample(previousTime);
             var sampledCount = 0;
             for (var boneIndex = 0; boneIndex < boneCount; boneIndex++)
             {
@@ -316,8 +657,8 @@ namespace Jadren.Animation
                     continue;
                 }
                 if (!currentClip.SampleBone(
+                        currentCursor,
                         boneIndex,
-                        currentTime,
                         out _,
                         out var currentRotation,
                         out _))
@@ -328,8 +669,8 @@ namespace Jadren.Animation
                 var previousRotation = currentRotation;
                 if (previousClip != null
                     && previousClip.SampleBone(
+                        previousCursor,
                         boneIndex,
-                        previousTime,
                         out _,
                         out var sampledPreviousRotation,
                         out _))
@@ -343,6 +684,71 @@ namespace Jadren.Animation
                 sampledCount++;
             }
             return sampledCount;
+        }
+
+        private void EnsureBatchCapacity(int count)
+        {
+            if (batchLods.Length < count)
+            {
+                batchLods = new JadrenAnimationLod[count];
+                batchUsesAggregate = new bool[count];
+            }
+            if (nativeCrowdPoseBridge == null || nativeCrowdPoseBridge.AgentCapacity < count)
+            {
+                nativeCrowdPoseBridge = new JadrenAnimationPoseCrowdNativeBridge(boneCount, count);
+            }
+        }
+
+        private void RecomputeBatchLinearFallback(
+            JadrenAnimationPoseBatchRequest[] requests,
+            JadrenPoseBuffer[] outputs,
+            int count)
+        {
+            for (var agent = 0; agent < count; agent++)
+            {
+                if (!batchUsesAggregate[agent])
+                {
+                    continue;
+                }
+                var request = requests[agent];
+                var currentClip = GetClip(request.CurrentState);
+                var previousClip = GetClip(request.PreviousState);
+                if (currentClip == null || previousClip == null)
+                {
+                    continue;
+                }
+                var currentCursor = currentClip.PrepareSample(request.CurrentTime);
+                var previousCursor = previousClip.PrepareSample(request.PreviousTime);
+                for (var bone = 0; bone < boneCount; bone++)
+                {
+                    if (request.Lod == JadrenAnimationLod.Reduced && (bone & 1) != 0)
+                    {
+                        continue;
+                    }
+                    if (previousClip.SampleBone(
+                            previousCursor,
+                            bone,
+                            out var previousPosition,
+                            out _,
+                            out var previousScale)
+                        && currentClip.SampleBone(
+                            currentCursor,
+                            bone,
+                            out var currentPosition,
+                            out _,
+                            out var currentScale))
+                    {
+                        outputs[agent].Positions[bone] = Vector3.LerpUnclamped(
+                            previousPosition,
+                            currentPosition,
+                            request.FadeWeight);
+                        outputs[agent].Scales[bone] = Vector3.LerpUnclamped(
+                            previousScale,
+                            currentScale,
+                            request.FadeWeight);
+                    }
+                }
+            }
         }
 
         private JadrenAnimationClipSnapshot GetClip(int stateIndex)

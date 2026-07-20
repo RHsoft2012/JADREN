@@ -39,3 +39,26 @@ The project distinguishes four states:
 
 Only the last state is treated as execution support. The public compatibility
 matrix will grow as repeatable device evidence becomes available.
+
+## Current bounded evidence
+
+This table is a capability snapshot for Jadren `0.1-dev`. A row applies only to
+the stated workload; it is not a blanket platform-support or performance claim.
+
+| Area | Platform and target | Highest verified state | Bounded scope |
+| --- | --- | --- | --- |
+| Compiler CLI and developer ZIP | Windows x86-64 | Executed | Clean extraction and CLI command smoke; unsigned developer package only. |
+| Native animation | Windows x86-64 baseline/AVX2 | Executed | Safe baseline fallback and numerical parity; no universal FPS claim. |
+| Native animation | Physical Android ARM64 with NEON artifact | Executed | ABI, sample and checksum smoke on one physical-device class; no sustained thermal claim. |
+| Unity agent update kernel | Windows Player x86-64 AVX2 | Executed | Correctness-matched managed, Burst and Jadren AoSoA8 benchmark with rendering excluded. |
+| Unity GPU skinned mesh | Windows Unity Editor | Executed | Real prefab, material and texture binding plus one visible GPU frame; no production FPS claim. |
+| GPU compute | Vulkan validated subset | Executed | Cross-backend artifact differential for the allowlisted workload only. |
+| GPU compute | Windows DirectX 12 validated subset | Executed | Twenty-eight exact allowlisted executions; no general SPIR-V translation claim. |
+| GPU compute | macOS Metal bounded source plan | Generated | Twenty-eight source identities prepared; native macOS compile, dispatch and readback remain unverified. |
+| Self-hosting preview | Windows x86-64 | Executed | Bounded literal/binary-family driver with exact precedence and left associativity through sixteen operators; at most two disjoint groups may each wrap one adjacent operand pair, one group may have one redundant nested delimiter layer, and one function may use one or two typed `Int32` parameters in a binary return. Nested groups with extra operators, locals, calls and general parameter expressions remain unsupported; this is not a general expression parser or second compiler. |
+| Self-hosting preview | Docker Linux x86-64 | Executed | Container-local object, loader and CLI run; not a native Linux installation claim. |
+| Developer package | Linux x86-64 | Executed | Reproducible unsigned archive passed checksums plus native build/run in a clean Debian 12 container; broader distributions and bare-metal hosts remain unverified. |
+
+The matrix intentionally keeps public-release readiness false. Signed packages,
+retained physical macOS evidence, broader Linux distribution and device
+coverage, and the declared external security/release gates remain separate work.

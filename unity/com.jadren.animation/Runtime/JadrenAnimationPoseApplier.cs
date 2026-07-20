@@ -8,22 +8,46 @@ namespace Jadren.Animation
     public sealed class JadrenAnimationPoseApplier : MonoBehaviour
     {
         private Transform[] bones = new Transform[0];
+        private int rootBoneIndex = -1;
+
+        [SerializeField]
+        private bool applyRootMotion;
 
         public int BoundBoneCount { get { return bones.Length; } }
+        /// <summary>
+        /// Keeps the spawned character root at its gameplay position by
+        /// default. Enable only when the host explicitly consumes the baked
+        /// root-motion track as a Transform position.
+        /// </summary>
+        public bool ApplyRootMotion
+        {
+            get { return applyRootMotion; }
+            set { applyRootMotion = value; }
+        }
 
         public void RebuildBindings(JadrenRigAsset rig, Transform root)
         {
             if (rig == null || root == null)
             {
                 bones = new Transform[0];
+                rootBoneIndex = -1;
                 return;
             }
 
             bones = new Transform[rig.BoneCount];
+            rootBoneIndex = -1;
             for (var i = 0; i < bones.Length; i++)
             {
                 var path = rig.GetBonePath(i);
-                bones[i] = string.IsNullOrEmpty(path) ? root : root.Find(path);
+                if (string.IsNullOrEmpty(path))
+                {
+                    rootBoneIndex = i;
+                    bones[i] = root;
+                }
+                else
+                {
+                    bones[i] = root.Find(path);
+                }
             }
         }
 
@@ -48,7 +72,10 @@ namespace Jadren.Animation
                 {
                     continue;
                 }
-                bone.localPosition = pose.Positions[boneIndex];
+                if (applyRootMotion || boneIndex != rootBoneIndex)
+                {
+                    bone.localPosition = pose.Positions[boneIndex];
+                }
                 bone.localRotation = pose.Rotations[boneIndex];
                 bone.localScale = pose.Scales[boneIndex];
             }

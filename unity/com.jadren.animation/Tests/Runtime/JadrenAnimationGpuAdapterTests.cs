@@ -154,5 +154,183 @@ namespace Jadren.Animation.Tests
                 Object.DestroyImmediate(hostObject);
             }
         }
+
+        [Test]
+        public void GpuCrowdRendererAcceptsIndependentAgentBoneLayout()
+        {
+            var hostObject = new GameObject("JadrenGpuSkinningCrowdLayoutTest");
+            var mesh = new Mesh
+            {
+                name = "JadrenGpuSkinningCrowdLayoutMesh",
+                vertices = new[]
+                {
+                    Vector3.zero,
+                    Vector3.right,
+                    Vector3.up
+                },
+                triangles = new[] { 0, 1, 2 }
+            };
+            try
+            {
+                var host = hostObject.AddComponent<JadrenGpuSkinningCrowdRenderer>();
+                var vertices = new JadrenGpuSkinningVertex[6];
+                for (var index = 0; index < vertices.Length; index++)
+                {
+                    vertices[index] = new JadrenGpuSkinningVertex(
+                        Vector3.zero,
+                        new Vector4(1.0f, 0.0f, 0.0f, 0.0f),
+                        Vector4.zero);
+                }
+                var matrices = new Matrix4x4[4];
+                Assert.That(
+                    host.TrySetCrowdData(mesh, null, vertices, matrices, 2, out var reason),
+                    Is.True,
+                    reason);
+                Assert.That(host.AgentCount, Is.EqualTo(2));
+                Assert.That(host.VerticesPerAgent, Is.EqualTo(3));
+                Assert.That(host.BonesPerAgent, Is.EqualTo(2));
+
+                Assert.That(
+                    host.TrySetCrowdData(
+                        mesh,
+                        null,
+                        vertices,
+                        new Matrix4x4[3],
+                        2,
+                        out reason),
+                    Is.False);
+                Assert.That(reason, Is.EqualTo("crowd_bone_matrices_not_agent_multiple"));
+            }
+            finally
+            {
+                Object.DestroyImmediate(mesh);
+                Object.DestroyImmediate(hostObject);
+            }
+        }
+
+        [Test]
+        public void GpuCrowdRendererAcceptsSharedMeshLayout()
+        {
+            var hostObject = new GameObject("JadrenGpuSkinningSharedLayoutTest");
+            var mesh = new Mesh
+            {
+                name = "JadrenGpuSkinningSharedMesh",
+                vertices = new[]
+                {
+                    Vector3.zero,
+                    Vector3.right,
+                    Vector3.up
+                },
+                triangles = new[] { 0, 1, 2 }
+            };
+            try
+            {
+                var host = hostObject.AddComponent<JadrenGpuSkinningCrowdRenderer>();
+                var vertices = new JadrenGpuSkinningVertex[3];
+                for (var index = 0; index < vertices.Length; index++)
+                {
+                    vertices[index] = new JadrenGpuSkinningVertex(
+                        Vector3.zero,
+                        new Vector4(1.0f, 0.0f, 0.0f, 0.0f),
+                        Vector4.zero);
+                }
+                Assert.That(
+                    host.TrySetSharedCrowdData(
+                        mesh,
+                        null,
+                        vertices,
+                        new Matrix4x4[4],
+                        2,
+                        2,
+                        out var reason),
+                    Is.True,
+                    reason);
+                Assert.That(host.AgentCount, Is.EqualTo(2));
+                Assert.That(host.VerticesPerAgent, Is.EqualTo(3));
+                Assert.That(host.BonesPerAgent, Is.EqualTo(2));
+                Assert.That(host.UsesSharedVertexLayout, Is.True);
+
+                Assert.That(
+                    host.TrySetSharedCrowdData(
+                        mesh,
+                        null,
+                        vertices,
+                        new Matrix4x4[2],
+                        2,
+                        2,
+                        out reason),
+                    Is.False);
+                Assert.That(reason, Is.EqualTo("crowd_bone_matrices_not_agent_multiple"));
+            }
+            finally
+            {
+                Object.DestroyImmediate(mesh);
+                Object.DestroyImmediate(hostObject);
+            }
+        }
+
+        [Test]
+        public void GpuCrowdRendererPreservesMultiMaterialSubmeshLayout()
+        {
+            var hostObject = new GameObject("JadrenGpuSkinningMultiMaterialTest");
+            var mesh = new Mesh
+            {
+                name = "JadrenGpuSkinningMultiMaterialMesh",
+                vertices = new[]
+                {
+                    Vector3.zero,
+                    Vector3.right,
+                    Vector3.up,
+                    Vector3.forward
+                }
+            };
+            mesh.subMeshCount = 2;
+            mesh.SetIndices(new[] { 0, 1, 2 }, MeshTopology.Triangles, 0);
+            mesh.SetIndices(new[] { 0, 2, 3 }, MeshTopology.Triangles, 1);
+            try
+            {
+                var host = hostObject.AddComponent<JadrenGpuSkinningCrowdRenderer>();
+                var vertices = new JadrenGpuSkinningVertex[4];
+                for (var index = 0; index < vertices.Length; index++)
+                {
+                    vertices[index] = new JadrenGpuSkinningVertex(
+                        mesh.vertices[index],
+                        new Vector4(1.0f, 0.0f, 0.0f, 0.0f),
+                        Vector4.zero);
+                }
+
+                Assert.That(
+                    host.TrySetSharedCrowdMaterials(
+                        mesh,
+                        new Material[] { null, null },
+                        vertices,
+                        new Matrix4x4[2],
+                        2,
+                        1,
+                        out var reason),
+                    Is.True,
+                    reason);
+                Assert.That(host.MaterialCount, Is.EqualTo(2));
+                Assert.That(host.DrawSubmeshCount, Is.EqualTo(2));
+                Assert.That(host.AgentCount, Is.EqualTo(2));
+
+                Assert.That(
+                    host.TrySetSharedCrowdMaterials(
+                        mesh,
+                        new Material[] { null, null, null },
+                        vertices,
+                        new Matrix4x4[2],
+                        2,
+                        1,
+                        out reason),
+                    Is.False);
+                Assert.That(reason, Is.EqualTo("crowd_material_count_not_submesh_count"));
+            }
+            finally
+            {
+                Object.DestroyImmediate(mesh);
+                Object.DestroyImmediate(hostObject);
+            }
+        }
     }
 }

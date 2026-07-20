@@ -60,6 +60,149 @@ pub struct FrontendStage2Summary {
     pub status_flags: UIntSize,
 }
 
+/// One deterministic record in the bounded stage-2 JIR hand-off.
+///
+/// `kind` is `1=type`, `2=function`, `3=block`, `4=instruction`, or
+/// `5=terminator`. The first supported subset emits one signed 32-bit integer
+/// type, functions with zero through two typed Int32 parameters, one entry block,
+/// and either one integer
+/// constant or a bounded sequence of integer constants and binary instructions
+/// before the value-return terminator. Dense function/block/value IDs are
+/// carried as indices. A function's `operand_a` stores its bounded parameter
+/// count; those parameters occupy the first function-local SSA values. This
+/// fixed record is an auditable bridge to the
+/// canonical Rust JIR model, not its complete serialized representation.
+@repr(C)
+pub struct Stage2JirRecord {
+    pub kind: UInt8,
+    pub opcode: UInt8,
+    pub type_kind: UInt8,
+    pub flags: UInt8,
+    pub function_index: UIntSize,
+    pub block_index: UIntSize,
+    pub value_index: UIntSize,
+    pub operand_a: UIntSize,
+    pub operand_b: UIntSize,
+    pub source_start: UIntSize,
+    pub source_end: UIntSize,
+}
+
+/// Summary for the bounded stage-2 JIR emitter.
+///
+/// `status_flags` uses bit 0 for structurally valid caller-owned tables, bit 1
+/// for the supported semantic subset and bit 2 for complete output capacity.
+/// A truncated output therefore reports status `3`, while a complete supported
+/// lowering reports `7`. This remains a candidate hand-off and does not remove
+/// the Rust bootstrap.
+@repr(C)
+pub struct Stage2JirSummary {
+    pub functions_seen: UIntSize,
+    pub statements_seen: UIntSize,
+    pub calls_seen: UIntSize,
+    pub records_required: UIntSize,
+    pub records_emitted: UIntSize,
+    pub functions_lowered: UIntSize,
+    pub errors: UIntSize,
+    pub status_flags: UIntSize,
+}
+
+/// Parsed bounded return expression used internally by the stage-2 emitter.
+/// `kind` is `0=invalid`, `1=literal`, `2=integer binary`, `3=bounded
+/// two-operator chain`, `4=bounded ungrouped three-operator chain`, or
+/// `5=bounded four-operator plan`, or `6=one Int32 parameter plus one literal`;
+/// binary nodes carry stable internal opcodes for add, subtract, or multiply.
+/// `grouping_kind` is `0=none`, `1=left subtree`, `2=right subtree`, or
+/// `3=whole single binary` for kind 2/3. For kind 4/5 it is the one-based
+/// left-literal position of an optional single binary group.
+struct Stage2ReturnExpression {
+    kind: UInt8,
+    grouping_kind: UInt8,
+    operator_opcode: UInt8,
+    second_operator_opcode: UInt8,
+    third_operator_opcode: UInt8,
+    fourth_operator_opcode: UInt8,
+    left_value: UIntSize,
+    right_value: UIntSize,
+    third_value: UIntSize,
+    fourth_value: UIntSize,
+    fifth_value: UIntSize,
+    left_start: UIntSize,
+    left_end: UIntSize,
+    right_start: UIntSize,
+    right_end: UIntSize,
+    third_start: UIntSize,
+    third_end: UIntSize,
+    fourth_start: UIntSize,
+    fourth_end: UIntSize,
+    fifth_start: UIntSize,
+    fifth_end: UIntSize,
+    group_start: UIntSize,
+    group_end: UIntSize,
+    expression_start: UIntSize,
+    expression_end: UIntSize,
+    statement_end: UIntSize,
+}
+
+/// One bounded function parameter discovered directly from the immutable
+/// source header. The stage-2 preview intentionally supports at most two
+/// `name: Int32` parameters; name/type resolution remains outside this hand-off.
+struct Stage2ParameterInfo {
+    valid: Bool,
+    count: UIntSize,
+    name_start: UIntSize,
+    name_end: UIntSize,
+    second_name_start: UIntSize,
+    second_name_end: UIntSize,
+}
+
+/// Result of emitting one bounded precedence plan directly into the
+/// caller-owned stage-2 record slice. The plan uses fixed stack storage and
+/// never allocates; `valid=false` means the parsed expression and reduction
+/// stack disagreed before any backend hand-off.
+struct Stage2ExpressionPlanEmission {
+    valid: Bool,
+    record_count: UIntSize,
+    records_emitted: UIntSize,
+    final_value_index: UIntSize,
+}
+
+/// One effective operand in the bounded expression-plan emitter. A grouped
+/// binary subtree occupies one atom while retaining its dense SSA value and
+/// delimiter-inclusive source span.
+struct Stage2ExpressionPlanAtom {
+    value_index: UIntSize,
+    start: UIntSize,
+    end: UIntSize,
+}
+
+/// Scan-only descriptor for the caller-owned streaming Stage-2 plan. It keeps
+/// counts and source boundaries rather than a fixed field per literal.
+struct Stage2StreamingExpressionPlan {
+    valid: Bool,
+    literal_count: UIntSize,
+    operator_count: UIntSize,
+    grouping_kind: UIntSize,
+    group_start: UIntSize,
+    group_end: UIntSize,
+    second_grouping_kind: UIntSize,
+    second_group_start: UIntSize,
+    second_group_end: UIntSize,
+    first_value: UIntSize,
+    first_start: UIntSize,
+    first_end: UIntSize,
+    expression_start: UIntSize,
+    expression_end: UIntSize,
+    statement_end: UIntSize,
+}
+
+/// One rescanned literal in the streaming expression plan.
+struct Stage2StreamingLiteral {
+    valid: Bool,
+    value: UIntSize,
+    start: UIntSize,
+    end: UIntSize,
+}
+
 /// Small enum fixture for the parser-shaped variant stage. Payload types are
 /// intentionally syntax-only here; the resolver remains the Rust bootstrap.
 enum TokenKind<T> {
@@ -11270,6 +11413,3776 @@ pub fn compile_frontend_stage2(
         statements_emitted: statement_count,
         calls_emitted: call_count,
         syntax_errors: source_summary.errors,
+        status_flags: status,
+    }
+}
+
+@noalloc
+fn stage2_is_int32_name(
+    bytes: read Slice<UInt8>,
+    start: UIntSize,
+    end: UIntSize,
+) -> Bool {
+    if end - start != 5usize {
+        return false
+    }
+    if bytes[start] != 0x49u8 {
+        return false
+    }
+    if bytes[start + 1usize] != 0x6Eu8 {
+        return false
+    }
+    if bytes[start + 2usize] != 0x74u8 {
+        return false
+    }
+    if bytes[start + 3usize] != 0x33u8 {
+        return false
+    }
+    return bytes[start + 4usize] == 0x32u8
+}
+
+/// Validates the explicit `-> Int32` suffix of one parameter-free function
+/// header. Parameter parsing itself remains owned by `FunctionHeader`.
+@noalloc
+fn stage2_has_int32_result(
+    bytes: read Slice<UInt8>,
+    signature_start: UIntSize,
+    body_start: UIntSize,
+) -> Bool {
+    var cursor: UIntSize = signature_start
+    var saw_dash: Bool = false
+    var saw_arrow: Bool = false
+    var saw_type: Bool = false
+    while cursor < body_start {
+        let info: TokenInfo = scan_token_info(bytes, cursor, body_start)
+        if info.start >= body_start {
+            break
+        }
+        var symbol: UInt8 = 0u8
+        if info.kind == 3u8 {
+            symbol = bytes[info.start]
+        }
+        if !saw_arrow {
+            if symbol == 0x2Du8 {
+                saw_dash = true
+            } else {
+                if symbol == 0x3Eu8 {
+                    if !saw_dash {
+                        return false
+                    }
+                    saw_arrow = true
+                } else {
+                    if saw_dash {
+                        return false
+                    }
+                }
+            }
+        } else {
+            if saw_type {
+                return false
+            }
+            if info.kind != 1u8 {
+                return false
+            }
+            if !stage2_is_int32_name(bytes, info.start, info.end) {
+                return false
+            }
+            saw_type = true
+        }
+        cursor = info.end
+    }
+    if !saw_arrow {
+        return false
+    }
+    return saw_type
+}
+
+@noalloc
+fn stage2_invalid_parameter_info() -> Stage2ParameterInfo {
+    return Stage2ParameterInfo {
+        valid: false,
+        count: 0usize,
+        name_start: 0usize,
+        name_end: 0usize,
+        second_name_start: 0usize,
+        second_name_end: 0usize,
+    }
+}
+
+/// Parses exactly one `name: Int32` parameter from the function signature.
+/// The return type is checked independently by `stage2_has_int32_result`.
+@noalloc
+fn stage2_parse_single_i32_parameter(
+    bytes: read Slice<UInt8>,
+    signature_start: UIntSize,
+    body_start: UIntSize,
+) -> Stage2ParameterInfo {
+    let invalid: Stage2ParameterInfo = stage2_invalid_parameter_info()
+    let opening: TokenInfo = scan_token_info(bytes, signature_start, body_start)
+    if opening.kind != 3u8 {
+        return invalid
+    }
+    if opening.start >= opening.end {
+        return invalid
+    }
+    if bytes[opening.start] != 0x28u8 {
+        return invalid
+    }
+    let name: TokenInfo = scan_token_info(bytes, opening.end, body_start)
+    if name.kind != 1u8 {
+        return invalid
+    }
+    let colon: TokenInfo = scan_token_info(bytes, name.end, body_start)
+    if colon.kind != 3u8 {
+        return invalid
+    }
+    if colon.start >= colon.end {
+        return invalid
+    }
+    if bytes[colon.start] != 0x3Au8 {
+        return invalid
+    }
+    let type_name: TokenInfo = scan_token_info(bytes, colon.end, body_start)
+    if type_name.kind != 1u8 {
+        return invalid
+    }
+    if !stage2_is_int32_name(bytes, type_name.start, type_name.end) {
+        return invalid
+    }
+    let closing: TokenInfo = scan_token_info(bytes, type_name.end, body_start)
+    if closing.kind != 3u8 {
+        return invalid
+    }
+    if closing.start >= closing.end {
+        return invalid
+    }
+    if bytes[closing.start] != 0x29u8 {
+        return invalid
+    }
+    return Stage2ParameterInfo {
+        valid: true,
+        count: 1usize,
+        name_start: name.start,
+        name_end: name.end,
+        second_name_start: 0usize,
+        second_name_end: 0usize,
+    }
+}
+
+@noalloc
+fn stage2_parse_pair_i32_parameters(
+    bytes: read Slice<UInt8>,
+    signature_start: UIntSize,
+    body_start: UIntSize,
+) -> Stage2ParameterInfo {
+    let invalid: Stage2ParameterInfo = stage2_invalid_parameter_info()
+    let opening: TokenInfo = scan_token_info(bytes, signature_start, body_start)
+    if opening.kind != 3u8 {
+        return invalid
+    }
+    if opening.start >= opening.end {
+        return invalid
+    }
+    if bytes[opening.start] != 0x28u8 {
+        return invalid
+    }
+    let first_name: TokenInfo = scan_token_info(bytes, opening.end, body_start)
+    if first_name.kind != 1u8 {
+        return invalid
+    }
+    let first_colon: TokenInfo = scan_token_info(bytes, first_name.end, body_start)
+    if first_colon.kind != 3u8 {
+        return invalid
+    }
+    if first_colon.start >= first_colon.end {
+        return invalid
+    }
+    if bytes[first_colon.start] != 0x3Au8 {
+        return invalid
+    }
+    let first_type: TokenInfo = scan_token_info(bytes, first_colon.end, body_start)
+    if first_type.kind != 1u8 {
+        return invalid
+    }
+    if !stage2_is_int32_name(bytes, first_type.start, first_type.end) {
+        return invalid
+    }
+    let comma: TokenInfo = scan_token_info(bytes, first_type.end, body_start)
+    if comma.kind != 3u8 {
+        return invalid
+    }
+    if comma.start >= comma.end {
+        return invalid
+    }
+    if bytes[comma.start] != 0x2Cu8 {
+        return invalid
+    }
+    let second_name: TokenInfo = scan_token_info(bytes, comma.end, body_start)
+    if second_name.kind != 1u8 {
+        return invalid
+    }
+    let second_colon: TokenInfo = scan_token_info(bytes, second_name.end, body_start)
+    if second_colon.kind != 3u8 {
+        return invalid
+    }
+    if second_colon.start >= second_colon.end {
+        return invalid
+    }
+    if bytes[second_colon.start] != 0x3Au8 {
+        return invalid
+    }
+    let second_type: TokenInfo = scan_token_info(bytes, second_colon.end, body_start)
+    if second_type.kind != 1u8 {
+        return invalid
+    }
+    if !stage2_is_int32_name(bytes, second_type.start, second_type.end) {
+        return invalid
+    }
+    let closing: TokenInfo = scan_token_info(bytes, second_type.end, body_start)
+    if closing.kind != 3u8 {
+        return invalid
+    }
+    if closing.start >= closing.end {
+        return invalid
+    }
+    if bytes[closing.start] != 0x29u8 {
+        return invalid
+    }
+    return Stage2ParameterInfo {
+        valid: true,
+        count: 2usize,
+        name_start: first_name.start,
+        name_end: first_name.end,
+        second_name_start: second_name.start,
+        second_name_end: second_name.end,
+    }
+}
+
+@noalloc
+fn stage2_same_bytes(
+    bytes: read Slice<UInt8>,
+    first_start: UIntSize,
+    first_end: UIntSize,
+    second_start: UIntSize,
+    second_end: UIntSize,
+) -> Bool {
+    if first_end - first_start != second_end - second_start {
+        return false
+    }
+    var first: UIntSize = first_start
+    var second: UIntSize = second_start
+    while first < first_end {
+        if bytes[first] != bytes[second] {
+            return false
+        }
+        first = first + 1usize
+        second = second + 1usize
+    }
+    return true
+}
+
+/// Parses one non-negative decimal Int32 literal. `2147483648` is the invalid
+/// sentinel and cannot collide with the supported value range.
+@noalloc
+fn stage2_i32_literal_value(
+    bytes: read Slice<UInt8>,
+    start: UIntSize,
+    end: UIntSize,
+) -> UIntSize {
+    let invalid: UIntSize = 2147483648usize
+    if start >= end {
+        return invalid
+    }
+    var value: UIntSize = 0usize
+    var cursor: UIntSize = start
+    while cursor < end {
+        let byte: UInt8 = bytes[cursor]
+        if byte < 0x30u8 {
+            return invalid
+        }
+        if byte > 0x39u8 {
+            return invalid
+        }
+        let digit: UIntSize = byte as UIntSize - 48usize
+        if value > 214748364usize {
+            return invalid
+        }
+        if value == 214748364usize {
+            if digit > 7usize {
+                return invalid
+            }
+        }
+        value = value * 10usize + digit
+        cursor = cursor + 1usize
+    }
+    return value
+}
+
+/// Recognizes the first parameter-aware executable slice: `return name op
+/// literal;`, where `name` is the one `Int32` parameter from the function
+/// header. The parameter is SSA value zero and the literal becomes value one.
+@noalloc
+fn stage2_invalid_parameter_return_expression() -> Stage2ReturnExpression {
+    return Stage2ReturnExpression {
+        kind: 0u8,
+        grouping_kind: 0u8,
+        operator_opcode: 0u8,
+        second_operator_opcode: 0u8,
+        third_operator_opcode: 0u8,
+        fourth_operator_opcode: 0u8,
+        left_value: 2147483648usize,
+        right_value: 2147483648usize,
+        third_value: 2147483648usize,
+        fourth_value: 2147483648usize,
+        fifth_value: 2147483648usize,
+        left_start: 0usize,
+        left_end: 0usize,
+        right_start: 0usize,
+        right_end: 0usize,
+        third_start: 0usize,
+        third_end: 0usize,
+        fourth_start: 0usize,
+        fourth_end: 0usize,
+        fifth_start: 0usize,
+        fifth_end: 0usize,
+        group_start: 0usize,
+        group_end: 0usize,
+        expression_start: 0usize,
+        expression_end: 0usize,
+        statement_end: 0usize,
+    }
+}
+
+@noalloc
+fn stage2_parse_parameter_return_i32_expression(
+    bytes: read Slice<UInt8>,
+    start: UIntSize,
+    end: UIntSize,
+    parameter_valid: Bool,
+    parameter_name_start: UIntSize,
+    parameter_name_end: UIntSize,
+) -> Stage2ReturnExpression {
+    let invalid: Stage2ReturnExpression = stage2_invalid_parameter_return_expression()
+    if !parameter_valid {
+        return invalid
+    }
+    let keyword: TokenInfo = scan_token_info(bytes, start, end)
+    if keyword.start >= end {
+        return invalid
+    }
+    if statement_kind(bytes, keyword.kind, keyword.start, keyword.end) != 2u8 {
+        return invalid
+    }
+    let name: TokenInfo = scan_token_info(bytes, keyword.end, end)
+    if name.kind != 1u8 {
+        return invalid
+    }
+    if !stage2_same_bytes(
+        bytes,
+        name.start,
+        name.end,
+        parameter_name_start,
+        parameter_name_end,
+    ) {
+        return invalid
+    }
+    let operator: TokenInfo = scan_token_info(bytes, name.end, end)
+    if operator.kind != 3u8 {
+        return invalid
+    }
+    var operator_opcode: UInt8 = 0u8
+    if bytes[operator.start] == 0x2Bu8 {
+        operator_opcode = 2u8
+    }
+    if bytes[operator.start] == 0x2Du8 {
+        operator_opcode = 3u8
+    }
+    if bytes[operator.start] == 0x2Au8 {
+        operator_opcode = 4u8
+    }
+    if operator_opcode == 0u8 {
+        return invalid
+    }
+    let literal: TokenInfo = scan_token_info(bytes, operator.end, end)
+    if literal.kind != 2u8 {
+        return invalid
+    }
+    let value: UIntSize = stage2_i32_literal_value(bytes, literal.start, literal.end)
+    if value == 2147483648usize {
+        return invalid
+    }
+    let semicolon: TokenInfo = scan_token_info(bytes, literal.end, end)
+    if semicolon.kind != 3u8 {
+        return invalid
+    }
+    if semicolon.start >= semicolon.end {
+        return invalid
+    }
+    if bytes[semicolon.start] != 0x3Bu8 {
+        return invalid
+    }
+    let trailing: TokenInfo = scan_token_info(bytes, semicolon.end, end)
+    if trailing.start < end {
+        return invalid
+    }
+    var expression: Stage2ReturnExpression = invalid
+    expression.kind = 6u8
+    expression.operator_opcode = operator_opcode
+    expression.left_value = 0usize
+    expression.right_value = value
+    expression.left_start = name.start
+    expression.left_end = name.end
+    expression.right_start = literal.start
+    expression.right_end = literal.end
+    expression.expression_start = name.start
+    expression.expression_end = literal.end
+    expression.statement_end = semicolon.end
+    return expression
+}
+
+@noalloc
+fn stage2_parse_parameter_pair_return_i32_expression(
+    bytes: read Slice<UInt8>,
+    start: UIntSize,
+    end: UIntSize,
+    parameter_valid: Bool,
+    first_name_start: UIntSize,
+    first_name_end: UIntSize,
+    second_name_start: UIntSize,
+    second_name_end: UIntSize,
+) -> Stage2ReturnExpression {
+    let invalid: Stage2ReturnExpression = stage2_invalid_parameter_return_expression()
+    if !parameter_valid {
+        return invalid
+    }
+    let keyword: TokenInfo = scan_token_info(bytes, start, end)
+    if keyword.start >= end {
+        return invalid
+    }
+    if statement_kind(bytes, keyword.kind, keyword.start, keyword.end) != 2u8 {
+        return invalid
+    }
+    let first_name: TokenInfo = scan_token_info(bytes, keyword.end, end)
+    if first_name.kind != 1u8 {
+        return invalid
+    }
+    if !stage2_same_bytes(bytes, first_name.start, first_name.end, first_name_start, first_name_end) {
+        return invalid
+    }
+    let operator: TokenInfo = scan_token_info(bytes, first_name.end, end)
+    if operator.kind != 3u8 {
+        return invalid
+    }
+    var operator_opcode: UInt8 = 0u8
+    if bytes[operator.start] == 0x2Bu8 {
+        operator_opcode = 2u8
+    }
+    if bytes[operator.start] == 0x2Du8 {
+        operator_opcode = 3u8
+    }
+    if bytes[operator.start] == 0x2Au8 {
+        operator_opcode = 4u8
+    }
+    if operator_opcode == 0u8 {
+        return invalid
+    }
+    let second_name: TokenInfo = scan_token_info(bytes, operator.end, end)
+    if second_name.kind != 1u8 {
+        return invalid
+    }
+    if !stage2_same_bytes(
+        bytes,
+        second_name.start,
+        second_name.end,
+        second_name_start,
+        second_name_end,
+    ) {
+        return invalid
+    }
+    let semicolon: TokenInfo = scan_token_info(bytes, second_name.end, end)
+    if semicolon.kind != 3u8 {
+        return invalid
+    }
+    if semicolon.start >= semicolon.end {
+        return invalid
+    }
+    if bytes[semicolon.start] != 0x3Bu8 {
+        return invalid
+    }
+    let trailing: TokenInfo = scan_token_info(bytes, semicolon.end, end)
+    if trailing.start < end {
+        return invalid
+    }
+    var expression: Stage2ReturnExpression = invalid
+    expression.kind = 7u8
+    expression.operator_opcode = operator_opcode
+    expression.left_value = 0usize
+    expression.right_value = 1usize
+    expression.left_start = first_name.start
+    expression.left_end = first_name.end
+    expression.right_start = second_name.start
+    expression.right_end = second_name.end
+    expression.expression_start = first_name.start
+    expression.expression_end = second_name.end
+    expression.statement_end = semicolon.end
+    return expression
+}
+
+@noalloc
+fn stage2_binary_opcode(byte: UInt8) -> UInt8 {
+    if byte == 0x2Bu8 {
+        return 2u8
+    }
+    if byte == 0x2Du8 {
+        return 3u8
+    }
+    if byte == 0x2Au8 {
+        return 4u8
+    }
+    return 0u8
+}
+
+@noalloc
+fn stage2_token_is_symbol(
+    bytes: read Slice<UInt8>,
+    kind: UInt8,
+    start: UIntSize,
+    end: UIntSize,
+    symbol: UInt8,
+) -> Bool {
+    if kind != 3u8 {
+        return false
+    }
+    if start >= end {
+        return false
+    }
+    return bytes[start] == symbol
+}
+
+@noalloc
+fn stage2_invalid_streaming_expression_plan() -> Stage2StreamingExpressionPlan {
+    return Stage2StreamingExpressionPlan {
+        valid: false,
+        literal_count: 0usize,
+        operator_count: 0usize,
+        grouping_kind: 0usize,
+        group_start: 0usize,
+        group_end: 0usize,
+        second_grouping_kind: 0usize,
+        second_group_start: 0usize,
+        second_group_end: 0usize,
+        first_value: 2147483648usize,
+        first_start: 0usize,
+        first_end: 0usize,
+        expression_start: 0usize,
+        expression_end: 0usize,
+        statement_end: 0usize,
+    }
+}
+
+/// Scans a longer return expression without retaining one field per operand.
+/// Five through sixteen binary operators are accepted. The final JIR output
+/// slice is the caller-owned plan table used by the emission pass.
+@noalloc
+fn stage2_parse_streaming_return_i32_expression_plan(
+    bytes: read Slice<UInt8>,
+    start: UIntSize,
+    end: UIntSize,
+) -> Stage2StreamingExpressionPlan {
+    let invalid: Stage2StreamingExpressionPlan = stage2_invalid_streaming_expression_plan()
+    let invalid_value: UIntSize = 2147483648usize
+    let keyword: TokenInfo = scan_token_info(bytes, start, end)
+    if keyword.start >= end {
+        return invalid
+    }
+    if statement_kind(bytes, keyword.kind, keyword.start, keyword.end) != 2u8 {
+        return invalid
+    }
+
+    var cursor: UIntSize = keyword.end
+    var expecting_operand: Bool = true
+    var literal_count: UIntSize = 0usize
+    var operator_count: UIntSize = 0usize
+    var grouping_kind: UIntSize = 0usize
+    var second_grouping_kind: UIntSize = 0usize
+    var group_open: Bool = false
+    var group_nested: Bool = false
+    var group_count: UIntSize = 0usize
+    var active_grouping_kind: UIntSize = 0usize
+    var group_start: UIntSize = 0usize
+    var group_end: UIntSize = 0usize
+    var second_group_start: UIntSize = 0usize
+    var second_group_end: UIntSize = 0usize
+    var first_value: UIntSize = invalid_value
+    var first_start: UIntSize = 0usize
+    var first_end: UIntSize = 0usize
+    var expression_start: UIntSize = 0usize
+    var last_literal_end: UIntSize = 0usize
+
+    while cursor < end {
+        if expecting_operand {
+            var literal: TokenInfo = scan_token_info(bytes, cursor, end)
+            if stage2_token_is_symbol(
+                bytes,
+                literal.kind,
+                literal.start,
+                literal.end,
+                0x28u8,
+            ) {
+                if group_open {
+                    if group_nested {
+                        return invalid
+                    }
+                    if literal_count + 1usize != active_grouping_kind {
+                        return invalid
+                    }
+                    group_nested = true
+                    literal = scan_token_info(bytes, literal.end, end)
+                } else {
+                    if group_count >= 2usize {
+                        return invalid
+                    }
+                    group_open = true
+                    active_grouping_kind = literal_count + 1usize
+                    group_count = group_count + 1usize
+                    if group_count == 1usize {
+                        grouping_kind = active_grouping_kind
+                        group_start = literal.start
+                    } else {
+                        second_grouping_kind = active_grouping_kind
+                        second_group_start = literal.start
+                    }
+                    if literal_count == 0usize {
+                        expression_start = literal.start
+                    }
+                    literal = scan_token_info(bytes, literal.end, end)
+                }
+            }
+            if group_open {
+                if !group_nested {
+                    if stage2_token_is_symbol(
+                        bytes,
+                        literal.kind,
+                        literal.start,
+                        literal.end,
+                        0x28u8,
+                    ) {
+                        group_nested = true
+                        literal = scan_token_info(bytes, literal.end, end)
+                    }
+                }
+            }
+            if literal.kind != 2u8 {
+                return invalid
+            }
+            let value: UIntSize = stage2_i32_literal_value(bytes, literal.start, literal.end)
+            if value == invalid_value {
+                return invalid
+            }
+            if literal_count == 0usize {
+                first_value = value
+                first_start = literal.start
+                first_end = literal.end
+                if expression_start == 0usize {
+                    expression_start = literal.start
+                }
+            }
+            literal_count = literal_count + 1usize
+            if literal_count > 17usize {
+                return invalid
+            }
+            last_literal_end = literal.end
+            cursor = literal.end
+            expecting_operand = false
+        } else {
+            var separator: TokenInfo = scan_token_info(bytes, cursor, end)
+            if separator.start >= end {
+                return invalid
+            }
+            if group_open {
+                if literal_count == active_grouping_kind + 1usize {
+                    if !stage2_token_is_symbol(
+                        bytes,
+                        separator.kind,
+                        separator.start,
+                        separator.end,
+                        0x29u8,
+                    ) {
+                        return invalid
+                    }
+                    let first_closing_end: UIntSize = separator.end
+                    var closing: TokenInfo = separator
+                    if group_nested {
+                        closing = scan_token_info(bytes, first_closing_end, end)
+                        if !stage2_token_is_symbol(
+                            bytes,
+                            closing.kind,
+                            closing.start,
+                            closing.end,
+                            0x29u8,
+                        ) {
+                            return invalid
+                        }
+                    }
+                    if group_count == 1usize {
+                        group_end = closing.end
+                    } else {
+                        second_group_end = closing.end
+                    }
+                    group_open = false
+                    cursor = closing.end
+                    separator = scan_token_info(bytes, cursor, end)
+                    if separator.start >= end {
+                        return invalid
+                    }
+                }
+            }
+            if stage2_token_is_symbol(
+                bytes,
+                separator.kind,
+                separator.start,
+                separator.end,
+                0x3Bu8,
+            ) {
+                if group_open {
+                    return invalid
+                }
+                if operator_count < 5usize {
+                    return invalid
+                }
+                if operator_count > 16usize {
+                    return invalid
+                }
+                if operator_count + 1usize != literal_count {
+                    return invalid
+                }
+                let trailing: TokenInfo = scan_token_info(bytes, separator.end, end)
+                if trailing.start < end {
+                    return invalid
+                }
+                var expression_end: UIntSize = last_literal_end
+                if second_grouping_kind + 1usize == literal_count {
+                    expression_end = second_group_end
+                } else if grouping_kind + 1usize == literal_count {
+                    expression_end = group_end
+                }
+                return Stage2StreamingExpressionPlan {
+                    valid: true,
+                    literal_count: literal_count,
+                    operator_count: operator_count,
+                    grouping_kind: grouping_kind,
+                    group_start: group_start,
+                    group_end: group_end,
+                    second_grouping_kind: second_grouping_kind,
+                    second_group_start: second_group_start,
+                    second_group_end: second_group_end,
+                    first_value: first_value,
+                    first_start: first_start,
+                    first_end: first_end,
+                    expression_start: expression_start,
+                    expression_end: expression_end,
+                    statement_end: separator.end,
+                }
+            }
+            if separator.kind != 3u8 {
+                return invalid
+            }
+            let opcode: UInt8 = stage2_binary_opcode(bytes[separator.start])
+            if opcode == 0u8 {
+                return invalid
+            }
+            operator_count = operator_count + 1usize
+            if operator_count > 16usize {
+                return invalid
+            }
+            cursor = separator.end
+            expecting_operand = true
+        }
+    }
+    return invalid
+}
+
+@noalloc
+fn stage2_invalid_return_expression() -> Stage2ReturnExpression {
+    return Stage2ReturnExpression {
+        kind: 0u8,
+        grouping_kind: 0u8,
+        operator_opcode: 0u8,
+        second_operator_opcode: 0u8,
+        third_operator_opcode: 0u8,
+        fourth_operator_opcode: 0u8,
+        left_value: 2147483648usize,
+        right_value: 2147483648usize,
+        third_value: 2147483648usize,
+        fourth_value: 2147483648usize,
+        fifth_value: 2147483648usize,
+        left_start: 0usize,
+        left_end: 0usize,
+        right_start: 0usize,
+        right_end: 0usize,
+        third_start: 0usize,
+        third_end: 0usize,
+        fourth_start: 0usize,
+        fourth_end: 0usize,
+        fifth_start: 0usize,
+        fifth_end: 0usize,
+        group_start: 0usize,
+        group_end: 0usize,
+        expression_start: 0usize,
+        expression_end: 0usize,
+        statement_end: 0usize,
+    }
+}
+
+/// Recognizes the grouped long-plan slice before the legacy one-/two-operator
+/// paths. Exactly one non-nested group must wrap two adjacent literals, and
+/// the complete expression must contain three or four binary operators.
+@noalloc
+fn stage2_parse_grouped_long_return_i32_expression(
+    bytes: read Slice<UInt8>,
+    start: UIntSize,
+    end: UIntSize,
+) -> Stage2ReturnExpression {
+    let invalid: Stage2ReturnExpression = stage2_invalid_return_expression()
+    let invalid_value: UIntSize = 2147483648usize
+    let keyword: TokenInfo = scan_token_info(bytes, start, end)
+    if keyword.start >= end {
+        return invalid
+    }
+    if statement_kind(bytes, keyword.kind, keyword.start, keyword.end) != 2u8 {
+        return invalid
+    }
+
+    var cursor: UIntSize = keyword.end
+    var expecting_operand: Bool = true
+    var operand_count: UIntSize = 0usize
+    var operator_count: UIntSize = 0usize
+    var grouping_kind: UInt8 = 0u8
+    var group_open: Bool = false
+    var group_closed: Bool = false
+    var group_start: UIntSize = 0usize
+    var group_end: UIntSize = 0usize
+    var expression_start: UIntSize = 0usize
+
+    var operator_opcode: UInt8 = 0u8
+    var second_operator_opcode: UInt8 = 0u8
+    var third_operator_opcode: UInt8 = 0u8
+    var fourth_operator_opcode: UInt8 = 0u8
+
+    var left_value: UIntSize = invalid_value
+    var right_value: UIntSize = invalid_value
+    var third_value: UIntSize = invalid_value
+    var fourth_value: UIntSize = invalid_value
+    var fifth_value: UIntSize = invalid_value
+    var left_start: UIntSize = 0usize
+    var left_end: UIntSize = 0usize
+    var right_start: UIntSize = 0usize
+    var right_end: UIntSize = 0usize
+    var third_start: UIntSize = 0usize
+    var third_end: UIntSize = 0usize
+    var fourth_start: UIntSize = 0usize
+    var fourth_end: UIntSize = 0usize
+    var fifth_start: UIntSize = 0usize
+    var fifth_end: UIntSize = 0usize
+
+    while cursor < end {
+        if expecting_operand {
+            var literal: TokenInfo = scan_token_info(bytes, cursor, end)
+            if stage2_token_is_symbol(
+                bytes,
+                literal.kind,
+                literal.start,
+                literal.end,
+                0x28u8,
+            ) {
+                if group_open {
+                    return invalid
+                }
+                if group_closed {
+                    return invalid
+                }
+                group_open = true
+                grouping_kind = (operand_count + 1usize) as UInt8
+                group_start = literal.start
+                if operand_count == 0usize {
+                    expression_start = group_start
+                }
+                literal = scan_token_info(bytes, literal.end, end)
+            }
+            if literal.kind != 2u8 {
+                return invalid
+            }
+            if operand_count >= 5usize {
+                return invalid
+            }
+            let value: UIntSize = stage2_i32_literal_value(bytes, literal.start, literal.end)
+            if value == invalid_value {
+                return invalid
+            }
+            if operand_count == 0usize {
+                left_value = value
+                left_start = literal.start
+                left_end = literal.end
+                if expression_start == 0usize {
+                    expression_start = literal.start
+                }
+            } else if operand_count == 1usize {
+                right_value = value
+                right_start = literal.start
+                right_end = literal.end
+            } else if operand_count == 2usize {
+                third_value = value
+                third_start = literal.start
+                third_end = literal.end
+            } else if operand_count == 3usize {
+                fourth_value = value
+                fourth_start = literal.start
+                fourth_end = literal.end
+            } else {
+                fifth_value = value
+                fifth_start = literal.start
+                fifth_end = literal.end
+            }
+            operand_count = operand_count + 1usize
+            cursor = literal.end
+            expecting_operand = false
+        } else {
+            var separator: TokenInfo = scan_token_info(bytes, cursor, end)
+            if separator.start >= end {
+                return invalid
+            }
+            if group_open {
+                let grouped_operand_end: UIntSize = (grouping_kind as UIntSize) + 1usize
+                if operand_count == grouped_operand_end {
+                    if !stage2_token_is_symbol(
+                        bytes,
+                        separator.kind,
+                        separator.start,
+                        separator.end,
+                        0x29u8,
+                    ) {
+                        return invalid
+                    }
+                    group_end = separator.end
+                    group_open = false
+                    group_closed = true
+                    cursor = separator.end
+                    separator = scan_token_info(bytes, cursor, end)
+                    if separator.start >= end {
+                        return invalid
+                    }
+                }
+            }
+            if stage2_token_is_symbol(
+                bytes,
+                separator.kind,
+                separator.start,
+                separator.end,
+                0x3Bu8,
+            ) {
+                if group_open {
+                    return invalid
+                }
+                if !group_closed {
+                    return invalid
+                }
+                if operand_count < 4usize {
+                    return invalid
+                }
+                if operand_count > 5usize {
+                    return invalid
+                }
+                if operator_count + 1usize != operand_count {
+                    return invalid
+                }
+                let trailing: TokenInfo = scan_token_info(bytes, separator.end, end)
+                if trailing.start < end {
+                    return invalid
+                }
+                var expression_end: UIntSize = fourth_end
+                var kind: UInt8 = 4u8
+                if operand_count == 5usize {
+                    expression_end = fifth_end
+                    kind = 5u8
+                }
+                if (grouping_kind as UIntSize) + 1usize == operand_count {
+                    expression_end = group_end
+                }
+                return Stage2ReturnExpression {
+                    kind: kind,
+                    grouping_kind: grouping_kind,
+                    operator_opcode: operator_opcode,
+                    second_operator_opcode: second_operator_opcode,
+                    third_operator_opcode: third_operator_opcode,
+                    fourth_operator_opcode: fourth_operator_opcode,
+                    left_value: left_value,
+                    right_value: right_value,
+                    third_value: third_value,
+                    fourth_value: fourth_value,
+                    fifth_value: fifth_value,
+                    left_start: left_start,
+                    left_end: left_end,
+                    right_start: right_start,
+                    right_end: right_end,
+                    third_start: third_start,
+                    third_end: third_end,
+                    fourth_start: fourth_start,
+                    fourth_end: fourth_end,
+                    fifth_start: fifth_start,
+                    fifth_end: fifth_end,
+                    group_start: group_start,
+                    group_end: group_end,
+                    expression_start: expression_start,
+                    expression_end: expression_end,
+                    statement_end: separator.end,
+                }
+            }
+            if separator.kind != 3u8 {
+                return invalid
+            }
+            if operator_count >= 4usize {
+                return invalid
+            }
+            let opcode: UInt8 = stage2_binary_opcode(bytes[separator.start])
+            if opcode == 0u8 {
+                return invalid
+            }
+            if operator_count == 0usize {
+                operator_opcode = opcode
+            } else if operator_count == 1usize {
+                second_operator_opcode = opcode
+            } else if operator_count == 2usize {
+                third_operator_opcode = opcode
+            } else {
+                fourth_operator_opcode = opcode
+            }
+            operator_count = operator_count + 1usize
+            cursor = separator.end
+            expecting_operand = true
+        }
+    }
+    return invalid
+}
+
+/// Parses the executable stage-2 expression subset: a literal, one binary
+/// operation, or a bounded add/subtract/multiply expression over at most five
+/// non-negative Int32 literals. One explicit non-nested group may wrap one
+/// adjacent binary pair. The emitter applies that group before multiplication
+/// precedence and left associativity.
+@noalloc
+fn stage2_parse_return_i32_expression(
+    bytes: read Slice<UInt8>,
+    start: UIntSize,
+    end: UIntSize,
+) -> Stage2ReturnExpression {
+    let invalid_value: UIntSize = 2147483648usize
+    let invalid: Stage2ReturnExpression = stage2_invalid_return_expression()
+    let grouped_long: Stage2ReturnExpression = stage2_parse_grouped_long_return_i32_expression(
+        bytes,
+        start,
+        end,
+    )
+    if grouped_long.kind == 4u8 {
+        return grouped_long
+    }
+    if grouped_long.kind == 5u8 {
+        return grouped_long
+    }
+    let keyword: TokenInfo = scan_token_info(bytes, start, end)
+    if keyword.start >= end {
+        return invalid
+    }
+    if statement_kind(bytes, keyword.kind, keyword.start, keyword.end) != 2u8 {
+        return invalid
+    }
+
+    let first_expression_token: TokenInfo = scan_token_info(bytes, keyword.end, end)
+    let first_expression_kind: UInt8 = first_expression_token.kind
+    let first_expression_start: UIntSize = first_expression_token.start
+    let first_expression_end: UIntSize = first_expression_token.end
+    var grouping_kind: UInt8 = 0u8
+    var group_start: UIntSize = 0usize
+    var group_end: UIntSize = 0usize
+    var left: TokenInfo = first_expression_token
+    if stage2_token_is_symbol(
+        bytes,
+        first_expression_kind,
+        first_expression_start,
+        first_expression_end,
+        0x28u8,
+    ) {
+        grouping_kind = 1u8
+        group_start = first_expression_start
+        left = scan_token_info(bytes, first_expression_end, end)
+    }
+    if left.kind != 2u8 {
+        return invalid
+    }
+    let left_value: UIntSize = stage2_i32_literal_value(bytes, left.start, left.end)
+    if left_value == invalid_value {
+        return invalid
+    }
+
+    let operator_or_semicolon: TokenInfo = scan_token_info(bytes, left.end, end)
+    if operator_or_semicolon.start >= end {
+        return invalid
+    }
+    if grouping_kind == 0u8 {
+        if stage2_token_is_symbol(
+            bytes,
+            operator_or_semicolon.kind,
+            operator_or_semicolon.start,
+            operator_or_semicolon.end,
+            0x3Bu8,
+        ) {
+            let trailing: TokenInfo = scan_token_info(bytes, operator_or_semicolon.end, end)
+            if trailing.start < end {
+                return invalid
+            }
+            return Stage2ReturnExpression {
+                kind: 1u8,
+                grouping_kind: 0u8,
+                operator_opcode: 0u8,
+                second_operator_opcode: 0u8,
+                third_operator_opcode: 0u8,
+                fourth_operator_opcode: 0u8,
+                left_value: left_value,
+                right_value: 0usize,
+                third_value: 0usize,
+                fourth_value: 0usize,
+                fifth_value: 0usize,
+                left_start: left.start,
+                left_end: left.end,
+                right_start: 0usize,
+                right_end: 0usize,
+                third_start: 0usize,
+                third_end: 0usize,
+                fourth_start: 0usize,
+                fourth_end: 0usize,
+                fifth_start: 0usize,
+                fifth_end: 0usize,
+                group_start: 0usize,
+                group_end: 0usize,
+                expression_start: left.start,
+                expression_end: left.end,
+                statement_end: operator_or_semicolon.end,
+            }
+        }
+    }
+    if operator_or_semicolon.kind != 3u8 {
+        return invalid
+    }
+    let operator_opcode: UInt8 = stage2_binary_opcode(bytes[operator_or_semicolon.start])
+    if operator_opcode == 0u8 {
+        return invalid
+    }
+
+    let right_or_open: TokenInfo = scan_token_info(bytes, operator_or_semicolon.end, end)
+    let right_or_open_kind: UInt8 = right_or_open.kind
+    let right_or_open_start: UIntSize = right_or_open.start
+    let right_or_open_end: UIntSize = right_or_open.end
+    var right: TokenInfo = right_or_open
+    if grouping_kind == 0u8 {
+        if stage2_token_is_symbol(
+            bytes,
+            right_or_open_kind,
+            right_or_open_start,
+            right_or_open_end,
+            0x28u8,
+        ) {
+            grouping_kind = 2u8
+            group_start = right_or_open_start
+            right = scan_token_info(bytes, right_or_open_end, end)
+        }
+    }
+    if right.kind != 2u8 {
+        return invalid
+    }
+    let right_value: UIntSize = stage2_i32_literal_value(bytes, right.start, right.end)
+    if right_value == invalid_value {
+        return invalid
+    }
+
+    let after_right: TokenInfo = scan_token_info(bytes, right.end, end)
+    if after_right.start >= end {
+        return invalid
+    }
+    if grouping_kind == 1u8 {
+        if !stage2_token_is_symbol(
+            bytes,
+            after_right.kind,
+            after_right.start,
+            after_right.end,
+            0x29u8,
+        ) {
+            return invalid
+        }
+        group_end = after_right.end
+        let after_left_group: TokenInfo = scan_token_info(bytes, after_right.end, end)
+        if stage2_token_is_symbol(
+            bytes,
+            after_left_group.kind,
+            after_left_group.start,
+            after_left_group.end,
+            0x3Bu8,
+        ) {
+            let trailing: TokenInfo = scan_token_info(bytes, after_left_group.end, end)
+            if trailing.start < end {
+                return invalid
+            }
+            return Stage2ReturnExpression {
+                kind: 2u8,
+                grouping_kind: 3u8,
+                operator_opcode: operator_opcode,
+                second_operator_opcode: 0u8,
+                third_operator_opcode: 0u8,
+                fourth_operator_opcode: 0u8,
+                left_value: left_value,
+                right_value: right_value,
+                third_value: 0usize,
+                fourth_value: 0usize,
+                fifth_value: 0usize,
+                left_start: left.start,
+                left_end: left.end,
+                right_start: right.start,
+                right_end: right.end,
+                third_start: 0usize,
+                third_end: 0usize,
+                fourth_start: 0usize,
+                fourth_end: 0usize,
+                fifth_start: 0usize,
+                fifth_end: 0usize,
+                group_start: group_start,
+                group_end: group_end,
+                expression_start: group_start,
+                expression_end: group_end,
+                statement_end: after_left_group.end,
+            }
+        }
+        let second_operator_opcode: UInt8 = stage2_binary_opcode(bytes[after_left_group.start])
+        if second_operator_opcode == 0u8 {
+            return invalid
+        }
+        let third: TokenInfo = scan_token_info(bytes, after_left_group.end, end)
+        if third.kind != 2u8 {
+            return invalid
+        }
+        let third_value: UIntSize = stage2_i32_literal_value(bytes, third.start, third.end)
+        if third_value == invalid_value {
+            return invalid
+        }
+        let semicolon: TokenInfo = scan_token_info(bytes, third.end, end)
+        if !stage2_token_is_symbol(
+            bytes,
+            semicolon.kind,
+            semicolon.start,
+            semicolon.end,
+            0x3Bu8,
+        ) {
+            return invalid
+        }
+        let trailing: TokenInfo = scan_token_info(bytes, semicolon.end, end)
+        if trailing.start < end {
+            return invalid
+        }
+        return Stage2ReturnExpression {
+            kind: 3u8,
+            grouping_kind: 1u8,
+            operator_opcode: operator_opcode,
+            second_operator_opcode: second_operator_opcode,
+            third_operator_opcode: 0u8,
+            fourth_operator_opcode: 0u8,
+            left_value: left_value,
+            right_value: right_value,
+            third_value: third_value,
+            fourth_value: 0usize,
+            fifth_value: 0usize,
+            left_start: left.start,
+            left_end: left.end,
+            right_start: right.start,
+            right_end: right.end,
+            third_start: third.start,
+            third_end: third.end,
+            fourth_start: 0usize,
+            fourth_end: 0usize,
+            fifth_start: 0usize,
+            fifth_end: 0usize,
+            group_start: group_start,
+            group_end: group_end,
+            expression_start: group_start,
+            expression_end: third.end,
+            statement_end: semicolon.end,
+        }
+    }
+
+    if grouping_kind == 2u8 {
+        if after_right.kind != 3u8 {
+            return invalid
+        }
+        let second_operator_opcode: UInt8 = stage2_binary_opcode(bytes[after_right.start])
+        if second_operator_opcode == 0u8 {
+            return invalid
+        }
+        let third: TokenInfo = scan_token_info(bytes, after_right.end, end)
+        if third.kind != 2u8 {
+            return invalid
+        }
+        let third_value: UIntSize = stage2_i32_literal_value(bytes, third.start, third.end)
+        if third_value == invalid_value {
+            return invalid
+        }
+        let close_group: TokenInfo = scan_token_info(bytes, third.end, end)
+        if !stage2_token_is_symbol(
+            bytes,
+            close_group.kind,
+            close_group.start,
+            close_group.end,
+            0x29u8,
+        ) {
+            return invalid
+        }
+        group_end = close_group.end
+        let semicolon: TokenInfo = scan_token_info(bytes, close_group.end, end)
+        if !stage2_token_is_symbol(
+            bytes,
+            semicolon.kind,
+            semicolon.start,
+            semicolon.end,
+            0x3Bu8,
+        ) {
+            return invalid
+        }
+        let trailing: TokenInfo = scan_token_info(bytes, semicolon.end, end)
+        if trailing.start < end {
+            return invalid
+        }
+        return Stage2ReturnExpression {
+            kind: 3u8,
+            grouping_kind: 2u8,
+            operator_opcode: operator_opcode,
+            second_operator_opcode: second_operator_opcode,
+            third_operator_opcode: 0u8,
+            fourth_operator_opcode: 0u8,
+            left_value: left_value,
+            right_value: right_value,
+            third_value: third_value,
+            fourth_value: 0usize,
+            fifth_value: 0usize,
+            left_start: left.start,
+            left_end: left.end,
+            right_start: right.start,
+            right_end: right.end,
+            third_start: third.start,
+            third_end: third.end,
+            fourth_start: 0usize,
+            fourth_end: 0usize,
+            fifth_start: 0usize,
+            fifth_end: 0usize,
+            group_start: group_start,
+            group_end: group_end,
+            expression_start: left.start,
+            expression_end: group_end,
+            statement_end: semicolon.end,
+        }
+    }
+
+    if stage2_token_is_symbol(
+        bytes,
+        after_right.kind,
+        after_right.start,
+        after_right.end,
+        0x3Bu8,
+    ) {
+        let trailing: TokenInfo = scan_token_info(bytes, after_right.end, end)
+        if trailing.start < end {
+            return invalid
+        }
+        return Stage2ReturnExpression {
+            kind: 2u8,
+            grouping_kind: 0u8,
+            operator_opcode: operator_opcode,
+            second_operator_opcode: 0u8,
+            third_operator_opcode: 0u8,
+            fourth_operator_opcode: 0u8,
+            left_value: left_value,
+            right_value: right_value,
+            third_value: 0usize,
+            fourth_value: 0usize,
+            fifth_value: 0usize,
+            left_start: left.start,
+            left_end: left.end,
+            right_start: right.start,
+            right_end: right.end,
+            third_start: 0usize,
+            third_end: 0usize,
+            fourth_start: 0usize,
+            fourth_end: 0usize,
+            fifth_start: 0usize,
+            fifth_end: 0usize,
+            group_start: 0usize,
+            group_end: 0usize,
+            expression_start: left.start,
+            expression_end: right.end,
+            statement_end: after_right.end,
+        }
+    }
+    if after_right.kind != 3u8 {
+        return invalid
+    }
+    let second_operator_opcode: UInt8 = stage2_binary_opcode(bytes[after_right.start])
+    if second_operator_opcode == 0u8 {
+        return invalid
+    }
+    let third: TokenInfo = scan_token_info(bytes, after_right.end, end)
+    if third.kind != 2u8 {
+        return invalid
+    }
+    let third_value: UIntSize = stage2_i32_literal_value(bytes, third.start, third.end)
+    if third_value == invalid_value {
+        return invalid
+    }
+    let third_operator_or_semicolon: TokenInfo = scan_token_info(bytes, third.end, end)
+    if stage2_token_is_symbol(
+        bytes,
+        third_operator_or_semicolon.kind,
+        third_operator_or_semicolon.start,
+        third_operator_or_semicolon.end,
+        0x3Bu8,
+    ) {
+        let trailing: TokenInfo = scan_token_info(bytes, third_operator_or_semicolon.end, end)
+        if trailing.start < end {
+            return invalid
+        }
+        return Stage2ReturnExpression {
+            kind: 3u8,
+            grouping_kind: 0u8,
+            operator_opcode: operator_opcode,
+            second_operator_opcode: second_operator_opcode,
+            third_operator_opcode: 0u8,
+            fourth_operator_opcode: 0u8,
+            left_value: left_value,
+            right_value: right_value,
+            third_value: third_value,
+            fourth_value: 0usize,
+            fifth_value: 0usize,
+            left_start: left.start,
+            left_end: left.end,
+            right_start: right.start,
+            right_end: right.end,
+            third_start: third.start,
+            third_end: third.end,
+            fourth_start: 0usize,
+            fourth_end: 0usize,
+            fifth_start: 0usize,
+            fifth_end: 0usize,
+            group_start: 0usize,
+            group_end: 0usize,
+            expression_start: left.start,
+            expression_end: third.end,
+            statement_end: third_operator_or_semicolon.end,
+        }
+    }
+    if third_operator_or_semicolon.kind != 3u8 {
+        return invalid
+    }
+    let third_operator_opcode: UInt8 = stage2_binary_opcode(bytes[third_operator_or_semicolon.start])
+    if third_operator_opcode == 0u8 {
+        return invalid
+    }
+    let fourth: TokenInfo = scan_token_info(bytes, third_operator_or_semicolon.end, end)
+    if fourth.kind != 2u8 {
+        return invalid
+    }
+    let fourth_value: UIntSize = stage2_i32_literal_value(bytes, fourth.start, fourth.end)
+    if fourth_value == invalid_value {
+        return invalid
+    }
+    let fourth_operator_or_semicolon: TokenInfo = scan_token_info(bytes, fourth.end, end)
+    if stage2_token_is_symbol(
+        bytes,
+        fourth_operator_or_semicolon.kind,
+        fourth_operator_or_semicolon.start,
+        fourth_operator_or_semicolon.end,
+        0x3Bu8,
+    ) {
+        let trailing: TokenInfo = scan_token_info(bytes, fourth_operator_or_semicolon.end, end)
+        if trailing.start < end {
+            return invalid
+        }
+        return Stage2ReturnExpression {
+            kind: 4u8,
+            grouping_kind: 0u8,
+            operator_opcode: operator_opcode,
+            second_operator_opcode: second_operator_opcode,
+            third_operator_opcode: third_operator_opcode,
+            fourth_operator_opcode: 0u8,
+            left_value: left_value,
+            right_value: right_value,
+            third_value: third_value,
+            fourth_value: fourth_value,
+            fifth_value: 0usize,
+            left_start: left.start,
+            left_end: left.end,
+            right_start: right.start,
+            right_end: right.end,
+            third_start: third.start,
+            third_end: third.end,
+            fourth_start: fourth.start,
+            fourth_end: fourth.end,
+            fifth_start: 0usize,
+            fifth_end: 0usize,
+            group_start: 0usize,
+            group_end: 0usize,
+            expression_start: left.start,
+            expression_end: fourth.end,
+            statement_end: fourth_operator_or_semicolon.end,
+        }
+    }
+    if fourth_operator_or_semicolon.kind != 3u8 {
+        return invalid
+    }
+    let fourth_operator_opcode: UInt8 = stage2_binary_opcode(bytes[fourth_operator_or_semicolon.start])
+    if fourth_operator_opcode == 0u8 {
+        return invalid
+    }
+    let fifth: TokenInfo = scan_token_info(bytes, fourth_operator_or_semicolon.end, end)
+    if fifth.kind != 2u8 {
+        return invalid
+    }
+    let fifth_value: UIntSize = stage2_i32_literal_value(bytes, fifth.start, fifth.end)
+    if fifth_value == invalid_value {
+        return invalid
+    }
+    let semicolon: TokenInfo = scan_token_info(bytes, fifth.end, end)
+    if !stage2_token_is_symbol(bytes, semicolon.kind, semicolon.start, semicolon.end, 0x3Bu8) {
+        return invalid
+    }
+    let trailing: TokenInfo = scan_token_info(bytes, semicolon.end, end)
+    if trailing.start < end {
+        return invalid
+    }
+    return Stage2ReturnExpression {
+        kind: 5u8,
+        grouping_kind: 0u8,
+        operator_opcode: operator_opcode,
+        second_operator_opcode: second_operator_opcode,
+        third_operator_opcode: third_operator_opcode,
+        fourth_operator_opcode: fourth_operator_opcode,
+        left_value: left_value,
+        right_value: right_value,
+        third_value: third_value,
+        fourth_value: fourth_value,
+        fifth_value: fifth_value,
+        left_start: left.start,
+        left_end: left.end,
+        right_start: right.start,
+        right_end: right.end,
+        third_start: third.start,
+        third_end: third.end,
+        fourth_start: fourth.start,
+        fourth_end: fourth.end,
+        fifth_start: fifth.start,
+        fifth_end: fifth.end,
+        group_start: 0usize,
+        group_end: 0usize,
+        expression_start: left.start,
+        expression_end: fifth.end,
+        statement_end: semicolon.end,
+    }
+}
+
+@noalloc
+fn stage2_expression_literal_atom(
+    expression: read Stage2ReturnExpression,
+    literal_index: UIntSize,
+) -> Stage2ExpressionPlanAtom {
+    if literal_index == 0usize {
+        return Stage2ExpressionPlanAtom {
+            value_index: 0usize,
+            start: expression.left_start,
+            end: expression.left_end,
+        }
+    }
+    if literal_index == 1usize {
+        return Stage2ExpressionPlanAtom {
+            value_index: 1usize,
+            start: expression.right_start,
+            end: expression.right_end,
+        }
+    }
+    if literal_index == 2usize {
+        return Stage2ExpressionPlanAtom {
+            value_index: 2usize,
+            start: expression.third_start,
+            end: expression.third_end,
+        }
+    }
+    if literal_index == 3usize {
+        return Stage2ExpressionPlanAtom {
+            value_index: 3usize,
+            start: expression.fourth_start,
+            end: expression.fourth_end,
+        }
+    }
+    return Stage2ExpressionPlanAtom {
+        value_index: 4usize,
+        start: expression.fifth_start,
+        end: expression.fifth_end,
+    }
+}
+
+@noalloc
+fn stage2_expression_operator_at(
+    expression: read Stage2ReturnExpression,
+    operator_index: UIntSize,
+) -> UInt8 {
+    if operator_index == 0usize {
+        return expression.operator_opcode
+    }
+    if operator_index == 1usize {
+        return expression.second_operator_opcode
+    }
+    if operator_index == 2usize {
+        return expression.third_operator_opcode
+    }
+    return expression.fourth_operator_opcode
+}
+
+@noalloc
+fn stage2_expression_plan_atom(
+    expression: read Stage2ReturnExpression,
+    literal_count: UIntSize,
+    effective_index: UIntSize,
+) -> Stage2ExpressionPlanAtom {
+    if expression.grouping_kind == 0u8 {
+        return stage2_expression_literal_atom(expression, effective_index)
+    }
+    let group_left_index: UIntSize = (expression.grouping_kind as UIntSize) - 1usize
+    if effective_index < group_left_index {
+        return stage2_expression_literal_atom(expression, effective_index)
+    }
+    if effective_index == group_left_index {
+        return Stage2ExpressionPlanAtom {
+            value_index: literal_count,
+            start: expression.group_start,
+            end: expression.group_end,
+        }
+    }
+    return stage2_expression_literal_atom(expression, effective_index + 1usize)
+}
+
+@noalloc
+fn stage2_expression_plan_operator(
+    expression: read Stage2ReturnExpression,
+    effective_index: UIntSize,
+) -> UInt8 {
+    var source_index: UIntSize = effective_index
+    if expression.grouping_kind != 0u8 {
+        let group_left_index: UIntSize = (expression.grouping_kind as UIntSize) - 1usize
+        if effective_index >= group_left_index {
+            source_index = source_index + 1usize
+        }
+    }
+    return stage2_expression_operator_at(expression, source_index)
+}
+
+/// Emits kind 4/5 Int32 expressions through one bounded two-tier precedence
+/// plan. An optional single binary group is emitted first as one effective
+/// atom. Multiplication segments are then reduced before pending
+/// addition/subtraction segments are folded from the left. Constants remain
+/// dense before binary nodes and every binary node is written in
+/// child-before-parent order directly into the caller-owned JIR slice.
+@noalloc
+fn stage2_emit_bounded_expression_plan(
+    expression: Stage2ReturnExpression,
+    function_index: UIntSize,
+    return_statement_start: UIntSize,
+    record_base: UIntSize,
+    output: write Slice<Stage2JirRecord>,
+) -> Stage2ExpressionPlanEmission {
+    var literal_count: UIntSize = 4usize
+    if expression.kind == 5u8 {
+        literal_count = 5usize
+    }
+    let binary_count: UIntSize = literal_count - 1usize
+    let record_count: UIntSize = 4usize + binary_count * 2usize
+    var output_capacity: UIntSize = 0usize
+    for output_index in output.indices {
+        output_capacity = output_index + 1usize
+    }
+
+    let literal_values: [UIntSize; 5] = [
+        expression.left_value,
+        expression.right_value,
+        expression.third_value,
+        expression.fourth_value,
+        expression.fifth_value,
+    ]
+    let literal_starts: [UIntSize; 5] = [
+        expression.left_start,
+        expression.right_start,
+        expression.third_start,
+        expression.fourth_start,
+        expression.fifth_start,
+    ]
+    let literal_ends: [UIntSize; 5] = [
+        expression.left_end,
+        expression.right_end,
+        expression.third_end,
+        expression.fourth_end,
+        expression.fifth_end,
+    ]
+    var records_emitted: UIntSize = 0usize
+    var literal_index: UIntSize = 1usize
+    while literal_index < literal_count {
+        let output_index: UIntSize = record_base + 2usize + literal_index
+        if output_index < output_capacity {
+            output[output_index] = Stage2JirRecord {
+                kind: 4u8,
+                opcode: 1u8,
+                type_kind: 2u8,
+                flags: 0u8,
+                function_index: function_index,
+                block_index: 0usize,
+                value_index: literal_index,
+                operand_a: literal_values[literal_index],
+                operand_b: 0usize,
+                source_start: literal_starts[literal_index],
+                source_end: literal_ends[literal_index],
+            }
+            records_emitted = records_emitted + 1usize
+        }
+        literal_index = literal_index + 1usize
+    }
+
+    var nodes_emitted: UIntSize = 0usize
+    var effective_atom_count: UIntSize = literal_count
+    if expression.grouping_kind != 0u8 {
+        let group_left_index: UIntSize = (expression.grouping_kind as UIntSize) - 1usize
+        if group_left_index >= binary_count {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let grouped_left: Stage2ExpressionPlanAtom = stage2_expression_literal_atom(
+            expression,
+            group_left_index,
+        )
+        let grouped_right: Stage2ExpressionPlanAtom = stage2_expression_literal_atom(
+            expression,
+            group_left_index + 1usize,
+        )
+        if expression.group_start >= grouped_left.start {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        if expression.group_end <= grouped_right.end {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let grouped_opcode: UInt8 = stage2_expression_operator_at(
+            expression,
+            group_left_index,
+        )
+        if grouped_opcode < 2u8 {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        if grouped_opcode > 4u8 {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let group_output_index: UIntSize = record_base + 2usize + literal_count
+        if group_output_index < output_capacity {
+            output[group_output_index] = Stage2JirRecord {
+                kind: 4u8,
+                opcode: grouped_opcode,
+                type_kind: 2u8,
+                flags: 0u8,
+                function_index: function_index,
+                block_index: 0usize,
+                value_index: literal_count,
+                operand_a: group_left_index,
+                operand_b: group_left_index + 1usize,
+                source_start: expression.group_start,
+                source_end: expression.group_end,
+            }
+            records_emitted = records_emitted + 1usize
+        }
+        nodes_emitted = 1usize
+        effective_atom_count = literal_count - 1usize
+    }
+
+    let first_atom: Stage2ExpressionPlanAtom = stage2_expression_plan_atom(
+        expression,
+        literal_count,
+        0usize,
+    )
+    var segment_value_index: UIntSize = first_atom.value_index
+    var segment_start: UIntSize = first_atom.start
+    var segment_end: UIntSize = first_atom.end
+    var accumulated_value_index: UIntSize = 0usize
+    var accumulated_start: UIntSize = first_atom.start
+    var pending_low_opcode: UInt8 = 0u8
+    var has_accumulated: Bool = false
+    let effective_binary_count: UIntSize = effective_atom_count - 1usize
+    var operator_index: UIntSize = 0usize
+    while operator_index < effective_binary_count {
+        let current_opcode: UInt8 = stage2_expression_plan_operator(expression, operator_index)
+        if current_opcode < 2u8 {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        if current_opcode > 4u8 {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let next_atom: Stage2ExpressionPlanAtom = stage2_expression_plan_atom(
+            expression,
+            literal_count,
+            operator_index + 1usize,
+        )
+        if current_opcode == 4u8 {
+            let result_value_index: UIntSize = literal_count + nodes_emitted
+            let output_index: UIntSize = record_base + 2usize + literal_count + nodes_emitted
+            if output_index < output_capacity {
+                output[output_index] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: current_opcode,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: result_value_index,
+                    operand_a: segment_value_index,
+                    operand_b: next_atom.value_index,
+                    source_start: segment_start,
+                    source_end: next_atom.end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            segment_value_index = result_value_index
+            segment_end = next_atom.end
+            nodes_emitted = nodes_emitted + 1usize
+        } else {
+            if has_accumulated {
+                let result_value_index: UIntSize = literal_count + nodes_emitted
+                let output_index: UIntSize = record_base + 2usize + literal_count + nodes_emitted
+                if output_index < output_capacity {
+                    output[output_index] = Stage2JirRecord {
+                        kind: 4u8,
+                        opcode: pending_low_opcode,
+                        type_kind: 2u8,
+                        flags: 0u8,
+                        function_index: function_index,
+                        block_index: 0usize,
+                        value_index: result_value_index,
+                        operand_a: accumulated_value_index,
+                        operand_b: segment_value_index,
+                        source_start: accumulated_start,
+                        source_end: segment_end,
+                    }
+                    records_emitted = records_emitted + 1usize
+                }
+                accumulated_value_index = result_value_index
+                nodes_emitted = nodes_emitted + 1usize
+            } else {
+                accumulated_value_index = segment_value_index
+                accumulated_start = segment_start
+                has_accumulated = true
+            }
+            pending_low_opcode = current_opcode
+            segment_value_index = next_atom.value_index
+            segment_start = next_atom.start
+            segment_end = next_atom.end
+        }
+        operator_index = operator_index + 1usize
+    }
+
+    var final_value_index: UIntSize = segment_value_index
+    if has_accumulated {
+        let result_value_index: UIntSize = literal_count + nodes_emitted
+        let output_index: UIntSize = record_base + 2usize + literal_count + nodes_emitted
+        if output_index < output_capacity {
+            output[output_index] = Stage2JirRecord {
+                kind: 4u8,
+                opcode: pending_low_opcode,
+                type_kind: 2u8,
+                flags: 0u8,
+                function_index: function_index,
+                block_index: 0usize,
+                value_index: result_value_index,
+                operand_a: accumulated_value_index,
+                operand_b: segment_value_index,
+                source_start: accumulated_start,
+                source_end: segment_end,
+            }
+            records_emitted = records_emitted + 1usize
+        }
+        final_value_index = result_value_index
+        nodes_emitted = nodes_emitted + 1usize
+    }
+    if nodes_emitted != binary_count {
+        return Stage2ExpressionPlanEmission {
+            valid: false,
+            record_count: record_count,
+            records_emitted: records_emitted,
+            final_value_index: 0usize,
+        }
+    }
+    let return_output_index: UIntSize = record_base + 2usize + literal_count + binary_count
+    if return_output_index < output_capacity {
+        output[return_output_index] = Stage2JirRecord {
+            kind: 5u8,
+            opcode: 1u8,
+            type_kind: 2u8,
+            flags: 1u8,
+            function_index: function_index,
+            block_index: 0usize,
+            value_index: final_value_index,
+            operand_a: 0usize,
+            operand_b: 0usize,
+            source_start: return_statement_start,
+            source_end: expression.statement_end,
+        }
+        records_emitted = records_emitted + 1usize
+    }
+    return Stage2ExpressionPlanEmission {
+        valid: true,
+        record_count: record_count,
+        records_emitted: records_emitted,
+        final_value_index: final_value_index,
+    }
+}
+
+@noalloc
+fn stage2_streaming_literal_at(
+    bytes: read Slice<UInt8>,
+    plan: read Stage2StreamingExpressionPlan,
+    wanted_index: UIntSize,
+) -> Stage2StreamingLiteral {
+    var cursor: UIntSize = plan.expression_start
+    var literal_index: UIntSize = 0usize
+    while cursor < plan.expression_end {
+        let token: TokenInfo = scan_token_info(bytes, cursor, plan.expression_end)
+        if token.start >= plan.expression_end {
+            break
+        }
+        if token.kind == 2u8 {
+            if literal_index == wanted_index {
+                let value: UIntSize = stage2_i32_literal_value(bytes, token.start, token.end)
+                if value == 2147483648usize {
+                    return Stage2StreamingLiteral {
+                        valid: false,
+                        value: 0usize,
+                        start: 0usize,
+                        end: 0usize,
+                    }
+                }
+                return Stage2StreamingLiteral {
+                    valid: true,
+                    value: value,
+                    start: token.start,
+                    end: token.end,
+                }
+            }
+            literal_index = literal_index + 1usize
+        }
+        cursor = token.end
+    }
+    return Stage2StreamingLiteral {
+        valid: false,
+        value: 0usize,
+        start: 0usize,
+        end: 0usize,
+    }
+}
+
+@noalloc
+fn stage2_streaming_operator_at(
+    bytes: read Slice<UInt8>,
+    plan: read Stage2StreamingExpressionPlan,
+    wanted_index: UIntSize,
+) -> UInt8 {
+    var cursor: UIntSize = plan.expression_start
+    var operator_index: UIntSize = 0usize
+    while cursor < plan.expression_end {
+        let token: TokenInfo = scan_token_info(bytes, cursor, plan.expression_end)
+        if token.start >= plan.expression_end {
+            break
+        }
+        if token.kind == 3u8 {
+            let opcode: UInt8 = stage2_binary_opcode(bytes[token.start])
+            if opcode >= 2u8 {
+                if opcode <= 4u8 {
+                    if operator_index == wanted_index {
+                        return opcode
+                    }
+                    operator_index = operator_index + 1usize
+                }
+            }
+        }
+        cursor = token.end
+    }
+    return 0u8
+}
+
+@noalloc
+fn stage2_streaming_plan_atom(
+    bytes: read Slice<UInt8>,
+    plan: read Stage2StreamingExpressionPlan,
+    effective_index: UIntSize,
+) -> Stage2ExpressionPlanAtom {
+    if plan.grouping_kind == 0usize {
+        let literal: Stage2StreamingLiteral = stage2_streaming_literal_at(
+            bytes,
+            plan,
+            effective_index,
+        )
+        return Stage2ExpressionPlanAtom {
+            value_index: effective_index,
+            start: literal.start,
+            end: literal.end,
+        }
+    }
+    let group_left_index: UIntSize = plan.grouping_kind - 1usize
+    if effective_index < group_left_index {
+        let literal: Stage2StreamingLiteral = stage2_streaming_literal_at(
+            bytes,
+            plan,
+            effective_index,
+        )
+        return Stage2ExpressionPlanAtom {
+            value_index: effective_index,
+            start: literal.start,
+            end: literal.end,
+        }
+    }
+    if effective_index == group_left_index {
+        return Stage2ExpressionPlanAtom {
+            value_index: plan.literal_count,
+            start: plan.group_start,
+            end: plan.group_end,
+        }
+    }
+    if plan.second_grouping_kind == 0usize {
+        let literal_index: UIntSize = effective_index + 1usize
+        let literal: Stage2StreamingLiteral = stage2_streaming_literal_at(bytes, plan, literal_index)
+        return Stage2ExpressionPlanAtom {
+            value_index: literal_index,
+            start: literal.start,
+            end: literal.end,
+        }
+    }
+    let second_group_left_index: UIntSize = plan.second_grouping_kind - 1usize
+    let second_group_effective_index: UIntSize = second_group_left_index - 1usize
+    if effective_index < second_group_effective_index {
+        let literal_index: UIntSize = effective_index + 1usize
+        let literal: Stage2StreamingLiteral = stage2_streaming_literal_at(bytes, plan, literal_index)
+        return Stage2ExpressionPlanAtom {
+            value_index: literal_index,
+            start: literal.start,
+            end: literal.end,
+        }
+    }
+    if effective_index == second_group_effective_index {
+        return Stage2ExpressionPlanAtom {
+            value_index: plan.literal_count + 1usize,
+            start: plan.second_group_start,
+            end: plan.second_group_end,
+        }
+    }
+    let literal_index: UIntSize = effective_index + 2usize
+    let literal: Stage2StreamingLiteral = stage2_streaming_literal_at(bytes, plan, literal_index)
+    return Stage2ExpressionPlanAtom {
+        value_index: literal_index,
+        start: literal.start,
+        end: literal.end,
+    }
+}
+
+@noalloc
+fn stage2_streaming_plan_operator(
+    bytes: read Slice<UInt8>,
+    plan: read Stage2StreamingExpressionPlan,
+    effective_index: UIntSize,
+) -> UInt8 {
+    var source_index: UIntSize = effective_index
+    if plan.grouping_kind != 0usize {
+        let group_left_index: UIntSize = plan.grouping_kind - 1usize
+        if effective_index >= group_left_index {
+            source_index = source_index + 1usize
+        }
+    }
+    if plan.second_grouping_kind != 0usize {
+        let second_group_left_index: UIntSize = plan.second_grouping_kind - 1usize
+        let second_group_effective_index: UIntSize = second_group_left_index - 1usize
+        if effective_index >= second_group_effective_index {
+            source_index = source_index + 1usize
+        }
+    }
+    return stage2_streaming_operator_at(bytes, plan, source_index)
+}
+
+/// Emits five through sixteen operators by rescanning the validated source and
+/// writing constants plus child-before-parent reductions directly into the
+/// caller-owned Stage2JirRecord table. At most two disjoint, non-nested binary
+/// groups are emitted in source order. No fixed operand array is retained.
+@noalloc
+fn stage2_emit_streaming_expression_plan(
+    bytes: read Slice<UInt8>,
+    plan: read Stage2StreamingExpressionPlan,
+    function_index: UIntSize,
+    return_statement_start: UIntSize,
+    record_base: UIntSize,
+    output: write Slice<Stage2JirRecord>,
+) -> Stage2ExpressionPlanEmission {
+    let record_count: UIntSize = 4usize + plan.operator_count * 2usize
+    var output_capacity: UIntSize = 0usize
+    for output_index in output.indices {
+        output_capacity = output_index + 1usize
+    }
+    var records_emitted: UIntSize = 0usize
+    var literal_index: UIntSize = 1usize
+    while literal_index < plan.literal_count {
+        let literal: Stage2StreamingLiteral = stage2_streaming_literal_at(
+            bytes,
+            plan,
+            literal_index,
+        )
+        if !literal.valid {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let output_index: UIntSize = record_base + 2usize + literal_index
+        if output_index < output_capacity {
+            output[output_index] = Stage2JirRecord {
+                kind: 4u8,
+                opcode: 1u8,
+                type_kind: 2u8,
+                flags: 0u8,
+                function_index: function_index,
+                block_index: 0usize,
+                value_index: literal_index,
+                operand_a: literal.value,
+                operand_b: 0usize,
+                source_start: literal.start,
+                source_end: literal.end,
+            }
+            records_emitted = records_emitted + 1usize
+        }
+        literal_index = literal_index + 1usize
+    }
+
+    var nodes_emitted: UIntSize = 0usize
+    var effective_atom_count: UIntSize = plan.literal_count
+    if plan.grouping_kind != 0usize {
+        let group_left_index: UIntSize = plan.grouping_kind - 1usize
+        if group_left_index >= plan.operator_count {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let grouped_left: Stage2StreamingLiteral = stage2_streaming_literal_at(
+            bytes,
+            plan,
+            group_left_index,
+        )
+        let grouped_right: Stage2StreamingLiteral = stage2_streaming_literal_at(
+            bytes,
+            plan,
+            group_left_index + 1usize,
+        )
+        if !grouped_left.valid {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        if !grouped_right.valid {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let grouped_opcode: UInt8 = stage2_streaming_operator_at(
+            bytes,
+            plan,
+            group_left_index,
+        )
+        if grouped_opcode < 2u8 {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let group_output_index: UIntSize = record_base + 2usize + plan.literal_count
+        if group_output_index < output_capacity {
+            output[group_output_index] = Stage2JirRecord {
+                kind: 4u8,
+                opcode: grouped_opcode,
+                type_kind: 2u8,
+                flags: 0u8,
+                function_index: function_index,
+                block_index: 0usize,
+                value_index: plan.literal_count,
+                operand_a: group_left_index,
+                operand_b: group_left_index + 1usize,
+                source_start: plan.group_start,
+                source_end: plan.group_end,
+            }
+            records_emitted = records_emitted + 1usize
+        }
+        nodes_emitted = 1usize
+        effective_atom_count = plan.literal_count - 1usize
+    }
+    if plan.second_grouping_kind != 0usize {
+        if plan.grouping_kind == 0usize {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let first_group_left_index: UIntSize = plan.grouping_kind - 1usize
+        let second_group_left_index: UIntSize = plan.second_grouping_kind - 1usize
+        if second_group_left_index >= plan.operator_count {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        if second_group_left_index <= first_group_left_index + 1usize {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let grouped_left: Stage2StreamingLiteral = stage2_streaming_literal_at(
+            bytes,
+            plan,
+            second_group_left_index,
+        )
+        let grouped_right: Stage2StreamingLiteral = stage2_streaming_literal_at(
+            bytes,
+            plan,
+            second_group_left_index + 1usize,
+        )
+        if !grouped_left.valid {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        if !grouped_right.valid {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let grouped_opcode: UInt8 = stage2_streaming_operator_at(
+            bytes,
+            plan,
+            second_group_left_index,
+        )
+        if grouped_opcode < 2u8 {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let group_output_index: UIntSize = record_base + 2usize + plan.literal_count + nodes_emitted
+        if group_output_index < output_capacity {
+            output[group_output_index] = Stage2JirRecord {
+                kind: 4u8,
+                opcode: grouped_opcode,
+                type_kind: 2u8,
+                flags: 0u8,
+                function_index: function_index,
+                block_index: 0usize,
+                value_index: plan.literal_count + nodes_emitted,
+                operand_a: second_group_left_index,
+                operand_b: second_group_left_index + 1usize,
+                source_start: plan.second_group_start,
+                source_end: plan.second_group_end,
+            }
+            records_emitted = records_emitted + 1usize
+        }
+        nodes_emitted = nodes_emitted + 1usize
+        effective_atom_count = effective_atom_count - 1usize
+    }
+
+    let first_atom: Stage2ExpressionPlanAtom = stage2_streaming_plan_atom(bytes, plan, 0usize)
+    var segment_value_index: UIntSize = first_atom.value_index
+    var segment_start: UIntSize = first_atom.start
+    var segment_end: UIntSize = first_atom.end
+    var accumulated_value_index: UIntSize = 0usize
+    var accumulated_start: UIntSize = first_atom.start
+    var pending_low_opcode: UInt8 = 0u8
+    var has_accumulated: Bool = false
+    let effective_binary_count: UIntSize = effective_atom_count - 1usize
+    var operator_index: UIntSize = 0usize
+    while operator_index < effective_binary_count {
+        let current_opcode: UInt8 = stage2_streaming_plan_operator(
+            bytes,
+            plan,
+            operator_index,
+        )
+        if current_opcode < 2u8 {
+            return Stage2ExpressionPlanEmission {
+                valid: false,
+                record_count: record_count,
+                records_emitted: records_emitted,
+                final_value_index: 0usize,
+            }
+        }
+        let next_atom: Stage2ExpressionPlanAtom = stage2_streaming_plan_atom(
+            bytes,
+            plan,
+            operator_index + 1usize,
+        )
+        if current_opcode == 4u8 {
+            let result_value_index: UIntSize = plan.literal_count + nodes_emitted
+            let output_index: UIntSize = record_base + 2usize + plan.literal_count + nodes_emitted
+            if output_index < output_capacity {
+                output[output_index] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: current_opcode,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: result_value_index,
+                    operand_a: segment_value_index,
+                    operand_b: next_atom.value_index,
+                    source_start: segment_start,
+                    source_end: next_atom.end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            segment_value_index = result_value_index
+            segment_end = next_atom.end
+            nodes_emitted = nodes_emitted + 1usize
+        } else {
+            if has_accumulated {
+                let result_value_index: UIntSize = plan.literal_count + nodes_emitted
+                let output_index: UIntSize = record_base + 2usize + plan.literal_count + nodes_emitted
+                if output_index < output_capacity {
+                    output[output_index] = Stage2JirRecord {
+                        kind: 4u8,
+                        opcode: pending_low_opcode,
+                        type_kind: 2u8,
+                        flags: 0u8,
+                        function_index: function_index,
+                        block_index: 0usize,
+                        value_index: result_value_index,
+                        operand_a: accumulated_value_index,
+                        operand_b: segment_value_index,
+                        source_start: accumulated_start,
+                        source_end: segment_end,
+                    }
+                    records_emitted = records_emitted + 1usize
+                }
+                accumulated_value_index = result_value_index
+                nodes_emitted = nodes_emitted + 1usize
+            } else {
+                accumulated_value_index = segment_value_index
+                accumulated_start = segment_start
+                has_accumulated = true
+            }
+            pending_low_opcode = current_opcode
+            segment_value_index = next_atom.value_index
+            segment_start = next_atom.start
+            segment_end = next_atom.end
+        }
+        operator_index = operator_index + 1usize
+    }
+
+    var final_value_index: UIntSize = segment_value_index
+    if has_accumulated {
+        let result_value_index: UIntSize = plan.literal_count + nodes_emitted
+        let output_index: UIntSize = record_base + 2usize + plan.literal_count + nodes_emitted
+        if output_index < output_capacity {
+            output[output_index] = Stage2JirRecord {
+                kind: 4u8,
+                opcode: pending_low_opcode,
+                type_kind: 2u8,
+                flags: 0u8,
+                function_index: function_index,
+                block_index: 0usize,
+                value_index: result_value_index,
+                operand_a: accumulated_value_index,
+                operand_b: segment_value_index,
+                source_start: accumulated_start,
+                source_end: segment_end,
+            }
+            records_emitted = records_emitted + 1usize
+        }
+        final_value_index = result_value_index
+        nodes_emitted = nodes_emitted + 1usize
+    }
+    if nodes_emitted != plan.operator_count {
+        return Stage2ExpressionPlanEmission {
+            valid: false,
+            record_count: record_count,
+            records_emitted: records_emitted,
+            final_value_index: 0usize,
+        }
+    }
+    let return_output_index: UIntSize = record_base + 2usize + plan.literal_count + plan.operator_count
+    if return_output_index < output_capacity {
+        output[return_output_index] = Stage2JirRecord {
+            kind: 5u8,
+            opcode: 1u8,
+            type_kind: 2u8,
+            flags: 1u8,
+            function_index: function_index,
+            block_index: 0usize,
+            value_index: final_value_index,
+            operand_a: 0usize,
+            operand_b: 0usize,
+            source_start: return_statement_start,
+            source_end: plan.statement_end,
+        }
+        records_emitted = records_emitted + 1usize
+    }
+    return Stage2ExpressionPlanEmission {
+        valid: true,
+        record_count: record_count,
+        records_emitted: records_emitted,
+        final_value_index: final_value_index,
+    }
+}
+
+/// Emits a deterministic, fixed-record JIR subset from the caller-owned
+/// function/statement/call tables produced by `compile_frontend_stage2`.
+///
+/// The supported semantic slice is deliberately executable-shaped and exact:
+/// one or more source-ordered `-> Int32` functions, each with zero parameters
+/// or one explicit `name: Int32` parameter, and each
+/// containing exactly one literal return, one binary operation, or one bounded
+/// two-operator chain, or an expression plan with three through sixteen binary
+/// operators, optionally with at most two explicit, disjoint, non-nested
+/// binary groups, over
+/// non-negative Int32 literals, and no
+/// executable call expression. The generic call
+/// scan reports a leading return group as `return(...)`; that one header is
+/// accepted only when its delimiters exactly match the bounded expression.
+/// Truncation is reported without writing outside the caller's output slice.
+@export(name: "jadren_selfhost_emit_stage2_jir", abi: "C")
+@noalloc
+pub fn emit_stage2_jir(
+    bytes: read Slice<UInt8>,
+    function_headers: read Slice<FunctionHeader>,
+    statements: read Slice<StatementHeader>,
+    calls: read Slice<ExpressionCallHeader>,
+    output: write Slice<Stage2JirRecord>,
+) -> Stage2JirSummary {
+    var source_length: UIntSize = 0usize
+    for source_index in bytes.indices {
+        source_length = source_index + 1usize
+    }
+    var function_count: UIntSize = 0usize
+    for function_index in function_headers.indices {
+        function_count = function_index + 1usize
+    }
+    var statement_count: UIntSize = 0usize
+    for statement_index in statements.indices {
+        statement_count = statement_index + 1usize
+    }
+    var call_count: UIntSize = 0usize
+    for call_index in calls.indices {
+        call_count = call_index + 1usize
+    }
+    var output_capacity: UIntSize = 0usize
+    for output_index in output.indices {
+        output_capacity = output_index + 1usize
+    }
+
+    var previous_function_end: UIntSize = 0usize
+    for function_index in function_headers.indices {
+        if function_headers[function_index].name_start >= function_headers[function_index].name_end {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 0usize,
+            }
+        }
+        if function_headers[function_index].name_end > source_length {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 0usize,
+            }
+        }
+        if function_headers[function_index].body_start >= function_headers[function_index].body_end {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 0usize,
+            }
+        }
+        if function_headers[function_index].body_end > source_length {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 0usize,
+            }
+        }
+        if bytes[function_headers[function_index].body_start] != 0x7Bu8 {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 0usize,
+            }
+        }
+        if bytes[function_headers[function_index].body_end - 1usize] != 0x7Du8 {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 0usize,
+            }
+        }
+        if function_index > 0usize {
+            if function_headers[function_index].name_start < previous_function_end {
+                return Stage2JirSummary {
+                    functions_seen: function_count,
+                    statements_seen: statement_count,
+                    calls_seen: call_count,
+                    records_required: 0usize,
+                    records_emitted: 0usize,
+                    functions_lowered: 0usize,
+                    errors: 1usize,
+                    status_flags: 0usize,
+                }
+            }
+        }
+        previous_function_end = function_headers[function_index].body_end
+    }
+    for statement_index in statements.indices {
+        if statements[statement_index].kind < 1u8 {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 0usize,
+            }
+        }
+        if statements[statement_index].kind > 9u8 {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 0usize,
+            }
+        }
+        if statements[statement_index].start >= statements[statement_index].end {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 0usize,
+            }
+        }
+        if statements[statement_index].end > source_length {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 0usize,
+            }
+        }
+    }
+    for call_index in calls.indices {
+        if calls[call_index].callee_start >= calls[call_index].callee_end {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 0usize,
+            }
+        }
+        if calls[call_index].close_end > source_length {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 0usize,
+            }
+        }
+    }
+
+    if function_count == 0usize {
+        return Stage2JirSummary {
+            functions_seen: function_count,
+            statements_seen: statement_count,
+            calls_seen: call_count,
+            records_required: 0usize,
+            records_emitted: 0usize,
+            functions_lowered: 0usize,
+            errors: 1usize,
+            status_flags: 1usize,
+        }
+    }
+    for call_index in calls.indices {
+        var is_signature_group: Bool = false
+        var is_leading_expression_group: Bool = false
+        for function_index in function_headers.indices {
+            if calls[call_index].callee_start == function_headers[function_index].name_start {
+                if calls[call_index].callee_end == function_headers[function_index].name_end {
+                    if calls[call_index].open_start >= function_headers[function_index].name_end {
+                        if calls[call_index].close_end < function_headers[function_index].body_start {
+                            is_signature_group = true
+                        }
+                    }
+                }
+            }
+            if calls[call_index].callee_start + 3usize == function_headers[function_index].name_start {
+                if bytes[calls[call_index].callee_start] == 0x66u8 {
+                    if bytes[calls[call_index].callee_start + 1usize] == 0x6Eu8 {
+                        if bytes[calls[call_index].callee_start + 2usize] == 0x20u8 {
+                            if calls[call_index].callee_end == function_headers[function_index].name_end {
+                                if calls[call_index].open_start >= function_headers[function_index].name_end {
+                                    if calls[call_index].close_end < function_headers[function_index].body_start {
+                                        is_signature_group = true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if calls[call_index].open_start > function_headers[function_index].body_start {
+                if calls[call_index].close_end < function_headers[function_index].body_end {
+                    for statement_index in statements.indices {
+                        if statements[statement_index].start > function_headers[function_index].body_start {
+                            if statements[statement_index].end < function_headers[function_index].body_end {
+                                let streaming_plan: Stage2StreamingExpressionPlan = stage2_parse_streaming_return_i32_expression_plan(
+                                    bytes,
+                                    statements[statement_index].start,
+                                    function_headers[function_index].body_end - 1usize,
+                                )
+                                let expression: Stage2ReturnExpression = stage2_parse_return_i32_expression(
+                                    bytes,
+                                    statements[statement_index].start,
+                                    function_headers[function_index].body_end - 1usize,
+                                )
+                                var is_supported_leading_group: Bool = false
+                                var supported_group_start: UIntSize = 0usize
+                                var supported_group_end: UIntSize = 0usize
+                                if expression.kind != 0u8 {
+                                    if expression.grouping_kind == 1u8 {
+                                        is_supported_leading_group = true
+                                        supported_group_start = expression.group_start
+                                        supported_group_end = expression.group_end
+                                    }
+                                    if expression.grouping_kind == 3u8 {
+                                        is_supported_leading_group = true
+                                        supported_group_start = expression.group_start
+                                        supported_group_end = expression.group_end
+                                    }
+                                }
+                                if streaming_plan.valid {
+                                    if streaming_plan.grouping_kind == 1usize {
+                                        is_supported_leading_group = true
+                                        supported_group_start = streaming_plan.group_start
+                                        supported_group_end = streaming_plan.group_end
+                                    }
+                                }
+                                if is_supported_leading_group {
+                                    let keyword: TokenInfo = scan_token_info(
+                                        bytes,
+                                        statements[statement_index].start,
+                                        function_headers[function_index].body_end - 1usize,
+                                    )
+                                    if calls[call_index].callee_start == keyword.start {
+                                        if calls[call_index].callee_end == keyword.end {
+                                            if calls[call_index].open_start == supported_group_start {
+                                                if calls[call_index].open_end == supported_group_start + 1usize {
+                                                    if calls[call_index].close_start + 1usize == supported_group_end {
+                                                        if calls[call_index].close_end == supported_group_end {
+                                                            if calls[call_index].argument_count == 1usize {
+                                                                if calls[call_index].depth == 0usize {
+                                                                    is_leading_expression_group = true
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !is_signature_group {
+            if !is_leading_expression_group {
+                return Stage2JirSummary {
+                    functions_seen: function_count,
+                    statements_seen: statement_count,
+                    calls_seen: call_count,
+                    records_required: 0usize,
+                    records_emitted: 0usize,
+                    functions_lowered: 0usize,
+                    errors: 1usize,
+                    status_flags: 1usize,
+                }
+            }
+        }
+    }
+    var matched_statements: UIntSize = 0usize
+    var binary_operation_count: UIntSize = 0usize
+    var parameter_function_count: UIntSize = 0usize
+    var parameter_total_count: UIntSize = 0usize
+    for function_index in function_headers.indices {
+        if function_headers[function_index].parameter_count > 2usize {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 1usize,
+            }
+        }
+        var parameter: Stage2ParameterInfo = stage2_invalid_parameter_info()
+        if function_headers[function_index].parameter_count == 1usize {
+            parameter = stage2_parse_single_i32_parameter(
+                bytes,
+                function_headers[function_index].name_end,
+                function_headers[function_index].body_start,
+            )
+            if !parameter.valid {
+                return Stage2JirSummary {
+                    functions_seen: function_count,
+                    statements_seen: statement_count,
+                    calls_seen: call_count,
+                    records_required: 0usize,
+                    records_emitted: 0usize,
+                    functions_lowered: 0usize,
+                    errors: 1usize,
+                    status_flags: 1usize,
+                }
+            }
+            parameter_function_count = parameter_function_count + 1usize
+            parameter_total_count = parameter_total_count + 1usize
+        }
+        if function_headers[function_index].parameter_count == 2usize {
+            parameter = stage2_parse_pair_i32_parameters(
+                bytes,
+                function_headers[function_index].name_end,
+                function_headers[function_index].body_start,
+            )
+            if !parameter.valid {
+                return Stage2JirSummary {
+                    functions_seen: function_count,
+                    statements_seen: statement_count,
+                    calls_seen: call_count,
+                    records_required: 0usize,
+                    records_emitted: 0usize,
+                    functions_lowered: 0usize,
+                    errors: 1usize,
+                    status_flags: 11usize,
+                }
+            }
+            if parameter.count != 2usize {
+                return Stage2JirSummary {
+                    functions_seen: function_count,
+                    statements_seen: statement_count,
+                    calls_seen: call_count,
+                    records_required: 0usize,
+                    records_emitted: 0usize,
+                    functions_lowered: 0usize,
+                    errors: 1usize,
+                    status_flags: 12usize,
+                }
+            }
+            parameter_function_count = parameter_function_count + 1usize
+            parameter_total_count = parameter_total_count + 2usize
+        }
+        if !stage2_has_int32_result(
+            bytes,
+            function_headers[function_index].name_end,
+            function_headers[function_index].body_start,
+        ) {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 1usize,
+            }
+        }
+        var function_statement_count: UIntSize = 0usize
+        for statement_index in statements.indices {
+            if statements[statement_index].start > function_headers[function_index].body_start {
+                if statements[statement_index].end < function_headers[function_index].body_end {
+                    function_statement_count = function_statement_count + 1usize
+                    matched_statements = matched_statements + 1usize
+                    if statements[statement_index].kind != 2u8 {
+                        return Stage2JirSummary {
+                            functions_seen: function_count,
+                            statements_seen: statement_count,
+                            calls_seen: call_count,
+                            records_required: 0usize,
+                            records_emitted: 0usize,
+                            functions_lowered: 0usize,
+                            errors: 1usize,
+                            status_flags: 1usize,
+                        }
+                    }
+                    let streaming_plan: Stage2StreamingExpressionPlan = stage2_parse_streaming_return_i32_expression_plan(
+                        bytes,
+                        statements[statement_index].start,
+                        function_headers[function_index].body_end - 1usize,
+                    )
+                    let expression: Stage2ReturnExpression = stage2_parse_return_i32_expression(
+                        bytes,
+                        statements[statement_index].start,
+                        function_headers[function_index].body_end - 1usize,
+                    )
+                    let parameter_expression: Stage2ReturnExpression = stage2_parse_parameter_return_i32_expression(
+                        bytes,
+                        statements[statement_index].start,
+                        function_headers[function_index].body_end - 1usize,
+                        parameter.valid,
+                        parameter.name_start,
+                        parameter.name_end,
+                    )
+                    let parameter_pair_expression: Stage2ReturnExpression = stage2_parse_parameter_pair_return_i32_expression(
+                        bytes,
+                        statements[statement_index].start,
+                        function_headers[function_index].body_end - 1usize,
+                        parameter.valid,
+                        parameter.name_start,
+                        parameter.name_end,
+                        parameter.second_name_start,
+                        parameter.second_name_end,
+                    )
+                    if function_headers[function_index].parameter_count == 1usize {
+                        if parameter_expression.kind != 6u8 {
+                            return Stage2JirSummary {
+                                functions_seen: function_count,
+                                statements_seen: statement_count,
+                                calls_seen: call_count,
+                                records_required: 0usize,
+                                records_emitted: 0usize,
+                                functions_lowered: 0usize,
+                                errors: 1usize,
+                                status_flags: 1usize,
+                            }
+                        }
+                        binary_operation_count = binary_operation_count + 1usize
+                    } else {
+                        if function_headers[function_index].parameter_count == 2usize {
+                            if parameter_pair_expression.kind != 7u8 {
+                                return Stage2JirSummary {
+                                    functions_seen: function_count,
+                                    statements_seen: statement_count,
+                                    calls_seen: call_count,
+                                    records_required: 0usize,
+                                    records_emitted: 0usize,
+                                    functions_lowered: 0usize,
+                                    errors: 1usize,
+                                    status_flags: 13usize,
+                                }
+                            }
+                            binary_operation_count = binary_operation_count + 1usize
+                        } else {
+                            if streaming_plan.valid {
+                                binary_operation_count = binary_operation_count + streaming_plan.operator_count
+                            } else {
+                                if expression.kind == 0u8 {
+                                    return Stage2JirSummary {
+                                        functions_seen: function_count,
+                                        statements_seen: statement_count,
+                                        calls_seen: call_count,
+                                        records_required: 0usize,
+                                        records_emitted: 0usize,
+                                        functions_lowered: 0usize,
+                                        errors: 1usize,
+                                        status_flags: 1usize,
+                                    }
+                                }
+                                if expression.kind == 2u8 {
+                                    binary_operation_count = binary_operation_count + 1usize
+                                }
+                                if expression.kind == 3u8 {
+                                    binary_operation_count = binary_operation_count + 2usize
+                                }
+                                if expression.kind == 4u8 {
+                                    binary_operation_count = binary_operation_count + 3usize
+                                }
+                                if expression.kind == 5u8 {
+                                    binary_operation_count = binary_operation_count + 4usize
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if function_statement_count != 1usize {
+            return Stage2JirSummary {
+                functions_seen: function_count,
+                statements_seen: statement_count,
+                calls_seen: call_count,
+                records_required: 0usize,
+                records_emitted: 0usize,
+                functions_lowered: 0usize,
+                errors: 1usize,
+                status_flags: 1usize,
+            }
+        }
+    }
+    if matched_statements != statement_count {
+        return Stage2JirSummary {
+            functions_seen: function_count,
+            statements_seen: statement_count,
+            calls_seen: call_count,
+            records_required: 0usize,
+            records_emitted: 0usize,
+            functions_lowered: 0usize,
+            errors: 1usize,
+            status_flags: 1usize,
+        }
+    }
+
+    let records_required: UIntSize = 1usize + function_count * 4usize
+        + binary_operation_count * 2usize
+        - parameter_total_count
+    var records_emitted: UIntSize = 0usize
+    if output_capacity > 0usize {
+        output[0] = Stage2JirRecord {
+            kind: 1u8,
+            opcode: 1u8,
+            type_kind: 2u8,
+            flags: 1u8,
+            function_index: 0usize,
+            block_index: 0usize,
+            value_index: 0usize,
+            operand_a: 32usize,
+            operand_b: 0usize,
+            source_start: 0usize,
+            source_end: 0usize,
+        }
+        records_emitted = 1usize
+    }
+    var record_cursor: UIntSize = 1usize
+    for function_index in function_headers.indices {
+        var return_statement_index: UIntSize = 0usize
+        for statement_index in statements.indices {
+            if statements[statement_index].start > function_headers[function_index].body_start {
+                if statements[statement_index].end < function_headers[function_index].body_end {
+                    return_statement_index = statement_index
+                }
+            }
+        }
+        let streaming_plan: Stage2StreamingExpressionPlan = stage2_parse_streaming_return_i32_expression_plan(
+            bytes,
+            statements[return_statement_index].start,
+            function_headers[function_index].body_end - 1usize,
+        )
+        let expression: Stage2ReturnExpression = stage2_parse_return_i32_expression(
+            bytes,
+            statements[return_statement_index].start,
+            function_headers[function_index].body_end - 1usize,
+        )
+        var parameter: Stage2ParameterInfo = stage2_invalid_parameter_info()
+        var parameter_expression: Stage2ReturnExpression = stage2_invalid_parameter_return_expression()
+        var parameter_pair_expression: Stage2ReturnExpression = stage2_invalid_parameter_return_expression()
+        if function_headers[function_index].parameter_count == 1usize {
+            parameter = stage2_parse_single_i32_parameter(
+                bytes,
+                function_headers[function_index].name_end,
+                function_headers[function_index].body_start,
+            )
+            parameter_expression = stage2_parse_parameter_return_i32_expression(
+                bytes,
+                statements[return_statement_index].start,
+                function_headers[function_index].body_end - 1usize,
+                parameter.valid,
+                parameter.name_start,
+                parameter.name_end,
+            )
+        }
+        if function_headers[function_index].parameter_count == 2usize {
+            parameter = stage2_parse_pair_i32_parameters(
+                bytes,
+                function_headers[function_index].name_end,
+                function_headers[function_index].body_start,
+            )
+            parameter_pair_expression = stage2_parse_parameter_pair_return_i32_expression(
+                bytes,
+                statements[return_statement_index].start,
+                function_headers[function_index].body_end - 1usize,
+                parameter.valid,
+                parameter.name_start,
+                parameter.name_end,
+                parameter.second_name_start,
+                parameter.second_name_end,
+            )
+        }
+        if function_headers[function_index].parameter_count == 1usize {
+            if parameter_expression.kind != 6u8 {
+                return Stage2JirSummary {
+                    functions_seen: function_count,
+                    statements_seen: statement_count,
+                    calls_seen: call_count,
+                    records_required: 0usize,
+                    records_emitted: 0usize,
+                    functions_lowered: 0usize,
+                    errors: 1usize,
+                    status_flags: 0usize,
+                }
+            }
+        } else {
+            if function_headers[function_index].parameter_count == 2usize {
+                if parameter_pair_expression.kind != 7u8 {
+                    return Stage2JirSummary {
+                        functions_seen: function_count,
+                        statements_seen: statement_count,
+                        calls_seen: call_count,
+                        records_required: 0usize,
+                        records_emitted: 0usize,
+                        functions_lowered: 0usize,
+                        errors: 1usize,
+                        status_flags: 0usize,
+                    }
+                }
+            } else {
+            if !streaming_plan.valid {
+                if expression.kind == 0u8 {
+                    return Stage2JirSummary {
+                        functions_seen: function_count,
+                        statements_seen: statement_count,
+                        calls_seen: call_count,
+                        records_required: 0usize,
+                        records_emitted: 0usize,
+                        functions_lowered: 0usize,
+                        errors: 1usize,
+                        status_flags: 0usize,
+                    }
+                }
+            }
+            }
+        }
+        var first_value: UIntSize = expression.left_value
+        var first_start: UIntSize = expression.left_start
+        var first_end: UIntSize = expression.left_end
+        if streaming_plan.valid {
+            first_value = streaming_plan.first_value
+            first_start = streaming_plan.first_start
+            first_end = streaming_plan.first_end
+        }
+        let record_base: UIntSize = record_cursor
+        if record_base < output_capacity {
+            output[record_base] = Stage2JirRecord {
+                kind: 2u8,
+                opcode: 1u8,
+                type_kind: 2u8,
+                flags: 1u8,
+                function_index: function_index,
+                block_index: 0usize,
+                value_index: 0usize,
+                operand_a: function_headers[function_index].parameter_count,
+                operand_b: 0usize,
+                source_start: function_headers[function_index].name_start,
+                source_end: function_headers[function_index].body_end,
+            }
+            records_emitted = records_emitted + 1usize
+        }
+        if record_base + 1usize < output_capacity {
+            output[record_base + 1usize] = Stage2JirRecord {
+                kind: 3u8,
+                opcode: 1u8,
+                type_kind: 0u8,
+                flags: 0u8,
+                function_index: function_index,
+                block_index: 0usize,
+                value_index: 0usize,
+                operand_a: 0usize,
+                operand_b: 0usize,
+                source_start: function_headers[function_index].body_start,
+                source_end: function_headers[function_index].body_end,
+            }
+            records_emitted = records_emitted + 1usize
+        }
+        if function_headers[function_index].parameter_count == 1usize {
+            if record_base + 2usize < output_capacity {
+                output[record_base + 2usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 1usize,
+                    operand_a: parameter_expression.right_value,
+                    operand_b: 0usize,
+                    source_start: parameter_expression.right_start,
+                    source_end: parameter_expression.right_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 3usize < output_capacity {
+                output[record_base + 3usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: parameter_expression.operator_opcode,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 2usize,
+                    operand_a: 0usize,
+                    operand_b: 1usize,
+                    source_start: parameter_expression.expression_start,
+                    source_end: parameter_expression.expression_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 4usize < output_capacity {
+                output[record_base + 4usize] = Stage2JirRecord {
+                    kind: 5u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 1u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 2usize,
+                    operand_a: 0usize,
+                    operand_b: 0usize,
+                    source_start: statements[return_statement_index].start,
+                    source_end: parameter_expression.statement_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            record_cursor = record_cursor + 5usize
+            continue
+        }
+        if function_headers[function_index].parameter_count == 2usize {
+            if parameter_pair_expression.kind != 7u8 {
+                return Stage2JirSummary {
+                    functions_seen: function_count,
+                    statements_seen: statement_count,
+                    calls_seen: call_count,
+                    records_required: 0usize,
+                    records_emitted: 0usize,
+                    functions_lowered: 0usize,
+                    errors: 1usize,
+                    status_flags: 0usize,
+                }
+            }
+            if record_base + 2usize < output_capacity {
+                output[record_base + 2usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: parameter_pair_expression.operator_opcode,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 2usize,
+                    operand_a: 0usize,
+                    operand_b: 1usize,
+                    source_start: parameter_pair_expression.expression_start,
+                    source_end: parameter_pair_expression.expression_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 3usize < output_capacity {
+                output[record_base + 3usize] = Stage2JirRecord {
+                    kind: 5u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 1u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 2usize,
+                    operand_a: 0usize,
+                    operand_b: 0usize,
+                    source_start: statements[return_statement_index].start,
+                    source_end: parameter_pair_expression.statement_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            record_cursor = record_cursor + 4usize
+            continue
+        }
+        if record_base + 2usize < output_capacity {
+            output[record_base + 2usize] = Stage2JirRecord {
+                kind: 4u8,
+                opcode: 1u8,
+                type_kind: 2u8,
+                flags: 0u8,
+                function_index: function_index,
+                block_index: 0usize,
+                value_index: 0usize,
+                operand_a: first_value,
+                operand_b: 0usize,
+                source_start: first_start,
+                source_end: first_end,
+            }
+            records_emitted = records_emitted + 1usize
+        }
+        var use_legacy_long_plan: Bool = false
+        if expression.kind == 4u8 {
+            if expression.grouping_kind == 0u8 {
+                use_legacy_long_plan = true
+            }
+        }
+        if streaming_plan.valid {
+            let plan: Stage2ExpressionPlanEmission = stage2_emit_streaming_expression_plan(
+                bytes,
+                streaming_plan,
+                function_index,
+                statements[return_statement_index].start,
+                record_base,
+                output,
+            )
+            if !plan.valid {
+                return Stage2JirSummary {
+                    functions_seen: function_count,
+                    statements_seen: statement_count,
+                    calls_seen: call_count,
+                    records_required: 0usize,
+                    records_emitted: 0usize,
+                    functions_lowered: 0usize,
+                    errors: 1usize,
+                    status_flags: 1usize,
+                }
+            }
+            records_emitted = records_emitted + plan.records_emitted
+            record_cursor = record_cursor + plan.record_count
+        } else if expression.kind == 1u8 {
+            if record_base + 3usize < output_capacity {
+                output[record_base + 3usize] = Stage2JirRecord {
+                    kind: 5u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 1u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 0usize,
+                    operand_a: 0usize,
+                    operand_b: 0usize,
+                    source_start: statements[return_statement_index].start,
+                    source_end: expression.statement_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            record_cursor = record_cursor + 4usize
+        } else if expression.kind == 2u8 {
+            if record_base + 3usize < output_capacity {
+                output[record_base + 3usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 1usize,
+                    operand_a: expression.right_value,
+                    operand_b: 0usize,
+                    source_start: expression.right_start,
+                    source_end: expression.right_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 4usize < output_capacity {
+                output[record_base + 4usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: expression.operator_opcode,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 2usize,
+                    operand_a: 0usize,
+                    operand_b: 1usize,
+                    source_start: expression.expression_start,
+                    source_end: expression.expression_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 5usize < output_capacity {
+                output[record_base + 5usize] = Stage2JirRecord {
+                    kind: 5u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 1u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 2usize,
+                    operand_a: 0usize,
+                    operand_b: 0usize,
+                    source_start: statements[return_statement_index].start,
+                    source_end: expression.statement_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            record_cursor = record_cursor + 6usize
+        } else if expression.kind == 3u8 {
+            if record_base + 3usize < output_capacity {
+                output[record_base + 3usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 1usize,
+                    operand_a: expression.right_value,
+                    operand_b: 0usize,
+                    source_start: expression.right_start,
+                    source_end: expression.right_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 4usize < output_capacity {
+                output[record_base + 4usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 2usize,
+                    operand_a: expression.third_value,
+                    operand_b: 0usize,
+                    source_start: expression.third_start,
+                    source_end: expression.third_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            var reduce_right_first: Bool = false
+            if expression.grouping_kind == 2u8 {
+                reduce_right_first = true
+            } else {
+                if expression.grouping_kind == 0u8 {
+                    if expression.second_operator_opcode == 4u8 {
+                        if expression.operator_opcode != 4u8 {
+                            reduce_right_first = true
+                        }
+                    }
+                }
+            }
+            if record_base + 5usize < output_capacity {
+                var first_opcode: UInt8 = expression.operator_opcode
+                var first_operand_a: UIntSize = 0usize
+                var first_operand_b: UIntSize = 1usize
+                var first_source_start: UIntSize = expression.left_start
+                var first_source_end: UIntSize = expression.right_end
+                if reduce_right_first {
+                    first_opcode = expression.second_operator_opcode
+                    first_operand_a = 1usize
+                    first_operand_b = 2usize
+                    first_source_start = expression.right_start
+                    first_source_end = expression.third_end
+                }
+                if expression.grouping_kind == 1u8 {
+                    first_source_start = expression.group_start
+                    first_source_end = expression.group_end
+                }
+                if expression.grouping_kind == 2u8 {
+                    first_source_start = expression.group_start
+                    first_source_end = expression.group_end
+                }
+                output[record_base + 5usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: first_opcode,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 3usize,
+                    operand_a: first_operand_a,
+                    operand_b: first_operand_b,
+                    source_start: first_source_start,
+                    source_end: first_source_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 6usize < output_capacity {
+                var final_opcode: UInt8 = expression.second_operator_opcode
+                var final_operand_a: UIntSize = 3usize
+                var final_operand_b: UIntSize = 2usize
+                if reduce_right_first {
+                    final_opcode = expression.operator_opcode
+                    final_operand_a = 0usize
+                    final_operand_b = 3usize
+                }
+                output[record_base + 6usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: final_opcode,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 4usize,
+                    operand_a: final_operand_a,
+                    operand_b: final_operand_b,
+                    source_start: expression.expression_start,
+                    source_end: expression.expression_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 7usize < output_capacity {
+                output[record_base + 7usize] = Stage2JirRecord {
+                    kind: 5u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 1u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 4usize,
+                    operand_a: 0usize,
+                    operand_b: 0usize,
+                    source_start: statements[return_statement_index].start,
+                    source_end: expression.statement_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            record_cursor = record_cursor + 8usize
+        } else if use_legacy_long_plan {
+            if record_base + 3usize < output_capacity {
+                output[record_base + 3usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 1usize,
+                    operand_a: expression.right_value,
+                    operand_b: 0usize,
+                    source_start: expression.right_start,
+                    source_end: expression.right_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 4usize < output_capacity {
+                output[record_base + 4usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 2usize,
+                    operand_a: expression.third_value,
+                    operand_b: 0usize,
+                    source_start: expression.third_start,
+                    source_end: expression.third_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 5usize < output_capacity {
+                output[record_base + 5usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 3usize,
+                    operand_a: expression.fourth_value,
+                    operand_b: 0usize,
+                    source_start: expression.fourth_start,
+                    source_end: expression.fourth_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            var reduce_first_left: Bool = true
+            if expression.operator_opcode != 4u8 {
+                if expression.second_operator_opcode == 4u8 {
+                    reduce_first_left = false
+                }
+            }
+            var reduce_second_left: Bool = true
+            if reduce_first_left {
+                if expression.second_operator_opcode != 4u8 {
+                    if expression.third_operator_opcode == 4u8 {
+                        reduce_second_left = false
+                    }
+                }
+            } else {
+                if expression.operator_opcode != 4u8 {
+                    if expression.third_operator_opcode == 4u8 {
+                        reduce_second_left = false
+                    }
+                }
+            }
+            if record_base + 6usize < output_capacity {
+                var first_opcode: UInt8 = expression.operator_opcode
+                var first_operand_a: UIntSize = 0usize
+                var first_operand_b: UIntSize = 1usize
+                var first_source_start: UIntSize = expression.left_start
+                var first_source_end: UIntSize = expression.right_end
+                if !reduce_first_left {
+                    first_opcode = expression.second_operator_opcode
+                    first_operand_a = 1usize
+                    first_operand_b = 2usize
+                    first_source_start = expression.right_start
+                    first_source_end = expression.third_end
+                }
+                output[record_base + 6usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: first_opcode,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 4usize,
+                    operand_a: first_operand_a,
+                    operand_b: first_operand_b,
+                    source_start: first_source_start,
+                    source_end: first_source_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 7usize < output_capacity {
+                var second_opcode: UInt8 = expression.second_operator_opcode
+                var second_operand_a: UIntSize = 4usize
+                var second_operand_b: UIntSize = 2usize
+                var second_source_start: UIntSize = expression.left_start
+                var second_source_end: UIntSize = expression.third_end
+                if reduce_first_left {
+                    if !reduce_second_left {
+                        second_opcode = expression.third_operator_opcode
+                        second_operand_a = 2usize
+                        second_operand_b = 3usize
+                        second_source_start = expression.third_start
+                        second_source_end = expression.fourth_end
+                    }
+                } else {
+                    if reduce_second_left {
+                        second_opcode = expression.operator_opcode
+                        second_operand_a = 0usize
+                        second_operand_b = 4usize
+                        second_source_start = expression.left_start
+                        second_source_end = expression.third_end
+                    } else {
+                        second_opcode = expression.third_operator_opcode
+                        second_operand_a = 4usize
+                        second_operand_b = 3usize
+                        second_source_start = expression.right_start
+                        second_source_end = expression.fourth_end
+                    }
+                }
+                output[record_base + 7usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: second_opcode,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 5usize,
+                    operand_a: second_operand_a,
+                    operand_b: second_operand_b,
+                    source_start: second_source_start,
+                    source_end: second_source_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 8usize < output_capacity {
+                var final_opcode: UInt8 = expression.third_operator_opcode
+                var final_operand_a: UIntSize = 5usize
+                var final_operand_b: UIntSize = 3usize
+                if reduce_first_left {
+                    if !reduce_second_left {
+                        final_opcode = expression.second_operator_opcode
+                        final_operand_a = 4usize
+                        final_operand_b = 5usize
+                    }
+                } else {
+                    if !reduce_second_left {
+                        final_opcode = expression.operator_opcode
+                        final_operand_a = 0usize
+                        final_operand_b = 5usize
+                    }
+                }
+                output[record_base + 8usize] = Stage2JirRecord {
+                    kind: 4u8,
+                    opcode: final_opcode,
+                    type_kind: 2u8,
+                    flags: 0u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 6usize,
+                    operand_a: final_operand_a,
+                    operand_b: final_operand_b,
+                    source_start: expression.expression_start,
+                    source_end: expression.expression_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            if record_base + 9usize < output_capacity {
+                output[record_base + 9usize] = Stage2JirRecord {
+                    kind: 5u8,
+                    opcode: 1u8,
+                    type_kind: 2u8,
+                    flags: 1u8,
+                    function_index: function_index,
+                    block_index: 0usize,
+                    value_index: 6usize,
+                    operand_a: 0usize,
+                    operand_b: 0usize,
+                    source_start: statements[return_statement_index].start,
+                    source_end: expression.statement_end,
+                }
+                records_emitted = records_emitted + 1usize
+            }
+            record_cursor = record_cursor + 10usize
+        } else {
+            let plan: Stage2ExpressionPlanEmission = stage2_emit_bounded_expression_plan(
+                expression,
+                function_index,
+                statements[return_statement_index].start,
+                record_base,
+                output,
+            )
+            if !plan.valid {
+                return Stage2JirSummary {
+                    functions_seen: function_count,
+                    statements_seen: statement_count,
+                    calls_seen: call_count,
+                    records_required: 0usize,
+                    records_emitted: 0usize,
+                    functions_lowered: 0usize,
+                    errors: 1usize,
+                    status_flags: 1usize,
+                }
+            }
+            records_emitted = records_emitted + plan.records_emitted
+            record_cursor = record_cursor + plan.record_count
+        }
+    }
+    var status: UIntSize = 3usize
+    if records_emitted == records_required {
+        status = 7usize
+    }
+    return Stage2JirSummary {
+        functions_seen: function_count,
+        statements_seen: statement_count,
+        calls_seen: call_count,
+        records_required: records_required,
+        records_emitted: records_emitted,
+        functions_lowered: function_count,
+        errors: 0usize,
         status_flags: status,
     }
 }

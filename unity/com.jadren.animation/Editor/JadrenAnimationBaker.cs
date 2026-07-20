@@ -18,6 +18,114 @@ namespace Jadren.Animation.Editor
         private const float PositionTolerance = 0.001f;
         private const float RotationToleranceDegrees = 0.1f;
 
+        [MenuItem("Tools/Jadren/Animation/Bake Selected Prefab", false, 219)]
+        private static void BakeSelectedPrefab()
+        {
+            var selected = Selection.activeObject as GameObject;
+            var assetPath = selected == null ? string.Empty : AssetDatabase.GetAssetPath(selected);
+            if (selected == null || !assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+            {
+                EditorUtility.DisplayDialog(
+                    "Jadren Animation",
+                    "Vyber prefab asset (napr. FemaleZombie.prefab), nie iba scénovú inštanciu.",
+                    "OK");
+                return;
+            }
+
+            if (!TryBakePrefabAsset(assetPath, out var failureReason))
+            {
+                EditorUtility.DisplayDialog("Jadren Animation", failureReason, "OK");
+            }
+        }
+
+        /// <summary>
+        /// Bakes a prefab asset without depending on editor selection. This is
+        /// the deterministic entry point used by CI fixtures and project tools.
+        /// </summary>
+        public static bool TryBakePrefabAsset(string assetPath, out string failureReason)
+        {
+            failureReason = string.Empty;
+            if (string.IsNullOrWhiteSpace(assetPath)
+                || !assetPath.StartsWith("Assets/", StringComparison.Ordinal)
+                || !assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+            {
+                failureReason = "Zadaj platnú cestu prefab assetu pod Assets/.";
+                return false;
+            }
+
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+            if (prefab == null)
+            {
+                failureReason = $"Prefab asset nebol nájdený: {assetPath}";
+                return false;
+            }
+
+            var root = PrefabUtility.LoadPrefabContents(assetPath);
+            try
+            {
+                var animator = root.GetComponentInChildren<Animator>(true);
+                if (animator == null || animator.runtimeAnimatorController == null)
+                {
+                    failureReason = "Prefab nemá Animator s RuntimeAnimatorController.";
+                    return false;
+                }
+
+                EnsureOutputFolder();
+                var rigData = CollectRig(animator.transform);
+                var rig = CreateRigAsset(animator.transform, rigData);
+                var clips = CreateClipAssets(animator, animator.transform, rigData, rig.CacheKey);
+                var controller = CreateControllerAsset(animator, clips);
+                if (clips.Count == 0)
+                {
+                    failureReason = "AnimatorController neobsahuje žiadny použiteľný AnimationClip.";
+                    return false;
+                }
+
+                var authoring = animator.GetComponent<JadrenAnimationAuthoring>();
+                if (authoring == null)
+                {
+                    authoring = animator.gameObject.AddComponent<JadrenAnimationAuthoring>();
+                }
+                authoring.AssignBakedAssets(rig, controller);
+                if (animator.GetComponent<JadrenAnimationPlayer>() == null)
+                {
+                    animator.gameObject.AddComponent<JadrenAnimationPlayer>();
+                }
+
+                EditorUtility.SetDirty(authoring);
+                if (PrefabUtility.SaveAsPrefabAsset(root, assetPath) == null)
+                {
+                    failureReason = $"Prefab sa nepodarilo uložiť: {assetPath}";
+                    return false;
+                }
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+                Debug.Log(
+                    $"Jadren prefab bake hotový: prefab='{assetPath}', rig={rig.BoneCount}, clips={clips.Count}.",
+                    prefab);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                failureReason = $"Jadren prefab bake zlyhal: {exception.Message}";
+                Debug.LogException(exception);
+                return false;
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+        }
+
+        [MenuItem("Tools/Jadren/Animation/Bake Selected Prefab", true)]
+        private static bool ValidateBakeSelectedPrefab()
+        {
+            var selected = Selection.activeObject as GameObject;
+            var assetPath = selected == null ? string.Empty : AssetDatabase.GetAssetPath(selected);
+            return selected != null
+                && assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase);
+        }
+
         [MenuItem("Tools/Jadren/Animation/Bake Selected Animator", false, 220)]
         private static void BakeSelectedAnimator()
         {
@@ -495,6 +603,8 @@ namespace Jadren.Animation.Editor
             var translations = new Vector3[valueCount];
             var rotations = new Quaternion[valueCount];
             var scales = new Vector3[valueCount];
+            var rootReferencePosition = Vector3.zero;
+            var rootReferenceCaptured = false;
             var sampleObject = Object.Instantiate(root.gameObject);
             sampleObject.name = "__JadrenAnimationBake__";
             sampleObject.hideFlags = HideFlags.HideAndDontSave;
@@ -518,7 +628,17 @@ namespace Jadren.Animation.Editor
                             scales[index] = rig.Scales[bone];
                             continue;
                         }
-                        translations[index] = transform.localPosition;
+                        var localPosition = transform.localPosition;
+                        if (bone == 0)
+                        {
+                            if (!rootReferenceCaptured)
+                            {
+                                rootReferencePosition = localPosition;
+                                rootReferenceCaptured = true;
+                            }
+                            localPosition -= rootReferencePosition;
+                        }
+                        translations[index] = localPosition;
                         rotations[index] = transform.localRotation;
                         scales[index] = transform.localScale;
                     }

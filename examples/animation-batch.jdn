@@ -58,6 +58,24 @@ pub struct AnimationPose {
     pub scale_z: Float32,
 }
 
+/// Eight-lane packed local TRS pose. The tile is memory-only and is passed
+/// through a borrowed slice; no Float8 value crosses an exported C register
+/// boundary. Unity's AoS `AnimationPose` remains the compatibility fallback
+/// for scalar tails and low-count callers.
+@repr(C)
+pub struct AnimationPoseTile8 {
+    pub position_x: Float8,
+    pub position_y: Float8,
+    pub position_z: Float8,
+    pub rotation_x: Float8,
+    pub rotation_y: Float8,
+    pub rotation_z: Float8,
+    pub rotation_w: Float8,
+    pub scale_x: Float8,
+    pub scale_y: Float8,
+    pub scale_z: Float8,
+}
+
 /// Eight-lane AoSoA tile for the controller hot path. The tile is a private
 /// packed representation; the public AoS record above remains the ABI used by
 /// Unity authoring and diagnostics.
@@ -287,6 +305,148 @@ pub fn animation_pose_blend_linear(
                 pose.scale_x = previous[index].scale_x + (current[index].scale_x - previous[index].scale_x) * blend
                 pose.scale_y = previous[index].scale_y + (current[index].scale_y - previous[index].scale_y) * blend
                 pose.scale_z = previous[index].scale_z + (current[index].scale_z - previous[index].scale_z) * blend
+            }
+        }
+        output[index] = pose
+        sampled = sampled + 1usize
+    }
+    return sampled
+}
+
+/// Eight-lane AoSoA pose blend. The scalar fade controls endpoint selection
+/// while the interior path uses one Float8 value for every TRS component.
+/// Callers process a scalar AoS tail separately when the bone/agent count is
+/// not a multiple of eight.
+@export(name: "jadren_animation_pose_blend_linear_aosoa8", abi: "C")
+@noalloc
+pub fn animation_pose_blend_linear_aosoa8(
+    previous: read Slice<AnimationPoseTile8>,
+    current: read Slice<AnimationPoseTile8>,
+    output: write Slice<AnimationPoseTile8>,
+    count: UIntSize,
+    fade_weight: Float32,
+) -> UIntSize {
+    var blend = fade_weight
+    if blend < 0.0f32 {
+        blend = 0.0f32
+    }
+    if blend > 1.0f32 {
+        blend = 1.0f32
+    }
+
+    var sampled: UIntSize = 0usize
+    let amount: Float8 = vector_splat8(blend)
+    for index in output.indices {
+        if index >= count {
+            continue
+        }
+
+        var pose: AnimationPoseTile8 = output[index]
+
+        if blend <= 0.0f32 {
+            pose.position_x = previous[index].position_x
+            pose.position_y = previous[index].position_y
+            pose.position_z = previous[index].position_z
+            pose.rotation_x = previous[index].rotation_x
+            pose.rotation_y = previous[index].rotation_y
+            pose.rotation_z = previous[index].rotation_z
+            pose.rotation_w = previous[index].rotation_w
+            pose.scale_x = previous[index].scale_x
+            pose.scale_y = previous[index].scale_y
+            pose.scale_z = previous[index].scale_z
+        } else {
+            if blend >= 1.0f32 {
+                pose.position_x = current[index].position_x
+                pose.position_y = current[index].position_y
+                pose.position_z = current[index].position_z
+                pose.rotation_x = current[index].rotation_x
+                pose.rotation_y = current[index].rotation_y
+                pose.rotation_z = current[index].rotation_z
+                pose.rotation_w = current[index].rotation_w
+                pose.scale_x = current[index].scale_x
+                pose.scale_y = current[index].scale_y
+                pose.scale_z = current[index].scale_z
+            } else {
+                pose.position_x = previous[index].position_x + (current[index].position_x - previous[index].position_x) * amount
+                pose.position_y = previous[index].position_y + (current[index].position_y - previous[index].position_y) * amount
+                pose.position_z = previous[index].position_z + (current[index].position_z - previous[index].position_z) * amount
+                pose.rotation_x = previous[index].rotation_x + (current[index].rotation_x - previous[index].rotation_x) * amount
+                pose.rotation_y = previous[index].rotation_y + (current[index].rotation_y - previous[index].rotation_y) * amount
+                pose.rotation_z = previous[index].rotation_z + (current[index].rotation_z - previous[index].rotation_z) * amount
+                pose.rotation_w = previous[index].rotation_w + (current[index].rotation_w - previous[index].rotation_w) * amount
+                pose.scale_x = previous[index].scale_x + (current[index].scale_x - previous[index].scale_x) * amount
+                pose.scale_y = previous[index].scale_y + (current[index].scale_y - previous[index].scale_y) * amount
+                pose.scale_z = previous[index].scale_z + (current[index].scale_z - previous[index].scale_z) * amount
+            }
+        }
+        output[index] = pose
+        sampled = sampled + 1usize
+    }
+    return sampled
+}
+
+/// Aggregated AoSoA8 pose blend for a crowd. Each tile owns its fade weight,
+/// so tiles from many agents and transition buckets can cross the C boundary
+/// in one call. Unity keeps the tile order and scalar tails caller-owned.
+@export(name: "jadren_animation_pose_blend_linear_aosoa8_weighted", abi: "C")
+@noalloc
+pub fn animation_pose_blend_linear_aosoa8_weighted(
+    previous: read Slice<AnimationPoseTile8>,
+    current: read Slice<AnimationPoseTile8>,
+    output: write Slice<AnimationPoseTile8>,
+    fade_weights: read Slice<Float32>,
+    count: UIntSize,
+) -> UIntSize {
+    var sampled: UIntSize = 0usize
+    for index in output.indices {
+        if index >= count {
+            continue
+        }
+
+        var blend = fade_weights[index]
+        if blend < 0.0f32 {
+            blend = 0.0f32
+        }
+        if blend > 1.0f32 {
+            blend = 1.0f32
+        }
+
+        var pose: AnimationPoseTile8 = output[index]
+        if blend <= 0.0f32 {
+            pose.position_x = previous[index].position_x
+            pose.position_y = previous[index].position_y
+            pose.position_z = previous[index].position_z
+            pose.rotation_x = previous[index].rotation_x
+            pose.rotation_y = previous[index].rotation_y
+            pose.rotation_z = previous[index].rotation_z
+            pose.rotation_w = previous[index].rotation_w
+            pose.scale_x = previous[index].scale_x
+            pose.scale_y = previous[index].scale_y
+            pose.scale_z = previous[index].scale_z
+        } else {
+            if blend >= 1.0f32 {
+                pose.position_x = current[index].position_x
+                pose.position_y = current[index].position_y
+                pose.position_z = current[index].position_z
+                pose.rotation_x = current[index].rotation_x
+                pose.rotation_y = current[index].rotation_y
+                pose.rotation_z = current[index].rotation_z
+                pose.rotation_w = current[index].rotation_w
+                pose.scale_x = current[index].scale_x
+                pose.scale_y = current[index].scale_y
+                pose.scale_z = current[index].scale_z
+            } else {
+                let amount: Float8 = vector_splat8(blend)
+                pose.position_x = previous[index].position_x + (current[index].position_x - previous[index].position_x) * amount
+                pose.position_y = previous[index].position_y + (current[index].position_y - previous[index].position_y) * amount
+                pose.position_z = previous[index].position_z + (current[index].position_z - previous[index].position_z) * amount
+                pose.rotation_x = previous[index].rotation_x + (current[index].rotation_x - previous[index].rotation_x) * amount
+                pose.rotation_y = previous[index].rotation_y + (current[index].rotation_y - previous[index].rotation_y) * amount
+                pose.rotation_z = previous[index].rotation_z + (current[index].rotation_z - previous[index].rotation_z) * amount
+                pose.rotation_w = previous[index].rotation_w + (current[index].rotation_w - previous[index].rotation_w) * amount
+                pose.scale_x = previous[index].scale_x + (current[index].scale_x - previous[index].scale_x) * amount
+                pose.scale_y = previous[index].scale_y + (current[index].scale_y - previous[index].scale_y) * amount
+                pose.scale_z = previous[index].scale_z + (current[index].scale_z - previous[index].scale_z) * amount
             }
         }
         output[index] = pose

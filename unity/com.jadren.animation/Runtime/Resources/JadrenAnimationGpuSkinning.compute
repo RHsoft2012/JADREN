@@ -1,4 +1,5 @@
 #pragma kernel SkinVertices
+#pragma kernel EvaluateAnimationCrowd
 
 struct JadrenGpuSkinningVertex
 {
@@ -12,18 +13,44 @@ StructuredBuffer<float4x4> BoneMatrices;
 RWStructuredBuffer<float3> OutputPosition;
 
 int JadrenVertexCount;
+int JadrenInputVertexCount;
 int JadrenBoneCount;
+int JadrenVerticesPerAgent;
+int JadrenBonesPerAgent;
+int JadrenAgentCount;
+int JadrenSkinningGroupStride;
 
 [numthreads(64, 1, 1)]
 void SkinVertices(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
-    uint vertexIndex = dispatchThreadId.x;
+    uint vertexIndex = dispatchThreadId.x
+        + dispatchThreadId.y * (uint)JadrenSkinningGroupStride;
     if (vertexIndex >= (uint)JadrenVertexCount)
     {
         return;
     }
 
-    JadrenGpuSkinningVertex vertex = Vertices[vertexIndex];
+    uint localVertexIndex = JadrenVerticesPerAgent > 0
+        ? vertexIndex % (uint)JadrenVerticesPerAgent
+        : vertexIndex;
+    if (localVertexIndex >= (uint)JadrenInputVertexCount)
+    {
+        return;
+    }
+    JadrenGpuSkinningVertex vertex = Vertices[localVertexIndex];
+    uint agentIndex = JadrenVerticesPerAgent > 0
+        ? vertexIndex / (uint)JadrenVerticesPerAgent
+        : 0u;
+    if (JadrenAgentCount > 0 && agentIndex >= (uint)JadrenAgentCount)
+    {
+        return;
+    }
+    uint boneBase = JadrenBonesPerAgent > 0
+        ? agentIndex * (uint)JadrenBonesPerAgent
+        : 0u;
+    uint bonesPerAgent = JadrenBonesPerAgent > 0
+        ? (uint)JadrenBonesPerAgent
+        : (uint)JadrenBoneCount;
     float4 weights = max(vertex.BoneWeights, 0.0f);
     float weightSum = weights.x + weights.y + weights.z + weights.w;
     if (weightSum <= 0.000001f)
@@ -34,21 +61,244 @@ void SkinVertices(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     uint4 indices = (uint4)round(vertex.BoneIndices);
     float3 skinned = 0.0f;
-    if (weights.x > 0.0f && indices.x < (uint)JadrenBoneCount)
+    if (weights.x > 0.0f && indices.x < bonesPerAgent
+        && boneBase + indices.x < (uint)JadrenBoneCount)
     {
-        skinned += mul(BoneMatrices[indices.x], float4(vertex.Position, 1.0f)).xyz * weights.x;
+        skinned += mul(BoneMatrices[boneBase + indices.x], float4(vertex.Position, 1.0f)).xyz * weights.x;
     }
-    if (weights.y > 0.0f && indices.y < (uint)JadrenBoneCount)
+    if (weights.y > 0.0f && indices.y < bonesPerAgent
+        && boneBase + indices.y < (uint)JadrenBoneCount)
     {
-        skinned += mul(BoneMatrices[indices.y], float4(vertex.Position, 1.0f)).xyz * weights.y;
+        skinned += mul(BoneMatrices[boneBase + indices.y], float4(vertex.Position, 1.0f)).xyz * weights.y;
     }
-    if (weights.z > 0.0f && indices.z < (uint)JadrenBoneCount)
+    if (weights.z > 0.0f && indices.z < bonesPerAgent
+        && boneBase + indices.z < (uint)JadrenBoneCount)
     {
-        skinned += mul(BoneMatrices[indices.z], float4(vertex.Position, 1.0f)).xyz * weights.z;
+        skinned += mul(BoneMatrices[boneBase + indices.z], float4(vertex.Position, 1.0f)).xyz * weights.z;
     }
-    if (weights.w > 0.0f && indices.w < (uint)JadrenBoneCount)
+    if (weights.w > 0.0f && indices.w < bonesPerAgent
+        && boneBase + indices.w < (uint)JadrenBoneCount)
     {
-        skinned += mul(BoneMatrices[indices.w], float4(vertex.Position, 1.0f)).xyz * weights.w;
+        skinned += mul(BoneMatrices[boneBase + indices.w], float4(vertex.Position, 1.0f)).xyz * weights.w;
     }
     OutputPosition[vertexIndex] = skinned / weightSum;
+}
+
+struct JadrenGpuAnimationClipInfo
+{
+    int FrameOffset;
+    int FrameCount;
+    int BoneCount;
+    float SampleRate;
+    float Duration;
+    int Loop;
+    float SpeedThreshold;
+    float PlaybackSpeed;
+};
+
+StructuredBuffer<JadrenGpuAnimationClipInfo> AnimationClipInfos;
+StructuredBuffer<float3> AnimationTranslations;
+StructuredBuffer<float4> AnimationRotations;
+StructuredBuffer<float3> AnimationScales;
+struct JadrenGpuAnimationMeshPathInfo
+{
+    int Offset;
+    int Count;
+};
+StructuredBuffer<JadrenGpuAnimationMeshPathInfo> AnimationMeshPathInfos;
+StructuredBuffer<int> AnimationMeshPathIndices;
+StructuredBuffer<float4x4> AnimationBindposes;
+StructuredBuffer<float> AnimationAgentSpeeds;
+RWStructuredBuffer<float> AnimationAgentTimes;
+RWStructuredBuffer<float4x4> AnimationBoneMatrices;
+
+int JadrenAnimationAgentCount;
+int JadrenAnimationAgentColumns;
+int JadrenAnimationRigBoneCount;
+int JadrenAnimationMeshBoneCount;
+int JadrenAnimationClipCount;
+int JadrenAnimationRootBoneIndex;
+float JadrenAnimationDeltaTime;
+float JadrenAnimationAgentSpacing;
+float3 JadrenAnimationAgentOrigin;
+float3 JadrenAnimationRootReference;
+groupshared float JadrenAnimationGroupTime;
+
+float4 JadrenAnimationSlerpUnclamped(float4 left, float4 right, float weight)
+{
+    float dotValue = dot(left, right);
+    if (dotValue < 0.0)
+    {
+        right = -right;
+        dotValue = -dotValue;
+    }
+    dotValue = clamp(dotValue, -1.0, 1.0);
+    if (dotValue > 0.9995)
+    {
+        return normalize(lerp(left, right, weight));
+    }
+    float angle = acos(dotValue);
+    float sine = sin(angle);
+    if (abs(sine) < 0.000001)
+    {
+        return normalize(lerp(left, right, weight));
+    }
+    return normalize(
+        (sin((1.0 - weight) * angle) * left
+            + sin(weight * angle) * right) / sine);
+}
+
+float4x4 JadrenAnimationComposeTrs(float3 position, float4 rotation, float3 scale)
+{
+    float x = rotation.x;
+    float y = rotation.y;
+    float z = rotation.z;
+    float w = rotation.w;
+    float xx = x + x;
+    float yy = y + y;
+    float zz = z + z;
+    float xx2 = x * xx;
+    float yy2 = y * yy;
+    float zz2 = z * zz;
+    float xy = x * yy;
+    float xz = x * zz;
+    float yz = y * zz;
+    float wx = w * xx;
+    float wy = w * yy;
+    float wz = w * zz;
+    return float4x4(
+        (1.0 - (yy2 + zz2)) * scale.x, (xy - wz) * scale.y,
+        (xz + wy) * scale.z, position.x,
+        (xy + wz) * scale.x, (1.0 - (xx2 + zz2)) * scale.y,
+        (yz - wx) * scale.z, position.y,
+        (xz - wy) * scale.x, (yz + wx) * scale.y,
+        (1.0 - (xx2 + yy2)) * scale.z, position.z,
+        0.0, 0.0, 0.0, 1.0);
+}
+
+void JadrenAnimationSample(
+    int clipIndex,
+    int boneIndex,
+    float time,
+    out float3 position,
+    out float4 rotation,
+    out float3 scale)
+{
+    JadrenGpuAnimationClipInfo clip = AnimationClipInfos[clipIndex];
+    float sampleTime = clip.Duration <= 0.0 ? 0.0 : time;
+    if (clip.Loop != 0 && clip.Duration > 0.0)
+    {
+        sampleTime = fmod(sampleTime, clip.Duration);
+        if (sampleTime < 0.0)
+        {
+            sampleTime += clip.Duration;
+        }
+    }
+    else
+    {
+        sampleTime = clamp(sampleTime, 0.0, clip.Duration);
+    }
+    float frame = sampleTime * clip.SampleRate;
+    int first = clamp((int)floor(frame), 0, clip.FrameCount - 1);
+    int second = min(first + 1, clip.FrameCount - 1);
+    float weight = saturate(frame - (float)first);
+    int firstIndex = clip.FrameOffset + first * clip.BoneCount + boneIndex;
+    int secondIndex = clip.FrameOffset + second * clip.BoneCount + boneIndex;
+    position = lerp(AnimationTranslations[firstIndex], AnimationTranslations[secondIndex], weight);
+    rotation = JadrenAnimationSlerpUnclamped(
+        AnimationRotations[firstIndex],
+        AnimationRotations[secondIndex],
+        weight);
+    scale = lerp(AnimationScales[firstIndex], AnimationScales[secondIndex], weight);
+}
+
+int JadrenAnimationSelectClip(float speed)
+{
+    int selected = 0;
+    float bestThreshold = -3.402823466e+38;
+    for (int index = 0; index < JadrenAnimationClipCount; index++)
+    {
+        JadrenGpuAnimationClipInfo clip = AnimationClipInfos[index];
+        if (speed >= clip.SpeedThreshold && clip.SpeedThreshold >= bestThreshold)
+        {
+            selected = index;
+            bestThreshold = clip.SpeedThreshold;
+        }
+    }
+    return selected;
+}
+
+[numthreads(64, 1, 1)]
+void EvaluateAnimationCrowd(
+    uint3 groupId : SV_GroupID,
+    uint3 groupThreadId : SV_GroupThreadID)
+{
+    if (groupId.x >= (uint)JadrenAnimationAgentCount
+        || JadrenAnimationClipCount < 1
+        || JadrenAnimationRigBoneCount < 1
+        || JadrenAnimationRigBoneCount > 256)
+    {
+        return;
+    }
+
+    uint agentIndex = groupId.x;
+    uint meshThread = groupThreadId.x;
+    if (agentIndex >= (uint)JadrenAnimationAgentCount)
+    {
+        return;
+    }
+
+    float speed = AnimationAgentSpeeds[agentIndex];
+    int clipIndex = JadrenAnimationSelectClip(speed);
+    JadrenGpuAnimationClipInfo clip = AnimationClipInfos[clipIndex];
+    if (meshThread == 0)
+    {
+        JadrenAnimationGroupTime = AnimationAgentTimes[agentIndex]
+            + JadrenAnimationDeltaTime * clip.PlaybackSpeed;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    float time = JadrenAnimationGroupTime;
+
+    uint columns = max(1u, (uint)JadrenAnimationAgentColumns);
+    uint row = agentIndex / columns;
+    uint column = agentIndex - row * columns;
+    float3 agentPosition = JadrenAnimationAgentOrigin + float3(
+        ((float)column - (float)(columns - 1u) * 0.5) * JadrenAnimationAgentSpacing,
+        0.0,
+        (float)row * JadrenAnimationAgentSpacing);
+    int outputBase = (int)agentIndex * JadrenAnimationMeshBoneCount;
+    for (int meshBone = (int)meshThread;
+         meshBone < JadrenAnimationMeshBoneCount;
+         meshBone += 64)
+    {
+        JadrenGpuAnimationMeshPathInfo path = AnimationMeshPathInfos[meshBone];
+        float4x4 world = float4x4(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0);
+        for (int pathIndex = 0; pathIndex < path.Count; pathIndex++)
+        {
+            int rigBone = AnimationMeshPathIndices[path.Offset + pathIndex];
+            float3 position;
+            float4 rotation;
+            float3 scale;
+            JadrenAnimationSample(clipIndex, rigBone, time, position, rotation, scale);
+            if (rigBone == JadrenAnimationRootBoneIndex)
+            {
+                position -= JadrenAnimationRootReference;
+            }
+            world = mul(world, JadrenAnimationComposeTrs(position, rotation, scale));
+        }
+        world[0][3] += agentPosition.x;
+        world[1][3] += agentPosition.y;
+        world[2][3] += agentPosition.z;
+        AnimationBoneMatrices[outputBase + meshBone] = mul(
+            world,
+            AnimationBindposes[meshBone]);
+    }
+    if (meshThread == 0)
+    {
+        AnimationAgentTimes[agentIndex] = time;
+    }
 }
