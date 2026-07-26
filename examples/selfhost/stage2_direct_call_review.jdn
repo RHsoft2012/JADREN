@@ -1,0 +1,12 @@
+module examples.selfhost.stage2_direct_call_review
+
+/// Review-only fixture for the proposed one-literal direct-call admission.
+/// The current Stage-2 producer must reject this source; it is not admitted
+/// language syntax and must not publish capture/object/executable artifacts.
+fn helper(value: Int32) -> Int32 {
+    return value + 1
+}
+
+fn main() -> Int32 {
+    return helper(41)
+}

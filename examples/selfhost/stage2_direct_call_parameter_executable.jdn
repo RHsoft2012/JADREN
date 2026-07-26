@@ -1,0 +1,9 @@
+fn helper(value: Int32) -> Int32 {
+    return value + 1;
+}
+fn caller(input: Int32) -> Int32 {
+    return helper(input);
+}
+fn main() -> Int32 {
+    return 42;
+}

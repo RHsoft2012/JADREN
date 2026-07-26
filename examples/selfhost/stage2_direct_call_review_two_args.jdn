@@ -1,0 +1,9 @@
+module examples.selfhost.stage2_direct_call_review_two_args
+
+fn helper(left: Int32, right: Int32) -> Int32 {
+    return left + right
+}
+
+fn main() -> Int32 {
+    return helper(20, 22)
+}
