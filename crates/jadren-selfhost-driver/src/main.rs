@@ -283,7 +283,10 @@ fn run() -> Result<(), String> {
     .map_err(|error| error.to_string())?;
     write_object(&arguments.object, &object).map_err(|error| error.to_string())?;
 
+    #[cfg(windows)]
     let mut link_summary: Option<(u64, u64)> = None;
+    #[cfg(not(windows))]
+    let link_summary: Option<(u64, u64)> = None;
     if let Some(executable) = &arguments.executable {
         #[cfg(not(windows))]
         {
