@@ -4,10 +4,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(feature = "bundled-installer")]
 const ARCHIVE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../target/jadren-0.1-dev-windows-x64.zip"
 ));
+
+#[cfg(not(feature = "bundled-installer"))]
+const ARCHIVE: &[u8] = &[];
 
 fn quote_powershell(path: &Path) -> String {
     format!(
@@ -27,6 +31,12 @@ fn default_install_root() -> Result<PathBuf, Box<dyn Error>> {
 fn main() -> Result<(), Box<dyn Error>> {
     if !cfg!(windows) {
         return Err("Jadren Windows installer must run on Windows".into());
+    }
+    if !cfg!(feature = "bundled-installer") {
+        return Err(
+            "Jadren installer payload is not bundled; rebuild with --features bundled-installer"
+                .into(),
+        );
     }
 
     let mut install_root = None;
