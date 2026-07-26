@@ -1,0 +1,19 @@
+module jadren.core.collections
+
+/// Sums a borrowed contiguous Int32 view without allocation.
+@noalloc
+pub fn sum_i32(values: read Slice<Int32>) -> Int32 {
+    var total: Int32 = 0
+    for index in values.indices {
+        total = total + values[index]
+    }
+    return total
+}
+
+/// Returns the first item when the caller-provided view length is non-zero.
+pub fn first_i32(values: read Slice<Int32>, count: UIntSize) -> Option<Int32> {
+    if count == 0usize {
+        return None
+    }
+    return Some(values[0])
+}

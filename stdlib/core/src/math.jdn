@@ -1,0 +1,38 @@
+module jadren.core.math
+
+/// Restricts an integer to the inclusive interval `[low, high]`.
+pub fn clamp(value: Int32, low: Int32, high: Int32) -> Int32 {
+    if value < low {
+        return low
+    }
+    if value > high {
+        return high
+    }
+    return value
+}
+
+/// Returns the non-negative magnitude of an integer.
+pub fn abs(value: Int32) -> Int32 {
+    if value < 0 {
+        return 0 - value
+    }
+    return value
+}
+
+/// Allocation-free lane-wise addition for the canonical 2-lane value.
+@noalloc
+pub fn add2(left: Float2, right: Float2) -> Float2 {
+    return left + right
+}
+
+/// Allocation-free lane-wise addition for the canonical 3-lane value.
+@noalloc
+pub fn add3(left: Float3, right: Float3) -> Float3 {
+    return left + right
+}
+
+/// Allocation-free lane-wise addition for the canonical 4-lane value.
+@noalloc
+pub fn add4(left: Float4, right: Float4) -> Float4 {
+    return left + right
+}

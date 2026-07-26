@@ -1,0 +1,15 @@
+module examples.stdlib.import_math
+
+import jadren.core.math.clamp
+import jadren.core.math.abs
+
+fn main() {
+    let bounded: Int32 = clamp(150, 0, 100)
+    let magnitude: Int32 = abs(-7)
+
+    if bounded == 100 {
+        if magnitude == 7 {
+            print("Jadren core import: ready")
+        }
+    }
+}

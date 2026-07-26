@@ -1,0 +1,9 @@
+module jadren.core.status
+
+/// Stable status values used at application and FFI boundaries.
+pub enum CoreStatus {
+    Ok,
+    InvalidArgument,
+    OutOfMemory,
+    IoError,
+}
