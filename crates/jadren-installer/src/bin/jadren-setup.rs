@@ -5,10 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[cfg(feature = "bundled-installer")]
-const ARCHIVE: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../target/jadren-0.1-dev-windows-x64.zip"
-));
+const ARCHIVE: &[u8] = include_bytes!(env!("JADREN_INSTALLER_ARCHIVE"));
 
 #[cfg(not(feature = "bundled-installer"))]
 const ARCHIVE: &[u8] = &[];
@@ -26,6 +23,10 @@ fn default_install_root() -> Result<PathBuf, Box<dyn Error>> {
     Ok(PathBuf::from(local_app_data)
         .join("Programs")
         .join("Jadren"))
+}
+
+fn release_label() -> &'static str {
+    option_env!("JADREN_RELEASE_LABEL").unwrap_or("0.1.0-preview.1")
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -50,7 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Jadren 0.1-dev installer\nUsage: Jadren-Setup-0.1-dev.exe [--install-root PATH]"
+                    "Jadren preview installer\nUsage: Jadren-Setup-<version>.exe [--install-root PATH]"
                 );
                 return Ok(());
             }
@@ -85,8 +86,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let marker = install_root.join("INSTALLATION.txt");
     fs::write(
         marker,
-        "Jadren Windows development preview\r\nVersion: 0.1-dev\r\nUnsigned local installer.\r\n",
+        format!(
+            "Jadren Windows public preview\r\nVersion: {}\r\nUnsigned preview installer.\r\n",
+            release_label()
+        ),
     )?;
-    println!("Jadren 0.1-dev installed to {}", install_root.display());
+    println!(
+        "Jadren {} installed to {}",
+        release_label(),
+        install_root.display()
+    );
     Ok(())
 }

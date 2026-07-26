@@ -79,8 +79,8 @@
     {
       "path": "README.md",
       "source": "docs/public/en/GITHUB_README.md",
-      "bytes": 3800,
-      "sha256": "da9197e6cc9284a596e86f0cf38f8f57c8d1a4458177d2fe2f15ab5fc779e3c3"
+      "bytes": 3826,
+      "sha256": "2daf48b033dfcf35bd782529cf2beb6f62561bad24d752a3169d6f756b4f1a87"
     },
     {
       "path": "SECURITY.md",
@@ -421,8 +421,8 @@
     {
       "path": "crates/jadren-installer/Cargo.toml",
       "source": "crates/jadren-installer/Cargo.toml",
-      "bytes": 425,
-      "sha256": "edda3e8faeaf9e9aee39e250fc3f3fd10ce7659d3c1fc8941e13e3c7daa91dcd"
+      "bytes": 473,
+      "sha256": "0e7608018086e5b8dfab243461557d75764b63b7f252956d0c3242adc8761624"
     },
     {
       "path": "crates/jadren-installer/src/bin/jadren-release-manifest.rs",
@@ -433,8 +433,8 @@
     {
       "path": "crates/jadren-installer/src/bin/jadren-setup.rs",
       "source": "crates/jadren-installer/src/bin/jadren-setup.rs",
-      "bytes": 2643,
-      "sha256": "ac0edc83253ddac77cc1635d875b88d99e9927b4d62424dcab47d727907b730c"
+      "bytes": 3102,
+      "sha256": "804384ab3e1709065043fa7d41f3be12f7f84b2499a86ed4e55871ed0860ba33"
     },
     {
       "path": "crates/jadren-installer/src/bin/jadren-toolchain-smoke.rs",
@@ -937,8 +937,8 @@
     {
       "path": "docs/GETTING_STARTED.md",
       "source": "docs/public/en/GETTING_STARTED.md",
-      "bytes": 2864,
-      "sha256": "964a3cc3bc0716a146dac0e923a9736570ac85221345bc8271b89ef4900bc35a"
+      "bytes": 2876,
+      "sha256": "d936fe3c6adf94b4ac2d2e9034ff5bfff45e4111ac9197715aad5ebf8b6d49f0"
     },
     {
       "path": "docs/LANGUAGE_OVERVIEW.md",

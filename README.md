@@ -4,9 +4,10 @@ Jadren is an experimental systems and compute programming language focused on
 safe native performance, predictable memory behaviour, data-parallel workloads,
 and practical Unity integration.
 
-The current implementation is a **0.1 draft preview**. It is suitable for
-evaluation, local experiments, and integration testing. It is not yet a stable
-language, a signed installer, or a production-supported public release.
+The current implementation is the **0.1.0-preview.1 public preview**. It is
+suitable for evaluation, local experiments, and integration testing. It is not
+yet a stable language or a production-supported release, and the Windows
+installer is unsigned.
 
 ## What Jadren is for
 

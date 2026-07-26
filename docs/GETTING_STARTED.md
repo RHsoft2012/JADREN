@@ -1,8 +1,8 @@
 # Getting started
 
 This guide uses the compiler from the public source repository. The repository
-is currently a 0.1 draft preview: it provides source, examples, and editor
-support, but not a signed public installer. Development installers and Unity
+is currently the 0.1.0-preview.1 public preview: it provides source, examples,
+and editor support. The Windows preview installer is unsigned. Development and Unity
 Asset Store packages are distributed separately and must match the same release
 line.
 
