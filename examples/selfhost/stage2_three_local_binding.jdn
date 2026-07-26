@@ -1,0 +1,8 @@
+module examples.selfhost.stage2_three_local_binding
+
+fn local_value() -> Int32 {
+    let first: Int32 = 40
+    let next: Int32 = first + 2
+    let final: Int32 = next + 3
+    return final
+}

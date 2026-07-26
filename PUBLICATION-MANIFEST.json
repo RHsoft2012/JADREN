@@ -2,7 +2,7 @@
   "schema": "jadren-public-export-0.1",
   "default_language": "en",
   "source_policy": "explicit-allowlist",
-  "file_count": 210,
+  "file_count": 234,
   "files": [
     {
       "path": ".editorconfig",
@@ -79,8 +79,8 @@
     {
       "path": "README.md",
       "source": "docs/public/en/GITHUB_README.md",
-      "bytes": 1684,
-      "sha256": "7a0abf6d11b3fd8c481776f5c2d6274fbfecc8dd85c3ae0a3503ec7662cccc0d"
+      "bytes": 3800,
+      "sha256": "da9197e6cc9284a596e86f0cf38f8f57c8d1a4458177d2fe2f15ab5fc779e3c3"
     },
     {
       "path": "SECURITY.md",
@@ -431,6 +431,12 @@
       "sha256": "b3a7b5177330c13583d2fd85c46ff73a2377f85cc838050a19c77980c997eeba"
     },
     {
+      "path": "crates/jadren-installer/src/bin/jadren-setup.rs",
+      "source": "crates/jadren-installer/src/bin/jadren-setup.rs",
+      "bytes": 2643,
+      "sha256": "ac0edc83253ddac77cc1635d875b88d99e9927b4d62424dcab47d727907b730c"
+    },
+    {
       "path": "crates/jadren-installer/src/bin/jadren-toolchain-smoke.rs",
       "source": "crates/jadren-installer/src/bin/jadren-toolchain-smoke.rs",
       "bytes": 2733,
@@ -691,8 +697,8 @@
     {
       "path": "crates/jadren-selfhost-driver/src/main.rs",
       "source": "crates/jadren-selfhost-driver/src/main.rs",
-      "bytes": 14691,
-      "sha256": "c6ee2d18389f34d341e870dac5709bcc0dd080f07e427a2190d07de30ad4205d"
+      "bytes": 14785,
+      "sha256": "35bc87ae64829cbde68a66734d92686b169fa83beac76ce252e07cdbc9a0fe79"
     },
     {
       "path": "crates/jadren-selfhost-oracle/Cargo.toml",
@@ -717,6 +723,12 @@
       "source": "crates/jadren-selfhost-stage2/Cargo.toml",
       "bytes": 685,
       "sha256": "240da529fc65e69746a637b88a7dd9f877ed51a6bc354f501951f3302fa9a18a"
+    },
+    {
+      "path": "crates/jadren-selfhost-stage2/src/bin/jadren-selfhost-stage2-verify.rs",
+      "source": "crates/jadren-selfhost-stage2/src/bin/jadren-selfhost-stage2-verify.rs",
+      "bytes": 1897,
+      "sha256": "0b9e65070c97db8c5b9c7b9afaa0155b4c13d5842c156ac43d180f6bafd8aa65"
     },
     {
       "path": "crates/jadren-selfhost-stage2/src/lib.rs",
@@ -925,8 +937,8 @@
     {
       "path": "docs/GETTING_STARTED.md",
       "source": "docs/public/en/GETTING_STARTED.md",
-      "bytes": 3812,
-      "sha256": "a365358931d3d00d421673bcbe0add94adb7b1394fee258e6f48b9a5f2c423bd"
+      "bytes": 2864,
+      "sha256": "964a3cc3bc0716a146dac0e923a9736570ac85221345bc8271b89ef4900bc35a"
     },
     {
       "path": "docs/LANGUAGE_OVERVIEW.md",
@@ -1163,16 +1175,148 @@
       "sha256": "378cf57fa8e7085606d70754c2b0c12a0e26ab0154ff250da705fdf3e38378ac"
     },
     {
+      "path": "examples/selfhost/stage2_direct_call_executable.jdn",
+      "source": "examples/selfhost/stage2_direct_call_executable.jdn",
+      "bytes": 106,
+      "sha256": "186dbf9be21ea7b0d839467d650f34094d6727ff0d5be259f8fc45a56d7aff09"
+    },
+    {
+      "path": "examples/selfhost/stage2_direct_call_parameter_executable.jdn",
+      "source": "examples/selfhost/stage2_direct_call_parameter_executable.jdn",
+      "bytes": 160,
+      "sha256": "e60d9c08f5eab392d22220c8c9168931814280f5eba57ba23ea678439949e1fb"
+    },
+    {
+      "path": "examples/selfhost/stage2_direct_call_review.jdn",
+      "source": "examples/selfhost/stage2_direct_call_review.jdn",
+      "bytes": 387,
+      "sha256": "54b9cfa78cdf0344b07bd4d4eb7422fb7234b72ff699b4e8248075dc13ee6bb4"
+    },
+    {
+      "path": "examples/selfhost/stage2_direct_call_review_extern.jdn",
+      "source": "examples/selfhost/stage2_direct_call_review_extern.jdn",
+      "bytes": 145,
+      "sha256": "e2c7fd1e6a8c074b57dd725e9f76d44572301ea4c8b81cb2b83ff1518b484852"
+    },
+    {
+      "path": "examples/selfhost/stage2_direct_call_review_generic.jdn",
+      "source": "examples/selfhost/stage2_direct_call_review_generic.jdn",
+      "bytes": 155,
+      "sha256": "20a8f1302002698a6c834f53ccb51b227d08c7caf3b2ac7573708bd015084e35"
+    },
+    {
+      "path": "examples/selfhost/stage2_direct_call_review_indirect.jdn",
+      "source": "examples/selfhost/stage2_direct_call_review_indirect.jdn",
+      "bytes": 209,
+      "sha256": "22c136319ee30f4320692cbfa7f43619cc726b6c32f1295c00b7b84d6713aa6e"
+    },
+    {
+      "path": "examples/selfhost/stage2_direct_call_review_overload.jdn",
+      "source": "examples/selfhost/stage2_direct_call_review_overload.jdn",
+      "bytes": 215,
+      "sha256": "474100de0df9c78e9b224e6ed02c62f4463da9a84ca35b412966f7f84914eb43"
+    },
+    {
+      "path": "examples/selfhost/stage2_direct_call_review_recursion.jdn",
+      "source": "examples/selfhost/stage2_direct_call_review_recursion.jdn",
+      "bytes": 170,
+      "sha256": "a3b7d1f57b918c62ea791fb2874f8aa373ae1a249b8a5f5d53b56d3484d9c524"
+    },
+    {
+      "path": "examples/selfhost/stage2_direct_call_review_two_args.jdn",
+      "source": "examples/selfhost/stage2_direct_call_review_two_args.jdn",
+      "bytes": 185,
+      "sha256": "f0dc04ff40bb6460a708da7f00081aec78313d4f5cbe597dec0746e6ada3c85e"
+    },
+    {
+      "path": "examples/selfhost/stage2_literal_local_binding.jdn",
+      "source": "examples/selfhost/stage2_literal_local_binding.jdn",
+      "bytes": 126,
+      "sha256": "1d50214694bf1298fd0eacc9a7fe3135541c8ee738ced72342f1e84ad83d47e9"
+    },
+    {
       "path": "examples/selfhost/stage2_literal_return.jdn",
       "source": "examples/selfhost/stage2_literal_return.jdn",
       "bytes": 2784,
       "sha256": "560477d602382410770e4bf229b8db8df9105eb7f5fbd27c94f1a324020214fa"
     },
     {
+      "path": "examples/selfhost/stage2_local_auto_fallback.jdn",
+      "source": "examples/selfhost/stage2_local_auto_fallback.jdn",
+      "bytes": 45,
+      "sha256": "fdaf24cc80e97b77872ac24d3f17e636137a57eb9dd0c0f68c3869639d98fa98"
+    },
+    {
+      "path": "examples/selfhost/stage2_local_binding.jdn",
+      "source": "examples/selfhost/stage2_local_binding.jdn",
+      "bytes": 129,
+      "sha256": "6f166f4c9bf0014b006e4d104026c13d50e0d3768c945515a11813665d8ee4ef"
+    },
+    {
+      "path": "examples/selfhost/stage2_local_binding_multiply.jdn",
+      "source": "examples/selfhost/stage2_local_binding_multiply.jdn",
+      "bytes": 138,
+      "sha256": "22e5510cafe0fb34813f75c10bf0c45ede83bde8585227ea943101ec020a7066"
+    },
+    {
+      "path": "examples/selfhost/stage2_local_binding_reverse_add.jdn",
+      "source": "examples/selfhost/stage2_local_binding_reverse_add.jdn",
+      "bytes": 141,
+      "sha256": "33ea9c550072b9c7700497a216f31d22ff163f0c74062ceaab4e74bb434242ac"
+    },
+    {
+      "path": "examples/selfhost/stage2_local_binding_reverse_multiply.jdn",
+      "source": "examples/selfhost/stage2_local_binding_reverse_multiply.jdn",
+      "bytes": 146,
+      "sha256": "faa88dc41ea376921ac2064d188fe16582c81037f2d239b69dcc60d60ac84521"
+    },
+    {
+      "path": "examples/selfhost/stage2_local_binding_reverse_subtract.jdn",
+      "source": "examples/selfhost/stage2_local_binding_reverse_subtract.jdn",
+      "bytes": 146,
+      "sha256": "9c2429e3be75b02ad27b0ea594e7801d856fe46a51742873ebc144e8ee72ae80"
+    },
+    {
+      "path": "examples/selfhost/stage2_local_binding_subtract.jdn",
+      "source": "examples/selfhost/stage2_local_binding_subtract.jdn",
+      "bytes": 138,
+      "sha256": "d715c7d1f212cba3a7536c743c863c54d61716241373627b40777252d943dfbb"
+    },
+    {
       "path": "examples/selfhost/stage2_local_rejection.jdn",
       "source": "examples/selfhost/stage2_local_rejection.jdn",
       "bytes": 284,
       "sha256": "e22274e7c61a82210e81d5d3e39a0f80be4433fb74a64ab6a5f6590154eea4d4"
+    },
+    {
+      "path": "examples/selfhost/stage2_parameter_alias_local_binding.jdn",
+      "source": "examples/selfhost/stage2_parameter_alias_local_binding.jdn",
+      "bytes": 141,
+      "sha256": "6636af94fc52c9bbfc9382b38f27d0205047eb54f53ae88467c1385b009850ff"
+    },
+    {
+      "path": "examples/selfhost/stage2_parameter_three_local_binding.jdn",
+      "source": "examples/selfhost/stage2_parameter_three_local_binding.jdn",
+      "bytes": 213,
+      "sha256": "cedc6c30c9817cfab134d5f269a060065209a958ffdf682ff495212fc1e7abfb"
+    },
+    {
+      "path": "examples/selfhost/stage2_parameter_two_local_binding.jdn",
+      "source": "examples/selfhost/stage2_parameter_two_local_binding.jdn",
+      "bytes": 176,
+      "sha256": "9d74d9aa1d9db22ddb73768c39305311dcdb38b547f283122749f3918e648d86"
+    },
+    {
+      "path": "examples/selfhost/stage2_three_local_binding.jdn",
+      "source": "examples/selfhost/stage2_three_local_binding.jdn",
+      "bytes": 190,
+      "sha256": "28ad11515b9f13b2177cbbed13a840e84baeee5a95fc6fc3759a41c38ad71bea"
+    },
+    {
+      "path": "examples/selfhost/stage2_two_local_binding.jdn",
+      "source": "examples/selfhost/stage2_two_local_binding.jdn",
+      "bytes": 155,
+      "sha256": "ab30811e58dac271cec22134bc34497101732cd1488787122c2c555d6f4a810d"
     },
     {
       "path": "examples/selfhost/token_counter.corpus",

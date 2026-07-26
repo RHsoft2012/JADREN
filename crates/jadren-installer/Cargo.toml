@@ -8,6 +8,10 @@ authors.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+default = []
+bundled-installer = []
+
 [dependencies]
 ed25519-dalek = { version = "2.1", default-features = false, features = ["std", "zeroize"] }
 sha2 = "0.10"

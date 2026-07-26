@@ -1,0 +1,9 @@
+module examples.selfhost.stage2_direct_call_review_recursion
+
+fn helper(value: Int32) -> Int32 {
+    return helper(value)
+}
+
+fn main() -> Int32 {
+    return helper(41)
+}

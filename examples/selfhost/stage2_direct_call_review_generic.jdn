@@ -1,0 +1,9 @@
+module examples.selfhost.stage2_direct_call_review_generic
+
+fn helper<T>(value: T) -> T {
+    return value
+}
+
+fn main() -> Int32 {
+    return helper(41)
+}
