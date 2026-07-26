@@ -1,0 +1,31 @@
+module jadren.core.simd
+
+/// Explicit Float2 slice path. The caller owns the storage and provides the
+/// checked index; a backend may lower this to baseline, AVX2 or NEON code.
+@noalloc
+pub fn add2_in_place(values: write Slice<Float32>, index: UIntSize, delta: Float32) {
+    let current: Float2 = vector_load2(values, index)
+    vector_store2(values, index, current + vector_splat2(delta))
+}
+
+/// Explicit Float3 slice path for transform and animation data.
+@noalloc
+pub fn add3_in_place(values: write Slice<Float32>, index: UIntSize, delta: Float32) {
+    let current: Float3 = vector_load3(values, index)
+    vector_store3(values, index, current + vector_splat3(delta))
+}
+
+/// Four-lane path suitable for SSE/NEON and AVX2 lowering.
+@noalloc
+pub fn add4_in_place(values: write Slice<Float32>, index: UIntSize, delta: Float32) {
+    let current: Float4 = vector_load4(values, index)
+    vector_store4(values, index, current + vector_splat4(delta))
+}
+
+/// Eight-lane path suitable for AVX2; non-multiple tails remain scalar in the
+/// caller, so this function never performs an implicit out-of-bounds access.
+@noalloc
+pub fn add8_in_place(values: write Slice<Float32>, index: UIntSize, delta: Float32) {
+    let current: Float8 = vector_load8(values, index)
+    vector_store8(values, index, current + vector_splat8(delta))
+}

@@ -1,0 +1,24 @@
+module examples.stdlib_core_demo
+
+import jadren.core.collections.sum_i32
+import jadren.core.option.unwrap_or_i32
+import jadren.core.outcome.ok_i32
+import jadren.core.outcome.unwrap_or_result_i32
+import jadren.core.utf8.pass_owned
+
+pub fn summarize(values: read Slice<Int32>) -> Int32 {
+    return sum_i32(values)
+}
+
+fn main() {
+    let fallback: Option<Int32> = Some(7)
+    let stable_total = unwrap_or_i32(fallback, 0)
+    let checked = ok_i32(stable_total)
+    let checked_total = unwrap_or_result_i32(checked, 0)
+    let text: String = "Jadren core project"
+    let message = pass_owned(text)
+    match ok_i32(checked_total) {
+        Ok(_) => print(message),
+        Error(_) => print("unexpected error"),
+    }
+}

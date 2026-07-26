@@ -1,0 +1,14 @@
+module examples.math_simd
+
+import jadren.core.math.add3
+import jadren.core.simd.add4_in_place
+
+@noalloc
+pub fn transform_probe(values: write Slice<Float32>, index: UIntSize, delta: Float32) {
+    add4_in_place(values, index, delta)
+}
+
+@noalloc
+pub fn vector_probe(left: Float3, right: Float3) -> Float3 {
+    return add3(left, right)
+}

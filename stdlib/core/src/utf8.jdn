@@ -1,0 +1,7 @@
+module jadren.core.utf8
+
+/// String is Jadren's owned, validated UTF-8 value. This identity helper
+/// makes the ownership boundary explicit while keeping the 0.1 API small.
+pub fn pass_owned(value: String) -> String {
+    return value
+}

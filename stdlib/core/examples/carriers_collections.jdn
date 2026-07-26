@@ -1,0 +1,22 @@
+module examples.carriers_collections
+
+import jadren.core.collections.sum_i32
+import jadren.core.option.unwrap_or_i32
+import jadren.core.outcome.invalid_i32
+import jadren.core.outcome.unwrap_or_result_i32
+import jadren.core.utf8.pass_owned
+
+pub fn inspect(values: read Slice<Int32>) -> Int32 {
+    return sum_i32(values)
+}
+
+fn main() {
+    let value: Option<Int32> = Some(7)
+    let optional_value = unwrap_or_i32(value, 0)
+    let result_total = unwrap_or_result_i32(invalid_i32(), optional_value)
+    let text: String = "Jadren UTF-8"
+    let owned_text = pass_owned(text)
+    if result_total > 0 {
+        print(owned_text)
+    }
+}

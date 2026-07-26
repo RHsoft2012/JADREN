@@ -1,0 +1,25 @@
+module jadren.core.outcome
+
+/// Small stable error set for examples and application boundaries.
+pub enum CoreError {
+    InvalidArgument,
+    EmptyInput,
+}
+
+/// Wraps a value in the built-in Result carrier.
+pub fn ok_i32(value: Int32) -> Result<Int32, CoreError> {
+    return Ok(value)
+}
+
+/// Returns a typed error without an exception or hidden allocation.
+pub fn invalid_i32() -> Result<Int32, CoreError> {
+    return Error(InvalidArgument)
+}
+
+/// Converts a Result into a value using an explicit fallback.
+pub fn unwrap_or_result_i32(value: Result<Int32, CoreError>, fallback: Int32) -> Int32 {
+    return match value {
+        Ok(inner) => inner,
+        Error(_) => fallback,
+    }
+}
