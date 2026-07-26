@@ -148,6 +148,55 @@ fn checks_hello_world() {
 }
 
 #[test]
+fn checks_package_and_resolves_cross_file_imports() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-package-check-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    let source = directory.join("src");
+    fs::create_dir_all(&source).expect("package source directory should be writable");
+    fs::write(
+        directory.join("jadren.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\n\n[targets]\nlibrary = true\n",
+    )
+    .expect("manifest should be writable");
+    let lock = Command::new(binary())
+        .args(["lock"])
+        .arg(&directory)
+        .output()
+        .expect("jadren lock should start");
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    fs::write(
+        source.join("math.jdn"),
+        "module demo.math\npub fn answer() -> Int32 { return 42 }\n",
+    )
+    .expect("module source should be writable");
+    fs::write(
+        source.join("main.jdn"),
+        "module demo.main\nimport demo.math.answer\nfn main() { let value: Int32 = answer() if value == 42 { print(\"package ready\") } }\n",
+    )
+    .expect("application source should be writable");
+
+    let check = Command::new(binary())
+        .args(["check"])
+        .arg(&directory)
+        .output()
+        .expect("package-aware check should start");
+    assert!(
+        check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(String::from_utf8_lossy(&check.stdout).contains("module imports resolved"));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn formats_and_checks_canonical_source() {
     let path = std::env::temp_dir().join(format!(
         "jadren-format-{}-{}.jdn",

@@ -31,8 +31,8 @@
     {
       "path": ".gitignore",
       "source": ".gitignore",
-      "bytes": 523,
-      "sha256": "3e99d70fbc754645ea7f3e8e0db2598507c92c0bd923813234f128710c5c0dbf"
+      "bytes": 665,
+      "sha256": "8015a812e0529006d5f946a7ad2271f2d5314ac572e9b737038f21e8e747e2b0"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -115,14 +115,14 @@
     {
       "path": "crates/jadren-cli/src/main.rs",
       "source": "crates/jadren-cli/src/main.rs",
-      "bytes": 94193,
-      "sha256": "ea9adf8f8238e8db8df8818dfeb8e3509dc35551621796ab82b98b9c5ba8c8c8"
+      "bytes": 97636,
+      "sha256": "b05f59aa36fb17473ce391913fa68d9afe2df10d74dc35b357fb13ccdd75bbb4"
     },
     {
       "path": "crates/jadren-cli/tests/cli.rs",
       "source": "crates/jadren-cli/tests/cli.rs",
-      "bytes": 33208,
-      "sha256": "66653ceaee0de92aa1f742ffc51f2a8d4bf02ee759829739ddf7a1a98fd3b30d"
+      "bytes": 34911,
+      "sha256": "275d480571c60dbd3e9dcb910cb635f1156e191851f6a1c7785c878acaad67c0"
     },
     {
       "path": "crates/jadren-codegen-llvm/Cargo.toml",
@@ -931,8 +931,8 @@
     {
       "path": "docs/COMPILER_AND_PLATFORMS.md",
       "source": "docs/public/en/COMPILER_AND_PLATFORMS.md",
-      "bytes": 4115,
-      "sha256": "c72cdcaa0219ad6c79a2f1868bfe7187e8ae9f581ecdcc6ccb9fa5e1809499f4"
+      "bytes": 4526,
+      "sha256": "139a8bd5e36b134f280ee6f3fccd7508b3ee7a20bdeeb6acf4184a24c50ee1fd"
     },
     {
       "path": "docs/GETTING_STARTED.md",
