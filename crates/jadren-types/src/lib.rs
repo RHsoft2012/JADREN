@@ -620,9 +620,9 @@ impl TypeStore {
             "UInt32" => Some(core.uint32),
             "UInt64" => Some(core.uint64),
             "UIntSize" => Some(core.uint_size),
-            "Float16" => Some(core.float16),
-            "Float32" => Some(core.float32),
-            "Float64" => Some(core.float64),
+            "Float16" | "F16" => Some(core.float16),
+            "Float32" | "F32" => Some(core.float32),
+            "Float64" | "F64" => Some(core.float64),
             "Float2" => Some(core.float2),
             "Float3" => Some(core.float3),
             "Float4" => Some(core.float4),
@@ -1320,6 +1320,19 @@ mod tests {
         assert_eq!(
             store.apply_builtin("Missing", &[]),
             Err(BuiltinTypeError::Unknown("Missing".to_owned()))
+        );
+    }
+
+    #[test]
+    fn accepts_short_numeric_width_aliases_without_creating_new_types() {
+        let mut store = TypeStore::new();
+        let core = store.core();
+        assert_eq!(store.apply_builtin("F16", &[]), Ok(core.float16));
+        assert_eq!(store.apply_builtin("F32", &[]), Ok(core.float32));
+        assert_eq!(store.apply_builtin("F64", &[]), Ok(core.float64));
+        assert_eq!(
+            store.apply_builtin("F128", &[]),
+            Err(BuiltinTypeError::Unknown("F128".to_owned()))
         );
     }
 

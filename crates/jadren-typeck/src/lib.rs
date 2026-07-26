@@ -3254,6 +3254,26 @@ mod tests {
     }
 
     #[test]
+    fn accepts_numeric_width_aliases_and_rejects_reserved_f128() {
+        let output = check(
+            "module test; fn main(a: F16, b: Float16, c: F32, d: Float32) -> F64 { let narrow = (a as F32) + (b as F32); return (narrow as F64) + (c as F64) + (d as F64) }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+        let float16_symbols = output
+            .symbol_types
+            .iter()
+            .flatten()
+            .filter(|ty| {
+                output.types.kind(**ty) == Some(&TypeKind::Float(jadren_types::FloatWidth::Bits16))
+            })
+            .count();
+        assert_eq!(float16_symbols, 2, "F16 and Float16 must share Float16");
+
+        let reserved = check("module test; fn main(value: F128) { print(value) }");
+        assert!(reserved.has_errors());
+    }
+
+    #[test]
     fn exposes_stable_typed_expression_index_and_kinds() {
         let output = check(
             "module test; fn main(value: Int32) { let x = value + 2; if x > 0 { print(x) } }",

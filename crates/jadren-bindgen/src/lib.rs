@@ -687,8 +687,8 @@ fn c_type_layout(
             let scalar = match name.as_str() {
                 "Int8" | "UInt8" => Some((1, 1)),
                 "Int16" | "UInt16" => Some((2, 2)),
-                "Int32" | "UInt32" | "Float32" | "Status" => Some((4, 4)),
-                "Int64" | "UInt64" | "Float64" => Some((8, 8)),
+                "Int32" | "UInt32" | "Float32" | "F32" | "Status" => Some((4, 4)),
+                "Int64" | "UInt64" | "Float64" | "F64" => Some((8, 8)),
                 "IntSize" | "UIntSize" => Some((pointer_bytes, pointer_bytes)),
                 "Float2" => Some((8, 4)),
                 "Float3" => Some((12, 4)),
@@ -853,8 +853,8 @@ fn c_type(
                 "UInt32" => Ok("uint32_t".to_owned()),
                 "UInt64" => Ok("uint64_t".to_owned()),
                 "UIntSize" => Ok("size_t".to_owned()),
-                "Float32" => Ok("float".to_owned()),
-                "Float64" => Ok("double".to_owned()),
+                "Float32" | "F32" => Ok("float".to_owned()),
+                "Float64" | "F64" => Ok("double".to_owned()),
                 "Float2" => Ok("JadrenFloat2".to_owned()),
                 "Float3" => Ok("JadrenFloat3".to_owned()),
                 "Float4" => Ok("JadrenFloat4".to_owned()),
@@ -928,8 +928,8 @@ fn csharp_type(
                 "UInt32" => Ok("uint".to_owned()),
                 "UInt64" => Ok("ulong".to_owned()),
                 "UIntSize" => Ok("UIntPtr".to_owned()),
-                "Float32" => Ok("float".to_owned()),
-                "Float64" => Ok("double".to_owned()),
+                "Float32" | "F32" => Ok("float".to_owned()),
+                "Float64" | "F64" => Ok("double".to_owned()),
                 "Float2" => Ok("JadrenFloat2".to_owned()),
                 "Float3" => Ok("JadrenFloat3".to_owned()),
                 "Float4" => Ok("JadrenFloat4".to_owned()),
@@ -1274,6 +1274,38 @@ mod tests {
         assert!(header.contains("typedef int32_t JadrenStatus;"));
         assert!(header.contains("JadrenSlice data, JadrenString text"));
         assert!(header.contains("JadrenStatus jadren_process"));
+    }
+
+    #[test]
+    fn maps_numeric_width_aliases_to_their_c_abi_types() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "numeric_aliases.jdn",
+                "module aliases; @export(name: \"aliases_process\", abi: \"C\") fn process(value: F32, precise: F64) -> F64 { return precise }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
+        let resolution = resolve(source, &parsed.file);
+        assert!(!resolution.has_errors(), "{:?}", resolution.diagnostics);
+        let types = check_types(source, &parsed.file, &resolution);
+        assert!(!types.has_errors(), "{:?}", types.diagnostics);
+
+        let header = generate_c_header(source, &parsed.file, &resolution, &types)
+            .expect("header")
+            .text;
+        assert!(header.contains("double aliases_process(float value, double precise);"));
+
+        let bindings =
+            generate_csharp_bindings(source, &parsed.file, &resolution, &types, "jadren_native")
+                .expect("C# bindings")
+                .text;
+        assert!(bindings.contains(
+            "internal static extern double aliases_process(float value, double precise);"
+        ));
     }
 
     #[test]

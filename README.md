@@ -23,6 +23,7 @@ a production-supported public release.
 - [Language overview](docs/LANGUAGE_OVERVIEW.md)
 - [Compiler and platforms](docs/COMPILER_AND_PLATFORMS.md)
 - [Unity integration](docs/UNITY_INTEGRATION.md)
+- [Unity project guide](docs/UNITY_PROJECT_GUIDE.md)
 - [Jadren Animation System](docs/ANIMATION_SYSTEM.md)
 - [VS Code extension](docs/VSCODE_EXTENSION.md)
 - [Public roadmap](docs/ROADMAP.md)

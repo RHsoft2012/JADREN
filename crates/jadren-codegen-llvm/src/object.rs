@@ -171,6 +171,21 @@ pub struct ObjectOptions {
     pub optimization: ObjectOptimization,
 }
 
+/// Compact internal summary for the source-independent JIR-to-object boundary.
+///
+/// The summary is intentionally additive and contains no source or AST data.
+/// `backend_status_flags` is `1` only after LLVM verification and object
+/// emission both succeed.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BackendEmissionSummary {
+    pub module_functions: u64,
+    pub module_blocks: u64,
+    pub module_instructions: u64,
+    pub object_bytes: u64,
+    pub backend_status_flags: u64,
+}
+
 impl Default for ObjectOptions {
     fn default() -> Self {
         Self::x86_64_baseline()
@@ -346,6 +361,40 @@ pub fn lower_to_object(
     emit_object(&llvm, options)
 }
 
+/// Emits an object through the source-independent backend boundary.
+///
+/// The caller must provide canonical, already verified JIR. This function
+/// never receives source text and does not rediscover frontend semantics. It
+/// is the internal seam a future non-Rust producer can target.
+pub fn lower_to_object_with_summary(
+    context: &Context,
+    jir: &Module,
+    module_name: &str,
+    type_config: &TypeLoweringConfig,
+    options: &ObjectOptions,
+) -> Result<(BackendEmissionSummary, Vec<u8>), ObjectError> {
+    let object = lower_to_object(context, jir, module_name, type_config, options)?;
+    let module_blocks = jir
+        .functions
+        .iter()
+        .map(|function| function.blocks.len() as u64)
+        .sum();
+    let module_instructions = jir
+        .functions
+        .iter()
+        .flat_map(|function| function.blocks.iter())
+        .map(|block| block.instructions.len() as u64)
+        .sum();
+    let summary = BackendEmissionSummary {
+        module_functions: jir.functions.len() as u64,
+        module_blocks,
+        module_instructions,
+        object_bytes: object.len() as u64,
+        backend_status_flags: 1,
+    };
+    Ok((summary, object))
+}
+
 /// Lowers verified JIR with debug metadata and emits one x86-64 object in memory.
 pub fn lower_to_object_with_debug(
     context: &Context,
@@ -471,7 +520,8 @@ mod tests {
     use jadren_source::{SourceManager, Span};
 
     use super::{
-        ObjectOptions, emit_assembly, lower_to_object, lower_to_object_with_debug, write_object,
+        ObjectOptions, emit_assembly, lower_to_object, lower_to_object_with_debug,
+        lower_to_object_with_summary, write_object,
     };
     use crate::{DebugInfoConfig, TypeLoweringConfig, lower_module_with_debug};
 
@@ -617,6 +667,35 @@ mod tests {
         );
         assert!(inspection.contains("Name: add_values"), "{inspection}");
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn backend_boundary_returns_source_independent_summary() {
+        let jir = add_module();
+        let context = Context::create();
+        let direct = lower_to_object(
+            &context,
+            &jir,
+            "backend_boundary_test",
+            &TypeLoweringConfig::default(),
+            &ObjectOptions::default(),
+        )
+        .expect("direct object");
+        let (summary, boundary) = lower_to_object_with_summary(
+            &context,
+            &jir,
+            "backend_boundary_test",
+            &TypeLoweringConfig::default(),
+            &ObjectOptions::default(),
+        )
+        .expect("boundary object");
+
+        assert_eq!(boundary, direct);
+        assert_eq!(summary.module_functions, jir.functions.len() as u64);
+        assert_eq!(summary.module_blocks, 1);
+        assert_eq!(summary.module_instructions, 1);
+        assert_eq!(summary.object_bytes, boundary.len() as u64);
+        assert_eq!(summary.backend_status_flags, 1);
     }
 
     #[test]

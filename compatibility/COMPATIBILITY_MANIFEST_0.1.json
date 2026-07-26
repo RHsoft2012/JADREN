@@ -16,13 +16,13 @@
     {
       "name": "hello-hir",
       "command": "emit hir examples/hello.jdn",
-      "sha256": "9fcec3b5b99645b8f32b6ac56adbcdfb8c6737e36967bd72ad783bb5efcaa450",
+      "sha256": "97ed587d780abc8296f5e250db10cfc23035219f2c41b000c96e291f819d2e3d",
       "bytes": 5475
     },
     {
       "name": "hello-mir",
       "command": "emit mir examples/hello.jdn",
-      "sha256": "c2de8234e0249fa9f52f722c3dcbb932978c5195b5d9d14362eb80efe06c91cf",
+      "sha256": "cb927387658fefa92a552dd2af94be895cc392925d22a63846407032d24207fa",
       "bytes": 5760
     },
     {

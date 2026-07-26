@@ -735,10 +735,10 @@ impl<'source> Resolver<'source> {
 
     fn install_builtins(&mut self, root: ScopeId) {
         const TYPES: &[&str] = &[
-            "Bool", "Buffer", "Char", "Float16", "Float2", "Float32", "Float3", "Float4", "Float8",
-            "Float64", "Int8", "Int16", "Int32", "Int64", "IntSize", "Never", "Option", "Pointer",
-            "Result", "Slice", "Status", "String", "UInt8", "UInt16", "UInt32", "UInt64",
-            "UIntSize", "Unit",
+            "Bool", "Buffer", "Char", "Float16", "F16", "Float2", "Float32", "F32", "Float3",
+            "Float4", "Float8", "Float64", "F64", "Int8", "Int16", "Int32", "Int64", "IntSize",
+            "Never", "Option", "Pointer", "Result", "Slice", "Status", "String", "UInt8", "UInt16",
+            "UInt32", "UInt64", "UIntSize", "Unit",
         ];
         const VALUES: &[&str] = &[
             "assert_eq",
@@ -2071,10 +2071,13 @@ fn is_builtin_type_name(name: &str) -> bool {
             | "Buffer"
             | "Char"
             | "Float16"
+            | "F16"
             | "Float2"
             | "Float32"
+            | "F32"
             | "Float3"
             | "Float64"
+            | "F64"
             | "Int8"
             | "Int16"
             | "Int32"
