@@ -433,8 +433,8 @@
     {
       "path": "crates/jadren-installer/src/bin/jadren-setup.rs",
       "source": "crates/jadren-installer/src/bin/jadren-setup.rs",
-      "bytes": 6996,
-      "sha256": "1594fc4a076b8f936bd7cb2f9f2076322789ef43c9a086c91f941e7ddb53d536"
+      "bytes": 7004,
+      "sha256": "0b05fb90bc6255df4261d94bbb46a50fb979a3489a4f73a0eb62552d42925905"
     },
     {
       "path": "crates/jadren-installer/src/bin/jadren-toolchain-smoke.rs",

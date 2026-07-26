@@ -173,10 +173,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(format!("Expand-Archive failed with status {status}").into());
     }
 
-    let bin_root = install_root.join("bin");
     let path_status = if update_path {
         #[cfg(windows)]
         {
+            let bin_root = install_root.join("bin");
             match update_user_path(&bin_root) {
                 Ok(()) => "updated",
                 Err(error) => {
