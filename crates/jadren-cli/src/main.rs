@@ -232,6 +232,9 @@ fn default_llvm_prefix() -> PathBuf {
 
 fn check(arguments: &[OsString]) -> Result<(), String> {
     let (path, config) = parse_check_arguments(arguments)?;
+    if path.is_dir() {
+        return check_package(&path, config);
+    }
     let format = config.diagnostic_format;
     let text = read_utf8(&path)?;
     let mut session = CompilerSession::new(config);
@@ -260,6 +263,103 @@ fn check(arguments: &[OsString]) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// Checks a package as one compiler session so cross-file imports are resolved
+/// against the complete deterministic module catalog.
+fn check_package(path: &Path, config: CompilerConfig) -> Result<(), String> {
+    let files = package_source_files(path)?;
+    let format = config.diagnostic_format;
+    let mut session = CompilerSession::new(config);
+    let mut source_ids = Vec::with_capacity(files.len());
+    for file in &files {
+        let text = read_utf8(file)?;
+        let source_id = session
+            .add_source(file, text)
+            .map_err(|error| format!("failed to register `{}`: {error}", file.display()))?;
+        source_ids.push(source_id);
+    }
+
+    let mut results = Vec::with_capacity(source_ids.len());
+    for (file, source_id) in files.iter().zip(source_ids) {
+        let output = session
+            .check(source_id)
+            .map_err(|error| format!("failed to check `{}`: {error}", file.display()))?;
+        results.push((file, output));
+    }
+    let failed = results
+        .iter()
+        .filter(|(_, output)| output.has_errors())
+        .count();
+
+    if format == DiagnosticFormat::Json {
+        print_test_json(&results, session.sources(), failed);
+    } else {
+        for (_, output) in &results {
+            render_diagnostics(&output.diagnostics, session.sources(), format);
+        }
+        if failed == 0 {
+            println!(
+                "checked package {}: {} source file(s), module imports resolved",
+                path.display(),
+                results.len()
+            );
+        }
+    }
+    if failed > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Validates package metadata and returns all source files from the local
+/// dependency graph in stable path order.
+fn package_source_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+    let manifest_path = path.join(MANIFEST_FILE);
+    let manifest_text = read_utf8(&manifest_path)?;
+    let manifest = PackageManifest::parse(&manifest_text).map_err(|error| {
+        format!(
+            "invalid package manifest `{}`: {error}",
+            manifest_path.display()
+        )
+    })?;
+
+    let lock_path = path.join(LOCKFILE_FILE);
+    let lock_text = read_utf8(&lock_path)?;
+    let expected_lock = PackageLockfile::from_manifest(&manifest).to_toml();
+    if lock_text != expected_lock {
+        return Err(format!(
+            "stale or non-canonical lockfile `{}`; run `jadren lock {}`",
+            lock_path.display(),
+            path.display()
+        ));
+    }
+
+    let resolution = resolve_local(path).map_err(|error| {
+        format!(
+            "failed to resolve local package dependencies for `{}`: {error}",
+            path.display()
+        )
+    })?;
+    let mut files = Vec::new();
+    for package in resolution.packages() {
+        let package_root = package.manifest_path.parent().ok_or_else(|| {
+            format!(
+                "package manifest has no parent: `{}`",
+                package.manifest_path.display()
+            )
+        })?;
+        files.extend(collect_jadren_files(package_root)?);
+    }
+    files.sort_by_key(|file| file.display().to_string());
+    files.dedup();
+    if files.is_empty() {
+        return Err(format!(
+            "package `{}` contains no `.jdn` sources",
+            path.display()
+        ));
+    }
+    Ok(files)
 }
 
 fn test_sources(arguments: &[OsString]) -> Result<(), String> {
@@ -2327,7 +2427,7 @@ fn parse_check_arguments(arguments: &[OsString]) -> Result<(PathBuf, CompilerCon
     }
 
     path.map(|path| (path, config)).ok_or_else(|| {
-        "usage: jadren check <file.jdn> [--format text|json] [--target <triple>] [--edition <edition>] [--warnings-as-errors]"
+            "usage: jadren check <file.jdn|package-directory> [--format text|json] [--target <triple>] [--edition <edition>] [--warnings-as-errors]"
             .to_owned()
     })
 }
@@ -2459,7 +2559,7 @@ fn print_help() {
          Usage:\n  \
            jadren version\n  \
            jadren doctor\n  \
-           jadren check <file.jdn> [--format text|json] [--target <triple>] [--edition <edition>] [--warnings-as-errors]\n  \
+           jadren check <file.jdn|package-directory> [--format text|json] [--target <triple>] [--edition <edition>] [--warnings-as-errors]\n  \
            jadren build <file.jdn> [-o <output>] [--profile debug|release] [--cpu baseline|avx2]\n  \
            jadren run <file.jdn> [-o <output>] [--profile debug|release] [--cpu baseline|avx2]\n  \
            jadren test <file.jdn|directory> [--format text|json] [--target <triple>] [--edition <edition>] [--warnings-as-errors]\n  \

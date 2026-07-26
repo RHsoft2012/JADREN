@@ -15,6 +15,13 @@ The primary development backend uses LLVM for native x86-64 output. Scalar and
 AVX2 policies are selected explicitly so unsupported processors retain a safe
 fallback. ARM64/NEON work follows the same capability-based model.
 
+The 0.1 core math contract exposes fixed-width `Float2`, `Float3`, `Float4`
+and `Float8` lane operations with checked `Slice` access. Quaternion and
+row-major `Matrix4` layouts are provided by the runtime/Unity ABI, including
+the shortest-arc `SlerpUnclamped` helper. Backend selection happens once
+outside the hot loop and always has a scalar fallback; these contracts do not
+constitute a universal FPS claim.
+
 ## GPU backends
 
 Jadren has bounded compute paths for SPIR-V/Vulkan, DirectX 12, and Metal source
