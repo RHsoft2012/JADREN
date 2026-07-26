@@ -25,7 +25,7 @@ fn default_install_root() -> Result<PathBuf, Box<dyn Error>> {
 }
 
 fn release_label() -> &'static str {
-    option_env!("JADREN_RELEASE_LABEL").unwrap_or("0.1.0-preview.2")
+    option_env!("JADREN_RELEASE_LABEL").unwrap_or("0.1.0-preview.3")
 }
 
 #[cfg(windows)]
