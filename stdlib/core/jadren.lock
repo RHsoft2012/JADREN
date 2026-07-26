@@ -1,0 +1,8 @@
+version = 1
+manifest_fingerprint = "7bf755dd6a8674e2"
+
+[package]
+name = "jadren-core"
+version = "0.1.0"
+edition = "2026"
+

@@ -2,7 +2,7 @@
   "schema": "jadren-public-export-0.1",
   "default_language": "en",
   "source_policy": "explicit-allowlist",
-  "file_count": 234,
+  "file_count": 254,
   "files": [
     {
       "path": ".editorconfig",
@@ -935,6 +935,12 @@
       "sha256": "139a8bd5e36b134f280ee6f3fccd7508b3ee7a20bdeeb6acf4184a24c50ee1fd"
     },
     {
+      "path": "docs/CORE_MATH_0.1.md",
+      "source": "docs/02-library/CORE_MATH_0.1.md",
+      "bytes": 2128,
+      "sha256": "6f892319af0397880debe0a2aec281e86f620f0a92f943307ddf0100027fdb7c"
+    },
+    {
       "path": "docs/GETTING_STARTED.md",
       "source": "docs/public/en/GETTING_STARTED.md",
       "bytes": 2942,
@@ -953,6 +959,12 @@
       "sha256": "38341443f8261cfe5015efde52c89e3bc68b2ca300f09221b25e7ae59d71e4f2"
     },
     {
+      "path": "docs/STDLIB_AND_MODULES_0.1.md",
+      "source": "docs/02-library/STDLIB_AND_MODULES_0.1.md",
+      "bytes": 3116,
+      "sha256": "a8b9dbf4d8e5856d00f65ca98c7113b2a89e26d7e48aac87b50235faa1b8a7b7"
+    },
+    {
       "path": "docs/UNITY_INTEGRATION.md",
       "source": "docs/public/en/UNITY_INTEGRATION.md",
       "bytes": 2431,
@@ -963,6 +975,12 @@
       "source": "docs/public/en/UNITY_PROJECT_GUIDE.md",
       "bytes": 7182,
       "sha256": "30caba233e7ec8069f1fe51a6ec827843dd6206aeaa30cbdd434ef6e1760a025"
+    },
+    {
+      "path": "docs/VERSIONING.md",
+      "source": "docs/public/en/VERSIONING.md",
+      "bytes": 1502,
+      "sha256": "654d79e614ef602d92ac01194c4fa3c1996e295c2194b932e4517415dedef632"
     },
     {
       "path": "docs/VSCODE_EXTENSION.md",
@@ -1331,6 +1349,30 @@
       "sha256": "b56d1ce3d88d985400c32b20190fa3dcdf81e07b45c21ab3c42b31482c775a2a"
     },
     {
+      "path": "examples/stdlib-core-project/README.md",
+      "source": "examples/stdlib-core-project/README.md",
+      "bytes": 650,
+      "sha256": "b84a62f0657eb1769c3f4621c295d814d18d07e300be0bc9fe97edf11762eedf"
+    },
+    {
+      "path": "examples/stdlib-core-project/jadren.lock",
+      "source": "examples/stdlib-core-project/jadren.lock",
+      "bytes": 215,
+      "sha256": "7d047d0a6b8887115c97cd545556fb0fde48d2f81b2d8427a20a2f649c374ae9"
+    },
+    {
+      "path": "examples/stdlib-core-project/jadren.toml",
+      "source": "examples/stdlib-core-project/jadren.toml",
+      "bytes": 158,
+      "sha256": "28a941280d216cfcdcb48a664277479edf3db654040d0a65fb1bd005085f45a4"
+    },
+    {
+      "path": "examples/stdlib-core-project/src/main.jdn",
+      "source": "examples/stdlib-core-project/src/main.jdn",
+      "bytes": 718,
+      "sha256": "322103935a727d462fd70ceefe75f65291d8990caec291e405f0910fc811b897"
+    },
+    {
       "path": "examples/vector-slice.jdn",
       "source": "examples/vector-slice.jdn",
       "bytes": 536,
@@ -1407,6 +1449,84 @@
       "source": "rust-toolchain.toml",
       "bytes": 151,
       "sha256": "5c6cafa78ea52e821292aec7c3697dd0fa22f3070d96e178599ca8d7964bd6fd"
+    },
+    {
+      "path": "stdlib/core/README.md",
+      "source": "stdlib/core/README.md",
+      "bytes": 731,
+      "sha256": "04c68590c7926d286be46a0a864730676e5b10f06687fc6dfbccce3f96d24d8d"
+    },
+    {
+      "path": "stdlib/core/examples/carriers_collections.jdn",
+      "source": "stdlib/core/examples/carriers_collections.jdn",
+      "bytes": 634,
+      "sha256": "1a87d41b52310c061e9e607a194274f015bbf3a04d1c3eeda9158dbdcf89c9ab"
+    },
+    {
+      "path": "stdlib/core/examples/import_math.jdn",
+      "source": "stdlib/core/examples/import_math.jdn",
+      "bytes": 304,
+      "sha256": "9149e25d537b681c4f329fbe7b504ec24023e5af6cb963e3ce0ed74ada2630f4"
+    },
+    {
+      "path": "stdlib/core/examples/math_simd.jdn",
+      "source": "stdlib/core/examples/math_simd.jdn",
+      "bytes": 336,
+      "sha256": "160b83467adf8c43ea8c5636083ba9bb18cea8f7528e3c5a00aacc8889f1b1b9"
+    },
+    {
+      "path": "stdlib/core/jadren.lock",
+      "source": "stdlib/core/jadren.lock",
+      "bytes": 122,
+      "sha256": "4e5d881684da9cdd9b8c903df326556a6ebff8675dc03c55e38d010194a18563"
+    },
+    {
+      "path": "stdlib/core/jadren.toml",
+      "source": "stdlib/core/jadren.toml",
+      "bytes": 108,
+      "sha256": "0d31769e63cc5c124f85e0f42a1e783625823b6bf9a9aef887598c5a674da456"
+    },
+    {
+      "path": "stdlib/core/src/collections.jdn",
+      "source": "stdlib/core/src/collections.jdn",
+      "bytes": 516,
+      "sha256": "54e60279d018638bb002fdd317d5e63b170c98541268730783be77b78f17d139"
+    },
+    {
+      "path": "stdlib/core/src/math.jdn",
+      "source": "stdlib/core/src/math.jdn",
+      "bytes": 907,
+      "sha256": "985a623e9d9b8bb538614cd437b45a50ec94be1fe57a302113b1ba6fd2e49ea2"
+    },
+    {
+      "path": "stdlib/core/src/option.jdn",
+      "source": "stdlib/core/src/option.jdn",
+      "bytes": 469,
+      "sha256": "8f3ff67529a7c8bd196f1070a13b8b00279d9f27d43d6f4d880ee4f6aeb54e02"
+    },
+    {
+      "path": "stdlib/core/src/outcome.jdn",
+      "source": "stdlib/core/src/outcome.jdn",
+      "bytes": 689,
+      "sha256": "cff9d50c2356e837d0a465225bd1b4de8823e957579f4694d391bd014b961d15"
+    },
+    {
+      "path": "stdlib/core/src/simd.jdn",
+      "source": "stdlib/core/src/simd.jdn",
+      "bytes": 1327,
+      "sha256": "7d1c10abda006a8247100039840fc10592bf4b64f5c18226ebb63c1330f22bfb"
+    },
+    {
+      "path": "stdlib/core/src/status.jdn",
+      "source": "stdlib/core/src/status.jdn",
+      "bytes": 175,
+      "sha256": "7f21d19b97e2c88fe77e16eafc8afc4082ff7a9a15bec6c30d550adbb4141df6"
+    },
+    {
+      "path": "stdlib/core/src/utf8.jdn",
+      "source": "stdlib/core/src/utf8.jdn",
+      "bytes": 238,
+      "sha256": "fd52683a30045dcca4d93c8b95fe9481daa55199b782497d6cfffe078f5d1b9d"
     }
   ],
   "claim_scope": "sanitized source export for separate public repository review; no publish, release, signing, or support claim"

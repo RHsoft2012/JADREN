@@ -1,0 +1,19 @@
+module jadren.core.option
+
+/// Creates a typed success value without heap allocation.
+pub fn some_i32(value: Int32) -> Option<Int32> {
+    return Some(value)
+}
+
+/// Creates an empty optional value.
+pub fn none_i32() -> Option<Int32> {
+    return None
+}
+
+/// Reads an optional value with an explicit fallback.
+pub fn unwrap_or_i32(value: Option<Int32>, fallback: Int32) -> Int32 {
+    return match value {
+        Some(inner) => inner,
+        None => fallback,
+    }
+}
