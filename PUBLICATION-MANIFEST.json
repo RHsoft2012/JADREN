@@ -80,7 +80,7 @@
       "path": "README.md",
       "source": "docs/public/en/GITHUB_README.md",
       "bytes": 3826,
-      "sha256": "2daf48b033dfcf35bd782529cf2beb6f62561bad24d752a3169d6f756b4f1a87"
+      "sha256": "6e4be5ac0b738bf40ee9aa7eb2e19ed4637f1b63ac04db95199ee2fcd3f7cea6"
     },
     {
       "path": "SECURITY.md",
@@ -433,8 +433,8 @@
     {
       "path": "crates/jadren-installer/src/bin/jadren-setup.rs",
       "source": "crates/jadren-installer/src/bin/jadren-setup.rs",
-      "bytes": 3102,
-      "sha256": "804384ab3e1709065043fa7d41f3be12f7f84b2499a86ed4e55871ed0860ba33"
+      "bytes": 7004,
+      "sha256": "0b05fb90bc6255df4261d94bbb46a50fb979a3489a4f73a0eb62552d42925905"
     },
     {
       "path": "crates/jadren-installer/src/bin/jadren-toolchain-smoke.rs",
@@ -937,8 +937,8 @@
     {
       "path": "docs/GETTING_STARTED.md",
       "source": "docs/public/en/GETTING_STARTED.md",
-      "bytes": 2876,
-      "sha256": "d936fe3c6adf94b4ac2d2e9034ff5bfff45e4111ac9197715aad5ebf8b6d49f0"
+      "bytes": 2942,
+      "sha256": "4da0fdb585011c7607534d672ecafde8b7ce330e8c08133b549446ab75c6c992"
     },
     {
       "path": "docs/LANGUAGE_OVERVIEW.md",
