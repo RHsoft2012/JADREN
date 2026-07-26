@@ -20,7 +20,7 @@ remain in the private development repository.
 
 ## Mobile and GPU validation
 
-- complete physical Android ARM64/NEON testing;
+- expand physical Android ARM64/NEON testing beyond the recorded three-device smoke matrix;
 - measure thermal and battery behaviour on representative devices;
 - expand bounded Vulkan, DirectX 12, and Metal execution evidence;
 - publish support only for combinations verified on matching hardware.

@@ -477,11 +477,33 @@ name = "jadren-selfhost-api"
 version = "0.1.0"
 
 [[package]]
+name = "jadren-selfhost-driver"
+version = "0.1.0"
+dependencies = [
+ "inkwell",
+ "jadren-codegen-llvm",
+ "jadren-jir",
+ "jadren-selfhost-stage2",
+ "jadren-source",
+]
+
+[[package]]
 name = "jadren-selfhost-oracle"
 version = "0.1.0"
 dependencies = [
  "jadren-determinism",
  "jadren-selfhost-api",
+]
+
+[[package]]
+name = "jadren-selfhost-stage2"
+version = "0.1.0"
+dependencies = [
+ "inkwell",
+ "jadren-codegen-llvm",
+ "jadren-jir",
+ "jadren-selfhost-api",
+ "jadren-source",
 ]
 
 [[package]]

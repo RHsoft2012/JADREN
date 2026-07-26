@@ -23,9 +23,9 @@ pub use link::{
 pub use module::{CodegenError, lower_module, lower_module_with_debug};
 #[cfg(any(windows, target_os = "linux"))]
 pub use object::{
-    CpuDispatch, CpuFeatures, CpuVariant, DispatchSelection, ObjectError, ObjectOptimization,
-    ObjectOptions, emit_assembly, emit_object, lower_to_object, lower_to_object_with_debug,
-    write_object,
+    BackendEmissionSummary, CpuDispatch, CpuFeatures, CpuVariant, DispatchSelection, ObjectError,
+    ObjectOptimization, ObjectOptions, emit_assembly, emit_object, lower_to_object,
+    lower_to_object_with_debug, lower_to_object_with_summary, write_object,
 };
 #[cfg(any(windows, target_os = "linux"))]
 pub use types::{

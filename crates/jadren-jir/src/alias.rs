@@ -48,7 +48,8 @@ impl AliasAnalysis {
 /// contract pairs propagate through aggregate copies, field extraction, casts,
 /// and offsets. Offsets derived from one root retain that root but are
 /// classified as `MayAlias` with the base because index arithmetic has not yet
-/// been range-proven. Parameters, loads, calls, and unknown casts remain
+/// been range-proven. Entry parameters are distinct from stack allocations
+/// created by the current invocation. Loads, calls, and unknown casts remain
 /// `MayAlias` with all other roots.
 #[must_use]
 pub fn analyze_aliases(module: &Module) -> AliasAnalysis {
@@ -57,9 +58,17 @@ pub fn analyze_aliases(module: &Module) -> AliasAnalysis {
         let mut provenance = BTreeMap::<ValueId, Provenance>::new();
         let mut memory_provenance = BTreeMap::<ValueId, Provenance>::new();
         let mut contract_noalias = BTreeSet::<(ValueId, ValueId)>::new();
+        let entry_parameters = function
+            .parameters
+            .iter()
+            .map(|parameter| parameter.value)
+            .collect::<BTreeSet<_>>();
         let mut pointers = BTreeMap::<ValueId, TypeId>::new();
         for parameter in &function.parameters {
-            provenance.insert(parameter.value, Provenance::Unknown);
+            // Parameters exist before this invocation creates any `StackAlloc`
+            // allocation. This remains true for aggregate parameters whose
+            // pointer field is extracted after a lowering-generated stack copy.
+            provenance.insert(parameter.value, Provenance::Parameter(parameter.value));
             if is_pointer_type(module, parameter.ty) {
                 pointers.insert(parameter.value, parameter.ty);
             }
@@ -71,8 +80,8 @@ pub fn analyze_aliases(module: &Module) -> AliasAnalysis {
             for instruction in &block.instructions {
                 if let InstructionKind::AssumeNoAlias { left, right } = &instruction.kind {
                     contract_noalias.insert(ordered(*left, *right));
-                    provenance.insert(*left, Provenance::Contract(*left));
-                    provenance.insert(*right, Provenance::Contract(*right));
+                    provenance.insert(*left, contract_provenance(*left, &entry_parameters));
+                    provenance.insert(*right, contract_provenance(*right, &entry_parameters));
                 }
             }
         }
@@ -87,8 +96,8 @@ pub fn analyze_aliases(module: &Module) -> AliasAnalysis {
                 match &instruction.kind {
                     InstructionKind::AssumeNoAlias { left, right } => {
                         contract_noalias.insert(ordered(*left, *right));
-                        provenance.insert(*left, Provenance::Contract(*left));
-                        provenance.insert(*right, Provenance::Contract(*right));
+                        provenance.insert(*left, contract_provenance(*left, &entry_parameters));
+                        provenance.insert(*right, contract_provenance(*right, &entry_parameters));
                     }
                     InstructionKind::Store { pointer, value, .. } => {
                         if let Some(value_provenance) = provenance.get(value).copied() {
@@ -167,6 +176,8 @@ pub fn analyze_aliases(module: &Module) -> AliasAnalysis {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Provenance {
+    Parameter(ValueId),
+    ContractParameter(ValueId),
     Unique(ValueId),
     DerivedUnique(ValueId),
     Contract(ValueId),
@@ -177,11 +188,21 @@ enum Provenance {
 impl Provenance {
     fn derived(self) -> Self {
         match self {
+            Self::Parameter(root) => Self::Parameter(root),
+            Self::ContractParameter(root) => Self::ContractParameter(root),
             Self::Unique(root) | Self::DerivedUnique(root) => Self::DerivedUnique(root),
             Self::Contract(root) => Self::Contract(root),
             Self::Shared(root) => Self::Shared(root),
             Self::Unknown => Self::Unknown,
         }
+    }
+}
+
+fn contract_provenance(value: ValueId, entry_parameters: &BTreeSet<ValueId>) -> Provenance {
+    if entry_parameters.contains(&value) {
+        Provenance::ContractParameter(value)
+    } else {
+        Provenance::Contract(value)
     }
 }
 
@@ -191,6 +212,16 @@ fn alias_relation(
     contract_noalias: &BTreeSet<(ValueId, ValueId)>,
 ) -> AliasRelation {
     match (left, right) {
+        (Provenance::Parameter(_), Provenance::Unique(_))
+        | (Provenance::Parameter(_), Provenance::DerivedUnique(_))
+        | (Provenance::Unique(_), Provenance::Parameter(_))
+        | (Provenance::DerivedUnique(_), Provenance::Parameter(_))
+        | (Provenance::ContractParameter(_), Provenance::Unique(_))
+        | (Provenance::ContractParameter(_), Provenance::DerivedUnique(_))
+        | (Provenance::Unique(_), Provenance::ContractParameter(_))
+        | (Provenance::DerivedUnique(_), Provenance::ContractParameter(_)) => {
+            AliasRelation::NoAlias
+        }
         (Provenance::Unique(left), Provenance::Unique(right))
         | (Provenance::Unique(left), Provenance::DerivedUnique(right))
         | (Provenance::DerivedUnique(left), Provenance::Unique(right))
@@ -199,9 +230,10 @@ fn alias_relation(
         {
             AliasRelation::NoAlias
         }
-        (Provenance::Contract(left), Provenance::Contract(right))
-            if left != right && contract_noalias.contains(&ordered(left, right)) =>
-        {
+        (
+            Provenance::Contract(left) | Provenance::ContractParameter(left),
+            Provenance::Contract(right) | Provenance::ContractParameter(right),
+        ) if left != right && contract_noalias.contains(&ordered(left, right)) => {
             AliasRelation::NoAlias
         }
         _ => AliasRelation::MayAlias,
@@ -316,7 +348,7 @@ mod tests {
         let with_unknown = analyze_aliases(&module);
         assert_eq!(
             with_unknown.relation(FunctionId::new(0), ValueId::new(1), ValueId::new(4)),
-            AliasRelation::MayAlias
+            AliasRelation::NoAlias
         );
     }
 
@@ -539,6 +571,10 @@ mod tests {
         let analysis = analyze_aliases(&module);
         assert_eq!(
             analysis.relation(FunctionId::new(0), ValueId::new(6), ValueId::new(7)),
+            AliasRelation::NoAlias
+        );
+        assert_eq!(
+            analysis.relation(FunctionId::new(0), ValueId::new(2), ValueId::new(6)),
             AliasRelation::NoAlias
         );
         module.functions[0].blocks[0].instructions[4].kind = InstructionKind::AssumeNoAlias {

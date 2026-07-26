@@ -66,6 +66,124 @@ pub struct TokenCounts {
     pub total: u64,
 }
 
+/// Stage-2 record containing one canonical type declaration.
+pub const STAGE2_JIR_RECORD_TYPE: u8 = 1;
+/// Stage-2 record containing one function declaration.
+pub const STAGE2_JIR_RECORD_FUNCTION: u8 = 2;
+/// Stage-2 record containing one basic block.
+pub const STAGE2_JIR_RECORD_BLOCK: u8 = 3;
+/// Stage-2 record containing one non-terminating instruction.
+pub const STAGE2_JIR_RECORD_INSTRUCTION: u8 = 4;
+/// Stage-2 record containing one block terminator.
+pub const STAGE2_JIR_RECORD_TERMINATOR: u8 = 5;
+/// Stage-2 metadata record binding one immutable source local to an existing
+/// SSA value. The record is additive; legacy streams never contain it.
+pub const STAGE2_JIR_RECORD_LOCAL_BINDING_METADATA: u8 = 6;
+/// Stage-2 record containing one bounded direct call to a preceding function.
+/// The record is additive and is accepted only under the reviewed internal
+/// one-literal call contract.
+pub const STAGE2_JIR_RECORD_DIRECT_CALL: u8 = 7;
+/// Current additive stage-2 record protocol. Legacy records remain accepted
+/// because their kind-specific contracts are unchanged.
+pub const STAGE2_JIR_PROTOCOL_VERSION: u8 = 2;
+/// Opcode used by the immutable local-binding metadata record.
+pub const STAGE2_JIR_LOCAL_BINDING_IMMUTABLE: u8 = 1;
+/// Opcode used by the bounded type record for a scalar integer.
+pub const STAGE2_JIR_TYPE_INTEGER: u8 = 1;
+/// Opcode used by the bounded function record for a definition.
+pub const STAGE2_JIR_FUNCTION_DEFINITION: u8 = 1;
+/// Opcode used by the bounded block record for an entry block.
+pub const STAGE2_JIR_BLOCK_ENTRY: u8 = 1;
+/// Opcode used by the bounded instruction record for an integer constant.
+pub const STAGE2_JIR_INSTRUCTION_CONSTANT: u8 = 1;
+/// Opcode used by the bounded instruction record for integer addition.
+pub const STAGE2_JIR_INSTRUCTION_ADD: u8 = 2;
+/// Opcode used by the bounded instruction record for integer subtraction.
+pub const STAGE2_JIR_INSTRUCTION_SUBTRACT: u8 = 3;
+/// Opcode used by the bounded instruction record for integer multiplication.
+pub const STAGE2_JIR_INSTRUCTION_MULTIPLY: u8 = 4;
+/// Maximum number of typed Int32 parameters in the bounded stage-2 preview.
+/// Parameter values occupy the first function-local SSA identities; the
+/// function record carries this count in `operand_a` without changing the
+/// fixed record layout.
+pub const STAGE2_JIR_MAX_PARAMETERS: u8 = 2;
+/// Opcode used by the bounded terminator record for a return.
+pub const STAGE2_JIR_TERMINATOR_RETURN: u8 = 1;
+/// Flag carried by the bounded signed-integer type record.
+pub const STAGE2_JIR_FLAG_SIGNED: u8 = 1;
+/// Flag carried by a bounded exported function definition.
+pub const STAGE2_JIR_FLAG_EXPORTED: u8 = 1;
+/// Flag carried by a bounded return terminator with an SSA operand.
+pub const STAGE2_JIR_FLAG_HAS_VALUE: u8 = 1;
+/// Version flag carried by an immutable local-binding metadata record.
+pub const STAGE2_JIR_FLAG_METADATA_V2: u8 = 1;
+/// Complete stage-2 status: validated input, lowered functions and full output.
+pub const STAGE2_JIR_STATUS_COMPLETE: u64 = 7;
+
+/// One fixed-size record in the bounded stage-2 JIR hand-off.
+///
+/// The record mirrors a deliberately small canonical JIR subset without
+/// claiming to serialize the complete `jadren-jir` model. `kind` is
+/// `1=type`, `2=function`, `3=block`, `4=instruction`, `5=terminator`,
+/// `6=immutable local-binding metadata`, or `7=bounded direct call`. For kind `6`, `source_start..end`
+/// is the declaration identifier span, `operand_a..b` is the use span and
+/// `value_index` names the already-emitted SSA value.
+/// For kind `7`, `operand_a` is the preceding callee function index,
+/// `operand_b` is the already-defined one-literal argument SSA value and
+/// `source_start..end` is the complete call expression span.
+/// Dense identities and operands are represented as platform-neutral `u64`
+/// indices for the currently supported 64-bit hosts. A function may carry at
+/// most two explicit Int32 parameters plus a bounded sequence of constant and
+/// binary instruction records; the parameter count is stored in the function
+/// record's `operand_a`, and parameter values occupy the first function-local
+/// SSA identities. The record layout remains fixed while the stream length
+/// describes the expression.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Stage2JirRecord {
+    pub kind: u8,
+    pub opcode: u8,
+    pub type_kind: u8,
+    pub flags: u8,
+    pub function_index: u64,
+    pub block_index: u64,
+    pub value_index: u64,
+    pub operand_a: u64,
+    pub operand_b: u64,
+    pub source_start: u64,
+    pub source_end: u64,
+}
+
+/// C-compatible summary returned by the bounded stage-2 JIR emitter.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Stage2JirSummary {
+    pub functions_seen: u64,
+    pub statements_seen: u64,
+    pub calls_seen: u64,
+    pub records_required: u64,
+    pub records_emitted: u64,
+    pub functions_lowered: u64,
+    pub errors: u64,
+    pub status_flags: u64,
+}
+
+/// C-compatible summary returned by the fused bounded Stage-2 frontend-to-JIR
+/// hand-off. The 64-byte layout keeps frontend validity/completeness and JIR
+/// emission completeness explicit without changing the existing summaries.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Stage2PipelineSummary {
+    pub source_bytes: u64,
+    pub tokens_emitted: u64,
+    pub syntax_errors: u64,
+    pub frontend_status_flags: u64,
+    pub records_required: u64,
+    pub records_emitted: u64,
+    pub functions_lowered: u64,
+    pub status_flags: u64,
+}
+
 /// C-compatible typed metadata for one builtin literal expression.
 ///
 /// This is deliberately a narrow hand-off: `expression_kind` identifies a
@@ -527,9 +645,10 @@ mod tests {
     use super::{
         API_SCHEMA, API_VERSION, ApiError, DiagnosticValue, ExpressionPrecedenceHeader,
         FrontendApiRegistry, FrontendApiSlot, FrontendApiV1, FrontendTokenInfoApiV1,
-        TOKEN_INFO_API_VERSION, TokenCounts, TokenInfo, TokenSpan, TypedCallBindingHeader,
-        TypedCallCandidateHeader, TypedExpressionHeader, TypedNameBindingHeader,
-        TypedRegionNameBindingHeader, TypedScopedNameBindingHeader,
+        Stage2JirRecord, Stage2JirSummary, Stage2PipelineSummary, TOKEN_INFO_API_VERSION,
+        TokenCounts, TokenInfo, TokenSpan, TypedCallBindingHeader, TypedCallCandidateHeader,
+        TypedExpressionHeader, TypedNameBindingHeader, TypedRegionNameBindingHeader,
+        TypedScopedNameBindingHeader,
     };
 
     extern "C" fn classify(_: u8) -> u8 {
@@ -574,6 +693,12 @@ mod tests {
         assert_eq!(align_of::<TypedRegionNameBindingHeader>(), 8);
         assert_eq!(size_of::<ExpressionPrecedenceHeader>(), 64);
         assert_eq!(align_of::<ExpressionPrecedenceHeader>(), 8);
+        assert_eq!(size_of::<Stage2JirRecord>(), 64);
+        assert_eq!(align_of::<Stage2JirRecord>(), 8);
+        assert_eq!(size_of::<Stage2JirSummary>(), 64);
+        assert_eq!(align_of::<Stage2JirSummary>(), 8);
+        assert_eq!(size_of::<Stage2PipelineSummary>(), 64);
+        assert_eq!(align_of::<Stage2PipelineSummary>(), 8);
     }
 
     #[test]

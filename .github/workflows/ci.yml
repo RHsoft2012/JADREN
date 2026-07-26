@@ -44,10 +44,10 @@ jobs:
         run: cargo +${{ env.RUST_TOOLCHAIN }} fmt --all -- --check
 
       - name: Run Clippy without the native LLVM boundary
-        run: cargo +${{ env.RUST_TOOLCHAIN }} clippy --locked --workspace --all-targets --exclude jadren-codegen-llvm --exclude jadren-cli -- -D warnings
+        run: cargo +${{ env.RUST_TOOLCHAIN }} clippy --locked --workspace --all-targets --exclude jadren-codegen-llvm --exclude jadren-cli --exclude jadren-selfhost-driver --exclude jadren-selfhost-stage2 -- -D warnings
 
       - name: Run portable workspace tests
-        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --workspace --all-targets --exclude jadren-codegen-llvm --exclude jadren-cli
+        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked --workspace --all-targets --exclude jadren-codegen-llvm --exclude jadren-cli --exclude jadren-selfhost-driver --exclude jadren-selfhost-stage2
 
   linux-native:
     name: Linux native build and run
@@ -88,10 +88,10 @@ jobs:
           echo "LD_LIBRARY_PATH=$prefix/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Run native backend Clippy
-        run: cargo +${{ env.RUST_TOOLCHAIN }} clippy --locked -p jadren-codegen-llvm -p jadren-cli --all-targets -- -D warnings
+        run: cargo +${{ env.RUST_TOOLCHAIN }} clippy --locked -p jadren-codegen-llvm -p jadren-cli -p jadren-selfhost-driver -p jadren-selfhost-stage2 --all-targets -- -D warnings
 
       - name: Run native backend tests
-        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked -p jadren-codegen-llvm -p jadren-cli --all-targets
+        run: cargo +${{ env.RUST_TOOLCHAIN }} test --locked -p jadren-codegen-llvm -p jadren-cli -p jadren-selfhost-driver -p jadren-selfhost-stage2 --all-targets
 
       - name: Build and run Hello Jadren
         shell: bash

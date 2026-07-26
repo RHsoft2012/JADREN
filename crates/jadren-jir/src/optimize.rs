@@ -81,12 +81,14 @@ pub fn inline_tiny_functions(module: &mut Module) -> OptimizationStats {
     stats
 }
 
-/// Promotes non-escaping scalar and vector stack slots to ordinary SSA values.
+/// Promotes non-escaping scalar, vector, and aggregate stack slots to ordinary
+/// SSA values.
 ///
-/// The MVP is deliberately local: every direct load must follow a store in
-/// the same basic block, and any pointer use other than a non-volatile direct
-/// load/store rejects the candidate. This prevents the pass from changing
-/// aliasing, volatile, panic or ownership semantics across CFG edges.
+/// The pass remains conservative: a multi-store slot must have every direct
+/// load follow a store in the same basic block, while a single immutable store
+/// may feed dominated loads across the CFG. Any pointer use other than a
+/// non-volatile direct load/store rejects the candidate. This prevents the
+/// pass from changing aliasing, volatile, panic or ownership semantics.
 pub fn promote_scalar_stack_slots(module: &mut Module) -> OptimizationStats {
     let types = &module.types;
     let mut stats = OptimizationStats::default();
@@ -663,6 +665,16 @@ fn promote_function_stack_slots(
         return;
     }
 
+    let mut predecessors = vec![Vec::<BlockId>::new(); function.blocks.len()];
+    for (source, block) in function.blocks.iter().enumerate() {
+        for target in terminator_targets(&block.terminator) {
+            if target.index() < predecessors.len() {
+                predecessors[target.index()].push(BlockId::new(source));
+            }
+        }
+    }
+    let dominators = compute_dominators(&predecessors);
+
     // First reject pointer escapes. Direct non-volatile loads/stores are the
     // only uses that the local dataflow below is allowed to rewrite.
     let mut valid = candidates
@@ -706,6 +718,77 @@ fn promote_function_stack_slots(
         if !valid.get(&pointer).copied().unwrap_or(false) {
             continue;
         }
+
+        // A caller-owned aggregate descriptor is commonly staged in the
+        // entry block and loaded from a loop block.  When there is exactly one
+        // non-volatile store, dominance proves that the stored SSA value is
+        // available for every load; promote that immutable staging across the
+        // CFG instead of forcing repeated stack traffic. Multiple stores or
+        // malformed CFGs stay on the conservative local proof below.
+        let mut stores = Vec::<(usize, usize, ValueId)>::new();
+        let mut loads = Vec::<(usize, usize, ValueId)>::new();
+        let mut stack_alloc = None;
+        for (block_index, block) in function.blocks.iter().enumerate() {
+            for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+                match &instruction.kind {
+                    InstructionKind::StackAlloc { .. }
+                        if instruction
+                            .result
+                            .is_some_and(|result| result.value == pointer) =>
+                    {
+                        stack_alloc = Some((block_index, instruction_index));
+                    }
+                    InstructionKind::Store {
+                        pointer: store_pointer,
+                        value,
+                        volatile: false,
+                        ..
+                    } if *store_pointer == pointer => {
+                        stores.push((block_index, instruction_index, *value));
+                    }
+                    InstructionKind::Load {
+                        pointer: load_pointer,
+                        ..
+                    } if *load_pointer == pointer => {
+                        if let Some(result) = instruction.result {
+                            loads.push((block_index, instruction_index, result.value));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let Some(stack_alloc) = stack_alloc else {
+            continue;
+        };
+        if stores.len() == 1
+            && loads.iter().all(|(load_block, load_index, _)| {
+                let (store_block, store_index, _) = stores[0];
+                dominators
+                    .get(*load_block)
+                    .is_some_and(|set| set.contains(&store_block))
+                    && (store_block != *load_block || store_index < *load_index)
+            })
+            && dominators
+                .get(stores[0].0)
+                .is_some_and(|set| set.contains(&stack_alloc.0))
+        {
+            let (store_block, store_index, stored_value) = stores[0];
+            let mut replacements = BTreeMap::new();
+            let mut removed_indices = BTreeMap::new();
+            removed_indices.insert(stack_alloc, ());
+            removed_indices.insert((store_block, store_index), ());
+            for (block, index, result) in loads {
+                replacements.insert(result, stored_value);
+                removed_indices.insert((block, index), ());
+            }
+            promotions.push(StackPromotion {
+                removed_indices,
+                replacements,
+            });
+            continue;
+        }
+
         let mut replacements = BTreeMap::new();
         let mut removed_indices = BTreeMap::new();
         let mut has_store = false;
@@ -809,7 +892,9 @@ fn is_stack_promotable_pointer(types: &[Type], pointer_ty: TypeId, pointee: Type
                     | Type::Integer { .. }
                     | Type::Float { .. }
                     | Type::Pointer { .. }
-                    | Type::Vector { .. },
+                    | Type::Vector { .. }
+                    | Type::Struct { .. }
+                    | Type::NominalStruct { .. },
             )
         )
 }
@@ -2380,6 +2465,99 @@ mod tests {
     }
 
     #[test]
+    fn promotes_non_escaping_struct_stack_slot() {
+        let mut module = Module {
+            types: vec![
+                Type::Float { bits: 32 },
+                Type::Integer {
+                    signed: false,
+                    bits: 32,
+                },
+                Type::Struct {
+                    fields: vec![TypeId::new(0), TypeId::new(1)],
+                },
+                Type::Pointer {
+                    pointee: TypeId::new(2),
+                    address_space: AddressSpace::Stack,
+                },
+                Type::Unit,
+            ],
+            functions: vec![Function {
+                id: FunctionId::new(0),
+                name: "struct_slot".to_owned(),
+                linkage: Linkage::Internal,
+                parameters: Vec::new(),
+                result: TypeId::new(4),
+                blocks: vec![Block {
+                    id: BlockId::new(0),
+                    parameters: Vec::new(),
+                    instructions: vec![
+                        Instruction {
+                            result: Some(value(0, 3)),
+                            kind: InstructionKind::StackAlloc {
+                                ty: TypeId::new(2),
+                                count: None,
+                            },
+                            span: None,
+                        },
+                        Instruction {
+                            result: Some(value(1, 0)),
+                            kind: InstructionKind::Constant(Constant::FloatBits {
+                                bits: u64::from(1.0_f32.to_bits()),
+                            }),
+                            span: None,
+                        },
+                        Instruction {
+                            result: Some(value(2, 1)),
+                            kind: InstructionKind::Constant(Constant::Integer { value: 2 }),
+                            span: None,
+                        },
+                        Instruction {
+                            result: Some(value(3, 2)),
+                            kind: InstructionKind::Aggregate {
+                                elements: vec![ValueId::new(1), ValueId::new(2)],
+                            },
+                            span: None,
+                        },
+                        Instruction {
+                            result: None,
+                            kind: InstructionKind::Store {
+                                pointer: ValueId::new(0),
+                                value: ValueId::new(3),
+                                alignment: 4,
+                                volatile: false,
+                            },
+                            span: None,
+                        },
+                        Instruction {
+                            result: Some(value(4, 2)),
+                            kind: InstructionKind::Load {
+                                pointer: ValueId::new(0),
+                                alignment: 4,
+                                volatile: false,
+                            },
+                            span: None,
+                        },
+                    ],
+                    terminator: Terminator::Return { value: None },
+                    span: None,
+                }],
+                span: None,
+            }],
+        };
+
+        let stats = super::promote_scalar_stack_slots(&mut module);
+        assert_eq!(stats.promoted_stack_slots, 1);
+        let block = &module.functions[0].blocks[0];
+        assert_eq!(block.instructions.len(), 3);
+        assert!(matches!(
+            block.instructions[2].kind,
+            InstructionKind::Aggregate { .. }
+        ));
+        assert!(crate::verify(&module).is_empty());
+    }
+
+    #[test]
     fn promotes_local_vector_store_load_across_basic_blocks() {
         let mut module = Module {
             types: vec![
@@ -2471,6 +2649,125 @@ mod tests {
         assert_eq!(stats.promoted_stack_slots, 1);
         assert_eq!(module.functions[0].blocks[0].instructions.len(), 2);
         assert!(module.functions[0].blocks[1].instructions.is_empty());
+        assert!(crate::verify(&module).is_empty());
+    }
+
+    #[test]
+    fn does_not_promote_cross_cfg_store_that_does_not_dominate_load() {
+        let mut module = Module {
+            types: vec![
+                Type::Integer {
+                    signed: true,
+                    bits: 32,
+                },
+                Type::Pointer {
+                    pointee: TypeId::new(0),
+                    address_space: AddressSpace::Stack,
+                },
+                Type::Bool,
+                Type::Unit,
+            ],
+            functions: vec![Function {
+                id: FunctionId::new(0),
+                name: "non_dominating_store".to_owned(),
+                linkage: Linkage::Internal,
+                parameters: vec![crate::Parameter {
+                    value: ValueId::new(0),
+                    ty: TypeId::new(2),
+                    name: Some("condition".to_owned()),
+                }],
+                result: TypeId::new(3),
+                blocks: vec![
+                    Block {
+                        id: BlockId::new(0),
+                        parameters: Vec::new(),
+                        instructions: vec![
+                            Instruction {
+                                result: Some(value(1, 1)),
+                                kind: InstructionKind::StackAlloc {
+                                    ty: TypeId::new(0),
+                                    count: None,
+                                },
+                                span: None,
+                            },
+                            Instruction {
+                                result: Some(value(2, 0)),
+                                kind: InstructionKind::Constant(Constant::Integer { value: 7 }),
+                                span: None,
+                            },
+                        ],
+                        terminator: Terminator::Branch {
+                            condition: ValueId::new(0),
+                            then_target: BlockId::new(1),
+                            then_arguments: Vec::new(),
+                            else_target: BlockId::new(2),
+                            else_arguments: Vec::new(),
+                        },
+                        span: None,
+                    },
+                    Block {
+                        id: BlockId::new(1),
+                        parameters: Vec::new(),
+                        instructions: vec![Instruction {
+                            result: None,
+                            kind: InstructionKind::Store {
+                                pointer: ValueId::new(1),
+                                value: ValueId::new(2),
+                                alignment: 4,
+                                volatile: false,
+                            },
+                            span: None,
+                        }],
+                        terminator: Terminator::Jump {
+                            target: BlockId::new(3),
+                            arguments: Vec::new(),
+                        },
+                        span: None,
+                    },
+                    Block {
+                        id: BlockId::new(2),
+                        parameters: Vec::new(),
+                        instructions: Vec::new(),
+                        terminator: Terminator::Jump {
+                            target: BlockId::new(3),
+                            arguments: Vec::new(),
+                        },
+                        span: None,
+                    },
+                    Block {
+                        id: BlockId::new(3),
+                        parameters: Vec::new(),
+                        instructions: vec![Instruction {
+                            result: Some(value(3, 0)),
+                            kind: InstructionKind::Load {
+                                pointer: ValueId::new(1),
+                                alignment: 4,
+                                volatile: false,
+                            },
+                            span: None,
+                        }],
+                        terminator: Terminator::Return { value: None },
+                        span: None,
+                    },
+                ],
+                span: None,
+            }],
+        };
+
+        let stats = super::promote_scalar_stack_slots(&mut module);
+        assert_eq!(stats.promoted_stack_slots, 0);
+        assert!(matches!(
+            module.functions[0].blocks[0].instructions[0].kind,
+            InstructionKind::StackAlloc { .. }
+        ));
+        assert!(matches!(
+            module.functions[0].blocks[1].instructions[0].kind,
+            InstructionKind::Store { .. }
+        ));
+        assert!(matches!(
+            module.functions[0].blocks[3].instructions[0].kind,
+            InstructionKind::Load { .. }
+        ));
         assert!(crate::verify(&module).is_empty());
     }
 
@@ -2810,6 +3107,7 @@ mod tests {
                     pointee: TypeId::new(0),
                     address_space: AddressSpace::Stack,
                 },
+                Type::Bool,
             ],
             functions: vec![Function {
                 id: FunctionId::new(0),
@@ -2871,9 +3169,27 @@ mod tests {
                             span: None,
                         },
                         Instruction {
+                            result: Some(value(6, 3)),
+                            kind: InstructionKind::Compare {
+                                predicate: ComparePredicate::Equal,
+                                left: ValueId::new(2),
+                                right: ValueId::new(3),
+                            },
+                            span: None,
+                        },
+                        Instruction {
+                            result: Some(value(7, 2)),
+                            kind: InstructionKind::Select {
+                                condition: ValueId::new(6),
+                                when_true: ValueId::new(0),
+                                when_false: ValueId::new(1),
+                            },
+                            span: None,
+                        },
+                        Instruction {
                             result: None,
                             kind: InstructionKind::Store {
-                                pointer: ValueId::new(0),
+                                pointer: ValueId::new(7),
                                 value: ValueId::new(2),
                                 alignment: 8,
                                 volatile: false,
@@ -2917,7 +3233,8 @@ mod tests {
                 .count(),
             2
         );
-        assert!(crate::verify(&module).is_empty());
+        let verification_errors = crate::verify(&module);
+        assert!(verification_errors.is_empty(), "{verification_errors:?}");
     }
 
     #[test]

@@ -1,0 +1,159 @@
+fn literal() -> Int32 {
+    return 7;
+}
+
+fn add() -> Int32 {
+    return 40 + 2;
+}
+
+fn subtract() -> Int32 {
+    return 50 - 8;
+}
+
+fn multiply() -> Int32 {
+    return 6 * 7;
+}
+
+fn precedence() -> Int32 {
+    return 2 + 4 * 10;
+}
+
+fn left_assoc() -> Int32 {
+    return 50 - 6 - 2;
+}
+
+fn grouped_left() -> Int32 {
+    return (50 - 6) - 2;
+}
+
+fn long_precedence() -> Int32 {
+    return 2 + 4 * 10 + 0;
+}
+
+fn expression_plan() -> Int32 {
+    return 2 + 4 * 10 + 5 - 5;
+}
+
+fn grouped_long_first() -> Int32 {
+    return (20 + 1) * 2 + 0;
+}
+
+fn grouped_long_second() -> Int32 {
+    return 50 - (2 + 2) * 2;
+}
+
+fn grouped_long_third() -> Int32 {
+    return 40 + 2 * (3 - 2);
+}
+
+fn grouped_plan_first() -> Int32 {
+    return (20 + 1) * 2 + 0 + 0;
+}
+
+fn grouped_plan_second() -> Int32 {
+    return 50 - (2 + 2) * 2 + 0;
+}
+
+fn grouped_plan_third() -> Int32 {
+    return 40 + 2 * (3 - 2) + 0;
+}
+
+fn grouped_plan_fourth() -> Int32 {
+    return 40 + 2 * 1 + (1 - 1);
+}
+
+fn streaming_plan() -> Int32 {
+    return 2 + 4 * 10 + 5 - 5 + 0 + 0 + 0;
+}
+
+fn streaming_grouped_plan() -> Int32 {
+    return 50 - (2 + 2) * 2 + 0 + 0 + 0;
+}
+
+fn streaming_two_groups() -> Int32 {
+    return (20 + 1) * 2 + (3 - 3) + 0 + 0;
+}
+
+fn streaming_nested_group() -> Int32 {
+    return ((20 + 1)) * 2 + 0 + 0 + 0;
+}
+
+fn parameter_binary(x: Int32) -> Int32 {
+    return x + 1;
+}
+
+fn parameter_chain(x: Int32) -> Int32 {
+    return x + 1 + 2;
+}
+
+fn parameter_chain_precedence(x: Int32) -> Int32 {
+    return x + 1 * 2;
+}
+
+fn parameter_product_then_add(x: Int32) -> Int32 {
+    return x * 2 + 3;
+}
+
+fn parameter_four_atom_precedence(x: Int32) -> Int32 {
+    return x + 1 * 2 + 3;
+}
+
+fn parameter_four_atom_precedence_subtract(x: Int32) -> Int32 {
+    return x + 1 * 2 - 3;
+}
+
+fn parameter_four_atom_leading_subtract(x: Int32) -> Int32 {
+    return x - 1 * 2 + 3;
+}
+
+fn parameter_four_atom_double_subtract(x: Int32) -> Int32 {
+    return x - 1 * 2 - 3;
+}
+
+fn parameter_pair(x: Int32, y: Int32) -> Int32 {
+    return x + y;
+}
+
+fn parameter_subtract(x: Int32) -> Int32 {
+    return x - 1;
+}
+
+fn parameter_multiply(x: Int32) -> Int32 {
+    return x * 2;
+}
+
+fn parameter_pair_subtract(x: Int32, y: Int32) -> Int32 {
+    return x - y;
+}
+
+fn parameter_pair_multiply(x: Int32, y: Int32) -> Int32 {
+    return x * y;
+}
+
+fn literal_parameter_add(x: Int32) -> Int32 {
+    return 1 + x;
+}
+
+fn literal_parameter_subtract(x: Int32) -> Int32 {
+    return 1 - x;
+}
+
+fn literal_parameter_multiply(x: Int32) -> Int32 {
+    return 2 * x;
+}
+
+fn parameter_pair_reverse_add(x: Int32, y: Int32) -> Int32 {
+    return y + x;
+}
+
+fn parameter_pair_reverse_subtract(x: Int32, y: Int32) -> Int32 {
+    return y - x;
+}
+
+fn parameter_pair_reverse_multiply(x: Int32, y: Int32) -> Int32 {
+    return y * x;
+}
+
+fn main() -> Int32 {
+    return 6 * (3 + 4);
+}

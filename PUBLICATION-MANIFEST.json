@@ -2,7 +2,7 @@
   "schema": "jadren-public-export-0.1",
   "default_language": "en",
   "source_policy": "explicit-allowlist",
-  "file_count": 368,
+  "file_count": 210,
   "files": [
     {
       "path": ".editorconfig",
@@ -19,8 +19,8 @@
     {
       "path": ".github/workflows/ci.yml",
       "source": "publication/public-ci/ci.yml",
-      "bytes": 4167,
-      "sha256": "2275387d51e307160ad5fa7026bbc36be1dde9bdd03fead47ebb00a4120b9383"
+      "bytes": 4403,
+      "sha256": "5123711a50f650a8b00c578b197482e9af25c745663e4b052d5039edfdd922b7"
     },
     {
       "path": ".github/workflows/sanitizers.yml",
@@ -31,8 +31,8 @@
     {
       "path": ".gitignore",
       "source": ".gitignore",
-      "bytes": 410,
-      "sha256": "dc4e7e64ec8b176d1f3cf153fba7d5ee73d9683f28bda8014e190920445aaa48"
+      "bytes": 523,
+      "sha256": "3e99d70fbc754645ea7f3e8e0db2598507c92c0bd923813234f128710c5c0dbf"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -43,14 +43,14 @@
     {
       "path": "Cargo.lock",
       "source": "Cargo.lock",
-      "bytes": 17921,
-      "sha256": "0e12984736592653507e7930b554c16ee189502c07b4b1b68b319754fd858a3b"
+      "bytes": 17476,
+      "sha256": "9e0c48c92d203c9707d0396464626b910b1778a9d44247dd2181367eaf3c99cf"
     },
     {
       "path": "Cargo.toml",
       "source": "Cargo.toml",
-      "bytes": 1290,
-      "sha256": "747c794aa989e642af615b1d893986fead6f2ce7506dacad3c41d92bc2a358ca"
+      "bytes": 1364,
+      "sha256": "f9ce6ffb7bc479698480e3c08f2e93b5c08a0cc74ce9f230ef721dcfcab3aea2"
     },
     {
       "path": "JADREN.png",
@@ -79,8 +79,8 @@
     {
       "path": "README.md",
       "source": "docs/public/en/GITHUB_README.md",
-      "bytes": 1633,
-      "sha256": "0ecd308435003bc7445ad0ab5f87c8168d1b876af0e1b99e93d63dd3c2bef66d"
+      "bytes": 1684,
+      "sha256": "7a0abf6d11b3fd8c481776f5c2d6274fbfecc8dd85c3ae0a3503ec7662cccc0d"
     },
     {
       "path": "SECURITY.md",
@@ -91,8 +91,8 @@
     {
       "path": "compatibility/COMPATIBILITY_MANIFEST_0.1.json",
       "source": "compatibility/COMPATIBILITY_MANIFEST_0.1.json",
-      "bytes": 2173,
-      "sha256": "499f2987439ed890805940a82d91cc86842492f161bec05f2ef6cb839dba66f8"
+      "bytes": 2171,
+      "sha256": "3e8299941a5d516da04db2dc634a9fcd977868103506ff8a157d560442bd3c8c"
     },
     {
       "path": "crates/jadren-bindgen/Cargo.toml",
@@ -103,8 +103,8 @@
     {
       "path": "crates/jadren-bindgen/src/lib.rs",
       "source": "crates/jadren-bindgen/src/lib.rs",
-      "bytes": 56992,
-      "sha256": "5e11f2757dac9134e5b3773129d18bf7651c560bea4a88c6c52e08e7880765fc"
+      "bytes": 57021,
+      "sha256": "103e7880122e6648f54a318ed03703c2f30c70bc3ffedf0204819d0053f0055e"
     },
     {
       "path": "crates/jadren-cli/Cargo.toml",
@@ -151,8 +151,8 @@
     {
       "path": "crates/jadren-codegen-llvm/src/lib.rs",
       "source": "crates/jadren-codegen-llvm/src/lib.rs",
-      "bytes": 1850,
-      "sha256": "227608f9dddcfb8fcc32529aabeb96d949d2ef43a56ebe4d0ce31edb628afd48"
+      "bytes": 1899,
+      "sha256": "7aaf1a5d57a597b93e7ef6b8706c614877bed413138b5469c4d70e0d99c4b381"
     },
     {
       "path": "crates/jadren-codegen-llvm/src/link.rs",
@@ -169,8 +169,8 @@
     {
       "path": "crates/jadren-codegen-llvm/src/object.rs",
       "source": "crates/jadren-codegen-llvm/src/object.rs",
-      "bytes": 33034,
-      "sha256": "399e71e08aaf42e67e82ae13a15dc7e32a0b78a5ddaaf7823f73019eaa2f5e3c"
+      "bytes": 35771,
+      "sha256": "3c681f6866f41d1a04e3e5d90819a58179d5d63c4476719a1f77fc779e5037ca"
     },
     {
       "path": "crates/jadren-codegen-llvm/src/target_wrappers.c",
@@ -451,8 +451,8 @@
     {
       "path": "crates/jadren-jir/src/alias.rs",
       "source": "crates/jadren-jir/src/alias.rs",
-      "bytes": 21989,
-      "sha256": "a153bd95b6d76ae3c7bbab8782d4664feae27144106222d0b5fee8d37e20fdbb"
+      "bytes": 23827,
+      "sha256": "661dba4195b78b5d58b9c7366c72a5e4d44fa282b3aaddc7b53f1bfef1127fb4"
     },
     {
       "path": "crates/jadren-jir/src/lib.rs",
@@ -469,8 +469,8 @@
     {
       "path": "crates/jadren-jir/src/optimize.rs",
       "source": "crates/jadren-jir/src/optimize.rs",
-      "bytes": 127372,
-      "sha256": "6b7d74e61ad1ff270ad05c395b7154283fe9978b586df376519fefa79cd2c770"
+      "bytes": 140709,
+      "sha256": "da4af957a1d32a9c3b31802251a2db611dc01a3c56c4ee5254667e8960e977fd"
     },
     {
       "path": "crates/jadren-jir/src/verifier.rs",
@@ -655,8 +655,8 @@
     {
       "path": "crates/jadren-resolve/src/lib.rs",
       "source": "crates/jadren-resolve/src/lib.rs",
-      "bytes": 91488,
-      "sha256": "2f6123b3295617d261f3abdecc69a45017507fb7de483d4e1600057ff5177fdb"
+      "bytes": 88961,
+      "sha256": "488593eccd91a7ee0b5525804b2bb48313290ea5202866375dde07e43090a052"
     },
     {
       "path": "crates/jadren-runtime/Cargo.toml",
@@ -679,8 +679,20 @@
     {
       "path": "crates/jadren-selfhost-api/src/lib.rs",
       "source": "crates/jadren-selfhost-api/src/lib.rs",
-      "bytes": 28373,
-      "sha256": "d1daab68e43c25154a0f015cd91d0842cf00afdf07acbe6d62d1198de8f898db"
+      "bytes": 33618,
+      "sha256": "f81061dceb605d6f31cf458bbd433d6fc159b4f0c0e247769d7412a01f248dc7"
+    },
+    {
+      "path": "crates/jadren-selfhost-driver/Cargo.toml",
+      "source": "crates/jadren-selfhost-driver/Cargo.toml",
+      "bytes": 667,
+      "sha256": "bae47ecdc529c176eebb85c23b326986e9c390f2226c4171963bcf2d415d96ba"
+    },
+    {
+      "path": "crates/jadren-selfhost-driver/src/main.rs",
+      "source": "crates/jadren-selfhost-driver/src/main.rs",
+      "bytes": 14691,
+      "sha256": "c6ee2d18389f34d341e870dac5709bcc0dd080f07e427a2190d07de30ad4205d"
     },
     {
       "path": "crates/jadren-selfhost-oracle/Cargo.toml",
@@ -699,6 +711,18 @@
       "source": "crates/jadren-selfhost-oracle/src/main.rs",
       "bytes": 2479,
       "sha256": "f62aee83d62ce2f0da68f3d2290dd4009bba733c17f225209c7f09f1bf34c77e"
+    },
+    {
+      "path": "crates/jadren-selfhost-stage2/Cargo.toml",
+      "source": "crates/jadren-selfhost-stage2/Cargo.toml",
+      "bytes": 685,
+      "sha256": "240da529fc65e69746a637b88a7dd9f877ed51a6bc354f501951f3302fa9a18a"
+    },
+    {
+      "path": "crates/jadren-selfhost-stage2/src/lib.rs",
+      "source": "crates/jadren-selfhost-stage2/src/lib.rs",
+      "bytes": 258365,
+      "sha256": "d79a4a8598012ef55dbfcb609bb678f12e27c2ecf64b09ab1a5769a65c2d6d9e"
     },
     {
       "path": "crates/jadren-source/Cargo.toml",
@@ -733,8 +757,8 @@
     {
       "path": "crates/jadren-typeck/src/lib.rs",
       "source": "crates/jadren-typeck/src/lib.rs",
-      "bytes": 157136,
-      "sha256": "9bfe6b6fe6f1618d8e6985a1bc8b7e2c07981145689e78bc3495350882e11e7b"
+      "bytes": 153892,
+      "sha256": "fd635fafc5a2ca7fcfa7a8db78a821ebb637b8131ed5cd8b6ce8829fedacdc2a"
     },
     {
       "path": "crates/jadren-types/Cargo.toml",
@@ -745,8 +769,8 @@
     {
       "path": "crates/jadren-types/src/lib.rs",
       "source": "crates/jadren-types/src/lib.rs",
-      "bytes": 52388,
-      "sha256": "e5bea79903eabce5889d8cd5f8db8c557c16ef9ff512ae965b524baf67c66f1e"
+      "bytes": 52927,
+      "sha256": "8c3ff2d22df01434752b6322dce8b48ab1db1a48fdf1816a21c6cce5e5435d61"
     },
     {
       "path": "crates/jadren-vulkan-runtime/Cargo.toml",
@@ -889,56 +913,50 @@
     {
       "path": "docs/ANIMATION_SYSTEM.md",
       "source": "docs/public/en/ANIMATION_SYSTEM.md",
-      "bytes": 1503,
-      "sha256": "cd3a922b5c6209264520e479cbd9b12d7ebaa146424337c79e7c08ff103f2e60"
+      "bytes": 19237,
+      "sha256": "00c8dc9d75c8e3f15c715e14c91eb3853ea8bf35c5b11e2e628224c99a52f8ce"
     },
     {
       "path": "docs/COMPILER_AND_PLATFORMS.md",
       "source": "docs/public/en/COMPILER_AND_PLATFORMS.md",
-      "bytes": 1465,
-      "sha256": "1dfb9c71a3820fb6bbf360d3e3f71ed46319dfc070df08ef8d28568b9ceffad4"
+      "bytes": 4115,
+      "sha256": "c72cdcaa0219ad6c79a2f1868bfe7187e8ae9f581ecdcc6ccb9fa5e1809499f4"
     },
     {
       "path": "docs/GETTING_STARTED.md",
       "source": "docs/public/en/GETTING_STARTED.md",
-      "bytes": 2253,
-      "sha256": "6a13c58a8682aa007ff1d69b833df540284bf39063bd851ea3ddcdfb174954f3"
+      "bytes": 3812,
+      "sha256": "a365358931d3d00d421673bcbe0add94adb7b1394fee258e6f48b9a5f2c423bd"
     },
     {
       "path": "docs/LANGUAGE_OVERVIEW.md",
       "source": "docs/public/en/LANGUAGE_OVERVIEW.md",
-      "bytes": 1802,
-      "sha256": "e5e6dff8ab1074b7fbef805d6261429a91bcfdbd2eebb7d9e56a1da51e7084a6"
+      "bytes": 2439,
+      "sha256": "ecfa807ed964982a774abc8bd40f76c0a3181d5a02a75b833912334a995b1adb"
     },
     {
       "path": "docs/ROADMAP.md",
       "source": "docs/public/en/ROADMAP.md",
-      "bytes": 1424,
-      "sha256": "8cbb65dcf42fcc1c78e9999ff8bdbdd0e9259cd6e7fadd2b36eb268d3ae4b240"
+      "bytes": 1467,
+      "sha256": "38341443f8261cfe5015efde52c89e3bc68b2ca300f09221b25e7ae59d71e4f2"
     },
     {
       "path": "docs/UNITY_INTEGRATION.md",
       "source": "docs/public/en/UNITY_INTEGRATION.md",
-      "bytes": 1714,
-      "sha256": "e82b9dc67e98e1b7dc18ae5fe2d605d2460ccbc98c5dc45f1c6946703dc77247"
+      "bytes": 2431,
+      "sha256": "36aec0513d898ac1bff600160851b1aea6d80ccd1b17b434a4396650f7cfe36b"
+    },
+    {
+      "path": "docs/UNITY_PROJECT_GUIDE.md",
+      "source": "docs/public/en/UNITY_PROJECT_GUIDE.md",
+      "bytes": 7182,
+      "sha256": "30caba233e7ec8069f1fe51a6ec827843dd6206aeaa30cbdd434ef6e1760a025"
     },
     {
       "path": "docs/VSCODE_EXTENSION.md",
       "source": "docs/public/en/VSCODE_EXTENSION.md",
       "bytes": 1047,
       "sha256": "d3645a0b2bc3afd7180436f25d4938ae3d3439d126b8b80dc88986d6a9f1c4a6"
-    },
-    {
-      "path": "docs/public/en/ANIMATION_SYSTEM.md",
-      "source": "docs/public/en/ANIMATION_SYSTEM.md",
-      "bytes": 1503,
-      "sha256": "cd3a922b5c6209264520e479cbd9b12d7ebaa146424337c79e7c08ff103f2e60"
-    },
-    {
-      "path": "docs/public/en/UNITY_INTEGRATION.md",
-      "source": "docs/public/en/UNITY_INTEGRATION.md",
-      "bytes": 1714,
-      "sha256": "e82b9dc67e98e1b7dc18ae5fe2d605d2460ccbc98c5dc45f1c6946703dc77247"
     },
     {
       "path": "editors/jadren-vscode/README.md",
@@ -997,14 +1015,14 @@
     {
       "path": "examples/agent-simulation.jdn",
       "source": "examples/agent-simulation.jdn",
-      "bytes": 6003,
-      "sha256": "0d44909980f0c61f8cad3b5b34663802c4014c161d672507af55020eb9820c87"
+      "bytes": 7836,
+      "sha256": "69c502347ac64ac766b53561031eb953e295a93bd9a99153b367b52838206391"
     },
     {
       "path": "examples/animation-batch.jdn",
       "source": "examples/animation-batch.jdn",
-      "bytes": 18955,
-      "sha256": "11376e3e76357e47305a6d10ea9077d71c47cde836c47ace81dc4e1dad49eff8"
+      "bytes": 27697,
+      "sha256": "46a286ebdb0fcb0fd0c94773150bb729977b139461efc7e3e0485156450984d2"
     },
     {
       "path": "examples/camera-controller.jdn",
@@ -1145,6 +1163,18 @@
       "sha256": "378cf57fa8e7085606d70754c2b0c12a0e26ab0154ff250da705fdf3e38378ac"
     },
     {
+      "path": "examples/selfhost/stage2_literal_return.jdn",
+      "source": "examples/selfhost/stage2_literal_return.jdn",
+      "bytes": 2784,
+      "sha256": "560477d602382410770e4bf229b8db8df9105eb7f5fbd27c94f1a324020214fa"
+    },
+    {
+      "path": "examples/selfhost/stage2_local_rejection.jdn",
+      "source": "examples/selfhost/stage2_local_rejection.jdn",
+      "bytes": 284,
+      "sha256": "e22274e7c61a82210e81d5d3e39a0f80be4433fb74a64ab6a5f6590154eea4d4"
+    },
+    {
       "path": "examples/selfhost/token_counter.corpus",
       "source": "examples/selfhost/token_counter.corpus",
       "bytes": 6541,
@@ -1153,8 +1183,8 @@
     {
       "path": "examples/selfhost/token_counter.jdn",
       "source": "examples/selfhost/token_counter.jdn",
-      "bytes": 454010,
-      "sha256": "802a19d1880b24180e5230b3a4a247c7ead52c4580d95cdc5dfbed94437f2c82"
+      "bytes": 756452,
+      "sha256": "b56d1ce3d88d985400c32b20190fa3dcdf81e07b45c21ab3c42b31482c775a2a"
     },
     {
       "path": "examples/vector-slice.jdn",
@@ -1233,984 +1263,6 @@
       "source": "rust-toolchain.toml",
       "bytes": 151,
       "sha256": "5c6cafa78ea52e821292aec7c3697dd0fa22f3070d96e178599ca8d7964bd6fd"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor.meta",
-      "source": "unity/com.jadren.animation/Editor.meta",
-      "bytes": 177,
-      "sha256": "0eca6a4230103fd2a9512442dd48e1159a5cab7f45c5c36e0f35ef1b39b26f11"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/Jadren.Animation.Editor.asmdef",
-      "source": "unity/com.jadren.animation/Editor/Jadren.Animation.Editor.asmdef",
-      "bytes": 424,
-      "sha256": "17e647033c0235c6cce5cb731af3d853977fcbfb67150b126b0032bee6f736c0"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/Jadren.Animation.Editor.asmdef.meta",
-      "source": "unity/com.jadren.animation/Editor/Jadren.Animation.Editor.asmdef.meta",
-      "bytes": 170,
-      "sha256": "bc14e819dea443f6390671c56bd93b9ef6d0e5fe75c45d5605af7460b11b683d"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationBaker.cs",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationBaker.cs",
-      "bytes": 33077,
-      "sha256": "ec8a74e04ff70f02ff72a6b6489886e9d41e34ffde8a5d0dd1fca16a560e4ad2"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationBaker.cs.meta",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationBaker.cs.meta",
-      "bytes": 60,
-      "sha256": "0d75b1d0d808f942be7fab251dba7e642f6070752f67ba6b7593e5c829012954"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuCapabilityBatchRunner.cs",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuCapabilityBatchRunner.cs",
-      "bytes": 5547,
-      "sha256": "cc407df2a93e1e80c3dddcb432629c7003f171b162a638532269758829788991"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuCapabilityBatchRunner.cs.meta",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuCapabilityBatchRunner.cs.meta",
-      "bytes": 62,
-      "sha256": "2fe0f2b53d942c1efdc09a11ad26447069ad8848afd130b87b26adc4f828695d"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuExecutionBatchRunner.cs",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuExecutionBatchRunner.cs",
-      "bytes": 16826,
-      "sha256": "b4a03e955021ed793b66be9ba015dfcf33f022fb7b0a6cb7535756e5645184c6"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuExecutionBatchRunner.cs.meta",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuExecutionBatchRunner.cs.meta",
-      "bytes": 62,
-      "sha256": "7be1fcca6a1f454094fa4c5e3237f87aa5a41737c849efa9b73a20256501f9e9"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinnedMeshRendererBatchRunner.cs",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinnedMeshRendererBatchRunner.cs",
-      "bytes": 18383,
-      "sha256": "bba528062a5c772ac7b2f6d80bd924ba6e2cff810fd1b699538f831485bc8371"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinnedMeshRendererBatchRunner.cs.meta",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinnedMeshRendererBatchRunner.cs.meta",
-      "bytes": 294,
-      "sha256": "e3d110f507aa18ebac22da5470990d9b9ffd5dcdd37fcc475946c8cc317a3d5c"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningBatchRunner.cs",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningBatchRunner.cs",
-      "bytes": 10163,
-      "sha256": "159b50dd059264cd74937b9b098a66c0e591907d5205b6dbf6ee4b464b435965"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningBatchRunner.cs.meta",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningBatchRunner.cs.meta",
-      "bytes": 62,
-      "sha256": "dc719750be2087ee1bdccdf1476e2c2204ae569f5882637a521ea12b80a3c74c"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningCompletionBatchRunner.cs",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningCompletionBatchRunner.cs",
-      "bytes": 10663,
-      "sha256": "cd2dd951a8ccf78d54096923b28507beaa523112bb4f0eaa54cf89f23286079f"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningCompletionBatchRunner.cs.meta",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningCompletionBatchRunner.cs.meta",
-      "bytes": 294,
-      "sha256": "eb069d1290564ae06f9d0633af2a82f76caa5052968acaa34492521f72987dcc"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningCrowdBatchRunner.cs",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningCrowdBatchRunner.cs",
-      "bytes": 12511,
-      "sha256": "61690e8f5663c83e91001d1e33d4c43bd0af750991c73ec8134476e22e274d26"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningCrowdBatchRunner.cs.meta",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningCrowdBatchRunner.cs.meta",
-      "bytes": 62,
-      "sha256": "6235af8a50d4c07229708e8482651925dd237d706eda16e283baf5654778704d"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningCrowdRendererBatchRunner.cs",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningCrowdRendererBatchRunner.cs",
-      "bytes": 13116,
-      "sha256": "7f9e954e85e263f529cc19422cd301595cf3d6363d89b374fe8debd5dae91a18"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningCrowdRendererBatchRunner.cs.meta",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningCrowdRendererBatchRunner.cs.meta",
-      "bytes": 62,
-      "sha256": "60dda1b9d8ae669ed059c667b235328279e66dcc7e4685ddd6b6ab74dfe6359a"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningGraphicsBatchRunner.cs",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningGraphicsBatchRunner.cs",
-      "bytes": 11874,
-      "sha256": "85c5b47fa1d7f39a58e163d34fb79f641c5a2087d50eaf31cd3663874d70fd35"
-    },
-    {
-      "path": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningGraphicsBatchRunner.cs.meta",
-      "source": "unity/com.jadren.animation/Editor/JadrenAnimationGpuSkinningGraphicsBatchRunner.cs.meta",
-      "bytes": 62,
-      "sha256": "7fd319224056ebcbd96280ae7cb2c3673b7d2b8638578afd52ee9ca319603041"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins.meta",
-      "source": "unity/com.jadren.animation/Plugins.meta",
-      "bytes": 177,
-      "sha256": "c0d4d112da6f2d35fa209347f0d939c922fe1a4bcaba93c4417a6aad17cb0bc0"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/Android.meta",
-      "source": "unity/com.jadren.animation/Plugins/Android.meta",
-      "bytes": 177,
-      "sha256": "4a14b963bbd9e80d66f728a129b8ede15c0c9c7319af3a26c99bfead3a7283a7"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/Android/ARM64.meta",
-      "source": "unity/com.jadren.animation/Plugins/Android/ARM64.meta",
-      "bytes": 177,
-      "sha256": "af649e30b37453954df7bba9d6053c30a877bcbcb9a1b5b90300bc9479eb8743"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/Android/ARM64/libjadren_animation_native.so",
-      "source": "unity/com.jadren.animation/Plugins/Android/ARM64/libjadren_animation_native.so",
-      "bytes": 11168,
-      "sha256": "26e251cef96f60a678e717384ffacd93fdb91904735371073f075742969c905a"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/Android/ARM64/libjadren_animation_native.so.meta",
-      "source": "unity/com.jadren.animation/Plugins/Android/ARM64/libjadren_animation_native.so.meta",
-      "bytes": 60,
-      "sha256": "fe71cea89aad6a138e2d4ce68ee5de3853a8f1f350c29ef7dbf62c27ba46656d"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/Android/ARM64/libjadren_native.so",
-      "source": "unity/com.jadren.animation/Plugins/Android/ARM64/libjadren_native.so",
-      "bytes": 11168,
-      "sha256": "26e251cef96f60a678e717384ffacd93fdb91904735371073f075742969c905a"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/Android/ARM64/libjadren_native.so.meta",
-      "source": "unity/com.jadren.animation/Plugins/Android/ARM64/libjadren_native.so.meta",
-      "bytes": 60,
-      "sha256": "e7ce42c8a84aba4ba7e5c6b0c96697380fa31b2957361cd8c3a8f09e314878b1"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/Android/ARM64/libjadren_runtime.so",
-      "source": "unity/com.jadren.animation/Plugins/Android/ARM64/libjadren_runtime.so",
-      "bytes": 467712,
-      "sha256": "d446e6fb654917fb3c8ff124cee8cd302e6cd25e82f1200c8633caaa6a5dc661"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/Android/ARM64/libjadren_runtime.so.meta",
-      "source": "unity/com.jadren.animation/Plugins/Android/ARM64/libjadren_runtime.so.meta",
-      "bytes": 60,
-      "sha256": "9fa8d039c6a738d80f26488b21839011c6d316868909014b22b12fdb9fe246d7"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/x86_64.meta",
-      "source": "unity/com.jadren.animation/Plugins/x86_64.meta",
-      "bytes": 177,
-      "sha256": "642a6a63ec1ba081e8fa96ca59788915d2fa1af78ea5b11d3b581fae944f64ff"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/x86_64/jadren_animation_native.dll",
-      "source": "unity/com.jadren.animation/Plugins/x86_64/jadren_animation_native.dll",
-      "bytes": 9728,
-      "sha256": "e945102659166c33ace9f1bb2f91f87ee18c75507bdbbb913dc263b43570b301"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/x86_64/jadren_animation_native.dll.meta",
-      "source": "unity/com.jadren.animation/Plugins/x86_64/jadren_animation_native.dll.meta",
-      "bytes": 60,
-      "sha256": "8cd6ec9f32b6f888d9f7d3faa01a4227d2f1c5151c09e96b2d9531047d8b3da0"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/x86_64/jadren_runtime.dll",
-      "source": "unity/com.jadren.animation/Plugins/x86_64/jadren_runtime.dll",
-      "bytes": 121856,
-      "sha256": "b044b52aade4a0f8982ab4de924c0d90f6eaed6b907273f030725c43a09eb5da"
-    },
-    {
-      "path": "unity/com.jadren.animation/Plugins/x86_64/jadren_runtime.dll.meta",
-      "source": "unity/com.jadren.animation/Plugins/x86_64/jadren_runtime.dll.meta",
-      "bytes": 60,
-      "sha256": "7dca9d95e002576ab7e24979c697af3cf0a6f4b67862c62d4c369f8896817d53"
-    },
-    {
-      "path": "unity/com.jadren.animation/README.md",
-      "source": "docs/public/en/ANIMATION_SYSTEM.md",
-      "bytes": 1503,
-      "sha256": "cd3a922b5c6209264520e479cbd9b12d7ebaa146424337c79e7c08ff103f2e60"
-    },
-    {
-      "path": "unity/com.jadren.animation/README.md.meta",
-      "source": "unity/com.jadren.animation/README.md.meta",
-      "bytes": 162,
-      "sha256": "243732beb086cb50b7342b964ff40a9a5976856d16f613d14096cc2706b41712"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime.meta",
-      "source": "unity/com.jadren.animation/Runtime.meta",
-      "bytes": 177,
-      "sha256": "828c63da19ad9bfd884ecccdd0f8d3a4459c44460b050b6be9dc5ecc238db893"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Jadren.Animation.Runtime.asmdef",
-      "source": "unity/com.jadren.animation/Runtime/Jadren.Animation.Runtime.asmdef",
-      "bytes": 364,
-      "sha256": "a1343233f1665da51bcebd0db40f651a93144596aa5cb090e6ade79873544a99"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Jadren.Animation.Runtime.asmdef.meta",
-      "source": "unity/com.jadren.animation/Runtime/Jadren.Animation.Runtime.asmdef.meta",
-      "bytes": 170,
-      "sha256": "9f398dadefd96318cf1ff3d5a6a91c0be84039bc430f2d325f6539a4f6e8b057"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationAuthoring.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationAuthoring.cs",
-      "bytes": 1028,
-      "sha256": "0c122b6e5ce2a23f40d848a516f8d4c0f8d162b8247e9f9c97cb6443d5b86c5b"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationAuthoring.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationAuthoring.cs.meta",
-      "bytes": 60,
-      "sha256": "13a54d7b11d4e8e34714dd64a795ea69138e27f0211b4d4602da68b2495d682f"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuAdapter.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuAdapter.cs",
-      "bytes": 12266,
-      "sha256": "e4de7bdced4f92e63b43243f2cbab532e11486eae206b70990402e50372de5e9"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuAdapter.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuAdapter.cs.meta",
-      "bytes": 62,
-      "sha256": "8fb011788f1582096394660342ce2d03c740b863a52ccfb0a99d53996beaf168"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuPoseCoordinator.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuPoseCoordinator.cs",
-      "bytes": 7182,
-      "sha256": "69a2447f5496f435e876a5bae4e008b57a4e3b04fa5f4d2c0d68849b7b3f8bac"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuPoseCoordinator.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuPoseCoordinator.cs.meta",
-      "bytes": 62,
-      "sha256": "eba5b643292a0de5e623320028e448b2c0c63d03b7495117bca77ac05c34b645"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuPoseDispatcher.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuPoseDispatcher.cs",
-      "bytes": 10886,
-      "sha256": "bc72d4abcefda8bcc5f06f1998d732b910a7f5bda362d52e1518bfd0a6d4430b"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuPoseDispatcher.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuPoseDispatcher.cs.meta",
-      "bytes": 62,
-      "sha256": "dfd3f8a3653bb6876f300e895652a6ca65a8685b7196f98cb5e7def074d1a28b"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuPoseResult.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuPoseResult.cs",
-      "bytes": 5104,
-      "sha256": "1421fd17c86b612f5e34f47047e584a9c58da7c8c857535d24e338ef5efe82dd"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuPoseResult.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuPoseResult.cs.meta",
-      "bytes": 62,
-      "sha256": "1ab5468d6beaae58fe22ce85c14aa6cecf4e6a108a166c077cdc06067e8137ca"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuSkinningDispatcher.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuSkinningDispatcher.cs",
-      "bytes": 12237,
-      "sha256": "f8174c22ade8b6dd8de169cf0ece6fe6cb4d0d72a8a897478187129dd7227b15"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuSkinningDispatcher.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuSkinningDispatcher.cs.meta",
-      "bytes": 62,
-      "sha256": "f419710400e05d44122c1dfc7b3bab85e6c68f93237564da6c6da8a78daa7ad4"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuSkinningGraphicsStream.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuSkinningGraphicsStream.cs",
-      "bytes": 7941,
-      "sha256": "63f56c398be97698473c61cd6512c82bbba49681bc21384558b810c759da5005"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuSkinningGraphicsStream.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuSkinningGraphicsStream.cs.meta",
-      "bytes": 294,
-      "sha256": "df5f3c395f7e9dc52c537c8fd4979ba9f5a6b5f7e02b53627faaf0d3ec482be2"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuSkinningResult.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuSkinningResult.cs",
-      "bytes": 2967,
-      "sha256": "f4a7774651c036b08b37b6359137f4597d7f9a9e8663f61bc86d20ce382d944d"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuSkinningResult.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationGpuSkinningResult.cs.meta",
-      "bytes": 62,
-      "sha256": "ef9399caba2df98470e929aab7726c89a3b900de3a057d85c7ed4d593f92b458"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationNativeBatch.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationNativeBatch.cs",
-      "bytes": 20049,
-      "sha256": "652914ca8c8d20221cd6f041efe1b78ea649bf35ed61cb91e85c89e7db1226bc"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationNativeBatch.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationNativeBatch.cs.meta",
-      "bytes": 62,
-      "sha256": "896580cc0ad3c49349d91977072b287b73e5635e95089b90b5aae1f8985c60d5"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationPlayer.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationPlayer.cs",
-      "bytes": 14904,
-      "sha256": "9823492e4ff8697bef4a4c11f61e9b262f1c4187630ca0da4fa0d6f16706f982"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationPlayer.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationPlayer.cs.meta",
-      "bytes": 60,
-      "sha256": "581ed93368919bb570e974b6a54ec793c6c997a0e5bb6587911c027992e6d9d6"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationPoseApplier.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationPoseApplier.cs",
-      "bytes": 2665,
-      "sha256": "354dc85625fbfd4abf29debf1d1235a8b3298513f4237604db366b8b793b12fd"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationPoseApplier.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationPoseApplier.cs.meta",
-      "bytes": 62,
-      "sha256": "2ac398a61b70d21998fcbe6a8a9ba2c3892725e6bcb51da34c9a075272f0a550"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationPoseNativeBridge.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationPoseNativeBridge.cs",
-      "bytes": 4559,
-      "sha256": "4f4fc2c0221722fc1577e889e2346c145b3178d0afd61e19dc8d530d370e51e9"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationPoseNativeBridge.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationPoseNativeBridge.cs.meta",
-      "bytes": 62,
-      "sha256": "531fc4775d7908201d9287d054b4008801e123e6c5aa8d82bcead59a228f1f3a"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationPoseWorker.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationPoseWorker.cs",
-      "bytes": 14392,
-      "sha256": "716a475513ea66131a92ef5b2edf3873e29d98e933ad0fb1c176c8e10c6c77e1"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationPoseWorker.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationPoseWorker.cs.meta",
-      "bytes": 62,
-      "sha256": "cd2c0224752b92d2bb7433f7d8d750e178c1b3e23ac24ed9dc2b183a3c44301c"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationTypes.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationTypes.cs",
-      "bytes": 816,
-      "sha256": "dd36ca864d4949cf048e50a1ba0dab89188424ba9bf82f368457d96d72a6e5ba"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenAnimationTypes.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenAnimationTypes.cs.meta",
-      "bytes": 60,
-      "sha256": "9a9e6f1d595e47b0b101f42e2d48e235734d131024c9f6a07e5da5b69e43f5b4"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenClipAsset.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenClipAsset.cs",
-      "bytes": 5336,
-      "sha256": "129e18e098a831f239eba594464e28557ef23ce296cb07123ae9d10c8a4ebbc6"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenClipAsset.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenClipAsset.cs.meta",
-      "bytes": 60,
-      "sha256": "443940fb01dcaa48fa58e0f69920e0dc8c5643656ca8112fd770158c3f045ef1"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenControllerAsset.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenControllerAsset.cs",
-      "bytes": 2678,
-      "sha256": "75975d3eab72699cc1ec1df15d3b1805951d5206389875814fc98ab29e285929"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenControllerAsset.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenControllerAsset.cs.meta",
-      "bytes": 60,
-      "sha256": "1cba076f669dc945280b8e800d1656f2cb6f5c2c586d60b2404a0dfc5476387c"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenGpuSkinnedMeshRenderer.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenGpuSkinnedMeshRenderer.cs",
-      "bytes": 17712,
-      "sha256": "af8039a591b43d4d6ae34028430b585274c0902d41dddf314eb901175ff89cd2"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenGpuSkinnedMeshRenderer.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenGpuSkinnedMeshRenderer.cs.meta",
-      "bytes": 298,
-      "sha256": "cf134624513e0587084d20bdda53d9ad7062556ebaa767483c7735456cb09330"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenGpuSkinningCrowdRenderer.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenGpuSkinningCrowdRenderer.cs",
-      "bytes": 11760,
-      "sha256": "f7df223ad039301dc5def68528c358a127bfd5cbf78287c22c1fde86d12ff8ca"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenGpuSkinningCrowdRenderer.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenGpuSkinningCrowdRenderer.cs.meta",
-      "bytes": 62,
-      "sha256": "41418435a095550acdf7cb47aa8f1e41f8a48b9519a46abc0bd75c076d73c144"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenGpuSkinningVertex.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenGpuSkinningVertex.cs",
-      "bytes": 2757,
-      "sha256": "f008eff71e05ee5247501d279b04a4f7040732f1225166f3234746e3b73f655c"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenGpuSkinningVertex.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenGpuSkinningVertex.cs.meta",
-      "bytes": 62,
-      "sha256": "5790df7d8ac21ce4f2fe09bfca985528bdb337b4cf7ed2f8ad4e3cf43443726c"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenPoseBuffer.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenPoseBuffer.cs",
-      "bytes": 1366,
-      "sha256": "9e26540cb7a636f245bfc0a2372561776c33028ee0f5a3756c5ff11ed49b33f8"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenPoseBuffer.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenPoseBuffer.cs.meta",
-      "bytes": 60,
-      "sha256": "58b9b74cdcac841349f79b0ad1318dd330f9dfe11569c1eb93fa19db02634dd4"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenPoseKernel.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenPoseKernel.cs",
-      "bytes": 5917,
-      "sha256": "4a4e2eccb535626080713e012351fb90f55d53ad221828d7a6b90b39150e76bc"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenPoseKernel.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenPoseKernel.cs.meta",
-      "bytes": 60,
-      "sha256": "17f3dbe4f19ea357bd730816374384b772582ceb9f490e82d99873d194d17b22"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenQuaternionMath.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenQuaternionMath.cs",
-      "bytes": 2355,
-      "sha256": "af74d94ee04633547d520597f94989a8fb964ad5c47947c989ce30ed5ef9e435"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenQuaternionMath.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenQuaternionMath.cs.meta",
-      "bytes": 62,
-      "sha256": "691faba24627f9077d420873581449b1ca4ebc7469dc376f63ff6abadfd2f910"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenRigAsset.cs",
-      "source": "unity/com.jadren.animation/Runtime/JadrenRigAsset.cs",
-      "bytes": 3923,
-      "sha256": "7d86d4f126a4f14e03c08434c11a857e08c28e2b3842c5ea9625cfd62a88c018"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/JadrenRigAsset.cs.meta",
-      "source": "unity/com.jadren.animation/Runtime/JadrenRigAsset.cs.meta",
-      "bytes": 60,
-      "sha256": "4c97ded0e49a99e809157cb90c51cdb1fa78e8193b0e5f7ff195a2a64c321875"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Resources.meta",
-      "source": "unity/com.jadren.animation/Runtime/Resources.meta",
-      "bytes": 177,
-      "sha256": "b9c016edac95eb66090e7e3f5f0e493b9441ce81868c7f0e419bb61d9a1fa5bb"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Resources/JadrenAnimationGpuSkinning.compute",
-      "source": "unity/com.jadren.animation/Runtime/Resources/JadrenAnimationGpuSkinning.compute",
-      "bytes": 1699,
-      "sha256": "2768e454b33359ebee127b3d80b029d3707aa23b0f666f07bac6f74dd4044d21"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Resources/JadrenAnimationGpuSkinning.compute.meta",
-      "source": "unity/com.jadren.animation/Runtime/Resources/JadrenAnimationGpuSkinning.compute.meta",
-      "bytes": 62,
-      "sha256": "45e0c2f55cc5813c415c8b007392c4abdca3409ac3251878ae5508a15a5fdcbd"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Resources/JadrenAnimationSlerpUnclamped.compute",
-      "source": "unity/com.jadren.animation/Runtime/Resources/JadrenAnimationSlerpUnclamped.compute",
-      "bytes": 1619,
-      "sha256": "1aaede8c8d44b937ac1196403264c202bad4448a7bb14591e57113c1879ccb7f"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Resources/JadrenAnimationSlerpUnclamped.compute.meta",
-      "source": "unity/com.jadren.animation/Runtime/Resources/JadrenAnimationSlerpUnclamped.compute.meta",
-      "bytes": 189,
-      "sha256": "9d5122167b283176d6e1ae97b2755735776b9b2a3e0839d77c63e92c3dd8f682"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Shaders.meta",
-      "source": "unity/com.jadren.animation/Runtime/Shaders.meta",
-      "bytes": 177,
-      "sha256": "ca45c8e8e5d0e83bd0efd8767485d076804791eca626101fa017aa9dc2fc83e2"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Shaders/JadrenGpuCrowdSkinnedMeshPreview.shader",
-      "source": "unity/com.jadren.animation/Runtime/Shaders/JadrenGpuCrowdSkinnedMeshPreview.shader",
-      "bytes": 7113,
-      "sha256": "e1abc870c64172953402ffeb64a047af8b28f0caefaf66eb8a8ba48f3ed3dff3"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Shaders/JadrenGpuCrowdSkinnedMeshPreview.shader.meta",
-      "source": "unity/com.jadren.animation/Runtime/Shaders/JadrenGpuCrowdSkinnedMeshPreview.shader.meta",
-      "bytes": 62,
-      "sha256": "c34321dea179cac40b18efa6fb8e566af594b87ca78f743b5032e7c4a7ba4252"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Shaders/JadrenGpuPositionPreview.shader",
-      "source": "unity/com.jadren.animation/Runtime/Shaders/JadrenGpuPositionPreview.shader",
-      "bytes": 1544,
-      "sha256": "572c58404cf5874454dac8098b7a2b54b44f403299d1592f705c78d51509308d"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Shaders/JadrenGpuPositionPreview.shader.meta",
-      "source": "unity/com.jadren.animation/Runtime/Shaders/JadrenGpuPositionPreview.shader.meta",
-      "bytes": 62,
-      "sha256": "fc293bead1e8687075aeb182312be5122cfa6e221f5a0ef868fec86152c6f578"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Shaders/JadrenGpuSkinnedMeshPreview.shader",
-      "source": "unity/com.jadren.animation/Runtime/Shaders/JadrenGpuSkinnedMeshPreview.shader",
-      "bytes": 6664,
-      "sha256": "19dfaf358afdfc3280e9783d23bdb4140f2026b69e52269c957b3480d7fc7b03"
-    },
-    {
-      "path": "unity/com.jadren.animation/Runtime/Shaders/JadrenGpuSkinnedMeshPreview.shader.meta",
-      "source": "unity/com.jadren.animation/Runtime/Shaders/JadrenGpuSkinnedMeshPreview.shader.meta",
-      "bytes": 253,
-      "sha256": "85067aadd6d26d6c09a67ae2bc25644123f17f28fac6b0e50bce14951c7fd0c0"
-    },
-    {
-      "path": "unity/com.jadren.animation/Samples~/JadrenAnimationSample/JadrenAnimationSample.cs",
-      "source": "unity/com.jadren.animation/Samples~/JadrenAnimationSample/JadrenAnimationSample.cs",
-      "bytes": 911,
-      "sha256": "386671076daa35e127f14fe59c4d31eac5a19440b1f39d10c2b4ae156ed165d2"
-    },
-    {
-      "path": "unity/com.jadren.animation/Samples~/JadrenAnimationSample/JadrenGpuSkinningCrowdSample.cs",
-      "source": "unity/com.jadren.animation/Samples~/JadrenAnimationSample/JadrenGpuSkinningCrowdSample.cs",
-      "bytes": 6560,
-      "sha256": "7ac125bc58a0499489e503116d5f1e356a5bca12728e10a6a95f85d456774916"
-    },
-    {
-      "path": "unity/com.jadren.animation/Tests.meta",
-      "source": "unity/com.jadren.animation/Tests.meta",
-      "bytes": 80,
-      "sha256": "d4de532b3af06a2f5ae8b8d1c0587de13db33cc11cfda5e828a349cc9af55362"
-    },
-    {
-      "path": "unity/com.jadren.animation/Tests/Runtime.meta",
-      "source": "unity/com.jadren.animation/Tests/Runtime.meta",
-      "bytes": 80,
-      "sha256": "1ff557a9e229a012bf2f178954ecb65352d831e7619a6cbe1f4fce86f83e69ea"
-    },
-    {
-      "path": "unity/com.jadren.animation/Tests/Runtime/Jadren.Animation.Tests.asmdef",
-      "source": "unity/com.jadren.animation/Tests/Runtime/Jadren.Animation.Tests.asmdef",
-      "bytes": 487,
-      "sha256": "3825f4e023a9f4f71222f6ffcbb9f7b7ef7b678f7048e01b5e82b2b9a04bfc41"
-    },
-    {
-      "path": "unity/com.jadren.animation/Tests/Runtime/Jadren.Animation.Tests.asmdef.meta",
-      "source": "unity/com.jadren.animation/Tests/Runtime/Jadren.Animation.Tests.asmdef.meta",
-      "bytes": 62,
-      "sha256": "be6ec9966556b9cd183028690d05314df6fa0de01b313f5124d38501db4415fd"
-    },
-    {
-      "path": "unity/com.jadren.animation/Tests/Runtime/JadrenAnimationGpuAdapterTests.cs",
-      "source": "unity/com.jadren.animation/Tests/Runtime/JadrenAnimationGpuAdapterTests.cs",
-      "bytes": 6694,
-      "sha256": "f510ae43c102839679c119c2f9d50a183a0b398f76aa0f84650e92066d7c968a"
-    },
-    {
-      "path": "unity/com.jadren.animation/Tests/Runtime/JadrenAnimationGpuAdapterTests.cs.meta",
-      "source": "unity/com.jadren.animation/Tests/Runtime/JadrenAnimationGpuAdapterTests.cs.meta",
-      "bytes": 62,
-      "sha256": "c11a3fc2d49db67b49da0293e11d6e81ea743af51ea337b245291500a0591e9e"
-    },
-    {
-      "path": "unity/com.jadren.animation/Tests/Runtime/JadrenAnimationPosePipelineTests.cs",
-      "source": "unity/com.jadren.animation/Tests/Runtime/JadrenAnimationPosePipelineTests.cs",
-      "bytes": 17510,
-      "sha256": "338a03b1c14bd2c3ddd5d02aeba9df0f6a45ca5c3a20d6d54e7acb6f6cde79d9"
-    },
-    {
-      "path": "unity/com.jadren.animation/Tests/Runtime/JadrenAnimationPosePipelineTests.cs.meta",
-      "source": "unity/com.jadren.animation/Tests/Runtime/JadrenAnimationPosePipelineTests.cs.meta",
-      "bytes": 60,
-      "sha256": "090ad0abc2998ac1d4d9236c4499cd699deb3f635e5393a5a9ba1c5999c03efc"
-    },
-    {
-      "path": "unity/com.jadren.animation/package.json",
-      "source": "unity/com.jadren.animation/package.json",
-      "bytes": 673,
-      "sha256": "5c024bbe116be2b54a82e3412b1d95d03c1d95459d7b8d1595d319ce860c52ef"
-    },
-    {
-      "path": "unity/com.jadren.animation/package.json.meta",
-      "source": "unity/com.jadren.animation/package.json.meta",
-      "bytes": 167,
-      "sha256": "65edb49e730df9f4995fd7e73f19ac5ef968abae3badae6a5f3fe6b47767cca2"
-    },
-    {
-      "path": "unity/com.jadren.unity/Editor/Jadren.Unity.Editor.asmdef",
-      "source": "unity/com.jadren.unity/Editor/Jadren.Unity.Editor.asmdef",
-      "bytes": 426,
-      "sha256": "ee12b447273ae2f31a83da5ca1dca339dc2b4fa3e897a671a1f63853448214ff"
-    },
-    {
-      "path": "unity/com.jadren.unity/Editor/JadrenAndroidPlayerValidator.cs",
-      "source": "unity/com.jadren.unity/Editor/JadrenAndroidPlayerValidator.cs",
-      "bytes": 1432,
-      "sha256": "d6921c6003f1f01ccc41967c8cfa9de3c2ffed6b8aa35b1d0f95282ca4292946"
-    },
-    {
-      "path": "unity/com.jadren.unity/Editor/JadrenBuildCache.cs",
-      "source": "unity/com.jadren.unity/Editor/JadrenBuildCache.cs",
-      "bytes": 3599,
-      "sha256": "6c2736e832d77569435017da71d0471610246e333c60fc7f79386d6bd8ec76c3"
-    },
-    {
-      "path": "unity/com.jadren.unity/Editor/JadrenGeneratedBindings.cs",
-      "source": "unity/com.jadren.unity/Editor/JadrenGeneratedBindings.cs",
-      "bytes": 4688,
-      "sha256": "d5d23a7d13b3f0d3aff2e8806ebf6362c38722744d4a5cb86739c6b0bd0373c7"
-    },
-    {
-      "path": "unity/com.jadren.unity/Editor/JadrenGpuBridgeSmoke.cs",
-      "source": "unity/com.jadren.unity/Editor/JadrenGpuBridgeSmoke.cs",
-      "bytes": 38263,
-      "sha256": "a2be644b66337abe2ddb224f6e3425215b2a4525a17d4472db9803d04656de93"
-    },
-    {
-      "path": "unity/com.jadren.unity/Editor/JadrenImporter.cs",
-      "source": "unity/com.jadren.unity/Editor/JadrenImporter.cs",
-      "bytes": 1281,
-      "sha256": "cab82ad83429cee0da471cb2415bfbf53218673242a0711108695c7056f2a4d1"
-    },
-    {
-      "path": "unity/com.jadren.unity/Editor/JadrenWindowsPlayerValidator.cs",
-      "source": "unity/com.jadren.unity/Editor/JadrenWindowsPlayerValidator.cs",
-      "bytes": 1368,
-      "sha256": "6a65441e25cb81fbcfce41219e893c8bda06a0c8073e14ff4c87619917983e15"
-    },
-    {
-      "path": "unity/com.jadren.unity/Plugins/Android/ARM64/libjadren_native.so",
-      "source": "unity/com.jadren.unity/Plugins/Android/ARM64/libjadren_native.so",
-      "bytes": 7928,
-      "sha256": "847b0953bf808e40ae28b755d8016be6e5af8f3a0bc84b6783116da5d0210600"
-    },
-    {
-      "path": "unity/com.jadren.unity/Plugins/Android/ARM64/libjadren_runtime.so",
-      "source": "unity/com.jadren.unity/Plugins/Android/ARM64/libjadren_runtime.so",
-      "bytes": 466792,
-      "sha256": "38854ee7f15e6fed14bf082b513b57ecf9824cd54da9f66bb499cba20bc8123b"
-    },
-    {
-      "path": "unity/com.jadren.unity/Plugins/x86_64/jadren_native.dll",
-      "source": "unity/com.jadren.unity/Plugins/x86_64/jadren_native.dll",
-      "bytes": 6144,
-      "sha256": "ee97d9c33a6563dfa1e969a2e02abbcbb0cdd74896435d441611c1ff5bfb0ce9"
-    },
-    {
-      "path": "unity/com.jadren.unity/Plugins/x86_64/jadren_runtime.dll",
-      "source": "unity/com.jadren.unity/Plugins/x86_64/jadren_runtime.dll",
-      "bytes": 120832,
-      "sha256": "dc6f6d96732df5cfb8e8e62f98364160a2fa1ac6e31c00ee50e2b7afe35e1036"
-    },
-    {
-      "path": "unity/com.jadren.unity/Plugins/x86_64/jadren_vulkan_runtime.dll",
-      "source": "unity/com.jadren.unity/Plugins/x86_64/jadren_vulkan_runtime.dll",
-      "bytes": 1309184,
-      "sha256": "d7663543129849393aa61a5219f26907ca546c8716503aeed14b2b133788223c"
-    },
-    {
-      "path": "unity/com.jadren.unity/README.md",
-      "source": "docs/public/en/UNITY_INTEGRATION.md",
-      "bytes": 1714,
-      "sha256": "e82b9dc67e98e1b7dc18ae5fe2d605d2460ccbc98c5dc45f1c6946703dc77247"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/Collections/Jadren.Unity.Collections.asmdef",
-      "source": "unity/com.jadren.unity/Runtime/Collections/Jadren.Unity.Collections.asmdef",
-      "bytes": 441,
-      "sha256": "b73d06769eb72496ebe4d91e25954e011164f49b65b68f3b1a2b97167ffd7413"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/Collections/JadrenComputeShaderExecutor.cs",
-      "source": "unity/com.jadren.unity/Runtime/Collections/JadrenComputeShaderExecutor.cs",
-      "bytes": 9949,
-      "sha256": "37e22880ec4e5db9e86ad1678efdd98d5b5c397872183b94f2be4a52eb842e05"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/Collections/JadrenComputeShaderTensor3DU32Executor.cs",
-      "source": "unity/com.jadren.unity/Runtime/Collections/JadrenComputeShaderTensor3DU32Executor.cs",
-      "bytes": 6224,
-      "sha256": "b93ceaecbefbd5220b240312fd2b9ca339170e8738525fe8a513b2ff51422684"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/Collections/JadrenGpuBridge.cs",
-      "source": "unity/com.jadren.unity/Runtime/Collections/JadrenGpuBridge.cs",
-      "bytes": 18673,
-      "sha256": "cc87d2da7cdbdc05cf5ff96774093bc7ef06f5b0c7372c803562f88cf412e66a"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/Collections/JadrenNativeArrayView.cs",
-      "source": "unity/com.jadren.unity/Runtime/Collections/JadrenNativeArrayView.cs",
-      "bytes": 6754,
-      "sha256": "5c03379f97505a9503407c70103dac4b396210d2131a0d971a04e20bcd7ed5cf"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/Collections/JadrenTensor3D.cs",
-      "source": "unity/com.jadren.unity/Runtime/Collections/JadrenTensor3D.cs",
-      "bytes": 17457,
-      "sha256": "d4b84ded54bd62d9f091da3416c35d06d76f3e38b666a42ecc1f2fbb23c7644b"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/Collections/JadrenVulkanF32Executor.cs",
-      "source": "unity/com.jadren.unity/Runtime/Collections/JadrenVulkanF32Executor.cs",
-      "bytes": 2849,
-      "sha256": "c347255913767daed3f2da98bfe6c33a5e1feff87af59ea715bc61efb4119dc0"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/Collections/JadrenVulkanTensor3DU32Executor.cs",
-      "source": "unity/com.jadren.unity/Runtime/Collections/JadrenVulkanTensor3DU32Executor.cs",
-      "bytes": 12181,
-      "sha256": "79d44633a2be1ce918f26d0b57b4ab79797cb180394ec4f50c81f5aa44165f8d"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/Collections/JadrenVulkanU32ArrayExecutor.cs",
-      "source": "unity/com.jadren.unity/Runtime/Collections/JadrenVulkanU32ArrayExecutor.cs",
-      "bytes": 4931,
-      "sha256": "2aff02f72b79da2e20c9ddee90777a2e98c2568d574410130f208464c7624ecd"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/Collections/JadrenVulkanU32BinaryExecutor.cs",
-      "source": "unity/com.jadren.unity/Runtime/Collections/JadrenVulkanU32BinaryExecutor.cs",
-      "bytes": 6321,
-      "sha256": "4e2a093e92542c65d9c4279127ada7e2a90217d04f26a1008814cc4a8e582508"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/JadrenConsoleBridge.cs",
-      "source": "unity/com.jadren.unity/Runtime/JadrenConsoleBridge.cs",
-      "bytes": 740,
-      "sha256": "2c83a300021bbd328e2cc79d5ba87fccf5a527973b331722922f2a42813b6d1e"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/JadrenProfilerBridge.cs",
-      "source": "unity/com.jadren.unity/Runtime/JadrenProfilerBridge.cs",
-      "bytes": 6436,
-      "sha256": "8b1b34caeaba325123fdada370eb7607d4e11e8b0d05cab3abce0b151c836f8d"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/JadrenRuntime.asmdef",
-      "source": "unity/com.jadren.unity/Runtime/JadrenRuntime.asmdef",
-      "bytes": 342,
-      "sha256": "409b02a388304601810d7040fb3e8f24c8acae40e50b63982f8d84d5a5d8228c"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/JadrenRuntime.cs",
-      "source": "unity/com.jadren.unity/Runtime/JadrenRuntime.cs",
-      "bytes": 5008,
-      "sha256": "51b41055db87c20819276acc0e33adc18f2048da3330260b13b188d34a0e68fb"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/JadrenSourceAsset.cs",
-      "source": "unity/com.jadren.unity/Runtime/JadrenSourceAsset.cs",
-      "bytes": 453,
-      "sha256": "31d137fd49734c52705be4d0f4f7aa969d3cdd00850240f6b321f5a01ffebe0a"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/Resources/JadrenGpu3DAffineWrite.compute",
-      "source": "unity/com.jadren.unity/Runtime/Resources/JadrenGpu3DAffineWrite.compute",
-      "bytes": 659,
-      "sha256": "058b57ddd25e76901c487cc4f00f38a3fc978e2bdeab28a5c8f8f0c3f8c28f3b"
-    },
-    {
-      "path": "unity/com.jadren.unity/Runtime/Resources/JadrenGpuAddOne.compute",
-      "source": "unity/com.jadren.unity/Runtime/Resources/JadrenGpuAddOne.compute",
-      "bytes": 305,
-      "sha256": "f34a0de472c77b6d97617b64c70b0cb707b592032a03ec8eb0da4a8f7e421bb2"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentFloat8.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentFloat8.cs",
-      "bytes": 1519,
-      "sha256": "1a6dbd97fe56295a72d35a0943cea6b9bc2a43de8da8c67e78fd4bbd04578129"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationAosoa8BurstJob.cs.txt",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationAosoa8BurstJob.cs.txt",
-      "bytes": 1201,
-      "sha256": "ba1c1313eb4fe11d42adbede76d855300fd213c43fc28ba34bdb4138a350c397"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationAosoa8BurstRunner.cs.txt",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationAosoa8BurstRunner.cs.txt",
-      "bytes": 600,
-      "sha256": "c1ef1a9e20c4f00297e60dd7b7561474989d6a248f990a7eb9ce8eecac988aaf"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationAosoa8NativeRunner.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationAosoa8NativeRunner.cs",
-      "bytes": 2247,
-      "sha256": "3fad988da7f29701fb40469797270dfcaf115b0b948c4c4710ccde950038623e"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationAosoa8State.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationAosoa8State.cs",
-      "bytes": 966,
-      "sha256": "4335f10ca1a3a47201e1406e53093e4dc926ccc585a0167b09f29193fc9b076f"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationAosoa8Workload.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationAosoa8Workload.cs",
-      "bytes": 3084,
-      "sha256": "4483cdbf10e0b67decfef806cd12c081232ce26aeb73e7cb9a99b7ce9a04b472"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationBurstJob.cs.txt",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationBurstJob.cs.txt",
-      "bytes": 739,
-      "sha256": "911ab531d0d4fce53c95dcd73ffa0be758f047531fbf9eb6bcaa911afc2ee7b8"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationBurstRunner.cs.txt",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationBurstRunner.cs.txt",
-      "bytes": 1044,
-      "sha256": "36102d91a131642d4dd3ef9ecd74786f62bb93422af659972ced3165960a1506"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationComparison.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationComparison.cs",
-      "bytes": 3309,
-      "sha256": "226c26e0c335f5ac3a9a59bc212d8cbc23813b00db790a0c8466e915b0de2be9"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationMath.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationMath.cs",
-      "bytes": 572,
-      "sha256": "465f0c5d2b9ee665fcee60705b0cb51f1cd2cbc6bc35556e5f89a1296a385f9d"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationNativeRunner.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationNativeRunner.cs",
-      "bytes": 2493,
-      "sha256": "a82caae02086730cc479beb454d806ae57d951813d0186f1f565c18a62232d63"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationPlayerBenchmark.cs.txt",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationPlayerBenchmark.cs.txt",
-      "bytes": 22236,
-      "sha256": "3209a0499a3635a4311222cbc9d225f42f069a8e4cd1d674705650c93ba37158"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationSoaBurstJob.cs.txt",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationSoaBurstJob.cs.txt",
-      "bytes": 920,
-      "sha256": "611c9164431390c9e90fa518a6f2e4b287c8d456f9e90e26f8e7e1f9cbfb85c7"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationSoaBurstRunner.cs.txt",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationSoaBurstRunner.cs.txt",
-      "bytes": 838,
-      "sha256": "64f4bb93bfdc7d12f8213a3bae40af4f24a556a84eba63ad252538319393fae2"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationSoaNativeRunner.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationSoaNativeRunner.cs",
-      "bytes": 12647,
-      "sha256": "f3e2ec9062ccb9287d418e83ee97a58358132f52ebf427b9899f3716e4f2fc6f"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationSoaState.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationSoaState.cs",
-      "bytes": 1745,
-      "sha256": "8f25a73747c3e962e601273f51f12d68d75bd1f9f745478757230c2096267921"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationSoaWorkload.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationSoaWorkload.cs",
-      "bytes": 1581,
-      "sha256": "d11a25fbabea9371f28a28ffaeef183677a360a3d8a977b76c4213a34c6abc75"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationWorkload.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationWorkload.cs",
-      "bytes": 1540,
-      "sha256": "b26f907766203ffbdb7e909d555a30caf26bd67944b62e0ae7c5db98cab390d2"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationWorld.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentSimulationWorld.cs",
-      "bytes": 2889,
-      "sha256": "22fea563f3deeb16d06a5e257455e328eb777d881ef8afc8ca0a1ea3e6e6cd33"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentState.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentState.cs",
-      "bytes": 512,
-      "sha256": "f396a888ff05ac6b80d81f528d86ff695d6ed135bf60b8f5854d129f8e8ee53f"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentTile.cs",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/AgentTile.cs",
-      "bytes": 603,
-      "sha256": "77ebb5d525e640e4ebd730bb5f76152cbb2369aaf9af1ea20487ad32ceb01f03"
-    },
-    {
-      "path": "unity/com.jadren.unity/Samples~/AgentSimulation/Jadren.AgentSimulation.Sample.asmdef",
-      "source": "unity/com.jadren.unity/Samples~/AgentSimulation/Jadren.AgentSimulation.Sample.asmdef",
-      "bytes": 502,
-      "sha256": "b7f77c3f23efd8814129a28c2e976d11d4dff05fc56afe0b11b1bec682b34cfe"
-    },
-    {
-      "path": "unity/com.jadren.unity/package.json",
-      "source": "unity/com.jadren.unity/package.json",
-      "bytes": 468,
-      "sha256": "a856c94ed5375ab34bca320f509c86cec0c412f6498a0fad5d6723513b0d2f25"
     }
   ],
   "claim_scope": "sanitized source export for separate public repository review; no publish, release, signing, or support claim"

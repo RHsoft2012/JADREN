@@ -13,15 +13,25 @@ per-object managed updates while preserving clear ownership and lifecycle rules.
 5. Execute the kernel in batches.
 6. Verify checksum and lifetime rules before using performance results.
 
-## Package layout
+The `com.jadren.unity` AgentSimulation sample also includes an optional
+`AgentSimulationSoaParallelNativeRunner.cs`. It schedules disjoint SoA chunks
+with Unity `IJobParallelFor` over the existing four-lane native ABI. Borrowed
+leases remain alive until `Schedule(...).Complete()`; the sample validates
+range disjointness and does not create native worker threads. This is a
+lifecycle/correctness sample, not a universal ARM64 or Burst speedup claim.
 
-The source tree contains Unity Package Manager packages under `unity/`:
+## Package distribution
 
-- `com.jadren.unity` for native compute integration;
-- `com.jadren.animation` for the independent Jadren animation runtime layer.
+Unity packages are distributed separately from the public GitHub source. The
+Unity Asset Store submission contains the `com.jadren.unity` native integration,
+the independent `com.jadren.animation` runtime, and matching English
+documentation. The public repository contains this integration guide and
+compatibility information, but intentionally excludes Unity package source,
+native plugins, samples, and asset files.
 
-The packages are development previews. Public package distribution, signing,
-and a stable compatibility promise are separate release gates.
+The packages are development previews until the Asset Store review, signing,
+and stable compatibility gates are complete. Do not treat a GitHub source
+checkout as the Unity distribution channel.
 
 ## Performance guidance
 

@@ -1,0 +1,21 @@
+[package]
+name = "jadren-selfhost-stage2"
+description = "Strict importer from the bounded self-host stage-2 ABI into canonical Jadren JIR"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jadren-jir = { path = "../jadren-jir" }
+jadren-selfhost-api = { path = "../jadren-selfhost-api" }
+jadren-source = { path = "../jadren-source" }
+
+[target.'cfg(windows)'.dev-dependencies]
+inkwell = { version = "=0.9.0", default-features = false, features = ["llvm22-1-no-llvm-linking", "target-x86"] }
+jadren-codegen-llvm = { path = "../jadren-codegen-llvm" }
+
+[lints]
+workspace = true

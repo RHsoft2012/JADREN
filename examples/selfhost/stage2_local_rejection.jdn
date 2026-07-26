@@ -1,0 +1,8 @@
+module examples.selfhost.stage2_local_rejection
+
+/// Valid Jadren source deliberately outside the bounded Stage-2 producer
+/// subset: local bindings are not yet serialized by its fixed record ABI.
+pub fn local_value(x: Int32) -> Int32 {
+    let next: Int32 = x + 1
+    return next
+}

@@ -23,7 +23,6 @@ pub fn agent_step_batch(agents: write Slice<AgentState>, delta: Float32) {
         agents[index].position_z = agents[index].position_z + agents[index].velocity_z * delta
     }
 }
-
 /// Updates the same workload through explicit structure-of-arrays slices.
 ///
 /// The separate writable/read-only slices make the layout and alias contract
@@ -31,97 +30,141 @@ pub fn agent_step_batch(agents: write Slice<AgentState>, delta: Float32) {
 /// loads/stores without changing the `@repr(C)` AgentState ABI.
 @export(name: "jadren_agent_step_batch_soa", abi: "C")
 @noalloc
-pub fn agent_step_batch_soa(
-    position_x: write Slice<Float32>,
-    position_y: write Slice<Float32>,
-    position_z: write Slice<Float32>,
-    velocity_x: read Slice<Float32>,
-    velocity_y: read Slice<Float32>,
-    velocity_z: read Slice<Float32>,
-    delta: Float32,
-) {
+pub fn agent_step_batch_soa(position_x: write Slice<Float32>, position_y: write Slice<Float32>, position_z: write Slice<Float32>, velocity_x: read Slice<Float32>, velocity_y: read Slice<Float32>, velocity_z: read Slice<Float32>, delta: Float32,) {
     for index in position_x.indices {
         position_x[index] = position_x[index] + velocity_x[index] * delta
         position_y[index] = position_y[index] + velocity_y[index] * delta
         position_z[index] = position_z[index] + velocity_z[index] * delta
     }
 }
-
 /// Explicit four-lane SIMD variant. `count` is the logical element count and
 /// may have a scalar tail; every vector intrinsic still validates its own
 /// slice range before touching memory.
 @export(name: "jadren_agent_step_batch_soa_simd", abi: "C")
 @disjoint
 @noalloc
-pub fn agent_step_batch_soa_simd(
-    position_x: write Slice<Float32>,
-    position_y: write Slice<Float32>,
-    position_z: write Slice<Float32>,
-    velocity_x: read Slice<Float32>,
-    velocity_y: read Slice<Float32>,
-    velocity_z: read Slice<Float32>,
-    count: UIntSize,
-    delta: Float32,
-) {
+pub fn agent_step_batch_soa_simd(position_x: write Slice<Float32>, position_y: write Slice<Float32>, position_z: write Slice<Float32>, velocity_x: read Slice<Float32>, velocity_y: read Slice<Float32>, velocity_z: read Slice<Float32>, count: UIntSize, delta: Float32,) {
     let amount: Float4 = vector_splat4(delta)
     var index: UIntSize = 0usize
     while index + 4usize <= count {
-        let px: Float4 = vector_load4(position_x, index)
-        let py: Float4 = vector_load4(position_y, index)
-        let pz: Float4 = vector_load4(position_z, index)
-        let vx: Float4 = vector_load4(velocity_x, index)
-        let vy: Float4 = vector_load4(velocity_y, index)
-        let vz: Float4 = vector_load4(velocity_z, index)
-        vector_store4(position_x, index, px + vx * amount)
-        vector_store4(position_y, index, py + vy * amount)
-        vector_store4(position_z, index, pz + vz * amount)
+        let px: Float4 = vector_load4(position_x,
+        index)
+        let py: Float4 = vector_load4(position_y,
+        index)
+        let pz: Float4 = vector_load4(position_z,
+        index)
+        let vx: Float4 = vector_load4(velocity_x,
+        index)
+        let vy: Float4 = vector_load4(velocity_y,
+        index)
+        let vz: Float4 = vector_load4(velocity_z,
+        index)
+        vector_store4(position_x,
+        index,
+        px + vx * amount)
+        vector_store4(position_y,
+        index,
+        py + vy * amount)
+        vector_store4(position_z,
+        index,
+        pz + vz * amount)
         index = index + 4usize
     }
-    while index < count {
+    while index<count {
         position_x[index] = position_x[index] + velocity_x[index] * delta
         position_y[index] = position_y[index] + velocity_y[index] * delta
         position_z[index] = position_z[index] + velocity_z[index] * delta
         index = index + 1usize
     }
 }
-
 /// Explicit eight-lane SIMD variant for AVX2-capable targets. The scalar tail
 /// keeps the exported kernel correct for counts that are not multiples of 8.
 @export(name: "jadren_agent_step_batch_soa_simd8", abi: "C")
 @disjoint
 @noalloc
-pub fn agent_step_batch_soa_simd8(
-    position_x: write Slice<Float32>,
-    position_y: write Slice<Float32>,
-    position_z: write Slice<Float32>,
-    velocity_x: read Slice<Float32>,
-    velocity_y: read Slice<Float32>,
-    velocity_z: read Slice<Float32>,
-    count: UIntSize,
-    delta: Float32,
-) {
+pub fn agent_step_batch_soa_simd8(position_x: write Slice<Float32>, position_y: write Slice<Float32>, position_z: write Slice<Float32>, velocity_x: read Slice<Float32>, velocity_y: read Slice<Float32>, velocity_z: read Slice<Float32>, count: UIntSize, delta: Float32,) {
     let amount: Float8 = vector_splat8(delta)
     var index: UIntSize = 0usize
+    // Process two independent tiles per iteration. This keeps the checked
+    // vector ABI unchanged while giving AVX2/NEON backends more independent
+    // work to schedule and reducing loop-branch overhead on mid-tier CPUs.
+    while index + 16usize <= count {
+        let px0: Float8 = vector_load8(position_x,
+        index)
+        let py0: Float8 = vector_load8(position_y,
+        index)
+        let pz0: Float8 = vector_load8(position_z,
+        index)
+        let vx0: Float8 = vector_load8(velocity_x,
+        index)
+        let vy0: Float8 = vector_load8(velocity_y,
+        index)
+        let vz0: Float8 = vector_load8(velocity_z,
+        index)
+        vector_store8(position_x,
+        index,
+        px0 + vx0 * amount)
+        vector_store8(position_y,
+        index,
+        py0 + vy0 * amount)
+        vector_store8(position_z,
+        index,
+        pz0 + vz0 * amount)
+        let next: UIntSize = index + 8usize
+        let px1: Float8 = vector_load8(position_x,
+        next)
+        let py1: Float8 = vector_load8(position_y,
+        next)
+        let pz1: Float8 = vector_load8(position_z,
+        next)
+        let vx1: Float8 = vector_load8(velocity_x,
+        next)
+        let vy1: Float8 = vector_load8(velocity_y,
+        next)
+        let vz1: Float8 = vector_load8(velocity_z,
+        next)
+        vector_store8(position_x,
+        next,
+        px1 + vx1 * amount)
+        vector_store8(position_y,
+        next,
+        py1 + vy1 * amount)
+        vector_store8(position_z,
+        next,
+        pz1 + vz1 * amount)
+        index = index + 16usize
+    }
     while index + 8usize <= count {
-        let px: Float8 = vector_load8(position_x, index)
-        let py: Float8 = vector_load8(position_y, index)
-        let pz: Float8 = vector_load8(position_z, index)
-        let vx: Float8 = vector_load8(velocity_x, index)
-        let vy: Float8 = vector_load8(velocity_y, index)
-        let vz: Float8 = vector_load8(velocity_z, index)
-        vector_store8(position_x, index, px + vx * amount)
-        vector_store8(position_y, index, py + vy * amount)
-        vector_store8(position_z, index, pz + vz * amount)
+        let px: Float8 = vector_load8(position_x,
+        index)
+        let py: Float8 = vector_load8(position_y,
+        index)
+        let pz: Float8 = vector_load8(position_z,
+        index)
+        let vx: Float8 = vector_load8(velocity_x,
+        index)
+        let vy: Float8 = vector_load8(velocity_y,
+        index)
+        let vz: Float8 = vector_load8(velocity_z,
+        index)
+        vector_store8(position_x,
+        index,
+        px + vx * amount)
+        vector_store8(position_y,
+        index,
+        py + vy * amount)
+        vector_store8(position_z,
+        index,
+        pz + vz * amount)
         index = index + 8usize
     }
-    while index < count {
+    while index<count {
         position_x[index] = position_x[index] + velocity_x[index] * delta
         position_y[index] = position_y[index] + velocity_y[index] * delta
         position_z[index] = position_z[index] + velocity_z[index] * delta
         index = index + 1usize
     }
 }
-
 /// Internal AoSoA8 tile used when the caller can keep eight agents packed in
 /// six vector fields. The public AgentState AoS ABI remains unchanged.
 @repr(C)
@@ -133,16 +176,17 @@ pub struct AgentTile {
     pub velocity_y: Float8,
     pub velocity_z: Float8,
 }
-
 @export(name: "jadren_agent_step_batch_aosoa8", abi: "C")
 @noalloc
 pub fn agent_step_batch_aosoa8(tiles: write Slice<AgentTile>, delta: Float32) {
     let amount: Float8 = vector_splat8(delta)
     for index in tiles.indices {
-        var tile: AgentTile = tiles[index]
-        tile.position_x = tile.position_x + tile.velocity_x * amount
-        tile.position_y = tile.position_y + tile.velocity_y * amount
-        tile.position_z = tile.position_z + tile.velocity_z * amount
-        tiles[index] = tile
+        // Keep the aggregate in caller-owned memory.  Loading the complete
+        // tile into a local value forces stack traffic on AArch64/NEON; direct
+        // projected loads/stores let the backend keep each vector in registers
+        // while preserving the same checked Slice<AgentTile> ABI.
+        tiles[index].position_x = tiles[index].position_x + tiles[index].velocity_x * amount
+        tiles[index].position_y = tiles[index].position_y + tiles[index].velocity_y * amount
+        tiles[index].position_z = tiles[index].position_z + tiles[index].velocity_z * amount
     }
 }
