@@ -14,9 +14,9 @@ const OFFLINE_COMPLETIONS = [
   ['Float32', vscode.CompletionItemKind.Type, '32-bit floating-point type'],
   ['Float64', vscode.CompletionItemKind.Type, '64-bit floating-point type'],
   ['String', vscode.CompletionItemKind.Type, 'UTF-8 string type'],
-  ['Vec2', vscode.CompletionItemKind.Type, '2D vector type'],
-  ['Vec3', vscode.CompletionItemKind.Type, '3D vector type'],
-  ['Vec4', vscode.CompletionItemKind.Type, '4D vector type'],
+  ['Float2', vscode.CompletionItemKind.Type, '2D floating-point vector type'],
+  ['Float3', vscode.CompletionItemKind.Type, '3D floating-point vector type'],
+  ['Float4', vscode.CompletionItemKind.Type, '4D floating-point vector type'],
   ['print', vscode.CompletionItemKind.Function, 'Print a value to stdout'],
   ['fn', vscode.CompletionItemKind.Keyword, 'Declare a function'],
   ['let', vscode.CompletionItemKind.Keyword, 'Declare a local binding'],
@@ -53,9 +53,9 @@ const OFFLINE_HOVER_DOCS = new Map([
   ['Float32', '**Float32** is a 32-bit floating-point type.'],
   ['Float64', '**Float64** is a 64-bit floating-point type.'],
   ['String', '**String** is the UTF-8 text type.'],
-  ['Vec2', '**Vec2** is a two-component vector type.'],
-  ['Vec3', '**Vec3** is a three-component vector type.'],
-  ['Vec4', '**Vec4** is a four-component vector type.'],
+  ['Float2', '**Float2** is a two-component floating-point vector type.'],
+  ['Float3', '**Float3** is a three-component floating-point vector type.'],
+  ['Float4', '**Float4** is a four-component floating-point vector type.'],
 ]);
 
 function registerOfflineCompletions(context) {
