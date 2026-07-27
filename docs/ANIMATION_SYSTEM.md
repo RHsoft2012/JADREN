@@ -23,6 +23,14 @@ explicitly deferred to the 0.3 track.
 - opt-in GPU pose and skinning experiments;
 - deterministic fallback when a backend is unavailable.
 
+For the GPU crowd route, immutable compute bindings are uploaded once at stream
+initialization and the frame path updates only dynamic crowd parameters. The
+optional `ForceGpuPoseGraphicsFence` switch is a diagnostic fallback and is
+disabled by default; normal execution preserves compute-to-skinning ordering
+without a CPU wait. Each mesh stream owns an isolated compute-shader instance,
+and the renderer consumes the producer fence on the GPU command queue so
+multi-material characters keep their mesh-specific pose buffers.
+
 The native pose ABI also exposes an explicit 320-byte `AnimationPoseTile8`
 AoSoA tile (ten eight-lane `Float8` fields) and a caller-owned linear blend
 export. The blend clamps its weight to `0..1`; scalar packed poses remain the

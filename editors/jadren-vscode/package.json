@@ -1,10 +1,15 @@
 {
   "name": "jadren-vscode",
   "displayName": "Jadren Language Support",
-  "description": "Jadren syntax highlighting and LSP diagnostics/navigation.",
+  "description": "Jadren syntax highlighting, offline snippets, and LSP diagnostics/navigation.",
   "version": "0.1.0",
   "publisher": "jadren",
   "icon": "icons/JADREN.png",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RHsoft2012/JADREN.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -34,6 +39,12 @@
         "language": "jadren",
         "scopeName": "source.jadren",
         "path": "./syntaxes/jadren.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "jadren",
+        "path": "./snippets/jadren.json"
       }
     ],
     "iconThemes": [

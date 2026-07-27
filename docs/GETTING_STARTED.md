@@ -1,7 +1,7 @@
 # Getting started
 
 This guide uses the compiler from the public source repository. The repository
-is currently the 0.1.0-preview.3 public preview: it provides source, examples,
+is currently the 0.1.0-preview.4 public preview: it provides source, examples,
 and editor support. The Windows preview installer is unsigned and installs to
 `%PROGRAMFILES%\\Jadren` after a UAC confirmation. Development and Unity
 Asset Store packages are distributed separately and must match the same release
