@@ -2,7 +2,7 @@
   "schema": "jadren-public-export-0.1",
   "default_language": "en",
   "source_policy": "explicit-allowlist",
-  "file_count": 254,
+  "file_count": 255,
   "files": [
     {
       "path": ".editorconfig",
@@ -80,7 +80,7 @@
       "path": "README.md",
       "source": "docs/public/en/GITHUB_README.md",
       "bytes": 3826,
-      "sha256": "6e4be5ac0b738bf40ee9aa7eb2e19ed4637f1b63ac04db95199ee2fcd3f7cea6"
+      "sha256": "7d05b1e72e6c9d1a4d46f347302a01e953cd8b684bd8d07702d6886b975b36d1"
     },
     {
       "path": "SECURITY.md",
@@ -434,7 +434,7 @@
       "path": "crates/jadren-installer/src/bin/jadren-setup.rs",
       "source": "crates/jadren-installer/src/bin/jadren-setup.rs",
       "bytes": 7004,
-      "sha256": "0b05fb90bc6255df4261d94bbb46a50fb979a3489a4f73a0eb62552d42925905"
+      "sha256": "80335ade54545b076aba892ed67c72302daa2ec3dd861189a69c28e6b3a910c0"
     },
     {
       "path": "crates/jadren-installer/src/bin/jadren-toolchain-smoke.rs",
@@ -925,8 +925,8 @@
     {
       "path": "docs/ANIMATION_SYSTEM.md",
       "source": "docs/public/en/ANIMATION_SYSTEM.md",
-      "bytes": 19237,
-      "sha256": "00c8dc9d75c8e3f15c715e14c91eb3853ea8bf35c5b11e2e628224c99a52f8ce"
+      "bytes": 19765,
+      "sha256": "8474359183540a2eef8893541c7ba06da5a199cb21317e63ac1bb82ea8b5cc62"
     },
     {
       "path": "docs/COMPILER_AND_PLATFORMS.md",
@@ -944,7 +944,7 @@
       "path": "docs/GETTING_STARTED.md",
       "source": "docs/public/en/GETTING_STARTED.md",
       "bytes": 2942,
-      "sha256": "4da0fdb585011c7607534d672ecafde8b7ce330e8c08133b549446ab75c6c992"
+      "sha256": "da92e27a313c6034b5c86a8e5e4c25fc1b4a90c395bf2fc0a1657da54d34a7cc"
     },
     {
       "path": "docs/LANGUAGE_OVERVIEW.md",
@@ -980,7 +980,7 @@
       "path": "docs/VERSIONING.md",
       "source": "docs/public/en/VERSIONING.md",
       "bytes": 1502,
-      "sha256": "654d79e614ef602d92ac01194c4fa3c1996e295c2194b932e4517415dedef632"
+      "sha256": "89f5d51416e9fb71809628e2966b5b96a6c4fc41ce8232078be2e72565ed7ada"
     },
     {
       "path": "docs/VSCODE_EXTENSION.md",
@@ -1027,14 +1027,20 @@
     {
       "path": "editors/jadren-vscode/package.json",
       "source": "editors/jadren-vscode/package.json",
-      "bytes": 1406,
-      "sha256": "d703e0f5af1d8297f8b77abfbcacc97e388cbd7e7f1de64b8d1e40e0c11c8960"
+      "bytes": 1654,
+      "sha256": "1d7a38177e76002ca572b5b731f8391b3ca5f507169c8b809a8d4697c144b2a2"
+    },
+    {
+      "path": "editors/jadren-vscode/snippets/jadren.json",
+      "source": "editors/jadren-vscode/snippets/jadren.json",
+      "bytes": 1590,
+      "sha256": "88d6b50947f8f233a98a25e140afa85b00a0351425b2485b5d4bc1e66b3afbfc"
     },
     {
       "path": "editors/jadren-vscode/src/extension.js",
       "source": "editors/jadren-vscode/src/extension.js",
-      "bytes": 1107,
-      "sha256": "b0ecc3e2387e997672db33259f9898e5505349d63970ee3749245430681f5b41"
+      "bytes": 6300,
+      "sha256": "4fb5d97171d6e6b46db49021bb6e955374363b74055005252c0eeb3568544065"
     },
     {
       "path": "editors/jadren-vscode/syntaxes/jadren.tmLanguage.json",
