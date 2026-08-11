@@ -143,6 +143,4 @@ This course intentionally does not add a database, hidden allocation, browser
 bridge, implicit network call, TLS policy, or credential storage. Those are
 separate, explicit application decisions.
 
-When this four-step course is complete, continue with the [28-lesson learning
-path](LEARNING_PATH.md) for the full language, desktop, data, HTTP, Unity, and
-capability-gated GPU route.
+When this four-step course is complete, continue with the [28-lesson learning path](LEARNING_PATH.md) for the full language, desktop, data, HTTP, Unity, and capability-gated GPU route.
