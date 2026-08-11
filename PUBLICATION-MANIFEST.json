@@ -967,8 +967,8 @@
     {
       "path": "docs/LEARNING_PATH.md",
       "source": "docs/public/en/LEARNING_PATH.md",
-      "bytes": 8093,
-      "sha256": "d09d893f40dbafcffdcdcc4252f55cdd56d6aa676bf562f400d5586f23f818bc"
+      "bytes": 8893,
+      "sha256": "a3988983e5d46d08534472093756287d6301713d0f8ba3c41745be811790998d"
     },
     {
       "path": "docs/COMPILER_AND_PLATFORMS.md",
