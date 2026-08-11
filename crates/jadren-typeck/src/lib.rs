@@ -4715,11 +4715,12 @@ impl<'a> Checker<'a> {
                 core.bool_
             }
             "app_data_journal_maintenance_retry_durable" => {
-                for index in 0..4 {
-                    self.unify_or_error(core.string, argument_types[index], arg_span(index));
+                for (index, actual) in argument_types[..4].iter().enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
                 }
-                for index in 4..8 {
-                    self.unify_or_error(core.uint_size, argument_types[index], arg_span(index));
+                for (offset, actual) in argument_types[4..8].iter().enumerate() {
+                    let index = offset + 4;
+                    self.unify_or_error(core.uint_size, *actual, arg_span(index));
                 }
                 core.bool_
             }
@@ -4752,14 +4753,14 @@ impl<'a> Checker<'a> {
                 core.bool_
             }
             "app_data_journal_build_index_durable" => {
-                for index in 0..4 {
-                    self.unify_or_error(core.string, argument_types[index], arg_span(index));
+                for (index, actual) in argument_types[..4].iter().enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
                 }
                 core.bool_
             }
             "app_data_journal_index_lookup_durable" => {
-                for index in 0..3 {
-                    self.unify_or_error(core.string, argument_types[index], arg_span(index));
+                for (index, actual) in argument_types[..3].iter().enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
                 }
                 self.unify_or_error(core.uint_size, argument_types[3], arg_span(3));
                 self.unify_or_error(write_slice_uint_size, argument_types[4], arg_span(4));
@@ -4773,14 +4774,14 @@ impl<'a> Checker<'a> {
                 core.uint_size
             }
             "app_data_journal_index_export_csv_file_durable" => {
-                for index in 0..5 {
-                    self.unify_or_error(core.string, argument_types[index], arg_span(index));
+                for (index, actual) in argument_types[..5].iter().enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
                 }
                 core.bool_
             }
             "app_data_journal_index_range_durable" => {
-                for index in 0..3 {
-                    self.unify_or_error(core.string, argument_types[index], arg_span(index));
+                for (index, actual) in argument_types[..3].iter().enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
                 }
                 self.unify_or_error(core.uint_size, argument_types[3], arg_span(3));
                 self.unify_or_error(core.uint_size, argument_types[4], arg_span(4));
@@ -4788,8 +4789,8 @@ impl<'a> Checker<'a> {
                 core.uint_size
             }
             "app_data_journal_index_read_page_durable" => {
-                for index in 0..3 {
-                    self.unify_or_error(core.string, argument_types[index], arg_span(index));
+                for (index, actual) in argument_types[..3].iter().enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
                 }
                 self.unify_or_error(core.uint_size, argument_types[3], arg_span(3));
                 self.unify_or_error(core.uint_size, argument_types[4], arg_span(4));
