@@ -1,0 +1,26 @@
+module buffer_callback.main
+
+import buffer_callback.logic.append_indirect
+import buffer_callback.logic.invoke
+
+fn main() -> Int32 {
+    let values_result: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let incoming_result: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match values_result {
+        Ok(values) => {
+            match incoming_result {
+                Ok(incoming) => {
+                    let callback = append_indirect
+                    if !invoke(callback, values, incoming) { result_code = 1 }
+                    if result_code == 0 {
+                        if buffer_length(values) != 1usize { result_code = 2 }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

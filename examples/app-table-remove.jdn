@@ -1,0 +1,32 @@
+module examples.app_table_remove
+
+// Typed key-based Delete: odstránenie neukladá index v aplikácii.
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !app_table_set_column_type(0, 0, 0) { return 1 } // text
+    if !app_table_set_column_type(0, 1, 1) { return 2 } // int
+    if !app_table_set_column_type(0, 2, 2) { return 3 } // uint
+    if !app_table_set_column_type(0, 3, 4) { return 4 } // float
+    if !app_table_set_column_type(0, 4, 3) { return 5 } // bool
+
+    if app_table_upsert_text(0, 0, "task-a") != 0 { return 6 }
+    if app_table_upsert_int(0, 1, 42 as Int64) != 1 { return 7 }
+    if app_table_upsert_uint(0, 2, 7u64) != 2 { return 8 }
+    if app_table_upsert_float(0, 3, 1.25f64) != 3 { return 9 }
+    if app_table_upsert_bool(0, 4, true) != 4 { return 10 }
+
+    if !app_table_remove_text(0, 0, "task-a") { return 11 }
+    if !app_table_remove_int(0, 1, 42 as Int64) { return 12 }
+    if !app_table_remove_uint(0, 2, 7u64) { return 13 }
+    if !app_table_remove_float(0, 3, 1.25f64) { return 14 }
+    if !app_table_remove_bool(0, 4, true) { return 15 }
+    if app_table_row_count(0) != 0 { return 16 }
+
+    // Missing keys, empty text and a schema mismatch are no-ops.
+    if app_table_remove_text(0, 0, "missing") { return 17 }
+    if app_table_remove_text(0, 0, "") { return 18 }
+    if app_table_remove_int(0, 0, 99 as Int64) { return 19 }
+    if app_table_row_count(0) != 0 { return 20 }
+
+    return 0
+}

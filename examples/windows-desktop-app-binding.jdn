@@ -1,0 +1,67 @@
+module examples.windows_desktop_app_binding
+
+// Explicit model binding: app_list/app_table remain the source of truth and
+// the UI is refreshed only when the program requests it. This keeps updates
+// deterministic while removing repetitive per-row ui_* copying from a form.
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_list_clear(0)
+    let first: Bool = app_list_push_text(0, "Focus")
+    let second: Bool = app_list_push_text(0, "Review")
+    if !first { return 1 }
+    if !second { return 2 }
+
+    ui_list(20, 0, 0, 240, 120, 0x111827u32, 0xFFFFFFu32)
+    ui_list_bind_app(20, 0)
+    if ui_list_count(20) != 2 { return 3 }
+
+    var list_output: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    let list_read: UIntSize = ui_list_read_item(20, 1, list_output)
+    if list_read != 6usize { return 4 }
+    if list_output[0] != 82u8 { return 5 }
+
+    let list_updated: Bool = app_list_set_text(0, 1, "Done")
+    if !list_updated { return 6 }
+    // One call refreshes every bound projection, not only this list.
+    ui_refresh_bindings()
+    let updated_read: UIntSize = ui_list_read_item(20, 1, list_output)
+    if updated_read != 4usize { return 7 }
+    if list_output[0] != 68u8 { return 8 }
+
+    app_table_clear(0)
+    let row: Bool = app_table_append_row(0)
+    let name: Bool = app_table_set_cell(0, 0, 0, "Focus")
+    let time: Bool = app_table_set_cell(0, 0, 1, "08:30")
+    if !row { return 9 }
+    if !name { return 10 }
+    if !time { return 11 }
+
+    ui_table(30, 0, 140, 360, 120, 0x111827u32, 0xFFFFFFu32)
+    ui_table_column(30, 0, "Nazov", 180)
+    ui_table_column(30, 1, "Cas", 120)
+    ui_table_bind_app(30, 0, 2)
+    if ui_table_row_count(30) != 1 { return 12 }
+    var table_output: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    let table_read: UIntSize = ui_table_read_cell(30, 0, 1, table_output)
+    if table_read != 5usize { return 13 }
+    if table_output[0] != 48u8 { return 14 }
+
+    let time_updated: Bool = app_table_set_cell(0, 0, 1, "08:45")
+    if !time_updated { return 15 }
+    ui_refresh_bindings()
+    let refreshed_read: UIntSize = ui_table_read_cell(30, 0, 1, table_output)
+    if refreshed_read != 5usize { return 16 }
+    if table_output[3] != 52u8 { return 17 }
+    return 0
+}

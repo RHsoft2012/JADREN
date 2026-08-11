@@ -1,0 +1,100 @@
+module examples.stdlib_buffer_carrier_remove_clear_move
+
+// Option/Result carriers can be direct Buffer elements. The compiler reuses
+// the record field-table ABI: the tag selects the active Buffer payload before
+// remove, clear, or move-aware resize.
+fn main() -> Int32 {
+    let direct_created: Result<Buffer<Option<Buffer<Int32>>>, Int32> = buffer_create(0usize)
+    let direct_value_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match direct_created {
+        Ok(direct) => {
+            match direct_value_created {
+                Ok(value) => {
+                    if !buffer_append(value, 7) { result_code = 1 }
+                    let some_value: Option<Buffer<Int32>> = Some(value)
+                    if !buffer_append(direct, some_value) { result_code = 2 }
+                    let removed: Int32 = buffer_remove_drop_status(direct, 0usize)
+                    if removed != 0 { result_code = 3 }
+                    if buffer_length(direct) != 0usize { result_code = 4 }
+                    let none_value: Option<Buffer<Int32>> = None
+                    if !buffer_append(direct, none_value) { result_code = 5 }
+                    let cleared: Bool = buffer_clear_move(direct)
+                    if !cleared { result_code = 6 }
+                    if buffer_length(direct) != 0usize { result_code = 7 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let result_created: Result<Buffer<Result<Buffer<Int32>, Buffer<Int32>>>, Int32> = buffer_create(0usize)
+    let ok_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let error_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    match result_created {
+        Ok(results) => {
+            match ok_created {
+                Ok(ok_value) => {
+                    match error_created {
+                        Ok(error_value) => {
+                            if !buffer_append(ok_value, 11) { result_code = 8 }
+                            if !buffer_append(error_value, 22) { result_code = 9 }
+                            let ok_state: Result<Buffer<Int32>, Buffer<Int32>> = Ok(ok_value)
+                            let error_state: Result<Buffer<Int32>, Buffer<Int32>> = Error(error_value)
+                            if !buffer_append(results, ok_state) { result_code = 10 }
+                            if !buffer_append(results, error_state) { result_code = 11 }
+                            let shrunk: Int32 = buffer_resize_move_status(results, 1usize)
+                            if shrunk != 0 { result_code = 12 }
+                            if buffer_length(results) != 1usize { result_code = 13 }
+                            let cleared: Bool = buffer_clear_move(results)
+                            if !cleared { result_code = 14 }
+                            if buffer_length(results) != 0usize { result_code = 15 }
+                            let grown: Int32 = buffer_resize_move_status(results, 2usize)
+                            if grown != 0 { result_code = 16 }
+                            let cleared_again: Int32 = buffer_clear_move_status(results)
+                            if cleared_again != 0 { result_code = 17 }
+                            if buffer_length(results) != 0usize { result_code = 18 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let nested_outer_created: Result<Buffer<Buffer<Option<Buffer<Int32>>>>, Int32> = buffer_create(0usize)
+    let nested_inner_created: Result<Buffer<Option<Buffer<Int32>>>, Int32> = buffer_create(0usize)
+    let nested_value_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    match nested_outer_created {
+        Ok(outer) => {
+            match nested_inner_created {
+                Ok(inner) => {
+                    match nested_value_created {
+                        Ok(value) => {
+                            if !buffer_append(value, 33) { result_code = 19 }
+                            let state: Option<Buffer<Int32>> = Some(value)
+                            if !buffer_append(inner, state) { result_code = 20 }
+                            if !buffer_append(outer, inner) { result_code = 21 }
+                            let grown: Int32 = buffer_resize_move_status(outer, 2usize)
+                            if grown != 0 { result_code = 22 }
+                            let shrunk: Bool = buffer_resize_move(outer, 1usize)
+                            if !shrunk { result_code = 23 }
+                            let cleared: Int32 = buffer_clear_move_status(outer)
+                            if cleared != 0 { result_code = 24 }
+                            if buffer_length(outer) != 0usize { result_code = 25 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

@@ -1,0 +1,16 @@
+module examples.selfhost.typed_while_local_dynamic_body_let_native_stage2
+
+// JADREN_STAGE2_DYNAMIC_BODY_LET
+// The while body declares an iteration-local `delta`, uses it in a grouped
+// assignment, and keeps conditional continue/break records in source order.
+fn local_value() -> Int32 {
+    var counter: Int32 = 0;
+    while counter < 4 {
+        let delta: Int32 = counter + 1;
+        counter = (counter + ((0 + 0) + (0 + delta)));
+        if counter < 2 { continue; }
+        counter = counter + 1;
+        if counter < 4 { break; }
+    }
+    return counter;
+}

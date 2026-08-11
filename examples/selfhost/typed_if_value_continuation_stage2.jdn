@@ -1,0 +1,9 @@
+module examples.selfhost.typed_if_value_continuation_stage2
+
+// Companion source for a post-join expression. The merged `value` is read
+// after the if/else and used by the following return expression.
+
+fn main() -> Int32 {
+    let value: Int32 = if 2 > 1 { 10 } else { 20 }
+    return value + 1
+}

@@ -1,0 +1,6 @@
+fn helper() -> Int32 {
+    return 42;
+}
+fn main() -> Int32 {
+    return helper();
+}

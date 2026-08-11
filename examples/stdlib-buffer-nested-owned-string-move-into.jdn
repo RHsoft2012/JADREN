@@ -1,0 +1,43 @@
+module examples.stdlib_buffer_nested_owned_string_move_into
+
+// Move a nested owning Buffer<OwnedString> element into caller-owned output.
+// The outer descriptor is compacted without duplicating the inner descriptor;
+// output cleanup must still release the owned UTF-8 payload exactly once.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<OwnedString>>, Int32> = buffer_create(0usize)
+    let inner_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    let output_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match inner_created {
+                Ok(inner) => {
+                    match output_created {
+                        Ok(output) => {
+                            let value: Result<OwnedString, Int32> = string_owned_from("Jadren")
+                            match value {
+                                Ok(text) => {
+                                    if !buffer_append(inner, text) { result_code = 1 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                            if !buffer_append(outer, inner) { result_code = 2 }
+                            let moved: Bool = buffer_remove_move_into(outer, 0usize, output)
+                            if !moved { result_code = 3 }
+                            if buffer_length(outer) != 0usize { result_code = 4 }
+                            if buffer_length(output) != 1usize { result_code = 5 }
+                            if string_owned_length(output[0]) != 6usize { result_code = 6 }
+                            if !buffer_clear_move(output) { result_code = 7 }
+                            if buffer_length(output) != 0usize { result_code = 8 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

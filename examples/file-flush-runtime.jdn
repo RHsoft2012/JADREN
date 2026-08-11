@@ -1,0 +1,22 @@
+module examples.file_flush_runtime
+
+// file_flush is an explicit OS durability boundary for an existing file.
+// It does not replace atomic rename, locking, or database semantics.
+fn main() -> Int32 {
+    directory_create("target/jadren")
+    file_delete("target/jadren/jadren-file-flush-runtime.txt")
+
+    let written: UIntSize = file_write_text(
+        "target/jadren/jadren-file-flush-runtime.txt",
+        "durable\n",
+    )
+    if (written as Int32) != 8 { return 1 }
+    if !file_flush("target/jadren/jadren-file-flush-runtime.txt") { return 2 }
+    if !file_exists("target/jadren/jadren-file-flush-runtime.txt") { return 3 }
+    if (file_size("target/jadren/jadren-file-flush-runtime.txt") as Int32) != 8 {
+        return 4
+    }
+
+    if !file_delete("target/jadren/jadren-file-flush-runtime.txt") { return 5 }
+    return 0
+}

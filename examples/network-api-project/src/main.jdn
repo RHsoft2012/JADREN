@@ -1,0 +1,222 @@
+module examples.network_api_project
+import examples.network_api_project.loopback.run_loopback
+import jadren.network.http.response_body_prefix
+import jadren.network.http.response_header_prefix
+import jadren.network.http.response_status_prefix
+import jadren.network.http.write_request_prefix
+import jadren.network.reactor.close
+import jadren.network.reactor.open
+import jadren.network.reactor.poll
+import jadren.network.session.step
+import jadren.network.tls.error
+pub fn build_request(body: read Slice<UInt8>, output: write Slice<UInt8>) -> UIntSize {
+    return write_request_prefix("G",
+    "/",
+    "h",
+    body,
+    0usize,
+    output)
+}
+fn main() -> Int32 {
+    var body:[UInt8;
+    2] =[79u8,
+    75u8]
+    let request =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    let request_length = build_request(body,
+    request)
+    if(request_length as Int32) == 0 {
+        return 1
+    }
+    if request[0] != 71u8 {
+        return 2
+    }
+    var response:[UInt8;
+    40] =[72u8,
+    84u8,
+    84u8,
+    80u8,
+    47u8,
+    49u8,
+    46u8,
+    49u8,
+    32u8,
+    50u8,
+    48u8,
+    48u8,
+    32u8,
+    79u8,
+    75u8,
+    13u8,
+    10u8,
+    67u8,
+    111u8,
+    110u8,
+    116u8,
+    101u8,
+    110u8,
+    116u8,
+    45u8,
+    76u8,
+    101u8,
+    110u8,
+    103u8,
+    116u8,
+    104u8,
+    58u8,
+    32u8,
+    50u8,
+    13u8,
+    10u8,
+    13u8,
+    10u8,
+    79u8,
+    75u8]
+    var header:[UInt8;
+    16] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var parsed_body:[UInt8;
+    8] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    if response_status_prefix(response,
+    40usize) != 200u16 {
+        return 3
+    }
+    if(response_header_prefix(response,
+    40usize,
+    "Content-Length",
+    header) as Int32) == 0 {
+        return 4
+    }
+    if(response_body_prefix(response,
+    40usize,
+    parsed_body) as Int32) != 2 {
+        return 5
+    }
+    let reactor = open(4u32,
+    4u32)
+    if reactor == 0usize {
+        return 6
+    }
+    let events = poll(reactor,
+    0u32)
+    if events != 0u32 {
+        close(reactor)
+        return 7
+    }
+    if ! close(reactor) {
+        return 6
+    }
+    if error(0usize) != - 1 {
+        return 8
+    }
+    if step(0usize,
+    0u32) != 0u32 {
+        return 9
+    }
+    return run_loopback()
+}

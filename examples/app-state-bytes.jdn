@@ -1,0 +1,15 @@
+module examples.app_state_bytes
+
+fn main() -> Int32 {
+    app_state_clear()
+    var value: [UInt8; 16] = [81u8, 65u8, 32u8, 112u8, 114u8, 101u8, 102u8, 101u8,
+                               114u8, 101u8, 110u8, 99u8, 101u8, 115u8, 0u8, 0u8]
+    if !app_state_set_text_bytes("name", value, 14usize) { return 1 }
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                                0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = app_state_read_text("name", output)
+    if length != 14usize { return 2 }
+    if output[0] != 81u8 { return 3 }
+    if output[13] != 115u8 { return 4 }
+    return 0
+}

@@ -1,0 +1,9 @@
+module examples.selfhost.typed_float64_process_entry_stage2
+
+// `main` may return Float64. The executable keeps the native result in the
+// generated `jadren_float64_entry` ABI and uses a separate Int32 adapter only
+// for the operating-system process boundary.
+
+fn main() -> Float64 {
+    return 42.5f64
+}

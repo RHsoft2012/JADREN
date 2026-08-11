@@ -1,0 +1,32 @@
+module examples.app_list_persistence
+
+// Bounded text collections can be saved as a JSON array and restored transactionally.
+fn main() -> Int32 {
+    app_list_clear(0)
+    let first: Bool = app_list_push_text(0, "Focus")
+    let second: Bool = app_list_push_text(0, "Review")
+    let saved: Bool = app_list_save(0, "target/jadren/app-list.json")
+    app_list_clear(0)
+    let loaded: Bool = app_list_load(0, "target/jadren/app-list.json")
+    let count: Int32 = app_list_count(0)
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let copied: UIntSize = app_list_read_text(0, 0, output)
+    let valid_json: UIntSize = file_write_text("target/jadren/app-list-invalid.json", "[\"ok\",")
+    let rejected: Bool = app_list_load(0, "target/jadren/app-list-invalid.json")
+    let preserved_count: Int32 = app_list_count(0)
+    let removed: Bool = file_delete("target/jadren/app-list.json")
+    let removed_invalid: Bool = file_delete("target/jadren/app-list-invalid.json")
+    if !first { return 1 }
+    if !second { return 2 }
+    if !saved { return 3 }
+    if !loaded { return 4 }
+    if count != 2 { return 5 }
+    if copied != 5usize { return 6 }
+    if output[0] != 70u8 { return 7 }
+    if valid_json != 6usize { return 8 }
+    if rejected { return 9 }
+    if preserved_count != 2 { return 10 }
+    if !removed { return 11 }
+    if !removed_invalid { return 12 }
+    return 0
+}

@@ -1,0 +1,20 @@
+module examples.stdlib_buffer_generic_f32
+
+fn main() -> Int32 {
+    // Generic value ABI copies a Float32 through a temporary stack slot.
+    let created: Result<Buffer<Float32>, Int32> = buffer_create(1usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            if !buffer_append(values, 1.5f32) { result_code = 1 }
+            if !buffer_insert(values, 0usize, 2.5f32) { result_code = 2 }
+            if values[0] != 2.5f32 { result_code = 3 }
+            if values[1] != 1.5f32 { result_code = 4 }
+            if !buffer_remove(values, 0usize) { result_code = 5 }
+            if buffer_length(values) != 1usize { result_code = 6 }
+            if values[0] != 1.5f32 { result_code = 7 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

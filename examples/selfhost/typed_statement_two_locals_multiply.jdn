@@ -1,0 +1,7 @@
+module examples.selfhost.typed_statement_two_locals_multiply
+
+fn local_value() -> Int32 {
+    let first: Int32 = 7;
+    let next: Int32 = first * 6;
+    return next;
+}

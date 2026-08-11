@@ -7,3 +7,51 @@ pub enum CoreStatus {
     OutOfMemory,
     IoError,
 }
+
+/// Named view of the stable runtime codes returned by generic Buffer<T>
+/// operations. Unknown future codes remain observable through `Unknown`.
+pub enum BufferStatus {
+    Ok,
+    Disabled,
+    RuntimeNotInitialized,
+    InvalidSize,
+    InvalidAlignment,
+    SizeOverflow,
+    OutOfMemory,
+    NullPointer,
+    OutOfBounds,
+    InvalidBuffer,
+    Unknown(Int32),
+}
+
+/// Converts a runtime Buffer status code into a named enum value.
+pub fn buffer_status_from_code(code: Int32) -> BufferStatus {
+    if code == 0 { return BufferStatus.Ok }
+    if code == 1 { return BufferStatus.Disabled }
+    if code == -10 { return BufferStatus.RuntimeNotInitialized }
+    if code == -11 { return BufferStatus.InvalidSize }
+    if code == -12 { return BufferStatus.InvalidAlignment }
+    if code == -13 { return BufferStatus.SizeOverflow }
+    if code == -14 { return BufferStatus.OutOfMemory }
+    if code == -15 { return BufferStatus.NullPointer }
+    if code == -20 { return BufferStatus.OutOfBounds }
+    if code == -21 { return BufferStatus.InvalidBuffer }
+    return BufferStatus.Unknown(code)
+}
+
+/// Converts a named Buffer status back to its stable runtime code.
+pub fn buffer_status_code(status: BufferStatus) -> Int32 {
+    return match status {
+        BufferStatus.Ok => 0,
+        BufferStatus.Disabled => 1,
+        BufferStatus.RuntimeNotInitialized => -10,
+        BufferStatus.InvalidSize => -11,
+        BufferStatus.InvalidAlignment => -12,
+        BufferStatus.SizeOverflow => -13,
+        BufferStatus.OutOfMemory => -14,
+        BufferStatus.NullPointer => -15,
+        BufferStatus.OutOfBounds => -20,
+        BufferStatus.InvalidBuffer => -21,
+        BufferStatus.Unknown(code) => code,
+    }
+}

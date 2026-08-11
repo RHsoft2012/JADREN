@@ -1,0 +1,69 @@
+module app_event_reducer_project.view
+
+import app_event_reducer_project.controller.handle
+import jadren.app.input.bind_checkbox_state
+import jadren.app.input.bind_select_state
+import jadren.app.input.bind_state
+import jadren.app.ui.button
+import jadren.app.ui.checkbox
+import jadren.app.ui.list
+import jadren.app.ui.list_item
+import jadren.app.ui.list_read_item
+import jadren.app.ui.menu
+import jadren.app.ui.menu_item
+import jadren.app.ui.select
+import jadren.app.ui.select_option
+import jadren.app.ui.table
+import jadren.app.ui.table_cell
+import jadren.app.ui.table_column
+import jadren.app.ui.table_read_cell
+import jadren.app.ui.text_input
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return handle(event_id)
+}
+
+pub fn build(parent: Int32) -> Bool {
+    let file_menu: Int32 = menu(parent, "File", 96, 36,
+                                 0xFFFFFFu32, 0x374151u32, 8, 0)
+    if file_menu == 0 { return false }
+    if !menu_item(file_menu, "Open", 13) { return false }
+    if !menu_item(file_menu, "Save", 14) { return false }
+    if button(parent, "Run reducer", 7, 160, 36,
+              0xFFFFFFu32, 0x168EF5u32, 8, 0) == 0 { return false }
+    if checkbox(parent, "Completed", 8, 160, 36,
+                0x111827u32, 0x18C964u32, 8, 0, 0) == 0 { return false }
+    if text_input(parent, "Name", 9, 240, 36,
+                  0x111827u32, 0xFFFFFFu32, 8, 1) == 0 { return false }
+    let select_node: Int32 = select(parent, 10, 180, 36,
+                                    0x111827u32, 0xFFFFFFu32, 8, 0)
+    if select_node == 0 { return false }
+    if !select_option(select_node, "First") { return false }
+    if !select_option(select_node, "Second") { return false }
+    let list_node: Int32 = list(parent, 11, 220, 88,
+                               0x111827u32, 0xFFFFFFu32, 8, 0)
+    if list_node == 0 { return false }
+    if !list_item(list_node, "Today") { return false }
+    if !list_item(list_node, "Tomorrow") { return false }
+    if !list_item(list_node, "Later") { return false }
+    var list_readback: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if list_read_item(list_node, 0, list_readback) != 5usize { return false }
+    let table_node: Int32 = table(parent, 12, 280, 108,
+                                  0x111827u32, 0xFFFFFFu32, 8, 0)
+    if table_node == 0 { return false }
+    if !table_column(table_node, 0, "Task", 150) { return false }
+    if !table_column(table_node, 1, "State", 100) { return false }
+    if !table_cell(table_node, 0, 0, "Build") { return false }
+    if !table_cell(table_node, 0, 1, "Ready") { return false }
+    if !table_cell(table_node, 1, 0, "Test") { return false }
+    if !table_cell(table_node, 1, 1, "Queued") { return false }
+    var table_readback: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if table_read_cell(table_node, 0, 0, table_readback) != 5usize { return false }
+    bind_checkbox_state(8, "reducer.completed")
+    bind_select_state(10, "reducer.selected")
+    // Text bindings require a text-valued state key. The reducer stores the
+    // derived length separately after reading the native input.
+    bind_state(9, "reducer.text")
+    return true
+}

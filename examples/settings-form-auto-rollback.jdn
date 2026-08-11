@@ -1,0 +1,57 @@
+module examples.settings_form_auto_rollback
+
+// A retained native form that proves a model rollback restores the rendered
+// input without calling ui_input_refresh_app_state manually. The normal
+// ui_refresh_bindings() API remains available for ordinary model mutations.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    if !app_state_set_text("name", "Committed value") { return 1 }
+    if !app_data_tx_begin() { return 2 }
+
+    let root: Int32 = ui_app_begin(
+        "Jadren Automatic Form Rollback",
+        560,
+        280,
+        0xF6F8FCu32
+    )
+    if root == 0 { return 3 }
+    let panel: Int32 = ui_app_panel(root, 500, 190, 0xFFFFFFu32, 16, 16, 12, 0, 1)
+    if panel == 0 { return 4 }
+    if ui_app_label(
+        panel,
+        "Rollback restores this field from app_state automatically.",
+        468,
+        30,
+        0x111827u32,
+        0xFFFFFFu32,
+        8,
+        1
+    ) == 0 { return 5 }
+    let name: Int32 = ui_app_text_input(
+        panel,
+        "Committed value",
+        10,
+        468,
+        40,
+        0x111827u32,
+        0xFFFFFFu32,
+        8,
+        1
+    )
+    if name == 0 { return 6 }
+    if !ui_app_bind_app_state(name, "name") { return 7 }
+    if !ui_app_end(panel) { return 8 }
+    if !ui_app_end(root) { return 9 }
+
+    // This updates both the native projection and the transaction model.
+    ui_set_input_text(10, "Draft value")
+    if !app_data_tx_rollback() { return 10 }
+
+    // No manual UI refresh is required after this restore boundary.
+    return ui_app_run()
+}

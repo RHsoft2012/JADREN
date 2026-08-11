@@ -1,0 +1,38 @@
+module examples.directory_list_runtime;
+
+// directory_list returns UTF-8 base names separated by LF and sorts them by
+// bytes. The runtime validates the complete result before touching output.
+fn main() -> Int32 {
+    file_delete("target/jadren/directory-list/beta.txt")
+    file_delete("target/jadren/directory-list/alpha.txt")
+    file_delete("target/jadren/directory-list/ž.txt")
+    directory_delete("target/jadren/directory-list")
+
+    if !directory_create("target/jadren/directory-list") { return 10 }
+    if file_write_text("target/jadren/directory-list/beta.txt", "b") != 1usize { return 11 }
+    if file_write_text("target/jadren/directory-list/alpha.txt", "a") != 1usize { return 12 }
+    if file_write_text("target/jadren/directory-list/ž.txt", "z") != 1usize { return 13 }
+
+    var too_small: [UInt8; 4] = [9u8, 9u8, 9u8, 9u8]
+    if directory_list("target/jadren/directory-list", too_small) != 0usize { return 14 }
+    if too_small[0] != 9u8 { return 15 }
+
+    var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = directory_list("target/jadren/directory-list", output)
+    if length != 25usize { return 16 }
+    if output[0] != 97u8 { return 17 }
+    if output[9] != 10u8 { return 17 }
+    if output[10] != 98u8 { return 17 }
+    if output[18] != 10u8 { return 17 }
+    if output[19] != 197u8 { return 17 }
+    if output[20] != 190u8 { return 17 }
+
+    if !file_delete("target/jadren/directory-list/alpha.txt") { return 17 }
+    if !file_delete("target/jadren/directory-list/beta.txt") { return 18 }
+    if !file_delete("target/jadren/directory-list/ž.txt") { return 19 }
+    if !directory_delete("target/jadren/directory-list") { return 20 }
+    return 0
+}

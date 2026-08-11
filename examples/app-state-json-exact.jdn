@@ -1,0 +1,55 @@
+module examples.app_state_json_exact
+
+// Export the whole bounded app_state into caller-owned memory. The runtime
+// validates the complete snapshot and both capacities before copying bytes.
+fn main() -> Int32 {
+    app_state_clear()
+
+    if !app_state_set_int("count", 3 as Int64) { return 1 }
+    if !app_state_set_bool("enabled", true) { return 2 }
+    if !app_state_set_text("name", "Jadren") { return 3 }
+
+    var output: [UInt8; 128] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var length: [UIntSize; 1] = [777usize]
+
+    if !app_state_write_json_exact(output, length) { return 4 }
+    // In insertion order the snapshot is exactly 42 UTF-8 bytes.
+    if length[0] != 42usize { return 5 }
+    if output[0] != 123u8 { return 6 }
+    if output[1] != 34u8 { return 6 }
+    if output[2] != 99u8 { return 6 }
+    if output[41] != 125u8 { return 7 }
+
+    // A short buffer is rejected atomically: neither output nor length moves.
+    var tiny: [UInt8; 4] = [90u8, 90u8, 90u8, 90u8]
+    var tiny_length: [UIntSize; 1] = [777usize]
+    if app_state_write_json_exact(tiny, tiny_length) { return 8 }
+    if tiny[0] != 90u8 { return 9 }
+    if tiny[1] != 90u8 { return 9 }
+    if tiny_length[0] != 777usize { return 9 }
+
+    app_state_clear()
+    length[0] = 777usize
+    if !app_state_write_json_exact(output, length) { return 10 }
+    if length[0] != 2usize { return 11 }
+    if output[0] != 123u8 { return 11 }
+    if output[1] != 125u8 { return 11 }
+    return 0
+}

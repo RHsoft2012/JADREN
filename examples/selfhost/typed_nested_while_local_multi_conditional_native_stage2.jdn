@@ -1,0 +1,17 @@
+module examples.selfhost.typed_nested_while_local_multi_conditional_native_stage2
+
+// Native producer -> JST2WNM1 -> nested Int32 while with continue then break.
+fn local_value() -> Int32 {
+    var outer: Int32 = 0;
+    while outer < 4 {
+        outer = outer + 1;
+        var inner: Int32 = 0;
+        while inner < 4 {
+            inner = inner + 1;
+            if inner < 2 { continue; }
+            if inner < 3 { break; }
+        }
+        outer = outer + outer;
+    }
+    return outer;
+}

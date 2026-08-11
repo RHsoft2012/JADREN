@@ -55,6 +55,7 @@ the stated workload; it is not a blanket platform-support or performance claim.
 | Area | Platform and target | Highest verified state | Bounded scope |
 | --- | --- | --- | --- |
 | Compiler CLI and developer ZIP | Windows x86-64 | Executed | Clean extraction and CLI command smoke; unsigned developer package only. |
+| Windows desktop preview | Windows x86-64 | Executed | `examples/windows-desktop-preview.jdn` built to a Windows GUI PE, opened a native rounded Win32 window, and its source-defined coloured rounded button changed visible state; bounded direct UI functions, not a general GUI toolkit. |
 | Native animation | Windows x86-64 baseline/AVX2 | Executed | Safe baseline fallback and numerical parity; no universal FPS claim. |
 | Native animation | Physical Android ARM64 with NEON artifact | Executed | ABI, sample, angle and checksum smoke on three recorded device classes; no FPS, sustained thermal or broad device-support claim. |
 | Unity agent update kernel | Windows Player x86-64 AVX2 | Executed | Correctness-matched managed, Burst and Jadren AoSoA8 benchmark with rendering excluded. |

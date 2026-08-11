@@ -1,0 +1,78 @@
+module examples.csv_export;
+
+    // Jednoduchý export CSV: text je UTF-8 String a runtime ho zapíše priamo.
+fn main() -> Int32 {
+    file_delete("target/jadren/jadren-export.csv")
+    let header: UIntSize = file_write_text("target/jadren/jadren-export.csv", "id,name\n")
+    var number: [UInt8; 20] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let first_id: UIntSize = format_int(1 as Int64, number)
+    file_append("target/jadren/jadren-export.csv", number, first_id)
+    file_append_text("target/jadren/jadren-export.csv", ",Ada,")
+    let first_active: UIntSize = format_bool(true, number)
+    file_append("target/jadren/jadren-export.csv", number, first_active)
+    file_append_text("target/jadren/jadren-export.csv", "\n")
+    let second_id: UIntSize = format_uint(2u64, number)
+    file_append("target/jadren/jadren-export.csv", number, second_id)
+    file_append_text("target/jadren/jadren-export.csv", ",Marco,")
+    let second_active: UIntSize = format_bool(false, number)
+    file_append("target/jadren/jadren-export.csv", number, second_active)
+    file_append_text("target/jadren/jadren-export.csv", "\n")
+    let exists: Bool = file_exists("target/jadren/jadren-export.csv")
+    let size: UIntSize = file_size("target/jadren/jadren-export.csv")
+    var exported: [UInt8; 33] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let loaded: UIntSize = file_read("target/jadren/jadren-export.csv", exported)
+    if !exists {
+        file_delete("target/jadren/jadren-export.csv")
+        return 10
+    }
+    if (header as Int32) != 8 {
+        file_delete("target/jadren/jadren-export.csv")
+        return 11
+    }
+    if (first_id as Int32) != 1 {
+        file_delete("target/jadren/jadren-export.csv")
+        return 12
+    }
+    if (first_active as Int32) != 4 {
+        file_delete("target/jadren/jadren-export.csv")
+        return 13
+    }
+    if (second_id as Int32) != 1 {
+        file_delete("target/jadren/jadren-export.csv")
+        return 14
+    }
+    if (second_active as Int32) != 5 {
+        file_delete("target/jadren/jadren-export.csv")
+        return 15
+    }
+    if (size as Int32) <= 0 {
+        file_delete("target/jadren/jadren-export.csv")
+        return 16
+    }
+    if (loaded as Int32) != 33 {
+        file_delete("target/jadren/jadren-export.csv")
+        return 17
+    }
+    if exported[0] != 105u8 {
+        file_delete("target/jadren/jadren-export.csv")
+        return 18
+    }
+    if exported[8] != 49u8 {
+        file_delete("target/jadren/jadren-export.csv")
+        return 19
+    }
+    if exported[14] != 116u8 {
+        file_delete("target/jadren/jadren-export.csv")
+        return 20
+    }
+    if exported[27] != 102u8 {
+        file_delete("target/jadren/jadren-export.csv")
+        return 21
+    }
+    if exported[32] != 10u8 {
+        file_delete("target/jadren/jadren-export.csv")
+        return 22
+    }
+    file_delete("target/jadren/jadren-export.csv")
+    return 0
+}

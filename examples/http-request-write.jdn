@@ -1,0 +1,24 @@
+module examples.http_request_write
+
+// Pure bounded HTTP request builder; networking is still an explicit TCP call.
+fn main() -> Int32 {
+    var body: [UInt8; 4] = [65u8, 104u8, 111u8, 106u8]
+    var output: [UInt8; 82] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8]
+    let written: UIntSize = http_request_write("GET", "/hello", "localhost", body, output)
+    if written != 82usize { return 1 }
+    if output[0] != 71u8 { return 2 }
+    if output[4] != 47u8 { return 2 }
+    if output[78] != 65u8 { return 2 }
+    if output[81] != 106u8 { return 2 }
+    var small: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    if http_request_write("GET", "/hello", "localhost", body, small) != 0usize { return 3 }
+    if http_request_write("BAD METHOD", "/hello", "localhost", body, output) != 0usize { return 4 }
+    return 0
+}

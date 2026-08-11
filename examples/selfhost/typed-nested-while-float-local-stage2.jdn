@@ -1,0 +1,19 @@
+module examples.selfhost.typed_nested_while_float_local_stage2
+
+// Both nested loop locals are Float64 and use native 8-byte storage.
+
+fn main() -> Int32 {
+    var outer: Float64 = 0.0f64
+    while outer < 6.0f64 {
+        outer = outer + 1.0f64
+        var inner: Float64 = 0.0f64
+        while inner < 2.0f64 {
+            inner = inner + 1.0f64
+        }
+        outer = outer + inner
+    }
+    if outer == 6.0f64 {
+        return 0
+    }
+    return 1
+}

@@ -79,6 +79,8 @@ pub fn generate_c_header(
     output.push_str(concat!(
         "typedef int32_t JadrenStatus;\n",
         "typedef struct JadrenSlice { void* pointer; size_t length; } JadrenSlice;\n",
+        "typedef struct JadrenBuffer { void* pointer; uint64_t length; uint64_t capacity; } JadrenBuffer;\n",
+        "typedef int32_t (*JadrenBufferCallback)(JadrenBuffer* values);\n",
         "typedef struct JadrenString { uint8_t* pointer; size_t length; size_t capacity; } JadrenString;\n\n",
         "typedef struct JadrenFloat2 { float lane0; float lane1; } JadrenFloat2;\n",
         "typedef struct JadrenFloat3 { float lane0; float lane1; float lane2; } JadrenFloat3;\n",
@@ -504,6 +506,9 @@ pub fn generate_c_layout_tests(
         .as_ref()
         .map(path_text)
         .unwrap_or_else(|| "jadren".to_owned());
+    let buffer_alignment = pointer_bytes.max(8);
+    let buffer_size = align_up(pointer_bytes + 16, buffer_alignment)
+        .expect("fixed JadrenBuffer layout cannot overflow");
     let records: BTreeMap<_, _> = file
         .items
         .iter()
@@ -532,6 +537,18 @@ pub fn generate_c_layout_tests(
         output,
         "_Static_assert(_Alignof(JadrenSlice) == {}u, \"JadrenSlice alignment\");",
         pointer_bytes
+    )
+    .expect("String write");
+    writeln!(
+        output,
+        "_Static_assert(sizeof(JadrenBuffer) == {}u, \"JadrenBuffer size\");",
+        buffer_size
+    )
+    .expect("String write");
+    writeln!(
+        output,
+        "_Static_assert(_Alignof(JadrenBuffer) == {}u, \"JadrenBuffer alignment\");",
+        buffer_alignment
     )
     .expect("String write");
     writeln!(
@@ -891,14 +908,45 @@ fn c_type(
                 .unwrap_or("0");
             Ok(format!("{element}[{length}]"))
         }
-        TypeRef::Capability { inner, .. } => c_type(source, module, inner, span),
+        TypeRef::Capability { inner, .. } => {
+            if matches!(inner.as_ref(), TypeRef::Path { path, .. } if path_text(path) == "Buffer") {
+                Ok("JadrenBuffer*".to_owned())
+            } else {
+                c_type(source, module, inner, span)
+            }
+        }
+        TypeRef::Function {
+            parameters,
+            return_type,
+            ..
+        } if parameters.len() == 1
+            && is_buffer_capability(&parameters[0])
+            && return_type.as_deref().is_some_and(is_int32_type) =>
+        {
+            Ok("JadrenBufferCallback".to_owned())
+        }
         TypeRef::Function { .. } => Err(BindgenError {
             code: "J0809",
-            message: "function pointer types require an explicit C callback ABI declaration"
-                .to_owned(),
+            message:
+                "function pointer types require an explicit supported C callback ABI declaration"
+                    .to_owned(),
             span,
         }),
     }
+}
+
+fn is_buffer_capability(ty: &TypeRef) -> bool {
+    matches!(
+        ty,
+        TypeRef::Capability {
+            inner,
+            ..
+        } if matches!(inner.as_ref(), TypeRef::Path { path, .. } if path_text(path) == "Buffer")
+    )
+}
+
+fn is_int32_type(ty: &TypeRef) -> bool {
+    matches!(ty, TypeRef::Path { path, .. } if path_text(path) == "Int32")
 }
 
 fn csharp_type(
@@ -1406,6 +1454,35 @@ mod tests {
     }
 
     #[test]
+    fn generates_pointer_descriptor_for_c_buffer_capability() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "buffer_callback.jdn",
+                "module callback; @export(name: \"callback\", abi: \"C\") fn callback(values: write Buffer<Int32>) -> Int32 { return 42 } @export(name: \"invoke\", abi: \"C\") fn invoke(callback: fn(write Buffer<Int32>) -> Int32, values: write Buffer<Int32>) -> Int32 { return callback(values) }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
+        let resolution = resolve(source, &parsed.file);
+        let types = check_types(source, &parsed.file, &resolution);
+        assert!(!types.has_errors(), "{:?}", types.diagnostics);
+        let header = generate_c_header(source, &parsed.file, &resolution, &types)
+            .expect("buffer callback header")
+            .text;
+        assert!(header.contains(
+            "typedef struct JadrenBuffer { void* pointer; uint64_t length; uint64_t capacity; } JadrenBuffer;"
+        ));
+        assert!(header.contains("typedef int32_t (*JadrenBufferCallback)(JadrenBuffer* values);"));
+        assert!(header.contains("int32_t callback(JadrenBuffer* values);"));
+        assert!(
+            header.contains("int32_t invoke(JadrenBufferCallback callback, JadrenBuffer* values);")
+        );
+    }
+
+    #[test]
     fn generates_safe_facade_with_slice_validation_and_scalar_wrapper() {
         let mut sources = SourceManager::new();
         let id = sources
@@ -1455,6 +1532,8 @@ mod tests {
         assert!(tests.contains("sizeof(layout_Vec3) == 12u"));
         assert!(tests.contains("offsetof(layout_Vec3, z) == 8u"));
         assert!(tests.contains("sizeof(JadrenSlice) == 16u"));
+        assert!(tests.contains("sizeof(JadrenBuffer) == 24u"));
+        assert!(tests.contains("_Alignof(JadrenBuffer) == 8u"));
         assert!(tests.contains("sizeof(JadrenFloat8) == 32u"));
         assert!(tests.contains("_Alignof(JadrenFloat8) == 4u"));
     }

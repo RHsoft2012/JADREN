@@ -1,0 +1,27 @@
+module examples.http_client;
+
+// Client fixture for examples/http-server.jdn.
+fn main() -> Int32 {
+    let socket: UIntSize = net_tcp_connect_dns("localhost", 38124u16)
+    if (socket as Int32) == 0 { return 10 }
+    let timeout_configured: Bool = net_socket_set_timeout(socket, 2000u32)
+    if !timeout_configured {
+        net_socket_close(socket)
+        return 11
+    }
+    var request: [UInt8; 40] = [71u8, 69u8, 84u8, 32u8, 47u8, 104u8, 101u8, 108u8, 108u8, 111u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 13u8, 10u8]
+    let sent: UIntSize = net_tcp_send(socket, request)
+    if (sent as Int32) != 40 {
+        net_socket_close(socket)
+        return 12
+    }
+    var response: [UInt8; 87] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let received: UIntSize = net_tcp_receive(socket, response)
+    net_socket_close(socket)
+    if (received as Int32) != 87 { return 13 }
+    if response[0] != 72u8 { return 14 }
+    if response[11] != 48u8 { return 15 }
+    if response[83] != 65u8 { return 16 }
+    if response[86] != 106u8 { return 17 }
+    return 0
+}

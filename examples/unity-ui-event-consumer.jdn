@@ -1,0 +1,33 @@
+module examples.unity_ui_event_consumer;
+
+/// Fixed 24-byte Unity-to-Jadren interaction record.
+///
+/// The Unity host owns the numeric target ID and sequence. Jadren only reads
+/// the bounded event stream and returns a derived result to the host.
+@repr(C)
+pub struct UnityUiEventRecord {
+    pub kind: UInt8,
+    pub flags: UInt8,
+    pub reserved: UInt16,
+    pub target_id: UInt32,
+    pub sequence: UInt32,
+    pub value: Float32,
+    pub data0: UInt32,
+    pub data1: UInt32,
+}
+
+/// Counts click events in one caller-owned frame.
+///
+/// The consumer does not allocate, retain the slice, or call Unity APIs. A
+/// future high-level `unity.ui.events()` API can lower to this same ABI.
+@export(name: "jadren_unity_consume_ui_events", abi: "C")
+@noalloc
+pub fn consume_ui_events(events: read Slice<UnityUiEventRecord>) -> UIntSize {
+    var clicks: UIntSize = 0usize
+    for index in events.indices {
+        if events[index].kind == 3u8 {
+            clicks = clicks + 1usize
+        }
+    }
+    return clicks
+}

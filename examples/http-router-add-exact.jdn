@@ -1,0 +1,22 @@
+module examples.http_router_add_exact
+
+// An application can register a generated response from a larger buffer while
+// publishing only the validated prefix into the bounded route table.
+fn main() -> Int32 {
+    http_router_clear()
+    var body: [UInt8; 4] = [79u8, 75u8, 33u8, 0u8]
+    if http_router_add_exact("GET", "/payload", 200u16, "text/plain", body, 5usize) {
+        return 1
+    }
+    if !http_router_add_exact("GET", "/payload", 200u16, "text/plain", body, 2usize) {
+        return 2
+    }
+    if http_router_count() != 1usize { return 3 }
+    if !http_router_add_exact("GET", "/payload", 200u16, "text/plain", body, 1usize) {
+        return 4
+    }
+    if http_router_count() != 1usize { return 5 }
+    if !http_router_remove("GET", "/payload") { return 6 }
+    if http_router_count() != 0usize { return 7 }
+    return 0
+}

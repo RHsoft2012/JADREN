@@ -1,0 +1,31 @@
+module examples.file_read_at_runtime;
+
+// file_read_at reads a caller-owned chunk from an explicit byte offset. An
+// offset beyond EOF returns zero and leaves the output buffer untouched.
+fn main() -> Int32 {
+    file_delete("target/jadren/file-read-at.txt")
+    if !directory_create("target/jadren") { return 10 }
+    if file_write_text("target/jadren/file-read-at.txt", "abcdef") != 6usize { return 11 }
+
+    var first: [UInt8; 3] = [0u8, 0u8, 0u8]
+    let first_count: UIntSize = file_read_at("target/jadren/file-read-at.txt", 0usize, first)
+    if first_count != 3usize { return 12 }
+    if first[0] != 97u8 { return 13 }
+    if first[2] != 99u8 { return 14 }
+
+    var second: [UInt8; 4] = [9u8, 9u8, 9u8, 9u8]
+    let second_count: UIntSize = file_read_at("target/jadren/file-read-at.txt", 3usize, second)
+    if second_count != 3usize { return 15 }
+    if second[0] != 100u8 { return 16 }
+    if second[2] != 102u8 { return 17 }
+    if second[3] != 9u8 { return 18 }
+
+    var untouched: [UInt8; 2] = [7u8, 8u8]
+    let eof: UIntSize = file_read_at("target/jadren/file-read-at.txt", 99usize, untouched)
+    if eof != 0usize { return 19 }
+    if untouched[0] != 7u8 { return 20 }
+    if untouched[1] != 8u8 { return 21 }
+
+    if !file_delete("target/jadren/file-read-at.txt") { return 22 }
+    return 0
+}

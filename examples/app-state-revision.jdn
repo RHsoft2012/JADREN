@@ -1,0 +1,30 @@
+module examples.app_state_revision
+
+// `app_state_revision` is an explicit polling boundary. It changes after a
+// successful state mutation, including a transaction rollback, but it does
+// not start a hidden reactive refresh loop.
+fn main() -> Int32 {
+    let initial: UInt64 = app_state_revision()
+
+    app_state_clear()
+    let after_clear: UInt64 = app_state_revision()
+    if after_clear <= initial { return 1 }
+
+    if !app_state_set_int("minutes", 25 as Int64) { return 2 }
+    let after_set: UInt64 = app_state_revision()
+    if after_set <= after_clear { return 3 }
+
+    if !app_state_tx_begin() { return 4 }
+    if !app_state_set_text("draft", "editing") { return 5 }
+    let during_transaction: UInt64 = app_state_revision()
+    if during_transaction <= after_set { return 6 }
+    if !app_state_tx_rollback() { return 7 }
+
+    let after_rollback: UInt64 = app_state_revision()
+    if after_rollback <= during_transaction { return 8 }
+    if app_state_exists("draft") { return 9 }
+    if app_state_get_int("minutes") != 25 as Int64 { return 10 }
+
+    app_state_clear()
+    return 0
+}

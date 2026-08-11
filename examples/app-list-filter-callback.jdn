@@ -1,0 +1,48 @@
+module examples.app_list_filter_callback
+
+// Keep only items whose first byte is the ASCII capital 'A'.
+fn keep_a(list_id: Int32, item_index: Int32) -> Bool {
+    var bytes: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = app_list_read_text(list_id, item_index, bytes)
+    if length == 0usize { return false }
+    if bytes[0] == 65u8 { return true }
+    return false
+}
+
+fn mutate_source(list_id: Int32, item_index: Int32) -> Bool {
+    if item_index == 0 {
+        let changed: Bool = app_list_push_text(list_id, "Mutation")
+    }
+    return true
+}
+
+fn main() -> Int32 {
+    app_list_clear(0)
+    app_list_clear(1)
+    if !app_list_push_text(0, "Alpha") { return 1 }
+    if !app_list_push_text(0, "Beta") { return 2 }
+    if !app_list_push_text(0, "Atlas") { return 3 }
+
+    if !app_list_filter_callback(0, 1, keep_a) { return 4 }
+    if app_list_count(1) != 2 { return 5 }
+
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let first_length: UIntSize = app_list_read_text(1, 0, output)
+    if first_length != 5usize { return 6 }
+    if output[0] != 65u8 { return 7 }
+    if output[1] != 108u8 { return 7 }
+    let second_length: UIntSize = app_list_read_text(1, 1, output)
+    if second_length != 5usize { return 8 }
+    if output[0] != 65u8 { return 9 }
+    if output[1] != 116u8 { return 9 }
+
+    app_list_clear(1)
+    if !app_list_push_text(1, "Keep") { return 10 }
+    if app_list_filter_callback(0, 1, mutate_source) { return 11 }
+    if app_list_count(1) != 1 { return 12 }
+    let preserved_length: UIntSize = app_list_read_text(1, 0, output)
+    if preserved_length != 4usize { return 13 }
+    if output[0] != 75u8 { return 14 }
+    return 0
+}

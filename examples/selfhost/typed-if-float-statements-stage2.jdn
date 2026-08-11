@@ -1,0 +1,17 @@
+module examples.selfhost.typed_if_float_statements_stage2
+
+// Ordered branch assignments and a post-join tail keep one Float64 local in
+// one native 8-byte stack slot. The process entry remains Int32 explicitly.
+fn main() -> Int32 {
+    var value: Float64 = 10.0f64
+    if value < 11.0f64 {
+        value = value + 1.0f64
+    } else {
+        value = value + 2.0f64
+    }
+    value = value + 3.0f64
+    if value == 14.0f64 {
+        return 0
+    }
+    return 1
+}

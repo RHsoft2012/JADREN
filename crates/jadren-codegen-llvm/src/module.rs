@@ -16,14 +16,18 @@ use inkwell::values::{
     InstructionValue, MetadataValue, PhiValue, UnnamedAddress,
 };
 use jadren_jir::{
-    BinaryOp, Block, CastOp, ComparePredicate, Constant, Function, Instruction, InstructionKind,
-    Linkage, Module, Terminator, Type, TypeId, UnaryOp, ValueId,
+    BinaryOp, Block, CarrierDropBranch, CarrierDropField, CastOp, ComparePredicate, Constant,
+    Function, Instruction, InstructionKind, Linkage, Module, RecordDropField, Terminator, Type,
+    TypeId, UnaryOp, ValueId,
 };
 
 use crate::debug::{DebugInfoConfig, DebugInfoError, DebugState, FunctionDebugInfo};
 use crate::{LoweredTypeTable, TypeLowerError, TypeLoweringConfig, lower_types};
 
 const BOUNDS_PANIC_SYMBOL: &str = "jadren_rt_bounds_panic_u64";
+const REGION_CREATE_SYMBOL: &str = "jadren_rt_native_region_create";
+const REGION_ALLOCATE_SYMBOL: &str = "jadren_rt_native_region_allocate";
+const REGION_DESTROY_SYMBOL: &str = "jadren_rt_native_region_destroy";
 
 /// Failure while lowering verified JIR functions and control flow to LLVM IR.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -303,6 +307,7 @@ fn lower_function<'ctx>(
                 "debug function has no LLVM instruction",
             ))?;
         debug.insert_parameters(function, llvm_function, info, first_instruction, types)?;
+        debug.insert_stack_locals(context, function, info, &values, first_instruction, types)?;
     }
     Ok(())
 }
@@ -454,6 +459,232 @@ fn set_debug_location<'ctx>(
         _ => builder.unset_current_debug_location(),
     }
     Ok(())
+}
+
+fn build_carrier_branch_table<'ctx>(
+    context: &'ctx Context,
+    builder: &Builder<'ctx>,
+    types: &LoweredTypeTable<'ctx>,
+    branches: &[CarrierDropBranch],
+    name: &str,
+) -> Result<inkwell::values::PointerValue<'ctx>, CodegenError> {
+    if branches.is_empty() {
+        return Err(CodegenError::ValueKind(
+            "enum carrier branch table is empty",
+        ));
+    }
+    let u64_type = context.i64_type();
+    let branch_type = context.struct_type(
+        &[
+            u64_type.into(),
+            u64_type.into(),
+            u64_type.into(),
+            u64_type.into(),
+        ],
+        false,
+    );
+    let table_type = branch_type.array_type(
+        u32::try_from(branches.len())
+            .map_err(|_| CodegenError::ValueKind("too many enum carrier branches"))?,
+    );
+    let table = builder
+        .build_alloca(table_type, &format!("{name}.branches"))
+        .map_err(builder_error)?;
+    let branch_alignment = types.target_data().get_abi_alignment(&branch_type);
+    table
+        .as_instruction_value()
+        .ok_or(CodegenError::ValueKind(
+            "enum carrier branch table alloca is not an instruction",
+        ))?
+        .set_alignment(branch_alignment)
+        .map_err(builder_error)?;
+    let zero = context.i32_type().const_zero();
+    for (index, branch) in branches.iter().enumerate() {
+        let entry = build_verified_gep(
+            builder,
+            table_type.into(),
+            table,
+            &[
+                zero,
+                context
+                    .i32_type()
+                    .const_int(u64::try_from(index).unwrap_or(u64::MAX), false),
+            ],
+            &format!("{name}.branch.{index}"),
+        )?;
+        let leaf_type = basic_type(types, branch.leaf_element)?;
+        let leaf_size = types.target_data().get_store_size(&leaf_type);
+        let leaf_alignment = u64::from(types.target_data().get_abi_alignment(&leaf_type));
+        let fields = [
+            u64_type.const_int(u64::from(branch.payload_variant), false),
+            u64_type.const_int(u64::from(branch.depth), false),
+            u64_type.const_int(leaf_size, false),
+            u64_type.const_int(leaf_alignment, false),
+        ];
+        for (field_index, field) in fields.into_iter().enumerate() {
+            let pointer = builder
+                .build_struct_gep(
+                    branch_type,
+                    entry,
+                    u32::try_from(field_index).unwrap_or(u32::MAX),
+                    &format!("{name}.branch.{index}.{field_index}"),
+                )
+                .map_err(builder_error)?;
+            let store = builder.build_store(pointer, field).map_err(builder_error)?;
+            store.set_alignment(8).map_err(builder_error)?;
+        }
+    }
+    Ok(table)
+}
+
+fn build_carrier_field_table<'ctx>(
+    context: &'ctx Context,
+    builder: &Builder<'ctx>,
+    types: &LoweredTypeTable<'ctx>,
+    fields: &[CarrierDropField],
+    name: &str,
+) -> Result<inkwell::values::PointerValue<'ctx>, CodegenError> {
+    if fields.is_empty() {
+        return Err(CodegenError::ValueKind("enum carrier field table is empty"));
+    }
+    let u64_type = context.i64_type();
+    let field_type = context.struct_type(
+        &[
+            u64_type.into(),
+            u64_type.into(),
+            u64_type.into(),
+            u64_type.into(),
+            u64_type.into(),
+        ],
+        false,
+    );
+    let table_type = field_type.array_type(
+        u32::try_from(fields.len())
+            .map_err(|_| CodegenError::ValueKind("too many enum carrier fields"))?,
+    );
+    let table = builder
+        .build_alloca(table_type, &format!("{name}.fields"))
+        .map_err(builder_error)?;
+    let field_alignment = types.target_data().get_abi_alignment(&field_type);
+    table
+        .as_instruction_value()
+        .ok_or(CodegenError::ValueKind(
+            "enum carrier field table alloca is not an instruction",
+        ))?
+        .set_alignment(field_alignment)
+        .map_err(builder_error)?;
+    let zero = context.i32_type().const_zero();
+    for (index, field) in fields.iter().enumerate() {
+        let entry = build_verified_gep(
+            builder,
+            table_type.into(),
+            table,
+            &[
+                zero,
+                context
+                    .i32_type()
+                    .const_int(u64::try_from(index).unwrap_or(u64::MAX), false),
+            ],
+            &format!("{name}.field.{index}"),
+        )?;
+        let leaf_type = basic_type(types, field.leaf_element)?;
+        let leaf_size = types.target_data().get_store_size(&leaf_type);
+        let leaf_alignment = u64::from(types.target_data().get_abi_alignment(&leaf_type));
+        let values = [
+            u64_type.const_int(u64::from(field.payload_variant), false),
+            u64_type.const_int(field.payload_offset, false),
+            u64_type.const_int(u64::from(field.depth), false),
+            u64_type.const_int(leaf_size, false),
+            u64_type.const_int(leaf_alignment, false),
+        ];
+        for (field_index, value) in values.into_iter().enumerate() {
+            let pointer = builder
+                .build_struct_gep(
+                    field_type,
+                    entry,
+                    u32::try_from(field_index).unwrap_or(u32::MAX),
+                    &format!("{name}.field.{index}.{field_index}"),
+                )
+                .map_err(builder_error)?;
+            builder.build_store(pointer, value).map_err(builder_error)?;
+        }
+    }
+    Ok(table)
+}
+
+fn build_record_field_table<'ctx>(
+    context: &'ctx Context,
+    builder: &Builder<'ctx>,
+    types: &LoweredTypeTable<'ctx>,
+    fields: &[RecordDropField],
+    name: &str,
+) -> Result<inkwell::values::PointerValue<'ctx>, CodegenError> {
+    if fields.is_empty() {
+        return Err(CodegenError::ValueKind("record field table is empty"));
+    }
+    let u64_type = context.i64_type();
+    let field_type = context.struct_type(
+        &[
+            u64_type.into(),
+            u64_type.into(),
+            u64_type.into(),
+            u64_type.into(),
+            u64_type.into(),
+        ],
+        false,
+    );
+    let table_type = field_type.array_type(
+        u32::try_from(fields.len())
+            .map_err(|_| CodegenError::ValueKind("too many record fields"))?,
+    );
+    let table = builder
+        .build_alloca(table_type, &format!("{name}.fields"))
+        .map_err(builder_error)?;
+    let field_alignment = types.target_data().get_abi_alignment(&field_type);
+    table
+        .as_instruction_value()
+        .ok_or(CodegenError::ValueKind(
+            "record field table alloca is not an instruction",
+        ))?
+        .set_alignment(field_alignment)
+        .map_err(builder_error)?;
+    let zero = context.i32_type().const_zero();
+    for (index, field) in fields.iter().enumerate() {
+        let entry = build_verified_gep(
+            builder,
+            table_type.into(),
+            table,
+            &[
+                zero,
+                context
+                    .i32_type()
+                    .const_int(u64::try_from(index).unwrap_or(u64::MAX), false),
+            ],
+            &format!("{name}.field.{index}"),
+        )?;
+        let leaf_type = basic_type(types, field.leaf_element)?;
+        let leaf_size = types.target_data().get_store_size(&leaf_type);
+        let leaf_alignment = u64::from(types.target_data().get_abi_alignment(&leaf_type));
+        let values = [
+            u64_type.const_int(field.payload_variant, false),
+            u64_type.const_int(field.payload_offset, false),
+            u64_type.const_int(u64::from(field.depth), false),
+            u64_type.const_int(leaf_size, false),
+            u64_type.const_int(leaf_alignment, false),
+        ];
+        for (field_index, value) in values.into_iter().enumerate() {
+            let pointer = builder
+                .build_struct_gep(
+                    field_type,
+                    entry,
+                    u32::try_from(field_index).unwrap_or(u32::MAX),
+                    &format!("{name}.field.{index}.{field_index}"),
+                )
+                .map_err(builder_error)?;
+            builder.build_store(pointer, value).map_err(builder_error)?;
+        }
+    }
+    Ok(table)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -839,13 +1070,1548 @@ fn lower_instruction<'ctx>(
             required_value(values, *value)?;
             None
         }
-        InstructionKind::Builtin(_)
-        | InstructionKind::RegionAlloc { .. }
-        | InstructionKind::RegionCreate
-        | InstructionKind::RegionDestroy { .. } => {
-            return Err(CodegenError::UnsupportedInstruction(
-                "memory/bounds lowering",
-            ));
+        InstructionKind::OwnedStringDrop { value } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.owned_string"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let destroy_type = context.i32_type().fn_type(&[pointer_type.into()], false);
+            let destroy = llvm
+                .get_function("jadren_rt_owned_string_destroy")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_owned_string_destroy",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[storage.into()],
+                    &format!("{name}.owned_string_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::BufferDrop { value, element } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.buffer"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let element_type = basic_type(types, *element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let destroy_type = context.i32_type().fn_type(
+                &[pointer_type.into(), u64_type.into(), u64_type.into()],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_buffer_destroy")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_buffer_destroy",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                    ],
+                    &format!("{name}.buffer_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::OwnedStringBufferDrop { value, element } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.owned_string_buffer"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let element_type = basic_type(types, *element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let destroy_type = context.i32_type().fn_type(
+                &[pointer_type.into(), u64_type.into(), u64_type.into()],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_buffer_destroy_owned_string")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_buffer_destroy_owned_string",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                    ],
+                    &format!("{name}.owned_string_buffer_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::BufferResizeMoveOwnedString {
+            descriptor,
+            new_length,
+            element,
+            status_result,
+        } => {
+            let descriptor = required_value(values, *descriptor)?;
+            let new_length = required_value(values, *new_length)?;
+            let element_type = basic_type(types, *element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let resize_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let symbol = if *status_result {
+                "jadren_rt_buffer_resize_move_owned_string_status"
+            } else {
+                "jadren_rt_buffer_resize_move_owned_string"
+            };
+            let resize = llvm.get_function(symbol).unwrap_or_else(|| {
+                llvm.add_function(symbol, resize_type, Some(LlvmLinkage::External))
+            });
+            let call = builder
+                .build_call(
+                    resize,
+                    &[
+                        descriptor.into(),
+                        new_length.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                    ],
+                    &format!("{name}.resize_owned_string_call"),
+                )
+                .map_err(builder_error)?;
+            let raw = call
+                .try_as_basic_value()
+                .basic()
+                .ok_or(CodegenError::ValueKind(
+                    "owned string resize move runtime call has no result",
+                ))?;
+            if *status_result {
+                Some(raw)
+            } else {
+                let BasicValueEnum::IntValue(raw) = raw else {
+                    return Err(CodegenError::ValueKind(
+                        "owned string resize move bool result is not integer",
+                    ));
+                };
+                let success = builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        raw,
+                        context.i32_type().const_zero(),
+                        &format!("{name}.resize_owned_string_ok"),
+                    )
+                    .map_err(builder_error)?;
+                Some(success.into())
+            }
+        }
+        InstructionKind::BufferResizeMoveNestedOwnedString {
+            descriptor,
+            new_length,
+            element,
+            string_element,
+            depth,
+            status_result,
+        } => {
+            let descriptor = required_value(values, *descriptor)?;
+            let new_length = required_value(values, *new_length)?;
+            let element_type = basic_type(types, *element)?;
+            let string_element_type = basic_type(types, *string_element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let string_element_size = types.target_data().get_store_size(&string_element_type);
+            let string_alignment =
+                u64::from(types.target_data().get_abi_alignment(&string_element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let resize_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let symbol = if *status_result {
+                "jadren_rt_buffer_resize_move_nested_owned_string_status"
+            } else {
+                "jadren_rt_buffer_resize_move_nested_owned_string"
+            };
+            let resize = llvm.get_function(symbol).unwrap_or_else(|| {
+                llvm.add_function(symbol, resize_type, Some(LlvmLinkage::External))
+            });
+            let call = builder
+                .build_call(
+                    resize,
+                    &[
+                        descriptor.into(),
+                        new_length.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        u64_type.const_int(u64::from(*depth), false).into(),
+                        u64_type.const_int(string_element_size, false).into(),
+                        u64_type.const_int(string_alignment, false).into(),
+                    ],
+                    &format!("{name}.resize_nested_owned_string_call"),
+                )
+                .map_err(builder_error)?;
+            let raw = call
+                .try_as_basic_value()
+                .basic()
+                .ok_or(CodegenError::ValueKind(
+                    "nested owned string resize move runtime call has no result",
+                ))?;
+            if *status_result {
+                Some(raw)
+            } else {
+                let BasicValueEnum::IntValue(raw) = raw else {
+                    return Err(CodegenError::ValueKind(
+                        "nested owned string resize move bool result is not integer",
+                    ));
+                };
+                let success = builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        raw,
+                        context.i32_type().const_zero(),
+                        &format!("{name}.resize_nested_owned_string_ok"),
+                    )
+                    .map_err(builder_error)?;
+                Some(success.into())
+            }
+        }
+        InstructionKind::NestedBufferDrop {
+            value,
+            element,
+            nested_element,
+        } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.nested_buffer"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let element_type = basic_type(types, *element)?;
+            let nested_element_type = basic_type(types, *nested_element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let nested_element_size = types.target_data().get_store_size(&nested_element_type);
+            let nested_alignment =
+                u64::from(types.target_data().get_abi_alignment(&nested_element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let destroy_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_buffer_destroy_nested_buffer")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_buffer_destroy_nested_buffer",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        u64_type.const_int(nested_element_size, false).into(),
+                        u64_type.const_int(nested_alignment, false).into(),
+                    ],
+                    &format!("{name}.nested_buffer_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::RecursiveBufferDrop {
+            value,
+            element,
+            leaf_element,
+            depth,
+        } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.recursive_buffer"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let element_type = basic_type(types, *element)?;
+            let leaf_element_type = basic_type(types, *leaf_element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let leaf_element_size = types.target_data().get_store_size(&leaf_element_type);
+            let leaf_alignment =
+                u64::from(types.target_data().get_abi_alignment(&leaf_element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let destroy_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_buffer_destroy_nested_buffer_recursive")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_buffer_destroy_nested_buffer_recursive",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        u64_type.const_int(u64::from(*depth), false).into(),
+                        u64_type.const_int(leaf_element_size, false).into(),
+                        u64_type.const_int(leaf_alignment, false).into(),
+                    ],
+                    &format!("{name}.recursive_buffer_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::RecursiveOwnedStringBufferDrop {
+            value,
+            element,
+            string_element,
+            depth,
+        } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.recursive_owned_string_buffer"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let element_type = basic_type(types, *element)?;
+            let string_element_type = basic_type(types, *string_element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let string_element_size = types.target_data().get_store_size(&string_element_type);
+            let string_alignment =
+                u64::from(types.target_data().get_abi_alignment(&string_element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let destroy_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_buffer_destroy_nested_owned_string")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_buffer_destroy_nested_owned_string",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        u64_type.const_int(u64::from(*depth), false).into(),
+                        u64_type.const_int(string_element_size, false).into(),
+                        u64_type.const_int(string_alignment, false).into(),
+                    ],
+                    &format!("{name}.recursive_owned_string_buffer_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::RecursiveRecordBufferFieldsDrop {
+            value,
+            element,
+            record_element,
+            fields,
+            depth,
+        } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.recursive_record_buffer_fields"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let table = build_record_field_table(
+                context,
+                builder,
+                types,
+                fields,
+                &format!("{name}.recursive_record_buffer_fields"),
+            )?;
+            let element_type = basic_type(types, *element)?;
+            let record_element_type = basic_type(types, *record_element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let record_element_size = types.target_data().get_store_size(&record_element_type);
+            let record_alignment =
+                u64::from(types.target_data().get_abi_alignment(&record_element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let destroy_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    pointer_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_buffer_destroy_nested_record_fields")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_buffer_destroy_nested_record_fields",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        u64_type.const_int(u64::from(*depth), false).into(),
+                        u64_type.const_int(record_element_size, false).into(),
+                        u64_type.const_int(record_alignment, false).into(),
+                        table.into(),
+                        u64_type
+                            .const_int(u64::try_from(fields.len()).unwrap_or(u64::MAX), false)
+                            .into(),
+                    ],
+                    &format!("{name}.recursive_record_buffer_fields_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::BufferResizeMoveRecordFields {
+            descriptor,
+            new_length,
+            element,
+            record_element,
+            fields,
+            depth,
+            status_result,
+        } => {
+            let descriptor = required_value(values, *descriptor)?;
+            let new_length = required_value(values, *new_length)?;
+            let table = build_record_field_table(
+                context,
+                builder,
+                types,
+                fields,
+                &format!("{name}.resize_record_fields"),
+            )?;
+            let element_type = basic_type(types, *element)?;
+            let record_element_type = basic_type(types, *record_element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let record_element_size = types.target_data().get_store_size(&record_element_type);
+            let record_alignment =
+                u64::from(types.target_data().get_abi_alignment(&record_element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let direct_record = *depth == 0;
+            let resize_type = if direct_record {
+                context.i32_type().fn_type(
+                    &[
+                        pointer_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        pointer_type.into(),
+                        u64_type.into(),
+                    ],
+                    false,
+                )
+            } else {
+                context.i32_type().fn_type(
+                    &[
+                        pointer_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        pointer_type.into(),
+                        u64_type.into(),
+                    ],
+                    false,
+                )
+            };
+            let symbol = if direct_record {
+                if *status_result {
+                    "jadren_rt_buffer_resize_move_record_fields_status"
+                } else {
+                    "jadren_rt_buffer_resize_move_record_fields"
+                }
+            } else if *status_result {
+                "jadren_rt_buffer_resize_move_nested_record_fields_status"
+            } else {
+                "jadren_rt_buffer_resize_move_nested_record_fields"
+            };
+            let resize = llvm.get_function(symbol).unwrap_or_else(|| {
+                llvm.add_function(symbol, resize_type, Some(LlvmLinkage::External))
+            });
+            let call_arguments: Vec<BasicMetadataValueEnum<'ctx>> = if direct_record {
+                vec![
+                    descriptor.into(),
+                    new_length.into(),
+                    u64_type.const_int(element_size, false).into(),
+                    u64_type.const_int(alignment, false).into(),
+                    table.into(),
+                    u64_type
+                        .const_int(u64::try_from(fields.len()).unwrap_or(u64::MAX), false)
+                        .into(),
+                ]
+            } else {
+                vec![
+                    descriptor.into(),
+                    new_length.into(),
+                    u64_type.const_int(element_size, false).into(),
+                    u64_type.const_int(alignment, false).into(),
+                    u64_type.const_int(u64::from(*depth), false).into(),
+                    u64_type.const_int(record_element_size, false).into(),
+                    u64_type.const_int(record_alignment, false).into(),
+                    table.into(),
+                    u64_type
+                        .const_int(u64::try_from(fields.len()).unwrap_or(u64::MAX), false)
+                        .into(),
+                ]
+            };
+            let call = builder
+                .build_call(
+                    resize,
+                    &call_arguments,
+                    &format!("{name}.resize_record_fields_call"),
+                )
+                .map_err(builder_error)?;
+            let raw = call
+                .try_as_basic_value()
+                .basic()
+                .ok_or(CodegenError::ValueKind(
+                    "record resize move runtime call has no result",
+                ))?;
+            if *status_result {
+                Some(raw)
+            } else {
+                let BasicValueEnum::IntValue(raw) = raw else {
+                    return Err(CodegenError::ValueKind(
+                        "record resize move bool result is not integer",
+                    ));
+                };
+                let success = builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        raw,
+                        context.i32_type().const_zero(),
+                        &format!("{name}.resize_record_fields_ok"),
+                    )
+                    .map_err(builder_error)?;
+                Some(success.into())
+            }
+        }
+        InstructionKind::BufferRemoveDropRecordFields {
+            descriptor,
+            index,
+            element,
+            fields,
+            status_result,
+        } => {
+            let descriptor_value_id = *descriptor;
+            let descriptor = required_value(values, descriptor_value_id)?;
+            let index = required_value(values, *index)?;
+            // Buffer values are passed through JIR as a small aggregate
+            // (`{ data: ptr, length: u64 }`), while the runtime ABI expects
+            // a pointer to the caller-owned descriptor. Materialize the
+            // aggregate in a temporary slot before invoking the drop/compact
+            // helper. A pointer is kept intact for future lowered callers
+            // that already provide storage.
+            let descriptor_storage = if descriptor.is_pointer_value() {
+                None
+            } else {
+                let descriptor_type = required_value_type(value_types, descriptor_value_id)?;
+                let aggregate = basic_type(types, descriptor_type)?;
+                let storage = builder
+                    .build_alloca(aggregate, &format!("{name}.remove_drop_record_descriptor"))
+                    .map_err(builder_error)?;
+                builder
+                    .build_store(storage, descriptor)
+                    .map_err(builder_error)?;
+                Some(storage)
+            };
+            let descriptor_argument: BasicValueEnum<'ctx> =
+                descriptor_storage.map(Into::into).unwrap_or(descriptor);
+            let table = build_record_field_table(
+                context,
+                builder,
+                types,
+                fields,
+                &format!("{name}.remove_drop_record_fields"),
+            )?;
+            let element_type = basic_type(types, *element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let remove_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    pointer_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let symbol = if *status_result {
+                "jadren_rt_buffer_remove_drop_record_fields_status"
+            } else {
+                "jadren_rt_buffer_remove_drop_record_fields"
+            };
+            let remove = llvm.get_function(symbol).unwrap_or_else(|| {
+                llvm.add_function(symbol, remove_type, Some(LlvmLinkage::External))
+            });
+            let call = builder
+                .build_call(
+                    remove,
+                    &[
+                        descriptor_argument.into(),
+                        index.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        table.into(),
+                        u64_type
+                            .const_int(u64::try_from(fields.len()).unwrap_or(u64::MAX), false)
+                            .into(),
+                    ],
+                    &format!("{name}.remove_drop_record_fields_call"),
+                )
+                .map_err(builder_error)?;
+            let raw = call
+                .try_as_basic_value()
+                .basic()
+                .ok_or(CodegenError::ValueKind(
+                    "record remove drop runtime call has no result",
+                ))?;
+            if *status_result {
+                Some(raw)
+            } else {
+                let BasicValueEnum::IntValue(raw) = raw else {
+                    return Err(CodegenError::ValueKind(
+                        "record remove drop bool result is not integer",
+                    ));
+                };
+                let success = builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        raw,
+                        context.i32_type().const_zero(),
+                        &format!("{name}.remove_drop_record_fields_ok"),
+                    )
+                    .map_err(builder_error)?;
+                Some(success.into())
+            }
+        }
+        InstructionKind::BufferRemoveDropOwnedString {
+            descriptor,
+            index,
+            element,
+            status_result,
+        } => {
+            let descriptor_value_id = *descriptor;
+            let descriptor = required_value(values, descriptor_value_id)?;
+            let index = required_value(values, *index)?;
+            let descriptor_storage = if descriptor.is_pointer_value() {
+                None
+            } else {
+                let descriptor_type = required_value_type(value_types, descriptor_value_id)?;
+                let aggregate = basic_type(types, descriptor_type)?;
+                let storage = builder
+                    .build_alloca(
+                        aggregate,
+                        &format!("{name}.remove_drop_owned_string_descriptor"),
+                    )
+                    .map_err(builder_error)?;
+                builder
+                    .build_store(storage, descriptor)
+                    .map_err(builder_error)?;
+                Some(storage)
+            };
+            let descriptor_argument: BasicValueEnum<'ctx> =
+                descriptor_storage.map(Into::into).unwrap_or(descriptor);
+            let element_type = basic_type(types, *element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let remove_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let symbol = if *status_result {
+                "jadren_rt_buffer_remove_drop_owned_string_status"
+            } else {
+                "jadren_rt_buffer_remove_drop_owned_string"
+            };
+            let remove = llvm.get_function(symbol).unwrap_or_else(|| {
+                llvm.add_function(symbol, remove_type, Some(LlvmLinkage::External))
+            });
+            let call = builder
+                .build_call(
+                    remove,
+                    &[
+                        descriptor_argument.into(),
+                        index.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                    ],
+                    &format!("{name}.remove_drop_owned_string_call"),
+                )
+                .map_err(builder_error)?;
+            let raw = call
+                .try_as_basic_value()
+                .basic()
+                .ok_or(CodegenError::ValueKind(
+                    "owned string remove drop runtime call has no result",
+                ))?;
+            if *status_result {
+                Some(raw)
+            } else {
+                let BasicValueEnum::IntValue(raw) = raw else {
+                    return Err(CodegenError::ValueKind(
+                        "owned string remove drop bool result is not integer",
+                    ));
+                };
+                let success = builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        raw,
+                        context.i32_type().const_zero(),
+                        &format!("{name}.remove_drop_owned_string_ok"),
+                    )
+                    .map_err(builder_error)?;
+                Some(success.into())
+            }
+        }
+        InstructionKind::BufferRemoveDropNestedRecordFields {
+            descriptor,
+            index,
+            element,
+            record_element,
+            fields,
+            depth,
+            status_result,
+        } => {
+            let descriptor = required_value(values, *descriptor)?;
+            let index = required_value(values, *index)?;
+            let table = build_record_field_table(
+                context,
+                builder,
+                types,
+                fields,
+                &format!("{name}.remove_drop_nested_record_fields"),
+            )?;
+            let element_type = basic_type(types, *element)?;
+            let record_element_type = basic_type(types, *record_element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let record_element_size = types.target_data().get_store_size(&record_element_type);
+            let record_alignment =
+                u64::from(types.target_data().get_abi_alignment(&record_element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let remove_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    pointer_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let symbol = if *status_result {
+                "jadren_rt_buffer_remove_drop_nested_record_fields_status"
+            } else {
+                "jadren_rt_buffer_remove_drop_nested_record_fields"
+            };
+            let remove = llvm.get_function(symbol).unwrap_or_else(|| {
+                llvm.add_function(symbol, remove_type, Some(LlvmLinkage::External))
+            });
+            let call = builder
+                .build_call(
+                    remove,
+                    &[
+                        descriptor.into(),
+                        index.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        u64_type.const_int(u64::from(*depth), false).into(),
+                        u64_type.const_int(record_element_size, false).into(),
+                        u64_type.const_int(record_alignment, false).into(),
+                        table.into(),
+                        u64_type
+                            .const_int(u64::try_from(fields.len()).unwrap_or(u64::MAX), false)
+                            .into(),
+                    ],
+                    &format!("{name}.remove_drop_nested_record_fields_call"),
+                )
+                .map_err(builder_error)?;
+            let raw = call
+                .try_as_basic_value()
+                .basic()
+                .ok_or(CodegenError::ValueKind(
+                    "nested record remove drop runtime call has no result",
+                ))?;
+            if *status_result {
+                Some(raw)
+            } else {
+                let BasicValueEnum::IntValue(raw) = raw else {
+                    return Err(CodegenError::ValueKind(
+                        "nested record remove drop bool result is not integer",
+                    ));
+                };
+                let success = builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        raw,
+                        context.i32_type().const_zero(),
+                        &format!("{name}.remove_drop_nested_record_fields_ok"),
+                    )
+                    .map_err(builder_error)?;
+                Some(success.into())
+            }
+        }
+        InstructionKind::EnumCarrierFieldsDrop {
+            value,
+            element,
+            fields,
+        } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.enum_carrier_fields"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let table = build_carrier_field_table(
+                context,
+                builder,
+                types,
+                fields,
+                &format!("{name}.enum_carrier_fields"),
+            )?;
+            let element_type = basic_type(types, *element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let destroy_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    pointer_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_buffer_destroy_enum_carrier_fields")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_buffer_destroy_enum_carrier_fields",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        table.into(),
+                        u64_type
+                            .const_int(u64::try_from(fields.len()).unwrap_or(u64::MAX), false)
+                            .into(),
+                    ],
+                    &format!("{name}.enum_carrier_fields_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::EnumOwningFieldsDrop {
+            value,
+            element,
+            fields,
+        } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.enum_owning_fields"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let table = build_carrier_field_table(
+                context,
+                builder,
+                types,
+                fields,
+                &format!("{name}.enum_owning_fields"),
+            )?;
+            let element_type = basic_type(types, *element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let destroy_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    pointer_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_carrier_destroy_enum_fields")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_carrier_destroy_enum_fields",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        table.into(),
+                        u64_type
+                            .const_int(u64::try_from(fields.len()).unwrap_or(u64::MAX), false)
+                            .into(),
+                    ],
+                    &format!("{name}.enum_owning_fields_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::RecordBufferFieldsDrop {
+            value,
+            element,
+            fields,
+        } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.record_buffer_fields"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let table = build_record_field_table(
+                context,
+                builder,
+                types,
+                fields,
+                &format!("{name}.record_buffer_fields"),
+            )?;
+            let element_type = basic_type(types, *element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let destroy_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    pointer_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_buffer_destroy_record_fields")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_buffer_destroy_record_fields",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        table.into(),
+                        u64_type
+                            .const_int(u64::try_from(fields.len()).unwrap_or(u64::MAX), false)
+                            .into(),
+                    ],
+                    &format!("{name}.record_buffer_fields_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::RecordOwningFieldsDrop {
+            value,
+            element,
+            fields,
+        } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.record_owning_fields"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let table = build_record_field_table(
+                context,
+                builder,
+                types,
+                fields,
+                &format!("{name}.record_owning_fields"),
+            )?;
+            let element_type = basic_type(types, *element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let destroy_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    pointer_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_carrier_destroy_record_fields")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_carrier_destroy_record_fields",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        table.into(),
+                        u64_type
+                            .const_int(u64::try_from(fields.len()).unwrap_or(u64::MAX), false)
+                            .into(),
+                    ],
+                    &format!("{name}.record_owning_fields_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::EnumCarrierBufferDrop {
+            value,
+            element,
+            payload_offset,
+            branches,
+        } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.enum_carrier_buffer"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let table = build_carrier_branch_table(
+                context,
+                builder,
+                types,
+                branches,
+                &format!("{name}.enum_carrier_buffer"),
+            )?;
+            let element_type = basic_type(types, *element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let destroy_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    pointer_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_buffer_destroy_enum_carrier_buffer")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_buffer_destroy_enum_carrier_buffer",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        u64_type.const_int(*payload_offset, false).into(),
+                        table.into(),
+                        u64_type
+                            .const_int(u64::try_from(branches.len()).unwrap_or(u64::MAX), false)
+                            .into(),
+                    ],
+                    &format!("{name}.enum_carrier_buffer_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::EnumOwningCarrierDrop {
+            value,
+            element,
+            payload_offset,
+            branches,
+        } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.enum_owning_carrier"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let table = build_carrier_branch_table(
+                context,
+                builder,
+                types,
+                branches,
+                &format!("{name}.enum_owning_carrier"),
+            )?;
+            let element_type = basic_type(types, *element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let destroy_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    pointer_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_carrier_destroy_enum_buffer")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_carrier_destroy_enum_buffer",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(*payload_offset, false).into(),
+                        table.into(),
+                        u64_type
+                            .const_int(u64::try_from(branches.len()).unwrap_or(u64::MAX), false)
+                            .into(),
+                    ],
+                    &format!("{name}.enum_owning_carrier_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::CarrierBufferDrop {
+            value,
+            element,
+            leaf_element,
+            payload_variant,
+            payload_offset,
+            depth,
+            alternate_leaf_element,
+            alternate_payload_variant,
+            alternate_depth,
+        } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.carrier_buffer"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let element_type = basic_type(types, *element)?;
+            let leaf_element_type = basic_type(types, *leaf_element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let leaf_element_size = types.target_data().get_store_size(&leaf_element_type);
+            let leaf_alignment =
+                u64::from(types.target_data().get_abi_alignment(&leaf_element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            if let (
+                Some(alternate_leaf_element),
+                Some(alternate_payload_variant),
+                Some(alternate_depth),
+            ) = (
+                *alternate_leaf_element,
+                *alternate_payload_variant,
+                *alternate_depth,
+            ) {
+                let alternate_leaf_type = basic_type(types, alternate_leaf_element)?;
+                let alternate_leaf_size = types.target_data().get_store_size(&alternate_leaf_type);
+                let alternate_leaf_alignment =
+                    u64::from(types.target_data().get_abi_alignment(&alternate_leaf_type));
+                let destroy_type = context.i32_type().fn_type(
+                    &[
+                        pointer_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                    ],
+                    false,
+                );
+                let destroy = llvm
+                    .get_function("jadren_rt_buffer_destroy_multi_carrier_buffer")
+                    .unwrap_or_else(|| {
+                        llvm.add_function(
+                            "jadren_rt_buffer_destroy_multi_carrier_buffer",
+                            destroy_type,
+                            Some(LlvmLinkage::External),
+                        )
+                    });
+                builder
+                    .build_call(
+                        destroy,
+                        &[
+                            storage.into(),
+                            u64_type.const_int(element_size, false).into(),
+                            u64_type.const_int(alignment, false).into(),
+                            u64_type.const_int(*payload_offset, false).into(),
+                            u64_type
+                                .const_int(u64::from(*payload_variant), false)
+                                .into(),
+                            u64_type.const_int(u64::from(*depth), false).into(),
+                            u64_type.const_int(leaf_element_size, false).into(),
+                            u64_type.const_int(leaf_alignment, false).into(),
+                            u64_type
+                                .const_int(u64::from(alternate_payload_variant), false)
+                                .into(),
+                            u64_type.const_int(u64::from(alternate_depth), false).into(),
+                            u64_type.const_int(alternate_leaf_size, false).into(),
+                            u64_type.const_int(alternate_leaf_alignment, false).into(),
+                        ],
+                        &format!("{name}.multi_carrier_buffer_destroy"),
+                    )
+                    .map_err(builder_error)?;
+                return Ok(None);
+            }
+            let destroy_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_buffer_destroy_carrier_buffer")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_buffer_destroy_carrier_buffer",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        u64_type.const_int(*payload_offset, false).into(),
+                        u64_type
+                            .const_int(u64::from(*payload_variant), false)
+                            .into(),
+                        u64_type.const_int(u64::from(*depth), false).into(),
+                        u64_type.const_int(leaf_element_size, false).into(),
+                        u64_type.const_int(leaf_alignment, false).into(),
+                    ],
+                    &format!("{name}.carrier_buffer_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::OwningCarrierDrop {
+            value,
+            element,
+            leaf_element,
+            payload_variant,
+            payload_offset,
+            depth,
+            alternate_leaf_element,
+            alternate_payload_variant,
+            alternate_depth,
+        } => {
+            let value_type = required_value_type(value_types, *value)?;
+            let aggregate = basic_type(types, value_type)?;
+            let value = required_value(values, *value)?;
+            let storage = builder
+                .build_alloca(aggregate, &format!("{name}.owning_carrier"))
+                .map_err(builder_error)?;
+            builder.build_store(storage, value).map_err(builder_error)?;
+            let element_type = basic_type(types, *element)?;
+            let leaf_element_type = basic_type(types, *leaf_element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let leaf_element_size = types.target_data().get_store_size(&leaf_element_type);
+            let leaf_alignment =
+                u64::from(types.target_data().get_abi_alignment(&leaf_element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            if let (
+                Some(alternate_leaf_element),
+                Some(alternate_payload_variant),
+                Some(alternate_depth),
+            ) = (
+                *alternate_leaf_element,
+                *alternate_payload_variant,
+                *alternate_depth,
+            ) {
+                let alternate_leaf_type = basic_type(types, alternate_leaf_element)?;
+                let alternate_leaf_size = types.target_data().get_store_size(&alternate_leaf_type);
+                let alternate_leaf_alignment =
+                    u64::from(types.target_data().get_abi_alignment(&alternate_leaf_type));
+                let destroy_type = context.i32_type().fn_type(
+                    &[
+                        pointer_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                        u64_type.into(),
+                    ],
+                    false,
+                );
+                let destroy = llvm
+                    .get_function("jadren_rt_carrier_destroy_multi_buffer")
+                    .unwrap_or_else(|| {
+                        llvm.add_function(
+                            "jadren_rt_carrier_destroy_multi_buffer",
+                            destroy_type,
+                            Some(LlvmLinkage::External),
+                        )
+                    });
+                builder
+                    .build_call(
+                        destroy,
+                        &[
+                            storage.into(),
+                            u64_type.const_int(element_size, false).into(),
+                            u64_type.const_int(*payload_offset, false).into(),
+                            u64_type
+                                .const_int(u64::from(*payload_variant), false)
+                                .into(),
+                            u64_type.const_int(u64::from(*depth), false).into(),
+                            u64_type.const_int(leaf_element_size, false).into(),
+                            u64_type.const_int(leaf_alignment, false).into(),
+                            u64_type
+                                .const_int(u64::from(alternate_payload_variant), false)
+                                .into(),
+                            u64_type.const_int(u64::from(alternate_depth), false).into(),
+                            u64_type.const_int(alternate_leaf_size, false).into(),
+                            u64_type.const_int(alternate_leaf_alignment, false).into(),
+                        ],
+                        &format!("{name}.multi_owning_carrier_destroy"),
+                    )
+                    .map_err(builder_error)?;
+                return Ok(None);
+            }
+            let destroy_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let destroy = llvm
+                .get_function("jadren_rt_carrier_destroy_buffer")
+                .unwrap_or_else(|| {
+                    llvm.add_function(
+                        "jadren_rt_carrier_destroy_buffer",
+                        destroy_type,
+                        Some(LlvmLinkage::External),
+                    )
+                });
+            builder
+                .build_call(
+                    destroy,
+                    &[
+                        storage.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(*payload_offset, false).into(),
+                        u64_type
+                            .const_int(u64::from(*payload_variant), false)
+                            .into(),
+                        u64_type.const_int(u64::from(*depth), false).into(),
+                        u64_type.const_int(leaf_element_size, false).into(),
+                        u64_type.const_int(leaf_alignment, false).into(),
+                    ],
+                    &format!("{name}.owning_carrier_destroy"),
+                )
+                .map_err(builder_error)?;
+            None
+        }
+        InstructionKind::RegionCreate => Some(lower_region_create(context, llvm, builder)?),
+        InstructionKind::RegionAlloc { region, ty, count } => Some(lower_region_allocate(
+            context,
+            llvm,
+            builder,
+            required_value(values, *region)?,
+            required_value(values, *count)?,
+            *ty,
+            types,
+            &name,
+        )?),
+        InstructionKind::RegionDestroy { region } => {
+            lower_region_destroy(context, llvm, builder, required_value(values, *region)?)?;
+            None
+        }
+        InstructionKind::Builtin(_) => {
+            return Err(CodegenError::UnsupportedInstruction("builtin lowering"));
         }
         InstructionKind::Offset { base, indices } => Some(lower_offset(
             context,
@@ -1443,6 +3209,144 @@ fn lower_bounds_check<'ctx>(
         .map_err(builder_error)?;
     builder.build_unreachable().map_err(builder_error)?;
     builder.position_at_end(success);
+    Ok(())
+}
+
+fn lower_region_create<'ctx>(
+    context: &'ctx Context,
+    llvm: &LlvmModule<'ctx>,
+    builder: &Builder<'ctx>,
+) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+    let pointer = context.ptr_type(inkwell::AddressSpace::default());
+    let function_type = pointer.fn_type(&[], false);
+    let function = llvm.get_function(REGION_CREATE_SYMBOL).unwrap_or_else(|| {
+        llvm.add_function(
+            REGION_CREATE_SYMBOL,
+            function_type,
+            Some(LlvmLinkage::External),
+        )
+    });
+    if function.get_type() != function_type {
+        return Err(CodegenError::ValueKind(
+            "native region create symbol has an incompatible signature",
+        ));
+    }
+    builder
+        .build_call(function, &[], "region.create")
+        .map_err(builder_error)?
+        .try_as_basic_value()
+        .basic()
+        .ok_or(CodegenError::ValueKind(
+            "native region create call has no result",
+        ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_region_allocate<'ctx>(
+    context: &'ctx Context,
+    llvm: &LlvmModule<'ctx>,
+    builder: &Builder<'ctx>,
+    region: BasicValueEnum<'ctx>,
+    count: BasicValueEnum<'ctx>,
+    element: TypeId,
+    types: &LoweredTypeTable<'ctx>,
+    name: &str,
+) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+    let BasicValueEnum::PointerValue(region) = region else {
+        return Err(CodegenError::ValueKind(
+            "native region allocation handle is not a pointer",
+        ));
+    };
+    let BasicValueEnum::IntValue(count) = count else {
+        return Err(CodegenError::ValueKind(
+            "native region allocation count is not an integer",
+        ));
+    };
+    if count.get_type().get_bit_width() > 64 {
+        return Err(CodegenError::ValueKind(
+            "native region allocation count exceeds u64",
+        ));
+    }
+    let element_type = basic_type(types, element)?;
+    let element_size = types.target_data().get_store_size(&element_type);
+    let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+    let u64_type = context.i64_type();
+    let count = builder
+        .build_int_z_extend_or_bit_cast(count, u64_type, &format!("{name}.count"))
+        .map_err(builder_error)?;
+    let pointer = context.ptr_type(inkwell::AddressSpace::default());
+    let function_type = pointer.fn_type(
+        &[
+            pointer.into(),
+            u64_type.into(),
+            u64_type.into(),
+            u64_type.into(),
+        ],
+        false,
+    );
+    let function = llvm
+        .get_function(REGION_ALLOCATE_SYMBOL)
+        .unwrap_or_else(|| {
+            llvm.add_function(
+                REGION_ALLOCATE_SYMBOL,
+                function_type,
+                Some(LlvmLinkage::External),
+            )
+        });
+    if function.get_type() != function_type {
+        return Err(CodegenError::ValueKind(
+            "native region allocate symbol has an incompatible signature",
+        ));
+    }
+    let element_size = u64_type.const_int(element_size, false);
+    let alignment = u64_type.const_int(alignment, false);
+    builder
+        .build_call(
+            function,
+            &[
+                region.into(),
+                element_size.into(),
+                count.into(),
+                alignment.into(),
+            ],
+            name,
+        )
+        .map_err(builder_error)?
+        .try_as_basic_value()
+        .basic()
+        .ok_or(CodegenError::ValueKind(
+            "native region allocation call has no result",
+        ))
+}
+
+fn lower_region_destroy<'ctx>(
+    context: &'ctx Context,
+    llvm: &LlvmModule<'ctx>,
+    builder: &Builder<'ctx>,
+    region: BasicValueEnum<'ctx>,
+) -> Result<(), CodegenError> {
+    let BasicValueEnum::PointerValue(region) = region else {
+        return Err(CodegenError::ValueKind(
+            "native region destroy handle is not a pointer",
+        ));
+    };
+    let pointer = context.ptr_type(inkwell::AddressSpace::default());
+    let function_type = context.void_type().fn_type(&[pointer.into()], false);
+    let function = llvm.get_function(REGION_DESTROY_SYMBOL).unwrap_or_else(|| {
+        llvm.add_function(
+            REGION_DESTROY_SYMBOL,
+            function_type,
+            Some(LlvmLinkage::External),
+        )
+    });
+    if function.get_type() != function_type {
+        return Err(CodegenError::ValueKind(
+            "native region destroy symbol has an incompatible signature",
+        ));
+    }
+    builder
+        .build_call(function, &[region.into()], "region.destroy")
+        .map_err(builder_error)?;
     Ok(())
 }
 
@@ -2941,6 +4845,96 @@ mod tests {
         assert!(text.contains("alloca i32, align 4"));
         assert!(text.contains("store volatile i32 42"));
         assert!(text.contains("load volatile i32"));
+        assert!(llvm.verify().is_ok());
+    }
+
+    #[test]
+    fn lowers_region_lifecycle_and_allocation_calls() {
+        let jir = Module {
+            types: vec![
+                Type::Unit,
+                Type::Integer {
+                    signed: true,
+                    bits: 32,
+                },
+                Type::Integer {
+                    signed: false,
+                    bits: 64,
+                },
+                Type::RegionHandle,
+                Type::Pointer {
+                    pointee: TypeId::new(1),
+                    address_space: AddressSpace::Region,
+                },
+            ],
+            functions: vec![Function {
+                id: FunctionId::new(0),
+                name: "region_memory".to_owned(),
+                linkage: Linkage::Internal,
+                parameters: Vec::new(),
+                result: TypeId::new(1),
+                blocks: vec![Block {
+                    id: BlockId::new(0),
+                    parameters: Vec::new(),
+                    instructions: vec![
+                        value_instruction(0, 3, InstructionKind::RegionCreate),
+                        value_instruction(
+                            1,
+                            2,
+                            InstructionKind::Constant(Constant::Integer { value: 2 }),
+                        ),
+                        value_instruction(
+                            2,
+                            4,
+                            InstructionKind::RegionAlloc {
+                                region: ValueId::new(0),
+                                ty: TypeId::new(1),
+                                count: ValueId::new(1),
+                            },
+                        ),
+                        value_instruction(
+                            3,
+                            1,
+                            InstructionKind::Constant(Constant::Integer { value: 7 }),
+                        ),
+                        Instruction {
+                            result: None,
+                            kind: InstructionKind::Store {
+                                pointer: ValueId::new(2),
+                                value: ValueId::new(3),
+                                alignment: 4,
+                                volatile: false,
+                            },
+                            span: None,
+                        },
+                        Instruction {
+                            result: None,
+                            kind: InstructionKind::RegionDestroy {
+                                region: ValueId::new(0),
+                            },
+                            span: None,
+                        },
+                    ],
+                    terminator: Terminator::Return {
+                        value: Some(ValueId::new(3)),
+                    },
+                    span: None,
+                }],
+                span: None,
+            }],
+        };
+        let context = Context::create();
+        let llvm = lower_module(
+            &context,
+            &jir,
+            "region_memory",
+            &TypeLoweringConfig::default(),
+        )
+        .expect("region lifecycle LLVM module");
+        let text = llvm.print_to_string().to_string();
+        assert!(text.contains("call ptr @jadren_rt_native_region_create"));
+        assert!(text.contains("call ptr @jadren_rt_native_region_allocate"));
+        assert!(text.contains("call void @jadren_rt_native_region_destroy"));
         assert!(llvm.verify().is_ok());
     }
 

@@ -1,0 +1,49 @@
+module examples.app_table_filter_ex
+
+// Extended bounded table filtering: exact, contains, prefix, suffix,
+// and ASCII case-insensitive variants (modes 0..7).
+fn main() -> Int32 {
+    app_table_clear(0)
+    app_table_clear(1)
+    app_table_clear(2)
+    app_table_clear(3)
+    app_table_append_row(0)
+    app_table_append_row(0)
+    app_table_append_row(0)
+    app_table_append_row(0)
+    app_table_set_cell(0, 0, 0, "Focus")
+    app_table_set_cell(0, 1, 0, "Review")
+    app_table_set_cell(0, 2, 0, "focus task")
+    app_table_set_cell(0, 3, 0, "Task")
+
+    let contains: Bool = app_table_filter_text_ex(0, 1, 0, "cus", 1)
+    if !contains { return 1 }
+    if app_table_row_count(1) != 2 { return 2 }
+
+    let prefix: Bool = app_table_filter_text_ex(0, 2, 0, "F", 2)
+    if !prefix { return 3 }
+    if app_table_row_count(2) != 1 { return 4 }
+
+    let suffix: Bool = app_table_filter_text_ex(0, 3, 0, "task", 3)
+    if !suffix { return 5 }
+    if app_table_row_count(3) != 1 { return 6 }
+
+    let insensitive_exact: Bool = app_table_filter_text_ex(0, 1, 0, "focus", 4)
+    if !insensitive_exact { return 7 }
+    if app_table_row_count(1) != 1 { return 8 }
+
+    let insensitive_contains: Bool = app_table_filter_text_ex(0, 1, 0, "FOCUS", 5)
+    if !insensitive_contains { return 9 }
+    if app_table_row_count(1) != 2 { return 10 }
+
+    let insensitive_prefix: Bool = app_table_filter_text_ex(0, 1, 0, "f", 6)
+    if !insensitive_prefix { return 11 }
+    if app_table_row_count(1) != 2 { return 12 }
+
+    let insensitive_suffix: Bool = app_table_filter_text_ex(0, 1, 0, "TASK", 7)
+    if !insensitive_suffix { return 13 }
+    if app_table_row_count(1) != 2 { return 14 }
+    if app_table_filter_text_ex(0, 1, 0, "Focus", 8) { return 15 }
+    if app_table_row_count(0) != 4 { return 16 }
+    return 0
+}

@@ -1,0 +1,36 @@
+module examples.http_session_chunked
+
+// A chunked POST and a normal GET share one keep-alive session.
+// The session validates and consumes the chunked body before routing it.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38127u16)
+    if (listener as Int32) == 0 { return 10 }
+
+    let session: UIntSize = http_session_open(listener, 2u32, 1024u32, 1024u32)
+    if (session as Int32) == 0 {
+        net_socket_close(listener)
+        return 11
+    }
+
+    http_router_clear()
+    var upload_body: [UInt8; 2] = [79u8, 75u8]
+    var hello_body: [UInt8; 2] = [79u8, 75u8]
+    let upload_added: Bool = http_router_add("POST", "/upload", 200u16, "text/plain", upload_body)
+    let hello_added: Bool = http_router_add("GET", "/hello", 200u16, "text/plain", hello_body)
+    if !upload_added {
+        http_session_close(session)
+        return 12
+    }
+    if !hello_added {
+        http_session_close(session)
+        return 12
+    }
+
+    let first: UInt32 = http_session_step(session, 2000u32)
+    let second: UInt32 = http_session_step(session, 2000u32)
+    let closed: Bool = http_session_close(session)
+    if first != 1u32 { return 13 }
+    if second != 2u32 { return 14 }
+    if !closed { return 15 }
+    return 0
+}

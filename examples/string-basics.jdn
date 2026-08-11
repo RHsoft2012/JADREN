@@ -1,0 +1,24 @@
+module examples.string_basics
+
+// String helpers read immutable UTF-8 views; they do not allocate.
+fn main() -> Int32 {
+    let title: String = "TimeTracker"
+    let length: UIntSize = string_length(title)
+    let length32: Int32 = length as Int32
+    let same: Bool = string_equals(title, "TimeTracker")
+    let different: Bool = string_equals(title, "Other")
+    if length32 != 11 {
+        print("string_length failed")
+        return 1
+    }
+    if !same {
+        print("string_equals true failed")
+        return 1
+    }
+    if different {
+        print("string_equals false failed")
+        return 1
+    }
+    print("string helpers ok")
+    return 0
+}

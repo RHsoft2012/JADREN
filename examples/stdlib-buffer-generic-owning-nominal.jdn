@@ -1,0 +1,59 @@
+module examples.stdlib_buffer_generic_owning_nominal
+
+@repr(C)
+struct Box<T> {
+    value: T
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<Box<OwnedString>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 1
+    match created {
+        Ok(values) => {
+            let first: Result<OwnedString, Int32> = string_owned_from("Jadren")
+            match first {
+                Ok(value) => {
+                    let item: Box<OwnedString> = Box { value: value }
+                    if string_owned_length(item.value) != 6usize { result_code = 4 }
+                    if !buffer_append(values, item) { result_code = 2 }
+                }
+                Error(status) => { result_code = status }
+            }
+            let remove_status: Int32 = buffer_remove_drop_status(values, 0usize)
+            if remove_status != 0 { result_code = remove_status }
+            let moved_source: Result<OwnedString, Int32> = string_owned_from("Moved")
+            match moved_source {
+                Ok(value) => {
+                    let item: Box<OwnedString> = Box { value: value }
+                    if !buffer_insert_move_from(values, 0usize, item) { result_code = 7 }
+                }
+                Error(status) => { result_code = status }
+            }
+            let output_created: Result<OwnedString, Int32> = string_owned_create(0usize)
+            match output_created {
+                Ok(output_value) => {
+                    let output: Box<OwnedString> = Box { value: output_value }
+                    if !buffer_remove_move_into(values, 0usize, output) { result_code = 8 }
+                    if string_owned_length(output.value) != 5usize { result_code = 9 }
+                }
+                Error(status) => { result_code = status }
+            }
+            let grow_status: Int32 = buffer_resize_move_status(values, 1usize)
+            if grow_status != 0 { result_code = grow_status }
+            let second: Result<OwnedString, Int32> = string_owned_from("Jadren UI")
+            match second {
+                Ok(value) => {
+                    let item: Box<OwnedString> = Box { value: value }
+                    if !buffer_append(values, item) { result_code = 10 }
+                }
+                Error(status) => { result_code = status }
+            }
+            let clear_status: Int32 = buffer_clear_move_status(values)
+            if clear_status != 0 { result_code = 11 }
+            if buffer_length(values) != 0usize { result_code = 6 }
+            if result_code == 1 { result_code = 0 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

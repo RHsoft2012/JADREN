@@ -1,0 +1,50 @@
+module windows_desktop_portable_popup_menu.main
+
+// A retained menu trigger stays in the top-bar layout. Its popup options are
+// declared by node id and are created natively only while the menu is open.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 21 {
+        ui_set_status("Open selected from the File menu.")
+    }
+    if event_id == 22 {
+        ui_set_status("Save selected from the File menu.")
+    }
+    if event_id == 23 {
+        ui_set_status("About selected from the Help menu.")
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    let root: Int32 = ui_app_begin("Jadren Portable Popup Menu", 760, 480, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+
+    let top_bar: Int32 = ui_app_top_bar(root, 700, 54, 0x1F2937u32, 0, 8, 12, 0, 1)
+    if top_bar == 0 { return 2 }
+    let logo: Int32 = ui_app_label(top_bar, "JADREN", 100, 38, 0xFFFFFFu32, 0x1F2937u32, 0, 0)
+    let file: Int32 = ui_app_menu(top_bar, "File", 96, 38, 0xFFFFFFu32, 0x374151u32, 8, 0)
+    let help: Int32 = ui_app_menu(top_bar, "Help", 96, 38, 0xFFFFFFu32, 0x374151u32, 8, 0)
+    if logo == 0 { return 3 }
+    if file == 0 { return 3 }
+    if help == 0 { return 3 }
+    let open_item: Bool = ui_app_menu_item(file, "Open", 21)
+    let save_item: Bool = ui_app_menu_item(file, "Save", 22)
+    let about_item: Bool = ui_app_menu_item(help, "About Jadren", 23)
+    if !open_item { return 4 }
+    if !save_item { return 4 }
+    if !about_item { return 4 }
+    if !ui_app_end(top_bar) { return 5 }
+
+    let panel: Int32 = ui_app_panel(root, 700, 260, 0xFFFFFFu32, 12, 16, 10, 0, 1)
+    if panel == 0 { return 6 }
+    let heading: Int32 = ui_app_label(panel, "Native popup menu", 640, 36,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let status: Int32 = ui_app_status(panel, "Click File or Help, then choose an item.", 640, 42,
+        0x111827u32, 0xDCFCE7u32, 8, 1)
+    if heading == 0 { return 7 }
+    if status == 0 { return 7 }
+    if !ui_app_end(panel) { return 8 }
+    if !ui_app_end(root) { return 9 }
+    return ui_app_run()
+}

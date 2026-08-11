@@ -1,0 +1,12 @@
+module examples.selfhost.typed_if_local_let_tail_stage2
+
+// Companion source for a post-join local declaration. The new mutable local
+// is allocated in the join, updated once, and returned.
+
+fn main() -> Int32 {
+    // branch-local stack storage
+    let value: Int32 = if 2 > 1 { 10 } else { 20 }
+    var extra: Int32 = value + 3
+    extra = extra + 1
+    return extra
+}

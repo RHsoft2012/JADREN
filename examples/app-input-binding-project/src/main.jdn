@@ -1,0 +1,186 @@
+module app_input_binding_project.main
+
+import jadren.app.event.AppEvent
+import jadren.app.event.checked_changed
+import jadren.app.event.click
+import jadren.app.event.read_text
+import jadren.app.event.checked_value
+import jadren.app.event.list_changed
+import jadren.app.event.list_index_value
+import jadren.app.event.select_changed
+import jadren.app.event.select_index_value
+import jadren.app.event.table_changed
+import jadren.app.event.table_row_value
+import jadren.app.event.text_changed
+import jadren.app.event.is_window_closed
+import jadren.app.event.is_window_resized
+import jadren.app.event.window_closed
+import jadren.app.event.window_resized
+import jadren.app.event.window_width_value
+import jadren.app.input.bind_state
+import jadren.app.input.bind_checkbox_state
+import jadren.app.input.bind_select_state
+import jadren.app.input.checked
+import jadren.app.input
+import jadren.app.input.refresh_checkbox_state
+import jadren.app.input.refresh_all
+import jadren.app.input.refresh_select_state
+import jadren.app.input.refresh_state
+import jadren.app.input.read_text_exact
+import jadren.app.input.select_index
+import jadren.app.input.set_checked
+import jadren.app.input.set_enabled
+import jadren.app.input.set_select_index
+import jadren.app.input.set_value
+import jadren.app.input.text_length
+import jadren.app.state.clear
+import jadren.app.state.set_bool
+import jadren.app.state.set_int
+import jadren.app.state.set_text
+import jadren.app.ui.begin
+import jadren.app.ui.checkbox
+import jadren.app.ui.finish
+import jadren.app.ui.panel
+import jadren.app.ui.select
+import jadren.app.ui.select_option
+import jadren.app.ui.text_input
+import jadren.app.ui.on_close
+import jadren.app.ui.on_resize
+import jadren.app.ui.window_height
+import jadren.app.ui.window_width
+import jadren.app.fs.write_text
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear()
+    if !set_text("name", "Bound input") { return 1 }
+
+    let root: Int32 = begin("Jadren input binding", 520, 260, 0xF6F8FCu32)
+    if root == 0 { return 2 }
+    on_resize(90)
+    on_close(91)
+    if window_width() != 520 { return 3 }
+    if window_height() != 260 { return 4 }
+    let panel_node: Int32 = panel(root, 460, 180, 0xFFFFFFu32, 12, 12, 8, 0, 1)
+    if panel_node == 0 { return 5 }
+    let input_node: Int32 = text_input(panel_node, "Name", 11, 360, 38,
+                                       0x111827u32, 0xFFFFFFu32, 8, 1)
+    if input_node == 0 { return 6 }
+    let checkbox_node: Int32 = checkbox(panel_node, "Enabled", 12, 180, 34,
+                                        0x111827u32, 0x168EF5u32, 8, 0, 0)
+    if checkbox_node == 0 { return 7 }
+    let select_node: Int32 = select(panel_node, 13, 240, 34,
+                                    0x111827u32, 0xFFFFFFu32, 8, 0)
+    if select_node == 0 { return 8 }
+    if !select_option(select_node, "First") { return 9 }
+    if !select_option(select_node, "Second") { return 10 }
+
+    // The input facade addresses the explicit event ID, while the retained
+    // UI facade uses input_node for node-oriented bindings.
+    bind_state(11, "name")
+    refresh_state(11)
+    if !bind_checkbox_state(12, "enabled") { return 11 }
+    if !bind_select_state(13, "choice") { return 12 }
+    if !set_text("name", "Bound input") { return 13 }
+    refresh_state(11)
+    if !set_bool("enabled", true) { return 14 }
+    refresh_checkbox_state(12)
+    if checked(12) != 1 { return 15 }
+    if !set_int("choice", 1i64) { return 16 }
+    refresh_select_state(13)
+    if select_index(13) != 1 { return 17 }
+    if text_length(11) != 11usize { return 18 }
+
+    var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if input.read_text(11, output) != 11usize { return 17 }
+    if output[0] != 66u8 { return 18 }
+    if output[1] != 111u8 { return 19 }
+    if output[2] != 117u8 { return 20 }
+
+    var exact_length: [UIntSize; 1] = [0usize]
+    if !read_text_exact(11, output, exact_length) { return 21 }
+    if exact_length[0] != 11usize { return 22 }
+
+    // A typed TextChanged event can carry the explicit input ID through a
+    // reducer/controller boundary and still read into caller-owned storage.
+    let event: AppEvent = text_changed(11, 11i64)
+    var event_output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                                     0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                                     0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                                     0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var event_length: [UIntSize; 1] = [0usize]
+    if !read_text(event, event_output, event_length) { return 25 }
+    if event_length[0] != 11usize { return 26 }
+    if event_output[0] != 66u8 { return 26 }
+    if event_output[1] != 111u8 { return 26 }
+
+    // Rejected event kinds and IDs must leave caller-owned outputs untouched.
+    event_output[0] = 90u8
+    event_length[0] = 77usize
+    let click_event: AppEvent = click(7)
+    if read_text(click_event, event_output, event_length) { return 27 }
+    if event_output[0] != 90u8 { return 28 }
+    if event_length[0] != 77usize { return 28 }
+    event_output[0] = 91u8
+    event_length[0] = 78usize
+    let negative_event: AppEvent = text_changed(-1, 0i64)
+    if read_text(negative_event, event_output, event_length) { return 29 }
+    if event_output[0] != 91u8 { return 30 }
+    if event_length[0] != 78usize { return 30 }
+    event_output[0] = 92u8
+    event_length[0] = 79usize
+    let unknown_input: AppEvent = text_changed(99, 0i64)
+    if read_text(unknown_input, event_output, event_length) { return 31 }
+    if event_output[0] != 92u8 { return 32 }
+    if event_length[0] != 79usize { return 32 }
+
+    let checked_event: AppEvent = checked_changed(12, true)
+    if !checked_value(checked_event) { return 33 }
+    let unchecked_event: AppEvent = checked_changed(12, false)
+    if checked_value(unchecked_event) { return 34 }
+    let select_event: AppEvent = select_changed(13, 2)
+    if select_index_value(select_event) != 2 { return 35 }
+    let list_event: AppEvent = list_changed(14, 3)
+    if list_index_value(list_event) != 3 { return 36 }
+    let table_event: AppEvent = table_changed(15, 4)
+    if table_row_value(table_event) != 4 { return 37 }
+    let invalid_list: AppEvent = list_changed(14, -1)
+    if list_index_value(invalid_list) != -1 { return 38 }
+    let invalid_table: AppEvent = table_changed(15, -1)
+    if table_row_value(invalid_table) != -1 { return 39 }
+    let resize_event: AppEvent = window_resized(90, 768)
+    if !is_window_resized(resize_event) { return 40 }
+    let resize_value: AppEvent = window_resized(90, 768)
+    if window_width_value(resize_value) != 768 { return 41 }
+    let close_event: AppEvent = window_closed(91)
+    if !is_window_closed(close_event) { return 42 }
+
+    set_value(11, "")
+    exact_length[0] = 123usize
+    if !read_text_exact(11, output, exact_length) { return 43 }
+    if exact_length[0] != 0usize { return 44 }
+
+    set_value(11, "Jadren")
+    if text_length(11) != 6usize { return 45 }
+    set_checked(12, 0)
+    if checked(12) != 0 { return 46 }
+    set_select_index(13, 0)
+    if select_index(13) != 0 { return 47 }
+    set_enabled(11, 0)
+    set_enabled(11, 1)
+    refresh_all()
+    if text_length(11) != 6usize { return 48 }
+
+    if !finish(panel_node) { return 49 }
+    if !finish(root) { return 50 }
+    if write_text("target/jadren/app-input-binding-project.result",
+                  "app-input-binding:pass\n") == 0usize { return 51 }
+    return 0
+}

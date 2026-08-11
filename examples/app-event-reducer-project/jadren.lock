@@ -1,0 +1,13 @@
+version = 1
+manifest_fingerprint = "bd3de0070bc10c73"
+
+[package]
+name = "app-event-reducer-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"
+

@@ -1,0 +1,59 @@
+module examples.stdlib_buffer_owning_record_remove_move_into
+
+// Move one owning record into caller-owned output storage without copying
+// nested Buffer descriptors or leaving a duplicate owner in the source.
+@repr(C)
+struct Entry {
+    values: Buffer<Int32>,
+    id: Int32
+}
+
+fn main() -> Int32 {
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let third_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let output_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match first_created {
+        Ok(first_values) => {
+            match second_created {
+                Ok(second_values) => {
+                    match third_created {
+                        Ok(third_values) => {
+                            match output_values_created {
+                                Ok(output_values) => {
+                                    match entries_created {
+                                        Ok(entries) => {
+                                            let first: Entry = Entry { values: first_values, id: 1 }
+                                            let second: Entry = Entry { values: second_values, id: 2 }
+                                            let third: Entry = Entry { values: third_values, id: 3 }
+                                            var output: Entry = Entry { values: output_values, id: 0 }
+                                            if !buffer_append(entries, first) { result_code = 1 }
+                                            if !buffer_append(entries, second) { result_code = 2 }
+                                            if !buffer_append(entries, third) { result_code = 3 }
+                                            let moved: Bool = buffer_remove_move_into(entries, 1usize, output)
+                                            if !moved { result_code = 4 }
+                                            if output.id != 2 { result_code = 5 }
+                                            if buffer_length(entries) != 2usize { result_code = 6 }
+                                            let status: Int32 = buffer_remove_move_into_status(entries, 99usize, output)
+                                            if status != -20 { result_code = 7 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

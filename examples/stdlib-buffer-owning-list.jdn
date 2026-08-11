@@ -1,0 +1,22 @@
+module examples.stdlib_buffer_owning_list
+
+fn main() -> Int32 {
+    // Heap-owned Buffer starts with capacity one and grows geometrically.
+    let created: Result<Buffer<Int32>, Int32> = buffer_create_i32(1usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            let first: Bool = buffer_append_i32_grow(values, 4)
+            let second: Bool = buffer_append_i32_grow(values, 8)
+            let third: Bool = buffer_append_i32_grow(values, 15)
+            if !first { result_code = 1 }
+            if !second { result_code = 2 }
+            if !third { result_code = 3 }
+            if buffer_length(values) != 3usize { result_code = 4 }
+            if buffer_capacity(values) != 4usize { result_code = 5 }
+            if values[0] + values[1] + values[2] != 27 { result_code = 6 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

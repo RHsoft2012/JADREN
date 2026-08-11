@@ -1,0 +1,10 @@
+module examples.selfhost.typed_while_local_native_stage2
+
+// Native producer -> JST2WHL1 -> Rust Stage-2 while hand-off.
+fn local_value() -> Int32 {
+    var counter: Int32 = 0;
+    while counter < 3 {
+        counter = counter + 1;
+    }
+    return counter;
+}

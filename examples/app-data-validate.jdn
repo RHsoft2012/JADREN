@@ -1,0 +1,22 @@
+module examples.app_data_validate
+
+fn main() -> Int32 {
+    app_state_clear()
+    app_list_clear(0)
+    app_table_clear(0)
+
+    if !app_data_validate() { return 1 }
+    if !app_state_set_text("mode", "focus") { return 2 }
+    if !app_list_push_text(0, "Task") { return 3 }
+    if !app_table_set_column_type(0, 0, 1) { return 4 }
+    if !app_table_append_row(0) { return 5 }
+    if !app_table_set_int(0, 0, 0, 42 as Int64) { return 6 }
+    if !app_data_validate() { return 7 }
+
+    let before: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(before) { return 8 }
+    if !app_data_validate() { return 9 }
+    if !app_data_tx_rollback() { return 10 }
+    if !app_data_validate() { return 11 }
+    return 0
+}

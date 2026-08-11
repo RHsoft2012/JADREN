@@ -1,0 +1,68 @@
+module examples.stdlib_buffer_owning_move_into
+
+// `buffer_remove_move_into` transfers any already move-safe owning element
+// into caller-owned storage. This fixture covers both a named C enum carrier
+// and a nested Buffer descriptor; no new runtime metadata is required.
+@repr(C)
+enum Event {
+    Idle,
+    Ready(Buffer<Int32>),
+    Nested(Buffer<Buffer<Int32>>),
+    Done
+}
+
+fn main() -> Int32 {
+    let payload_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let events_created: Result<Buffer<Event>, Int32> = buffer_create(0usize)
+    let leaf_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let inner_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let outer_created: Result<Buffer<Buffer<Buffer<Int32>>>, Int32> = buffer_create(0usize)
+    let output_nested_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match payload_created {
+        Ok(payload) => {
+            match events_created {
+                Ok(events) => {
+                    if !buffer_append(payload, 42) { result_code = 1 }
+                    if !buffer_append(events, Event.Ready(payload)) { result_code = 2 }
+                    var output: Event = Event.Idle
+                    let moved: Bool = buffer_remove_move_into(events, 0usize, output)
+                    if !moved { result_code = 3 }
+                    if buffer_length(events) != 0usize { result_code = 4 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    match leaf_created {
+        Ok(leaf) => {
+            match inner_created {
+                Ok(inner) => {
+                    match outer_created {
+                        Ok(outer) => {
+                            match output_nested_created {
+                                Ok(output_nested) => {
+                                    if !buffer_append(leaf, 7) { result_code = 6 }
+                                    if !buffer_append(inner, leaf) { result_code = 7 }
+                                    if !buffer_append(outer, inner) { result_code = 8 }
+                                    let moved_nested: Bool = buffer_remove_move_into(outer, 0usize, output_nested)
+                                    if !moved_nested { result_code = 9 }
+                                    if buffer_length(outer) != 0usize { result_code = 10 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

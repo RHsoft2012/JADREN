@@ -1,0 +1,15 @@
+module examples.selfhost.typed_while_local_dynamic_long_expression_native_stage2
+
+// JADREN_STAGE2_GENERIC_LONG_DYNAMIC_CONTROL
+// Native producer -> JST2WHG1 -> dynamic controls plus a 43-node arithmetic AST.
+// The first assignment deliberately crosses the former 32-node adapter limit.
+fn local_value() -> Int32 {
+    var counter: Int32 = 0;
+    while counter < 4 {
+        counter = (counter + ((0 + 0) + (0 + 0) + (0 + 0) + (0 + 0) + (0 + 0) + (0 + 0) + (0 + 0) + (0 + 1)));
+        if counter < 2 { continue; }
+        counter = counter + 1;
+        if counter < 4 { break; }
+    }
+    return counter;
+}

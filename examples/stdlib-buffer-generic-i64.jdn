@@ -1,0 +1,22 @@
+module examples.stdlib_buffer_generic_i64
+
+fn main() -> Int32 {
+    // The same source API works for a wider scalar without an i32 suffix.
+    let created: Result<Buffer<Int64>, Int32> = buffer_create(1usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            if !buffer_reserve(values, 3usize) { result_code = 1 }
+            if !buffer_append(values, 100i64) { result_code = 2 }
+            if !buffer_append(values, 23i64) { result_code = 3 }
+            if !buffer_insert(values, 1usize, 7i64) { result_code = 4 }
+            if buffer_length(values) != 3usize { result_code = 5 }
+            if values[0] + values[1] + values[2] != 130i64 { result_code = 6 }
+            if !buffer_remove(values, 1usize) { result_code = 7 }
+            if buffer_length(values) != 2usize { result_code = 8 }
+            if values[0] + values[1] != 123i64 { result_code = 9 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

@@ -1,0 +1,54 @@
+module time_tracker_project.main
+
+import jadren.app.fs.append_text
+import jadren.app.fs.size
+import jadren.app.fs.write_text
+import jadren.app.list.count
+import jadren.app.state.get_int
+import jadren.app.table.read_cell
+import time_tracker_project.model.bootstrap
+import time_tracker_project.model.checkpoint
+import time_tracker_project.model.row_count
+import time_tracker_project.view.build
+import time_tracker_project.view.dispatch_test
+import time_tracker_project.storage.export_csv
+import time_tracker_project.network.sync_selected
+
+fn main() -> Int32 {
+    if !bootstrap() { return 1 }
+    if row_count() != 2 as Int32 { return 2 }
+    let restarted: Bool = get_int("controller_events") > 0 as Int64
+    if !build() { return 3 }
+    if restarted {
+        if sync_selected() != 200 { return 4 }
+    } else {
+        if !dispatch_test() { return 4 }
+    }
+    if get_int("controller_events") != 1 as Int64 { return 5 }
+    if get_int("network_status") != 200 as Int64 { return 6 }
+    if get_int("list_events") != 1 as Int64 { return 7 }
+    if count(0) != 3 { return 8 }
+    var status: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let status_length: UIntSize = read_cell(0, 0, 2, status)
+    if status_length != 4usize { return 9 }
+    if status[0] != 68u8 { return 10 }
+    if !checkpoint() { return 11 }
+    if !export_csv() { return 12 }
+    if size("target/jadren/time-tracker-pro-project.csv") == 0usize { return 13 }
+    if size("target/jadren/time-tracker-pro-project-list.csv") == 0usize { return 14 }
+    // Windows GUI subsystem entry points do not propagate an Int32 return
+    // value as a process exit code.  Persist a sentinel after every module
+    // completed so the package smoke can verify the result without relying on
+    // the GUI process code.
+    let written: UIntSize = write_text(
+        "target/jadren/time-tracker-pro-project.result",
+        "multi-file-ok:42 controller-event:1 status:Done network:200 list:3 input-bound export:csv restart:"
+    )
+    if written == 0usize { return 15 }
+    if restarted {
+        if append_text("target/jadren/time-tracker-pro-project.result", "1\n") == 0usize { return 16 }
+    } else {
+        if append_text("target/jadren/time-tracker-pro-project.result", "0\n") == 0usize { return 16 }
+    }
+    return 0
+}

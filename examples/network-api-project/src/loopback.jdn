@@ -1,0 +1,170 @@
+module examples.network_api_project.loopback
+import jadren.network.reactor.close
+import jadren.network.reactor.event_bytes
+import jadren.network.reactor.event_operation
+import jadren.network.reactor.event_socket
+import jadren.network.reactor.event_user
+import jadren.network.reactor.open
+import jadren.network.reactor.poll
+import jadren.network.reactor.submit_accept
+import jadren.network.reactor.submit_receive_buffer
+import jadren.network.reactor.submit_send_buffer_prefix
+import jadren.network.tcp.close_socket
+import jadren.network.tcp.connect
+import jadren.network.tcp.listen
+import jadren.network.tcp.receive
+import jadren.network.tcp.send
+import jadren.network.tcp.set_timeout
+/// Real loopback transport: accept, receive and send are all driven by the
+/// imported reactor facade. No external server or thread is required.
+pub fn run_loopback() -> Int32 {
+    let listener = listen(38147u16)
+    if listener == 0usize {
+        return 10
+    }
+    let reactor = open(4u32,
+    8u32)
+    if reactor == 0usize {
+        close_socket(listener)
+        return 11
+    }
+    let accept_operation = submit_accept(reactor,
+    listener,
+    7usize)
+    if accept_operation == 0usize {
+        close(reactor)
+        close_socket(listener)
+        return 12
+    }
+    let client = connect("127.0.0.1",
+    38147u16)
+    if client == 0usize {
+        close(reactor)
+        close_socket(listener)
+        return 13
+    }
+    if ! set_timeout(client,
+    2000u32) {
+        close_socket(client)
+        close(reactor)
+        close_socket(listener)
+        return 14
+    }
+    let accepted_events = poll(reactor,
+    2000u32)
+    if accepted_events == 0u32 {
+        return 15
+    }
+    let accepted = event_socket(reactor,
+    0u32)
+    if accepted == 0usize {
+        return 16
+    }
+    if event_operation(reactor,
+    0u32) != accept_operation {
+        return 17
+    }
+    if event_user(reactor,
+    0u32) != 7usize {
+        return 18
+    }
+    if ! set_timeout(accepted,
+    2000u32) {
+        return 19
+    }
+    var request:[UInt8;
+    4] =[74u8,
+    65u8,
+    68u8,
+    82u8]
+    var received:[UInt8;
+    4] =[0u8,
+    0u8,
+    0u8,
+    0u8]
+    let receive_operation = submit_receive_buffer(reactor,
+    accepted,
+    received,
+    8usize)
+    if receive_operation == 0usize {
+        return 20
+    }
+    let sent = send(client,
+    request)
+    if sent != 4usize {
+        return 21
+    }
+    if poll(reactor,
+    2000u32) == 0u32 {
+        return 22
+    }
+    if event_operation(reactor,
+    0u32) != receive_operation {
+        return 23
+    }
+    if event_user(reactor,
+    0u32) != 8usize {
+        return 24
+    }
+    if event_bytes(reactor,
+    0u32) != 4usize {
+        return 25
+    }
+    if received[0] != 74u8 {
+        return 26
+    }
+    if received[3] != 82u8 {
+        return 26
+    }
+    var response:[UInt8;
+    3] =[79u8,
+    75u8,
+    33u8]
+    let send_operation = submit_send_buffer_prefix(reactor,
+    accepted,
+    response,
+    3usize,
+    9usize)
+    if send_operation == 0usize {
+        return 27
+    }
+    if poll(reactor,
+    2000u32) == 0u32 {
+        return 28
+    }
+    if event_operation(reactor,
+    0u32) != send_operation {
+        return 29
+    }
+    if event_bytes(reactor,
+    0u32) != 3usize {
+        return 30
+    }
+    var client_response:[UInt8;
+    3] =[0u8,
+    0u8,
+    0u8]
+    if receive(client,
+    client_response) != 3usize {
+        return 31
+    }
+    if client_response[0] != 79u8 {
+        return 32
+    }
+    if client_response[2] != 33u8 {
+        return 32
+    }
+    if ! close_socket(client) {
+        return 33
+    }
+    if ! close_socket(accepted) {
+        return 34
+    }
+    if ! close(reactor) {
+        return 35
+    }
+    if ! close_socket(listener) {
+        return 36
+    }
+    return 0
+}

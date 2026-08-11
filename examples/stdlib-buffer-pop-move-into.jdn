@@ -1,0 +1,36 @@
+module examples.stdlib_buffer_pop_move_into
+
+// `buffer_pop_move_into` transfers the last owning element into a caller-owned
+// slot, avoiding a large aggregate return across the native C ABI.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let inner_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let output_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match inner_created {
+                Ok(inner) => {
+                    match output_created {
+                        Ok(output) => {
+                            if !buffer_append(inner, 42) { result_code = 1 }
+                            if !buffer_append(outer, inner) { result_code = 2 }
+                            let moved: Bool = buffer_pop_move_into(outer, output)
+                            if !moved { result_code = 3 }
+                            if buffer_length(output) != 1usize { result_code = 4 }
+                            if output[0] != 42 { result_code = 5 }
+                            if buffer_length(outer) != 0usize { result_code = 6 }
+                            let status: Int32 = buffer_pop_move_into_status(outer, output)
+                            if status != -20 { result_code = 7 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

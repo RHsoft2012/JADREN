@@ -1,0 +1,11 @@
+module examples.selfhost.typed_if_local_assignment_stage2
+
+// Companion source for assignment after a branch-local merge. The merged
+// value is updated in the join before the final return.
+
+fn main() -> Int32 {
+    // branch-local stack storage
+    let value: Int32 = if 2 > 1 { 10 } else { 20 }
+    value = value + 1
+    return value
+}

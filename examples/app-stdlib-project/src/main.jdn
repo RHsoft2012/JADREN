@@ -1,0 +1,102 @@
+module app_stdlib_project.main
+
+import app_stdlib_project.scheduler_probe.run
+import app_stdlib_project.fs_probe.run_fs_probe
+
+import jadren.app.data.save_atomic
+import jadren.app.list.count
+import jadren.app.list.push_text
+import jadren.app.list.read_text
+import jadren.app.list.sort_text
+import jadren.app.state.clear
+import jadren.app.state.exists
+import jadren.app.state.get_int
+import jadren.app.state.revision
+import jadren.app.state.set_int
+import jadren.app.state.set_text
+import jadren.app.data.load
+import jadren.app.export.escape_csv
+import jadren.app.export.int_text
+import jadren.app.fs.size
+import jadren.app.fs.write_text
+import jadren.app.table.append_row
+import jadren.app.table.find_column
+import jadren.app.table.read_cell
+import jadren.app.table.read_int
+import jadren.app.table.row_count
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+import jadren.app.table.sort_int
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    if !run() { return 41 }
+    if !run_fs_probe() { return 42 }
+    clear()
+    if !set_text("project", "app-stdlib") { return 1 }
+    if !set_int("runs", 7i64) { return 2 }
+    if !exists("project") { return 3 }
+    if get_int("runs") != 7i64 { return 4 }
+
+    if !push_text(0, "Beta") { return 5 }
+    if !push_text(0, "Alpha") { return 6 }
+    if count(0) != 2 { return 7 }
+    if !sort_text(0, false) { return 8 }
+    var list_output: [UInt8; 5] = [0u8, 0u8, 0u8, 0u8, 0u8]
+    if read_text(0, 0, list_output) != 5usize { return 9 }
+    if list_output[0] != 65u8 { return 10 }
+
+    if !set_column_name(0, 0, "name") { return 11 }
+    if !append_row(0) { return 12 }
+    if !set_cell(0, 0, 0, "Alpha") { return 13 }
+    if row_count(0) != 1 { return 14 }
+    if find_column(0, "name") != 0 { return 15 }
+    var table_output: [UInt8; 5] = [0u8, 0u8, 0u8, 0u8, 0u8]
+    if read_cell(0, 0, 0, table_output) != 5usize { return 16 }
+    if table_output[0] != 65u8 { return 17 }
+
+    if !set_column_name(1, 0, "rank") { return 18 }
+    if !set_column_type(1, 0, 1) { return 19 }
+    if !append_row(1) { return 20 }
+    if !append_row(1) { return 21 }
+    if !app_table_set_int(1, 0, 0, 10i64) { return 22 }
+    if !app_table_set_int(1, 1, 0, 2i64) { return 23 }
+    if !sort_int(1, 0, false) { return 24 }
+    if read_int(1, 0, 0) != 2i64 { return 25 }
+
+    var csv_field: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if escape_csv("A,B", csv_field) != 5usize { return 26 }
+    if csv_field[0] != 34u8 { return 27 }
+    if csv_field[4] != 34u8 { return 28 }
+    var id_text: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if int_text(42i64, id_text) != 2usize { return 29 }
+    if id_text[0] != 52u8 { return 30 }
+    if id_text[1] != 50u8 { return 31 }
+
+    if !save_atomic(
+        "target/jadren/app-stdlib-project.tmp",
+        "target/jadren/app-stdlib-project.data"
+    ) { return 32 }
+    if !set_text("project", "mutated") { return 33 }
+    if !load("target/jadren/app-stdlib-project.data") { return 34 }
+    var state_output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if state_output[0] != 0u8 { return 35 }
+    if !exists("project") { return 36 }
+    if get_int("runs") != 7i64 { return 37 }
+    if revision() == 0u64 { return 38 }
+    if !data_checkpoint_exists() { return 39 }
+    if write_text(
+        "target/jadren/app-stdlib-project.result",
+        "app-stdlib:pass\n"
+    ) == 0usize { return 40 }
+    return 0
+}
+
+fn data_checkpoint_exists() -> Bool {
+    return size("target/jadren/app-stdlib-project.data") > 0usize
+}

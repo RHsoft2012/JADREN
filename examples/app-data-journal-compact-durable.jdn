@@ -1,0 +1,48 @@
+module examples.app_data_journal_compact_durable
+
+// Recover the newest complete checkpoint and compact the journal while a
+// caller-owned cross-process lock protects recovery and atomic replacement.
+fn main() -> Int32 {
+    file_delete("target/jadren/app-data-journal-compact-durable.journal")
+    file_delete("target/jadren/app-data-journal-compact-durable.scratch")
+    file_delete("target/jadren/app-data-journal-compact-durable.tmp")
+    file_delete("target/jadren/app-data-journal-compact-durable.lock")
+
+    if !app_state_set_int("counter", 1i64) { return 1 }
+    if !app_data_journal_append_durable(
+        "target/jadren/app-data-journal-compact-durable.journal",
+        "target/jadren/app-data-journal-compact-durable.scratch",
+        "target/jadren/app-data-journal-compact-durable.lock"
+    ) { return 2 }
+    if !app_state_set_int("counter", 2i64) { return 3 }
+    if !app_data_journal_append_durable(
+        "target/jadren/app-data-journal-compact-durable.journal",
+        "target/jadren/app-data-journal-compact-durable.scratch",
+        "target/jadren/app-data-journal-compact-durable.lock"
+    ) { return 4 }
+
+    // A previous interrupted compaction may have left stale bytes here.
+    file_append_text("target/jadren/app-data-journal-compact-durable.tmp", "stale")
+    let before: UIntSize = file_size("target/jadren/app-data-journal-compact-durable.journal")
+    if !app_data_journal_recover_compact_durable(
+        "target/jadren/app-data-journal-compact-durable.journal",
+        "target/jadren/app-data-journal-compact-durable.scratch",
+        "target/jadren/app-data-journal-compact-durable.tmp",
+        "target/jadren/app-data-journal-compact-durable.lock"
+    ) { return 5 }
+    let after: UIntSize = file_size("target/jadren/app-data-journal-compact-durable.journal")
+    if after >= before { return 6 }
+
+    app_state_clear()
+    if !app_data_journal_recover(
+        "target/jadren/app-data-journal-compact-durable.journal",
+        "target/jadren/app-data-journal-compact-durable.scratch"
+    ) { return 7 }
+    if app_state_get_int("counter") != 2i64 { return 8 }
+
+    file_delete("target/jadren/app-data-journal-compact-durable.journal")
+    file_delete("target/jadren/app-data-journal-compact-durable.scratch")
+    file_delete("target/jadren/app-data-journal-compact-durable.tmp")
+    file_delete("target/jadren/app-data-journal-compact-durable.lock")
+    return 0
+}

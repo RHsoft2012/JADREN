@@ -1,0 +1,38 @@
+module app_event_reducer_project.model
+
+import jadren.app.state.get_bool
+import jadren.app.state.get_int
+import jadren.app.state.set_bool
+import jadren.app.state.set_int
+
+/// Application-owned typed model. The runtime state store remains the
+/// persistence boundary; this record is the reducer's local typed snapshot.
+pub struct FormModel {
+    pub runs: Int64,
+    pub completed: Bool,
+    pub selected: Int32,
+    pub list_index: Int32,
+    pub table_row: Int32,
+    pub text_length: Int64,
+}
+
+pub fn load() -> FormModel {
+    return FormModel {
+        runs: get_int("reducer.runs"),
+        completed: get_bool("reducer.completed"),
+        selected: get_int("reducer.selected") as Int32,
+        list_index: get_int("reducer.list_index") as Int32,
+        table_row: get_int("reducer.table_row") as Int32,
+        text_length: get_int("reducer.text_length"),
+    }
+}
+
+pub fn commit(model: FormModel) -> Bool {
+    if !set_int("reducer.runs", model.runs) { return false }
+    if !set_bool("reducer.completed", model.completed) { return false }
+    if !set_int("reducer.selected", model.selected as Int64) { return false }
+    if !set_int("reducer.list_index", model.list_index as Int64) { return false }
+    if !set_int("reducer.table_row", model.table_row as Int64) { return false }
+    if !set_int("reducer.text_length", model.text_length) { return false }
+    return true
+}

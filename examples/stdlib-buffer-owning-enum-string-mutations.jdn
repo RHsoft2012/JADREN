@@ -1,0 +1,46 @@
+module examples.stdlib_buffer_owning_enum_string_mutations
+
+// Resize/clear and drop-only remove use the same tag-aware field table as
+// scope cleanup. Zero-grown enum slots have the Idle tag and therefore no
+// OwnedString destructor is invoked for inactive variants.
+@repr(C) enum Event {
+    Idle,
+    Text(OwnedString),
+    Pair(OwnedString, Int32),
+    Done
+}
+
+fn main() -> Int32 {
+    let events_created: Result<Buffer<Event>, Int32> = buffer_create(0usize)
+    let first_created: Result<OwnedString, Int32> = string_owned_from("first")
+    let second_created: Result<OwnedString, Int32> = string_owned_from("second")
+    var result_code: Int32 = 0
+
+    match events_created {
+        Ok(events) => {
+            match first_created {
+                Ok(first) => {
+                    if !buffer_append(events, Event.Text(first)) { result_code = 1 }
+                    match second_created {
+                        Ok(second) => {
+                            if !buffer_append(events, Event.Pair(second, 7)) { result_code = 2 }
+                            if !buffer_resize_move(events, 4usize) { result_code = 3 }
+                            let shrink_status: Int32 = buffer_resize_move_status(events, 1usize)
+                            if shrink_status != 0 { result_code = shrink_status }
+                            let removed: Bool = buffer_remove_drop(events, 0usize)
+                            if !removed { result_code = 4 }
+                            let clear_status: Int32 = buffer_clear_move_status(events)
+                            if clear_status != 0 { result_code = clear_status }
+                            if buffer_length(events) != 0usize { result_code = 5 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

@@ -1,0 +1,32 @@
+module examples.string_owned
+
+// OwnedString is a move-only UTF-8 value. The constructor reports allocation
+// and validation errors through Result; append/clear report a Status code.
+fn main() -> Int32 {
+    let created: Result<OwnedString, Int32> = string_owned_from("Jadren")
+    var result_code: Int32 = 1
+    match created {
+        Ok(value) => {
+            let status: Int32 = string_owned_append(value, "!!")
+            if status != 0 {
+                result_code = status
+            } else {
+                var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+                let copied: UIntSize = string_owned_copy(value, output)
+                file_delete("target/jadren/string-owned.txt")
+                let written: UIntSize = file_append("target/jadren/string-owned.txt", output, copied)
+                let length: UIntSize = string_owned_length(value)
+                if written == copied {
+                    if copied == 8usize {
+                        if length == 8usize {
+                            print("owned string ok")
+                            result_code = 0
+                        }
+                    }
+                }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

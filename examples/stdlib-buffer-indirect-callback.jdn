@@ -1,0 +1,59 @@
+module examples.stdlib_buffer_indirect_callback
+
+// A function-value call must use the same mutable descriptor ABI as a direct
+// call: append updates the caller-owned length/capacity words.
+fn append_indirect(values: write Buffer<Int32>, incoming: Buffer<Int32>) -> Bool {
+    if buffer_length(incoming) != 0usize { return false }
+    if !buffer_append(values, 42) { return false }
+    return buffer_length(values) == 1usize
+}
+
+// Explicit callback parameters carry the same function type contract.
+fn invoke(
+    callback: fn(write Buffer<Int32>, Buffer<Int32>) -> Bool,
+    values: write Buffer<Int32>,
+    incoming: Buffer<Int32>
+) -> Bool {
+    return callback(values, incoming)
+}
+
+// Region-owned descriptors use a region-shaped pointee at the callback
+// boundary, while the callback still reads/writes the caller-owned elements.
+fn mutate_region(values: write Buffer<Int32>) -> Bool {
+    if buffer_length(values) != 1usize { return false }
+    values[0] = 99
+    return values[0] == 99
+}
+
+fn main() -> Int32 {
+    let values_result: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let incoming_result: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match values_result {
+        Ok(values) => {
+            match incoming_result {
+                Ok(incoming) => {
+                    let callback = append_indirect
+                    if !invoke(callback, values, incoming) { result_code = 1 }
+                    if result_code == 0 {
+                        if buffer_length(values) != 1usize { result_code = 2 }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    if result_code != 0 {
+        return result_code
+    }
+
+    region frame {
+        let region_values: Buffer<Int32> = frame.allocate(1)
+        region_values[0] = 7
+        let region_callback = mutate_region
+        if !region_callback(region_values) { return 3 }
+        if region_values[0] != 99 { return 4 }
+    }
+    return 0
+}

@@ -1,0 +1,25 @@
+module examples.file_read_text_runtime;
+
+// file_read_text requires one extra byte for a trailing NUL and returns the
+// text length without that terminator. The caller owns the output buffer.
+fn main() -> Int32 {
+    file_delete("target/jadren/file-read-text.txt")
+
+    if file_write_text("target/jadren/file-read-text.txt", "Aho\nž") != 6usize { return 10 }
+
+    var too_small: [UInt8; 6] = [9u8, 9u8, 9u8, 9u8, 9u8, 9u8]
+    if file_read_text("target/jadren/file-read-text.txt", too_small) != 0usize { return 11 }
+    if too_small[0] != 9u8 { return 12 }
+
+    var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = file_read_text("target/jadren/file-read-text.txt", output)
+    if length != 6usize { return 13 }
+    if output[0] != 65u8 { return 14 }
+    if output[3] != 10u8 { return 15 }
+    if output[4] != 197u8 { return 16 }
+    if output[5] != 190u8 { return 16 }
+    if output[6] != 0u8 { return 17 }
+
+    if !file_delete("target/jadren/file-read-text.txt") { return 18 }
+    return 0
+}

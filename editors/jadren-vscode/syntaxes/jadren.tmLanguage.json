@@ -2,24 +2,16 @@
   "name": "Jadren",
   "scopeName": "source.jadren",
   "patterns": [
-    {
-      "include": "#comments"
-    },
-    {
-      "include": "#strings"
-    },
-    {
-      "include": "#numbers"
-    },
-    {
-      "include": "#keywords"
-    },
-    {
-      "include": "#types"
-    },
-    {
-      "include": "#functions"
-    }
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#literals" },
+    { "include": "#types" },
+    { "include": "#functions" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
   ],
   "repository": {
     "comments": {
@@ -53,15 +45,54 @@
     "numbers": {
       "patterns": [
         {
-          "match": "\\b(?:0x[0-9A-Fa-f_]+|[0-9][0-9_]*(?:\\.[0-9][0-9_]*)?)(?:u8|u16|u32|u64|i8|i16|i32|i64|f16|f32|f64)?\\b",
+          "match": "\\b(?:0x[0-9A-Fa-f_]+|0b[01_]+|0o[0-7_]+|[0-9][0-9_]*(?:\\.[0-9][0-9_]*)?)(?:u8|u16|u32|u64|usize|i8|i16|i32|i64|isize|f16|f32|f64)?\\b",
           "name": "constant.numeric.jadren"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(module)\\b\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)",
+          "captures": {
+            "1": { "name": "keyword.control.module.jadren" },
+            "2": { "name": "entity.name.namespace.jadren" }
+          }
+        },
+        {
+          "match": "\\b(import)\\b\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)",
+          "captures": {
+            "1": { "name": "keyword.control.import.jadren" },
+            "2": { "name": "entity.name.namespace.jadren" }
+          }
+        },
+        {
+          "match": "\\b(fn)\\b\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.function.jadren" },
+            "2": { "name": "entity.name.function.definition.jadren" }
+          }
+        },
+        {
+          "match": "\\b(struct|enum|trait|type)\\b\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.declaration.jadren" },
+            "2": { "name": "storage.type.java.jadren" }
+          }
+        },
+        {
+          "match": "\\b(let|var|const)\\b\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.modifier.binding.jadren" },
+            "2": { "name": "variable.other.definition.jadren" }
+          }
         }
       ]
     },
     "keywords": {
       "patterns": [
         {
-          "match": "\\b(?:module|import|pub|extern|unsafe|fn|return|let|var|if|else|match|region|true|false|as|where)\\b",
+          "match": "\\b(?:module|import|pub|extern|unsafe|fn|return|let|var|const|if|else|match|region|for|in|while|loop|break|continue|as|where|from|use|export|impl|struct|enum|trait|type)\\b",
           "name": "keyword.control.jadren"
         },
         {
@@ -70,19 +101,55 @@
         }
       ]
     },
+    "literals": {
+      "patterns": [
+        {
+          "match": "\\b(?:true|false)\\b",
+          "name": "constant.language.boolean.jadren"
+        },
+        {
+          "match": "\\b(?:None|Some|Ok|Err)\\b",
+          "name": "constant.language.constructor.jadren"
+        }
+      ]
+    },
     "types": {
       "patterns": [
         {
-          "match": "\\b(?:Bool|Char|String|Int8|Int16|Int32|Int64|UInt8|UInt16|UInt32|UInt64|Float16|Float32|Float64|Buffer|Slice|Option|Result)\\b",
+          "match": "\\b(?:Unit|Void|Bool|Char|String|Int8|Int16|Int32|Int64|IntSize|UInt8|UInt16|UInt32|UInt64|UIntSize|Float16|Float32|Float64|Buffer|Slice|Option|Result)\\b",
           "name": "storage.type.jadren"
+        },
+        {
+          "match": "\\b(?:owned|read|write)\\b",
+          "name": "storage.modifier.capability.jadren"
         }
       ]
     },
     "functions": {
       "patterns": [
         {
-          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()",
+          "match": "\\b(?!if\\b|for\\b|while\\b|match\\b|loop\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?=\\s*\\()",
           "name": "entity.name.function.jadren"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "match": "(?:->|=>|==|!=|<=|>=|&&|\\|\\||\\+|-|\\*|/|%|=|<|>|!|&|\\|)",
+          "name": "keyword.operator.jadren"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "match": "[,;:{}\\[\\]()]",
+          "name": "punctuation.separator.jadren"
+        },
+        {
+          "match": "\\.",
+          "name": "punctuation.accessor.jadren"
         }
       ]
     }

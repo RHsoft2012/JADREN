@@ -1,0 +1,11 @@
+[package]
+name = "jadren-ui"
+description = "Platform-neutral retained layout model for Jadren UI backends"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true

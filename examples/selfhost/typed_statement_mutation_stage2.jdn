@@ -1,0 +1,25 @@
+module examples.selfhost.typed_statement_mutation_stage2
+
+// Source companion for the first straight-line Stage-2 statement hand-off.
+// The caller-owned TypedStatementHeader stream describes the same three
+// statements below: a mutable Int32 local, an assignment to that local, and a
+// final return. The Rust lowering emits StackAlloc + Load/Store instead of
+// treating the assignment as an immutable SSA alias.
+@repr(C)
+pub struct TypedStatementHeader {
+    pub kind: UInt8,
+    pub flags: UInt8,
+    pub type_kind: UInt8,
+    pub reserved: UInt8,
+    pub target_start: UInt64,
+    pub target_end: UInt64,
+    pub expression_node: UInt64,
+    pub start: UInt64,
+    pub end: UInt64,
+}
+
+fn main() -> Int32 {
+    var value: Int32 = 1
+    value = value + 2
+    return value
+}

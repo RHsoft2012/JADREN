@@ -1,0 +1,30 @@
+module examples.http_query_param
+
+// Query extraction is bounded, allocation-free and percent-decodes one value.
+fn main() -> Int32 {
+    var query: [UInt8; 47] = [105u8, 100u8, 61u8, 52u8, 50u8, 38u8, 110u8, 97u8, 109u8, 101u8, 61u8, 74u8, 97u8, 100u8, 114u8, 101u8, 110u8, 43u8, 85u8, 73u8, 38u8, 110u8, 111u8, 116u8, 101u8, 61u8, 104u8, 101u8, 108u8, 108u8, 111u8, 37u8, 50u8, 48u8, 119u8, 111u8, 114u8, 108u8, 100u8, 35u8, 105u8, 103u8, 110u8, 111u8, 114u8, 101u8, 100u8]
+    var id: [UInt8; 2] = [0u8, 0u8]
+    if http_query_param(query, "id", id) != 2usize { return 1 }
+    if id[0] != 52u8 { return 2 }
+    if id[1] != 50u8 { return 2 }
+
+    var name: [UInt8; 9] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if http_query_param(query, "name", name) != 9usize { return 3 }
+    if name[6] != 32u8 { return 4 }
+    if name[8] != 73u8 { return 4 }
+
+    var note: [UInt8; 11] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if http_query_param(query, "note", note) != 11usize { return 5 }
+    if note[5] != 32u8 { return 6 }
+    if note[10] != 100u8 { return 6 }
+
+    var too_small: [UInt8; 1] = [0u8]
+    if http_query_param(query, "name", too_small) != 0usize { return 7 }
+    if http_query_param(query, "missing", note) != 0usize { return 8 }
+
+    var invalid: [UInt8; 5] = [120u8, 61u8, 37u8, 71u8, 49u8]
+    if http_query_param(invalid, "x", note) != 0usize { return 9 }
+    var duplicate: [UInt8; 7] = [120u8, 61u8, 49u8, 38u8, 120u8, 61u8, 50u8]
+    if http_query_param(duplicate, "x", note) != 0usize { return 10 }
+    return 0
+}

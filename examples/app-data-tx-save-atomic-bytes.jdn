@@ -1,0 +1,25 @@
+module examples.app_data_tx_save_atomic_bytes
+
+fn main() -> Int32 {
+    app_state_clear()
+    var input: [UInt8; 14] = [81u8, 65u8, 32u8, 112u8, 114u8, 101u8, 102u8,
+        101u8, 114u8, 101u8, 110u8, 99u8, 101u8, 115u8]
+    if !app_state_set_text_bytes("name", input, 14usize) { return 1 }
+    if !app_data_tx_begin() { return 2 }
+    if !app_data_tx_save_atomic(
+        "target/app-data-tx-save-atomic-bytes.tmp",
+        "target/app-data-tx-save-atomic-bytes.data"
+    ) { return 3 }
+    if !app_state_set_text("name", "mutated") { return 4 }
+    if !app_data_load("target/app-data-tx-save-atomic-bytes.data") { return 5 }
+    var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = app_state_read_text("name", output)
+    if length != 14usize { return 6 }
+    if output[0] != 81u8 { return 7 }
+    file_delete("target/app-data-tx-save-atomic-bytes.tmp")
+    file_delete("target/app-data-tx-save-atomic-bytes.data")
+    return 0
+}

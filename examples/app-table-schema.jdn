@@ -1,0 +1,77 @@
+module examples.app_table_schema
+
+// Runtime table schema: 0=text, 1=signed integer, 2=unsigned integer, 3=bool.
+// Cells remain UTF-8 storage, while typed columns validate writes and changes.
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !app_table_set_column_type(0, 0, 1) { return 1 }
+    if !app_table_set_column_type(0, 1, 3) { return 2 }
+    if !app_table_set_column_type(0, 2, 0) { return 3 }
+    if app_table_column_type(0, 0) != 1 { return 4 }
+    if app_table_column_type(0, 1) != 3 { return 5 }
+
+    if !app_table_append_row(0) { return 6 }
+    if !app_table_set_int(0, 0, 0, 42 as Int64) { return 7 }
+    if !app_table_set_bool(0, 0, 1, true) { return 8 }
+    if !app_table_set_cell(0, 0, 2, "Focus") { return 9 }
+    if !app_table_set_column_type(0, 3, 2) { return 43 }
+    if !app_table_set_uint(0, 0, 3, 7u64) { return 44 }
+    if app_table_set_uint(0, 0, 0, 7u64) { return 48 }
+    if app_table_set_bool(0, 0, 0, true) { return 49 }
+    if app_table_set_cell(0, 0, 0, "forty") { return 10 }
+    if app_table_set_cell(0, 0, 1, "yes") { return 11 }
+    if !app_table_validate(0) { return 12 }
+    if app_table_read_int(0, 0, 0) != 42 as Int64 { return 45 }
+    if app_table_read_uint(0, 0, 3) != 7u64 { return 46 }
+    if !app_table_read_bool(0, 0, 1) { return 47 }
+
+    var output: [UInt8; 2] = [0u8, 0u8]
+    if app_table_read_cell(0, 0, 0, output) != 2usize { return 13 }
+    if output[0] != 52u8 { return 14 }
+    if output[1] != 50u8 { return 14 }
+
+    if !app_table_set_cell(0, 0, 0, "-1") { return 15 }
+    if app_table_set_column_type(0, 0, 2) { return 16 }
+    if app_table_column_type(0, 0) != 1 { return 17 }
+
+    // Schema is persisted independently so the legacy row JSON stays stable.
+    if !app_table_save_schema(0, "target/jadren/app-table-schema.json") { return 18 }
+    if !app_table_save_schema_atomic(0, "target/jadren/app-table-schema.tmp", "target/jadren/app-table-schema.json") { return 19 }
+    if !app_table_set_column_type(0, 0, 0) { return 20 }
+    if app_table_column_type(0, 0) != 0 { return 21 }
+    if !app_table_load_schema(0, "target/jadren/app-table-schema.json") { return 22 }
+    if app_table_column_type(0, 0) != 1 { return 23 }
+    let invalid_schema_written: UIntSize = file_write_text(
+        "target/jadren/app-table-schema-invalid.json",
+        "[1,3,9,0,0,0,0,0]"
+    )
+    if invalid_schema_written == 0usize { return 24 }
+    if app_table_load_schema(0, "target/jadren/app-table-schema-invalid.json") { return 25 }
+    if app_table_column_type(0, 0) != 1 { return 26 }
+
+    // Filtering copies the source schema together with its rows.
+    if !app_table_set_column_type(1, 0, 3) { return 27 }
+    if !app_table_filter_text(0, 1, 2, "Focus") { return 28 }
+    if app_table_column_type(1, 0) != 1 { return 29 }
+    if app_table_column_type(1, 1) != 3 { return 30 }
+    if !app_table_validate(1) { return 31 }
+
+    // Loading keeps the configured schema and rejects invalid typed rows atomically.
+    if !app_table_save(0, "target/jadren/app-table-schema-rows.json") { return 32 }
+    app_table_clear(0)
+    if !app_table_load(0, "target/jadren/app-table-schema-rows.json") { return 33 }
+    if !app_table_validate(0) { return 34 }
+    let invalid_written: UIntSize = file_write_text(
+        "target/jadren/app-table-schema-rows-invalid.json",
+        "[[\"bad\",\"false\",\"\",\"\",\"\",\"\",\"\",\"\"]]"
+    )
+    if invalid_written == 0usize { return 35 }
+    if app_table_load(0, "target/jadren/app-table-schema-rows-invalid.json") { return 36 }
+    if app_table_row_count(0) != 1 { return 37 }
+    if !file_delete("target/jadren/app-table-schema.json") { return 38 }
+    if file_exists("target/jadren/app-table-schema.tmp") { return 39 }
+    if !file_delete("target/jadren/app-table-schema-invalid.json") { return 40 }
+    if !file_delete("target/jadren/app-table-schema-rows.json") { return 41 }
+    if !file_delete("target/jadren/app-table-schema-rows-invalid.json") { return 42 }
+    return 0
+}

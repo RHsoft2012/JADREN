@@ -1,0 +1,29 @@
+module generic_nominal.main
+
+import generic_nominal.model.Box
+import generic_nominal.model.Frame
+
+fn main() -> Int32 {
+    let inner: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let outer: Result<Buffer<Frame<Buffer<Int32>>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match inner {
+        Ok(values) => {
+            if !buffer_append(values, 7) { result_code = 1 }
+            let item: Frame<Buffer<Int32>> = Frame {
+                first: Box { value: values }
+            }
+            match outer {
+                Ok(items) => {
+                    if !buffer_append(items, item) { result_code = 2 }
+                    if items[0].first.value[0] != 7 { result_code = 3 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

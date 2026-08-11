@@ -1,0 +1,58 @@
+module time_tracker_project.model
+
+import jadren.app.list.count
+import jadren.app.list.push_text
+import jadren.app.state.set_int
+import jadren.app.state.set_text
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+import jadren.app.table.set_named_cell
+import jadren.app.table.upsert_int
+import time_tracker_project.storage.load
+import time_tracker_project.storage.save
+
+// The model module owns the application state and table.  UI code does not
+// write rows directly; it receives this projection from the model module.
+pub fn bootstrap() -> Bool {
+    if file_exists("target/jadren/time-tracker-pro-project.data") {
+        if !load() { return false }
+        if app_table_row_count(0) != 2 { return false }
+        if count(0) < 3 { return false }
+        return true
+    }
+    app_state_clear()
+    app_list_clear(0)
+    if !push_text(0, "Plan UI") { return false }
+    if !push_text(0, "Review build") { return false }
+    app_table_clear(0)
+    if !set_column_name(0, 0, "title") { return false }
+    if !set_column_name(0, 1, "time") { return false }
+    if !set_column_name(0, 2, "status") { return false }
+    if !set_column_name(0, 3, "task_id") { return false }
+    if !set_column_type(0, 3, 1) { return false }
+
+    let first: Int32 = upsert_int(0, 3, 1 as Int64)
+    let second: Int32 = upsert_int(0, 3, 2 as Int64)
+    if first != 0 as Int32 { return false }
+    if second != 1 as Int32 { return false }
+    if !set_named_cell(0, first, "title", "Plan UI") { return false }
+    if !set_named_cell(0, first, "time", "08:30") { return false }
+    if !set_named_cell(0, first, "status", "Open") { return false }
+    if !set_named_cell(0, second, "title", "Review build") { return false }
+    if !set_named_cell(0, second, "time", "09:15") { return false }
+    if !set_named_cell(0, second, "status", "Open") { return false }
+    if !set_int("selected_task_id", 1 as Int64) { return false }
+    if !set_int("selected_list_index", -1 as Int64) { return false }
+    if !set_int("list_events", 0 as Int64) { return false }
+    if !set_text("draft", "New list item") { return false }
+    if !set_int("controller_events", 0 as Int64) { return false }
+    return checkpoint()
+}
+
+pub fn row_count() -> Int32 {
+    return app_table_row_count(0)
+}
+
+pub fn checkpoint() -> Bool {
+    return save()
+}

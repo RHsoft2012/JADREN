@@ -1,0 +1,81 @@
+module examples.http_reactor_server;
+
+// Async HTTP composition built only from Jadren APIs: the reactor accepts a
+// socket, receives a complete bounded request into caller-owned memory, routes
+// it through the native bounded router, and sends the exact response prefix.
+// This is intentionally one connection/one request; keep-alive is the next
+// higher-level composition step.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38136u16)
+    if (listener as Int32) == 0 { return 10 }
+    let reactor: UIntSize = net_reactor_open(4u32, 8u32)
+    if (reactor as Int32) == 0 { net_socket_close(listener); return 11 }
+
+    http_router_clear()
+    var body: [UInt8; 2] = [79u8, 75u8]
+    let route_added: Bool = http_router_add("GET", "/hello", 200u16, "text/plain", body)
+    if !route_added {
+        net_reactor_close(reactor); net_socket_close(listener); return 12
+    }
+
+    let accept_operation: UIntSize = net_reactor_submit_accept(reactor, listener, 10usize)
+    if (accept_operation as Int32) == 0 {
+        net_reactor_close(reactor); net_socket_close(listener); return 13
+    }
+    let accepted_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if accepted_events == 0u32 {
+        net_reactor_close(reactor); net_socket_close(listener); return 14
+    }
+    let client: UIntSize = net_reactor_event_socket(reactor, 0u32)
+    if (client as Int32) == 0 {
+        net_reactor_close(reactor); net_socket_close(listener); return 15
+    }
+
+    // Exact 40-byte request: GET /hello + Host header + CRLF terminator.
+    var request: [UInt8; 40] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let receive_operation: UIntSize = net_reactor_submit_receive_buffer(
+        reactor, client, request, 20usize)
+    if (receive_operation as Int32) == 0 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 16
+    }
+    let received_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if received_events == 0u32 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 17
+    }
+    let received_bytes: UIntSize = net_reactor_event_bytes(reactor, 0u32)
+    if (received_bytes as Int32) != 40 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 18
+    }
+    if !http_request_is_complete(request) {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 19
+    }
+
+    // The bounded router response for this route is 85 bytes, so the
+    // caller-owned buffer is exactly sized and can be sent without a hidden
+    // slice/prefix allocation.
+    var response: [UInt8; 85] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let response_length: UIntSize = http_router_respond(request, response)
+    if response_length == 0usize {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 20
+    }
+    let send_operation: UIntSize = net_reactor_submit_send_buffer(
+        reactor, client, response, 30usize)
+    if (send_operation as Int32) == 0 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 21
+    }
+    let sent_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if sent_events == 0u32 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 22
+    }
+    let sent_bytes: UIntSize = net_reactor_event_bytes(reactor, 0u32)
+    if (sent_bytes as Int32) != (response_length as Int32) {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 23
+    }
+    let client_closed: Bool = net_socket_close(client)
+    let reactor_closed: Bool = net_reactor_close(reactor)
+    let listener_closed: Bool = net_socket_close(listener)
+    if !client_closed { return 24 }
+    if !reactor_closed { return 25 }
+    if !listener_closed { return 26 }
+    return 0
+}

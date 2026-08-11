@@ -1,0 +1,15 @@
+module examples.selfhost.typed_while_local_conditional_break_stage2
+
+// Companion source for a bounded while with a conditional terminal break.
+// The loop increments twice, then exits when the Bool condition becomes true.
+
+fn main() -> Int32 {
+    var counter: Int32 = 0
+    while counter < 4 {
+        counter = counter + 1
+        if counter > 1 {
+            break
+        }
+    }
+    return counter
+}

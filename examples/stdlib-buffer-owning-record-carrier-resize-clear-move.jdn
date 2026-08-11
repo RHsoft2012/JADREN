@@ -1,0 +1,112 @@
+module examples.stdlib_buffer_owning_record_carrier_resize_clear_move
+
+// Move-aware resize/clear reuses the record field table used by drop/remove.
+// Carrier tags ensure that only the active Option/Result Buffer branch is
+// destroyed before a shrink or clear publishes the new logical length.
+@repr(C)
+struct Entry {
+    id: Int32,
+    maybe: Option<Buffer<Int32>>,
+    outcome: Result<Buffer<Int32>, Buffer<Int32>>
+}
+
+fn main() -> Int32 {
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let third_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let direct_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match first_created {
+        Ok(first) => {
+            match second_created {
+                Ok(second) => {
+                    match third_created {
+                        Ok(third) => {
+                            match direct_created {
+                                Ok(direct) => {
+                                    if !buffer_append(first, 11) { result_code = 1 }
+                                    if !buffer_append(second, 22) { result_code = 2 }
+                                    if !buffer_append(third, 33) { result_code = 3 }
+                                    let first_entry: Entry = Entry {
+                                        id: 1,
+                                        maybe: Some(first),
+                                        outcome: Ok(second)
+                                    }
+                                    let second_entry: Entry = Entry {
+                                        id: 2,
+                                        maybe: None,
+                                        outcome: Error(third)
+                                    }
+                                    if !buffer_append(direct, first_entry) { result_code = 4 }
+                                    if !buffer_append(direct, second_entry) { result_code = 5 }
+                                    let shrink_status: Int32 = buffer_resize_move_status(direct, 1usize)
+                                    if shrink_status != 0 { result_code = 6 }
+                                    if buffer_length(direct) != 1usize { result_code = 7 }
+                                    let cleared_status: Int32 = buffer_clear_move_status(direct)
+                                    if cleared_status != 0 { result_code = 8 }
+                                    if buffer_length(direct) != 0usize { result_code = 9 }
+                                    let grown: Bool = buffer_resize_move(direct, 2usize)
+                                    if !grown { result_code = 10 }
+                                    if buffer_length(direct) != 2usize { result_code = 11 }
+                                    let cleared: Bool = buffer_clear_move(direct)
+                                    if !cleared { result_code = 12 }
+                                    if buffer_length(direct) != 0usize { result_code = 13 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let nested_outer_created: Result<Buffer<Buffer<Entry>>, Int32> = buffer_create(0usize)
+    let nested_inner_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let nested_value_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let nested_error_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    match nested_outer_created {
+        Ok(outer) => {
+            match nested_inner_created {
+                Ok(inner) => {
+                    match nested_value_created {
+                        Ok(value) => {
+                            match nested_error_created {
+                                Ok(error) => {
+                                    if !buffer_append(value, 44) { result_code = 14 }
+                                    if !buffer_append(error, 55) { result_code = 15 }
+                                    let nested_entry: Entry = Entry {
+                                        id: 3,
+                                        maybe: Some(value),
+                                        outcome: Error(error)
+                                    }
+                                    if !buffer_append(inner, nested_entry) { result_code = 16 }
+                                    if !buffer_append(outer, inner) { result_code = 17 }
+                                    let grown_status: Int32 = buffer_resize_move_status(outer, 2usize)
+                                    if grown_status != 0 { result_code = 18 }
+                                    if buffer_length(outer) != 2usize { result_code = 19 }
+                                    let shrunk: Bool = buffer_resize_move(outer, 1usize)
+                                    if !shrunk { result_code = 20 }
+                                    if buffer_length(outer) != 1usize { result_code = 21 }
+                                    let cleared_nested: Int32 = buffer_clear_move_status(outer)
+                                    if cleared_nested != 0 { result_code = 22 }
+                                    if buffer_length(outer) != 0usize { result_code = 23 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

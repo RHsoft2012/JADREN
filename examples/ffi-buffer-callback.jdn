@@ -1,0 +1,20 @@
+module examples.ffi_buffer_callback
+
+/// C-callable callback-compatible entry point.
+///
+/// The descriptor is borrowed from the C caller for the duration of the
+/// call. The fixture intentionally does not retain or allocate it.
+@export(name: "jadren_buffer_callback", abi: "C")
+pub fn buffer_callback(values: write Buffer<Int32>) -> Int32 {
+    values[0] = 42
+    return values[0]
+}
+
+/// C host may provide this callback and Jadren invokes it synchronously.
+@export(name: "jadren_invoke_buffer_callback", abi: "C")
+pub fn invoke_buffer_callback(
+    callback: fn(write Buffer<Int32>) -> Int32,
+    values: write Buffer<Int32>,
+) -> Int32 {
+    return callback(values)
+}

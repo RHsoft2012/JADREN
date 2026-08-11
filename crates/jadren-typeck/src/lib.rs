@@ -9,8 +9,9 @@ use jadren_parser::{
     TypeRef,
 };
 use jadren_resolve::{
-    DeclaredVisibility, ModuleEnumInterface, ModuleFunctionSignature, ModuleRecordInterface,
-    ModuleType, Namespace, ResolutionOutput, Symbol, SymbolId, SymbolKind, SymbolOrigin,
+    DeclaredVisibility, ModuleCatalog, ModuleEnumInterface, ModuleFunctionSignature,
+    ModuleRecordInterface, ModuleType, Namespace, ResolutionOutput, Symbol, SymbolId, SymbolKind,
+    SymbolOrigin,
 };
 use jadren_source::{SourceFile, SourceId, Span};
 use jadren_types::{
@@ -288,6 +289,8 @@ pub struct MonomorphizationInstance {
     pub key: MonomorphizationKey,
     /// Concrete type arguments in generic parameter order.
     pub arguments: Vec<TypeId>,
+    /// Source call range that requested this concrete instance.
+    pub span: Span,
 }
 
 /// Typed allocation owned by one lexical `region` statement.
@@ -374,13 +377,32 @@ pub fn check_types(
     file: &AstFile,
     resolution: &ResolutionOutput,
 ) -> TypeCheckOutput {
-    Checker::new(source, file, resolution).run()
+    Checker::new(source, file, resolution, None).run()
+}
+
+/// Lowers types with the complete compiler-session module catalog available.
+///
+/// A function imported from another module can carry a nominal type in its
+/// signature (for example `Result<Int32, CoreError>`).  The resolver already
+/// stores that signature as a portable interface, but a source-local checker
+/// also needs the defining record/enum layout for MIR-to-JIR lowering.  The
+/// catalog-aware entry point makes that transitive package ABI explicit while
+/// preserving [`check_types`] for isolated frontend callers and unit tests.
+#[must_use]
+pub fn check_types_with_modules(
+    source: &SourceFile,
+    file: &AstFile,
+    resolution: &ResolutionOutput,
+    catalog: &ModuleCatalog,
+) -> TypeCheckOutput {
+    Checker::new(source, file, resolution, Some(catalog)).run()
 }
 
 struct Checker<'a> {
     source: &'a SourceFile,
     file: &'a AstFile,
     resolution: &'a ResolutionOutput,
+    module_catalog: Option<&'a ModuleCatalog>,
     types: TypeStore,
     unification: UnificationTable,
     symbol_types: Vec<Option<TypeId>>,
@@ -435,11 +457,17 @@ enum PatternCoverage {
 }
 
 impl<'a> Checker<'a> {
-    fn new(source: &'a SourceFile, file: &'a AstFile, resolution: &'a ResolutionOutput) -> Self {
+    fn new(
+        source: &'a SourceFile,
+        file: &'a AstFile,
+        resolution: &'a ResolutionOutput,
+        module_catalog: Option<&'a ModuleCatalog>,
+    ) -> Self {
         Self {
             source,
             file,
             resolution,
+            module_catalog,
             types: TypeStore::new(),
             unification: UnificationTable::new(),
             symbol_types: vec![None; resolution.symbols.len()],
@@ -500,7 +528,10 @@ impl<'a> Checker<'a> {
             }
         }
         self.finalize_types();
-        let nominal_layouts = self.export_nominal_layouts();
+        let mut nominal_layouts = self.export_nominal_layouts();
+        nominal_layouts.extend(self.export_catalog_nominal_layouts());
+        nominal_layouts.sort_by_key(|layout| layout.constructor);
+        nominal_layouts.dedup_by_key(|layout| layout.constructor);
         TypeCheckOutput {
             types: self.types,
             symbol_types: self.symbol_types,
@@ -828,7 +859,7 @@ impl<'a> Checker<'a> {
                     continue;
                 };
                 let mut visiting = DeterministicSet::new();
-                if !self.is_c_abi_type(field.ty, &mut visiting) {
+                if !self.is_c_record_field_type(field.ty, &mut visiting) {
                     self.diagnostics.push(Diagnostic::error(
                         "J0801",
                         format!("field `{name}` is not representable in `repr(C)` type"),
@@ -850,13 +881,16 @@ impl<'a> Checker<'a> {
                 continue;
             }
             for variant in declaration.variants.values() {
-                if !variant.fields.is_empty() {
-                    self.diagnostics.push(Diagnostic::error(
-                        "J0803",
-                        "payload enums are not supported by `repr(C)` in Jadren 0.1",
-                        variant.span,
-                        "use a `struct` with an explicit tag and payload instead",
-                    ));
+                for field in &variant.fields {
+                    let mut visiting = DeterministicSet::new();
+                    if !self.is_c_enum_payload_type(*field, &mut visiting) {
+                        self.diagnostics.push(Diagnostic::error(
+                            "J0803",
+                            "payload field is not representable in `repr(C)` enum",
+                            variant.span,
+                            "use fixed-width scalar, array, pointer, or another `@repr(C)` type",
+                        ));
+                    }
                 }
             }
         }
@@ -975,6 +1009,10 @@ impl<'a> Checker<'a> {
     fn is_c_abi_type(&self, ty: TypeId, visiting: &mut DeterministicSet<NominalTypeId>) -> bool {
         match self.types.kind(ty) {
             Some(TypeKind::Integer { .. } | TypeKind::Float(_)) => true,
+            // Generic C-layout declarations are validated after their
+            // nominal arguments are substituted.  The Buffer<T> copy-safety
+            // gate performs that concrete validation before byte-copy codegen.
+            Some(TypeKind::GenericParameter(_)) => true,
             Some(TypeKind::Vector { element, lanes }) => {
                 matches!(
                     self.types.kind(*element),
@@ -1004,10 +1042,12 @@ impl<'a> Checker<'a> {
                             .all(|field| self.is_c_abi_type(field.ty, visiting))
                 } else if let Some(declaration) = self.enums.get(constructor) {
                     declaration.repr == AbiRepr::C
-                        && declaration
-                            .variants
-                            .values()
-                            .all(|variant| variant.fields.is_empty())
+                        && declaration.variants.values().all(|variant| {
+                            variant
+                                .fields
+                                .iter()
+                                .all(|field| self.is_c_abi_type(*field, visiting))
+                        })
                 } else {
                     false
                 };
@@ -1015,6 +1055,75 @@ impl<'a> Checker<'a> {
                 result
             }
             _ => false,
+        }
+    }
+
+    /// Record declarations may contain a fixed-size owning Buffer descriptor.
+    /// The generic Buffer element checker validates the concrete leaf later;
+    /// this declaration-level pass only needs to reserve the stable descriptor
+    /// layout while keeping FFI signatures copy-safe.
+    fn is_c_record_field_type(
+        &self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<NominalTypeId>,
+    ) -> bool {
+        match self.types.kind(ty) {
+            Some(TypeKind::Buffer(_)) => true,
+            Some(TypeKind::Option(inner)) => self.is_c_record_field_type(*inner, visiting),
+            Some(TypeKind::Result { ok, error }) => {
+                self.is_c_record_field_type(*ok, visiting)
+                    && self.is_c_record_field_type(*error, visiting)
+            }
+            Some(TypeKind::Array { element, .. }) => {
+                self.is_c_record_field_type(*element, visiting)
+            }
+            Some(TypeKind::Nominal {
+                constructor,
+                arguments,
+            }) => {
+                if !arguments
+                    .iter()
+                    .all(|argument| self.is_c_record_field_type(*argument, visiting))
+                {
+                    return false;
+                }
+                let Some(record) = self.records.get(constructor) else {
+                    // Owning enum carriers need tag-aware metadata and are
+                    // intentionally not nested inside records in this ABI.
+                    return self.is_c_abi_type(ty, visiting);
+                };
+                if !visiting.insert(*constructor) {
+                    return false;
+                }
+                let result = record.repr == AbiRepr::C
+                    && record
+                        .fields
+                        .values()
+                        .all(|field| self.is_c_record_field_type(field.ty, visiting));
+                visiting.remove(constructor);
+                result
+            }
+            _ => self.is_c_abi_type(ty, visiting),
+        }
+    }
+
+    /// Returns whether an enum payload has a stable C layout.  Owning
+    /// `Buffer<T>` descriptors are valid inside a tagged carrier even though
+    /// they are intentionally rejected from ordinary `repr(C)` records and
+    /// FFI signatures.  The owning carrier move/drop checker applies the
+    /// stricter one-owning-variant contract below.
+    fn is_c_enum_payload_type(
+        &self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<NominalTypeId>,
+    ) -> bool {
+        match self.types.kind(ty) {
+            Some(TypeKind::Buffer(inner)) => self.is_c_enum_payload_type(*inner, visiting),
+            // OwnedString is the same target-native three-word descriptor as
+            // Buffer, and the owning enum field table supplies its destructor
+            // marker after the declaration-level layout check.
+            Some(TypeKind::OwnedString) => true,
+            _ => self.is_c_abi_type(ty, visiting),
         }
     }
 
@@ -1409,7 +1518,11 @@ impl<'a> Checker<'a> {
                     let explicit = ty.as_ref().map(|ty| self.lower_type(ty));
                     let inferred = value
                         .as_ref()
-                        .map(|value| self.infer_expression(value, return_type));
+                        // Feed an explicit binding type into the initializer
+                        // so generic constructors and region allocations can
+                        // validate their element type before inference is
+                        // finalized.
+                        .map(|value| self.infer_expression(value, explicit.unwrap_or(return_type)));
                     let binding_type = match (explicit, inferred) {
                         (Some(expected), Some(actual)) => {
                             self.unify_or_error(expected, actual, *span)
@@ -1421,6 +1534,14 @@ impl<'a> Checker<'a> {
                             *span,
                         ),
                     };
+                    // A generic `buffer_create` is commonly inferred before
+                    // this binding annotation is unified. Re-check the
+                    // finalized `Result<Buffer<T>, E>` carrier here so an
+                    // inference variable cannot bypass the element ABI and
+                    // ownership contract.
+                    if let Some(element) = self.generic_buffer_element_from_expected(binding_type) {
+                        self.require_buffer_element_move_abi(element, *span);
+                    }
                     self.assign_declaration(name.span, binding_type);
                     self.types.core().unit
                 }
@@ -2361,7 +2482,7 @@ impl<'a> Checker<'a> {
             None
         };
         if let Some(name) = builtin_name {
-            return self.infer_builtin_call(&name, arguments, &argument_types, span);
+            return self.infer_builtin_call(&name, arguments, &argument_types, span, return_type);
         }
 
         let declaration = self
@@ -2437,7 +2558,19 @@ impl<'a> Checker<'a> {
             let count = self.infer_expression(argument, return_type);
             self.require_integer(count, argument.span());
         }
-        let element = self.unification.fresh(&mut self.types);
+        let expected = self.unification.resolve_shallow(&self.types, return_type);
+        let element = if let Some(TypeKind::Buffer(element)) = self.types.kind(expected) {
+            // Region cleanup bulk-frees storage and has no nested destructor
+            // walk; only copy-safe elements are valid in this bounded API.
+            let element = *element;
+            self.require_buffer_element_abi(element, span);
+            element
+        } else {
+            // Without an explicit result annotation the element remains an
+            // inference variable and the binding check will validate it once
+            // the surrounding type is known.
+            self.unification.fresh(&mut self.types)
+        };
         let result_type = self.types.intern(TypeKind::Buffer(element));
         self.region_allocations.push(RegionAllocationSite {
             span,
@@ -2536,6 +2669,7 @@ impl<'a> Checker<'a> {
                 declaration,
                 key,
                 arguments: concrete,
+                span,
             });
     }
 
@@ -2628,10 +2762,481 @@ impl<'a> Checker<'a> {
         arguments: &[Expression],
         argument_types: &[TypeId],
         span: Span,
+        return_type: TypeId,
     ) -> TypeId {
         let expected = match name {
-            "print" => 1,
+            "print" | "stdin_read" | "stdout_write" | "stderr_write" => 1,
+            "time_now_unix_seconds" => 0,
+            "time_now_monotonic_ms" => 0,
+            "process_arg_count" => 0,
+            "process_arg_read" => 2,
+            "time_utc_parts" => 2,
+            "time_utc_offset_parts" => 3,
+            "app_scheduler_clear" => 0,
+            "app_scheduler_set" => 3,
+            "app_scheduler_cancel" => 1,
+            "app_scheduler_poll" => 2,
+            "app_scheduler_count" => 0,
+            "buffer_create" | "buffer_create_i32" => 1,
+            "buffer_length"
+            | "buffer_capacity"
+            | "buffer_clear"
+            | "buffer_clear_status"
+            | "buffer_clear_move"
+            | "buffer_clear_move_status" => 1,
+            "buffer_pop" => 1,
+            "buffer_remove_move" => 2,
+            "buffer_pop_move_into" | "buffer_pop_move_into_status" => 2,
+            "buffer_remove_move_into" | "buffer_remove_move_into_status" => 3,
+            "buffer_insert_move" | "buffer_insert_move_status" => 3,
+            "buffer_insert_move_from" | "buffer_insert_move_from_status" => 3,
+            "buffer_append_move" | "buffer_append_move_status" => 2,
+            "buffer_resize"
+            | "buffer_resize_status"
+            | "buffer_resize_move"
+            | "buffer_resize_move_status"
+            | "buffer_append_i32"
+            | "buffer_reserve_i32"
+            | "buffer_append_i32_grow"
+            | "buffer_reserve"
+            | "buffer_reserve_status"
+            | "buffer_append"
+            | "buffer_append_status"
+            | "buffer_remove"
+            | "buffer_remove_status"
+            | "buffer_remove_drop"
+            | "buffer_remove_drop_status" => 2,
+            "buffer_insert" | "buffer_insert_status" => 3,
+            "string_length" => 1,
+            "string_equals" => 2,
+            "string_builder_append" | "string_builder_append_bytes" => 3,
+            "string_owned_create" | "string_owned_from" => 1,
+            "string_owned_append" => 2,
+            "string_owned_length" => 1,
+            "string_owned_copy" => 2,
+            "string_owned_clear" => 1,
             "assert_eq" => 2,
+            "file_delete" | "file_flush" | "file_exists" | "directory_create"
+            | "directory_exists" | "directory_delete" | "file_size" => 1,
+            "file_lock" | "file_unlock" => 1,
+            "file_replace_atomic" | "file_copy" => 2,
+            "directory_list" => 2,
+            "directory_list_ex" => 3,
+            "file_read_at" => 3,
+            "file_write_at" => 3,
+            "file_read_exact" | "file_read_text_exact" => 3,
+            "file_read" | "file_read_text" | "file_write" | "file_write_text"
+            | "file_append_text" | "format_bool" | "format_int" | "format_uint"
+            | "format_float" | "csv_escape" | "json_escape" => 2,
+            "parse_int" | "parse_uint" | "parse_float" | "parse_bool" => 3,
+            "json_object_field_string"
+            | "json_object_field_int"
+            | "json_object_field_uint"
+            | "json_object_field_float"
+            | "json_object_field_bool" => 3,
+            "json_object_read_string" => 3,
+            "json_object_read_string_exact" => 4,
+            "json_object_read_int"
+            | "json_object_read_uint"
+            | "json_object_read_float"
+            | "json_object_read_bool" => 2,
+            "json_object_read_int_exact"
+            | "json_object_read_uint_exact"
+            | "json_object_read_float_exact"
+            | "json_object_read_bool_exact" => 3,
+            "json_array_int" | "json_array_uint" | "json_array_float" | "json_array_bool" => 2,
+            "app_state_clear" | "app_state_count" | "app_state_revision" | "app_data_revision"
+            | "app_data_validate" => 0,
+            "app_state_exists" | "app_state_remove" => 1,
+            "app_state_set_int"
+            | "app_state_set_uint"
+            | "app_state_set_float"
+            | "app_state_set_bool"
+            | "app_state_set_text" => 2,
+            "app_state_set_text_bytes" => 3,
+            "app_state_get_int"
+            | "app_state_get_uint"
+            | "app_state_get_float"
+            | "app_state_get_bool"
+            | "app_state_save"
+            | "app_state_load"
+            | "app_data_save"
+            | "app_data_load"
+            | "app_data_tx_begin_if_revision" => 1,
+            "app_data_write_exact" | "app_data_load_exact" => 2,
+            "app_data_write_exact_if_revision" => 3,
+            "app_data_load_exact_if_revision" => 3,
+            "app_state_tx_begin"
+            | "app_state_tx_commit"
+            | "app_state_tx_rollback"
+            | "app_data_tx_begin"
+            | "app_data_tx_commit"
+            | "app_data_tx_rollback" => 0,
+            "app_state_save_atomic_if_revision" | "app_data_save_atomic_if_revision" => 3,
+            "app_state_save_atomic"
+            | "app_data_save_atomic"
+            | "app_data_tx_save_atomic"
+            | "app_data_journal_append"
+            | "app_data_journal_recover" => 2,
+            "app_data_tx_commit_durable" => 3,
+            "app_data_journal_append_durable" => 3,
+            "app_data_journal_recover_compact" => 3,
+            "app_data_journal_recover_compact_durable" => 4,
+            "app_data_journal_compact_if_over_durable" => 5,
+            "app_data_journal_compact_if_needed_durable" => 6,
+            "app_data_journal_compact_if_frames_over_durable" => 5,
+            "app_data_journal_retain_last_durable" => 5,
+            "app_data_journal_recover_frame_durable" => 4,
+            "app_data_journal_count_frames_durable" => 2,
+            "app_data_journal_stats_durable" => 3,
+            "app_data_journal_maintenance_plan_durable" => 5,
+            "app_data_journal_maintenance_retry_durable" => 8,
+            "app_data_journal_frame_length_durable" => 3,
+            "app_data_journal_frame_span_durable" => 4,
+            "app_data_journal_build_index_durable" => 4,
+            "app_data_journal_index_lookup_durable" => 5,
+            "app_data_journal_index_export_csv_durable" => 4,
+            "app_data_journal_index_export_csv_file_durable" => 5,
+            "app_data_journal_index_range_durable" => 6,
+            "app_data_journal_index_read_page_durable" => 7,
+            "app_data_journal_read_frame_exact_durable" => 5,
+            "app_data_journal_read_latest_frame_exact_durable" => 4,
+            "app_state_read_text_exact" => 3,
+            "app_state_write_json_exact" => 2,
+            "app_state_load_json_exact" => 2,
+            "app_state_read_text"
+            | "app_state_read_int"
+            | "app_state_read_uint"
+            | "app_state_read_float"
+            | "app_state_read_bool" => 2,
+            "app_state_read_key" => 2,
+            "app_state_type_at" => 1,
+            "app_list_clear" | "app_list_count" => 1,
+            "app_list_push_text" => 2,
+            "app_list_push_text_bytes" => 3,
+            "app_list_export_csv" => 2,
+            "app_list_sort_text" => 2,
+            "app_list_sort_callback" => 2,
+            "app_list_find_text" => 3,
+            "app_list_filter_text" => 3,
+            "app_list_filter_text_ex" => 4,
+            "app_list_filter_text_ex_bytes" => 5,
+            "app_list_filter_callback" => 3,
+            "app_list_page" => 4,
+            "app_list_read_text" | "app_list_set_text" => 3,
+            "app_list_read_text_exact" => 4,
+            "app_list_set_text_bytes" => 4,
+            "app_list_remove" => 2,
+            "app_list_save" | "app_list_load" => 2,
+            "app_list_save_atomic" => 3,
+            "app_table_clear"
+            | "app_table_row_count"
+            | "app_table_append_row"
+            | "app_table_tx_begin" => 1,
+            "app_table_tx_begin_all"
+            | "app_table_tx_commit"
+            | "app_table_tx_commit_all"
+            | "app_table_tx_rollback"
+            | "app_table_tx_rollback_all" => 0,
+            "app_table_migration_begin" => 3,
+            "app_table_migration_rename_column" | "app_table_migration_set_column_type" => 2,
+            "app_table_migration_commit" | "app_table_migration_rollback" => 0,
+            "app_table_set_column_name" => 3,
+            "app_table_read_column_name" => 3,
+            "app_table_read_column_name_exact" => 4,
+            "app_table_find_column" => 2,
+            "app_table_schema_version" => 1,
+            "app_table_set_schema_version" => 2,
+            "app_table_set_named_cell" => 4,
+            "app_table_read_named_cell" => 4,
+            "app_table_read_named_cell_exact" => 5,
+            "app_table_set_named_int"
+            | "app_table_set_named_uint"
+            | "app_table_set_named_float"
+            | "app_table_set_named_bool" => 4,
+            "app_table_read_named_int"
+            | "app_table_read_named_uint"
+            | "app_table_read_named_float"
+            | "app_table_read_named_bool" => 3,
+            "app_table_read_named_int_exact"
+            | "app_table_read_named_uint_exact"
+            | "app_table_read_named_float_exact"
+            | "app_table_read_named_bool_exact" => 4,
+            "app_table_set_column_type" => 3,
+            "app_table_column_type" => 2,
+            "app_table_validate" => 1,
+            "app_table_remove_row" => 2,
+            "app_table_remove_text"
+            | "app_table_remove_int"
+            | "app_table_remove_uint"
+            | "app_table_remove_float"
+            | "app_table_remove_bool" => 3,
+            "app_table_set_cell" => 4,
+            "app_table_set_cell_bytes" => 4,
+            "app_table_set_cell_bytes_ex" => 5,
+            "app_table_set_int"
+            | "app_table_set_uint"
+            | "app_table_set_float"
+            | "app_table_set_bool" => 4,
+            "app_table_read_cell" => 4,
+            "app_table_read_cell_exact" => 5,
+            "app_table_read_int"
+            | "app_table_read_uint"
+            | "app_table_read_float"
+            | "app_table_read_bool" => 3,
+            "app_table_read_int_exact"
+            | "app_table_read_uint_exact"
+            | "app_table_read_float_exact"
+            | "app_table_read_bool_exact" => 4,
+            "app_table_sort_text"
+            | "app_table_sort_int"
+            | "app_table_sort_uint"
+            | "app_table_sort_float"
+            | "app_table_sort_bool" => 3,
+            "app_table_sort_callback" => 2,
+            "app_table_page" => 4,
+            "app_table_find_text"
+            | "app_table_find_int"
+            | "app_table_find_uint"
+            | "app_table_find_float"
+            | "app_table_find_bool" => 4,
+            "app_table_upsert_text"
+            | "app_table_upsert_int"
+            | "app_table_upsert_uint"
+            | "app_table_upsert_float"
+            | "app_table_upsert_bool" => 3,
+            "app_table_index_build"
+            | "app_table_index_build_int"
+            | "app_table_index_build_uint"
+            | "app_table_index_build_float"
+            | "app_table_index_build_bool"
+            | "app_table_index_is_valid" => 2,
+            "app_table_index_build_pair" => 3,
+            "app_table_index_clear" => 1,
+            "app_table_index_find_text"
+            | "app_table_index_find_int"
+            | "app_table_index_find_uint"
+            | "app_table_index_find_float"
+            | "app_table_index_find_bool" => 3,
+            "app_table_index_find_pair_text" => 5,
+            "app_table_index_collect_int_range"
+            | "app_table_index_collect_uint_range"
+            | "app_table_index_collect_float_range" => 5,
+            "app_table_filter_text" => 4,
+            "app_table_filter_text_ex" => 5,
+            "app_table_filter_text_ex_bytes" => 6,
+            "app_table_filter_int"
+            | "app_table_filter_uint"
+            | "app_table_filter_float"
+            | "app_table_filter_bool" => 4,
+            "app_table_filter_callback" => 3,
+            "app_table_export_csv" => 2,
+            "app_table_import_csv" => 3,
+            "app_table_save"
+            | "app_table_load"
+            | "app_table_save_schema"
+            | "app_table_load_schema"
+            | "app_table_save_schema_full"
+            | "app_table_load_schema_full" => 2,
+            "app_table_load_schema_full_if_version" => 3,
+            "app_table_save_atomic"
+            | "app_table_save_schema_atomic"
+            | "app_table_save_schema_full_atomic" => 3,
+            "net_tcp_connect" | "net_tcp_connect_dns" => 2,
+            "net_tcp_listen" | "net_tcp_accept" | "net_socket_close" => 1,
+            "net_reactor_open" => 2,
+            "net_reactor_watch" => 4,
+            "net_reactor_unwatch" | "net_reactor_poll" => 2,
+            "net_reactor_event_socket" | "net_reactor_event_flags" | "net_reactor_event_user" => 2,
+            "net_reactor_error" | "net_reactor_close" => 1,
+            "net_reactor_submit_accept"
+            | "net_reactor_submit_receive"
+            | "net_reactor_submit_send" => 3,
+            "net_reactor_submit_receive_buffer" | "net_reactor_submit_send_buffer" => 4,
+            "net_reactor_submit_send_buffer_prefix" => 5,
+            "net_reactor_submit_connect" => 4,
+            "net_reactor_cancel" => 2,
+            "net_reactor_event_operation" | "net_reactor_event_bytes" => 2,
+            "net_tcp_send" | "net_tcp_receive" => 2,
+            "net_tcp_send_prefix" => 3,
+            "net_socket_set_timeout" => 2,
+            "http_response_write" => 4,
+            "http_response_write_ex" => 5,
+            "http_response_write_header" => 6,
+            "http_response_write_header_ex" => 7,
+            "http_response_write_cookie" => 7,
+            "http_response_write_cookie_ex" => 8,
+            "http_response_write_header_block" => 5,
+            "http_response_write_header_block_ex" => 6,
+            "http_response_status" => 1,
+            "http_response_status_prefix" => 2,
+            "http_response_header" => 3,
+            "http_response_header_prefix" => 4,
+            "http_response_body" => 2,
+            "http_response_body_prefix" => 3,
+            "http_response_body_chunked_exact" | "http_request_body_chunked_exact" => 3,
+            "http_request_write" => 5,
+            "http_request_write_prefix" => 6,
+            "http_request_write_header" => 7,
+            "http_request_write_header_block" => 6,
+            "http_request_append" => 4,
+            "http_request_is_complete" => 1,
+            "http_request_is_complete_prefix" => 2,
+            "http_request_frame_length_prefix" | "http_request_chunked_frame_length_prefix" => 2,
+            "http_request_consume_prefix" => 3,
+            "http_request_keep_alive" => 1,
+            "http_request_method" | "http_request_target" | "http_request_body" => 2,
+            "http_request_header" => 3,
+            "http_query_param" => 3,
+            "http_query_param_exact" => 4,
+            "http_route_match" => 3,
+            "http_route_match_prefix" => 4,
+            "http_router_clear" => 0,
+            "http_router_add" => 5,
+            "http_router_add_exact" => 6,
+            "http_router_add_prefix" => 5,
+            "http_router_remove" => 2,
+            "http_router_remove_prefix" => 2,
+            "http_router_respond" => 2,
+            "http_router_respond_prefix" => 3,
+            "http_router_count" => 0,
+            "http_session_open" => 4,
+            "http_session_open_tls" => 6,
+            "http_session_step" => 2,
+            "http_session_close" => 1,
+            "net_tls_open_client" => 3,
+            "net_tls_open_server" => 3,
+            "net_tls_step" => 2,
+            "net_tls_state" | "net_tls_error" | "net_tls_close" => 1,
+            "net_tls_send" | "net_tls_receive" => 2,
+            "file_append" => 3,
+            "ui_app_begin" => 4,
+            "ui_app_on_resize" | "ui_app_on_close" => 1,
+            "ui_app_window_width" | "ui_app_window_height" => 0,
+            "ui_app_window_set_constraints" => 4,
+            "ui_app_window_min_width"
+            | "ui_app_window_min_height"
+            | "ui_app_window_max_width"
+            | "ui_app_window_max_height" => 0,
+            "ui_app_panel" => 9,
+            "ui_app_row" => 7,
+            "ui_app_top_bar" => 9,
+            "ui_app_menu" => 8,
+            "ui_app_menu_item" => 3,
+            "ui_app_tooltip" => 7,
+            "ui_app_label" => 8,
+            "ui_app_status" => 8,
+            "ui_app_button" => 9,
+            "ui_app_text_input" => 9,
+            "ui_app_checkbox" => 10,
+            "ui_app_select" => 8,
+            "ui_app_select_option" => 2,
+            "ui_app_select_index" => 1,
+            "ui_app_select_set_index" => 2,
+            "ui_app_list" => 8,
+            "ui_app_list_item" | "ui_app_list_bind_app" => 2,
+            "ui_app_list_read_item" => 3,
+            "ui_app_list_clear"
+            | "ui_app_list_count"
+            | "ui_app_list_index"
+            | "ui_app_list_refresh" => 1,
+            "ui_app_list_set_index" => 2,
+            "ui_app_bind_app_state" => 2,
+            "ui_app_refresh_app_state" => 1,
+            "ui_app_table" => 8,
+            "ui_app_table_column" | "ui_app_table_cell" => 4,
+            "ui_app_table_read_cell" => 4,
+            "ui_app_table_bind_app" => 3,
+            "ui_app_table_refresh"
+            | "ui_app_table_clear"
+            | "ui_app_table_row_count"
+            | "ui_app_table_selected_row" => 1,
+            "ui_app_table_set_selected_row" => 2,
+            "ui_app_table_sort_text"
+            | "ui_app_table_sort_int"
+            | "ui_app_table_sort_uint"
+            | "ui_app_table_sort_float"
+            | "ui_app_table_sort_bool" => 3,
+            "ui_app_table_filter_text" => 4,
+            "ui_app_table_filter_text_ex" => 5,
+            "ui_app_table_filter_int"
+            | "ui_app_table_filter_uint"
+            | "ui_app_table_filter_float"
+            | "ui_app_table_filter_bool" => 4,
+            "ui_app_end" => 1,
+            "ui_app_run" => 0,
+            "ui_window" => 4,
+            "ui_top_bar" => 2,
+            "ui_label" | "ui_status" | "ui_text" => 8,
+            "ui_scroll_panel" => 8,
+            "ui_image" => 5,
+            "ui_button" | "ui_toggle_button" | "ui_menu_item" | "ui_icon_button" => 9,
+            "ui_menu" => 9,
+            "ui_checkbox" | "ui_switch" | "ui_text_input" => 9,
+            "ui_checked" | "ui_select_index" => 1,
+            "ui_list_clear" | "ui_list_count" | "ui_list_index" => 1,
+            "ui_close_button" | "ui_disabled_button" => 8,
+            "ui_tooltip" => 7,
+            "ui_column" | "ui_panel" => 8,
+            "ui_event_button" => 9,
+            "ui_row" => 6,
+            "ui_layout_label" | "ui_layout_status" => 7,
+            "ui_layout_event_button" => 8,
+            "ui_layout_end" => 0,
+            "ui_run" => 0,
+            "ui_set_button_enabled" => 2,
+            "ui_set_button_text" => 2,
+            "ui_set_checked" | "ui_set_input_enabled" | "ui_set_input_text" => 2,
+            "ui_input_length" => 1,
+            "ui_input_read_exact" => 3,
+            "ui_input_read" => 2,
+            "ui_input_bind_app_state" => 2,
+            "ui_input_refresh_app_state" => 1,
+            "ui_checkbox_bind_app_state"
+            | "ui_select_bind_app_state"
+            | "ui_list_bind_app_state"
+            | "ui_table_bind_app_state" => 2,
+            "ui_checkbox_refresh_app_state"
+            | "ui_select_refresh_app_state"
+            | "ui_list_refresh_app_state"
+            | "ui_table_refresh_app_state" => 1,
+            "ui_select" => 7,
+            "ui_select_option" | "ui_select_set_index" => 2,
+            "ui_menu_option" => 3,
+            "ui_list" => 7,
+            "ui_list_item" | "ui_list_set_index" => 2,
+            "ui_list_read_item" => 3,
+            "ui_list_set_item" => 3,
+            "ui_list_bind_app" => 2,
+            "ui_list_refresh_app" => 1,
+            "ui_table" => 7,
+            "ui_table_column" | "ui_table_cell" => 4,
+            "ui_table_read_cell" => 4,
+            "ui_table_bind_app" => 3,
+            "ui_table_refresh_app" => 1,
+            "ui_refresh_bindings" => 0,
+            "ui_table_clear" | "ui_table_row_count" | "ui_table_selected_row" => 1,
+            "ui_table_set_selected_row" => 2,
+            "ui_table_sort_text"
+            | "ui_table_sort_int"
+            | "ui_table_sort_uint"
+            | "ui_table_sort_float"
+            | "ui_table_sort_bool" => 3,
+            "ui_table_filter_text" => 4,
+            "ui_table_filter_text_ex" => 5,
+            "ui_table_filter_int"
+            | "ui_table_filter_uint"
+            | "ui_table_filter_float"
+            | "ui_table_filter_bool" => 4,
+            "ui_theme" | "ui_theme_color" => 1,
+            "ui_set_status" => 1,
+            "ui_state_get" => 1,
+            "ui_state_bind" => 3,
+            "ui_state_bind_text" => 2,
+            "ui_state_set" => 2,
+            "ui_state_text_length" => 1,
+            "ui_state_text_read" => 2,
+            "ui_state_text_set" => 2,
             "vector_splat2" | "vector_splat3" | "vector_splat4" | "vector_splat8" => 1,
             "vector_load2" | "vector_load3" | "vector_load4" | "vector_load8" => 2,
             "vector_store2" | "vector_store3" | "vector_store4" | "vector_store8" => 3,
@@ -2683,8 +3288,4718 @@ impl<'a> Checker<'a> {
             capability: Capability::Write,
             inner: slice_float32,
         });
+        let byte_slice = self.types.intern(TypeKind::Slice(core.uint8));
+        let read_byte_slice = self.types.intern(TypeKind::Capability {
+            capability: Capability::Read,
+            inner: byte_slice,
+        });
+        let read_string = self.types.intern(TypeKind::Capability {
+            capability: Capability::Read,
+            inner: core.string,
+        });
+        let read_owned_string = self.types.intern(TypeKind::Capability {
+            capability: Capability::Read,
+            inner: core.owned_string,
+        });
+        let write_owned_string = self.types.intern(TypeKind::Capability {
+            capability: Capability::Write,
+            inner: core.owned_string,
+        });
+        let write_byte_slice = self.types.intern(TypeKind::Capability {
+            capability: Capability::Write,
+            inner: byte_slice,
+        });
+        let slice_int64 = self.types.intern(TypeKind::Slice(core.int64));
+        let slice_int32 = self.types.intern(TypeKind::Slice(core.int32));
+        let slice_uint64 = self.types.intern(TypeKind::Slice(core.uint64));
+        let slice_uint_size = self.types.intern(TypeKind::Slice(core.uint_size));
+        let slice_float64 = self.types.intern(TypeKind::Slice(core.float64));
+        let slice_bool = self.types.intern(TypeKind::Slice(core.bool_));
+        let read_slice_int64 = self.types.intern(TypeKind::Capability {
+            capability: Capability::Read,
+            inner: slice_int64,
+        });
+        let write_slice_int64 = self.types.intern(TypeKind::Capability {
+            capability: Capability::Write,
+            inner: slice_int64,
+        });
+        let write_slice_int32 = self.types.intern(TypeKind::Capability {
+            capability: Capability::Write,
+            inner: slice_int32,
+        });
+        let read_slice_uint64 = self.types.intern(TypeKind::Capability {
+            capability: Capability::Read,
+            inner: slice_uint64,
+        });
+        let write_slice_uint64 = self.types.intern(TypeKind::Capability {
+            capability: Capability::Write,
+            inner: slice_uint64,
+        });
+        let write_slice_uint_size = self.types.intern(TypeKind::Capability {
+            capability: Capability::Write,
+            inner: slice_uint_size,
+        });
+        let read_slice_float64 = self.types.intern(TypeKind::Capability {
+            capability: Capability::Read,
+            inner: slice_float64,
+        });
+        let write_slice_float64 = self.types.intern(TypeKind::Capability {
+            capability: Capability::Write,
+            inner: slice_float64,
+        });
+        let read_slice_bool = self.types.intern(TypeKind::Capability {
+            capability: Capability::Read,
+            inner: slice_bool,
+        });
+        let write_slice_bool = self.types.intern(TypeKind::Capability {
+            capability: Capability::Write,
+            inner: slice_bool,
+        });
         let arg_span = |index: usize| arguments.get(index).map_or(span, Expression::span);
         match name {
+            "time_now_unix_seconds" => core.int64,
+            "time_now_monotonic_ms" => core.uint64,
+            "process_arg_count" => core.uint_size,
+            "process_arg_read" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "stdin_read" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(0));
+                }
+                core.uint_size
+            }
+            "stdout_write" | "stderr_write" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                core.uint_size
+            }
+            "time_utc_parts" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int64, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "time_utc_offset_parts" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int64, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_scheduler_clear" => core.unit,
+            "app_scheduler_set" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int64, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_scheduler_cancel" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "app_scheduler_poll" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int64, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "app_scheduler_count" => core.uint_size,
+            "buffer_create" | "buffer_create_i32" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                let element = if name == "buffer_create" {
+                    self.generic_buffer_element_from_expected(return_type)
+                        .unwrap_or_else(|| self.unification.fresh(&mut self.types))
+                } else {
+                    core.int32
+                };
+                self.require_buffer_element_move_abi(element, span);
+                let buffer = self.types.intern(TypeKind::Buffer(element));
+                self.types.intern(TypeKind::Result {
+                    ok: buffer,
+                    error: core.int32,
+                })
+            }
+            "buffer_length" | "buffer_capacity" => {
+                if let Some(actual) = argument_types.first() {
+                    self.require_buffer_capability(*actual, Capability::Read, arg_span(0));
+                }
+                core.uint_size
+            }
+            "buffer_clear" | "buffer_clear_status" => {
+                if let Some(element) = argument_types
+                    .first()
+                    .and_then(|actual| self.buffer_element_from_type(*actual))
+                {
+                    // Clear only changes the logical length.  Keep it
+                    // copy-safe until a move-aware variant can destroy nested
+                    // owning values before publishing length zero.
+                    self.require_buffer_element_abi(element, arg_span(0));
+                }
+                if let Some(actual) = argument_types.first() {
+                    self.require_buffer_capability(*actual, Capability::Write, arg_span(0));
+                }
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "buffer_clear_move" | "buffer_clear_move_status" => {
+                let Some(outer) = argument_types.first() else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_clear_move requires Buffer<Buffer<U>>, Buffer<OwnedString>, or an owning @repr(C) record Buffer",
+                        span,
+                    );
+                };
+                let Some(element) = self.buffer_element_from_type(*outer) else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_clear_move requires Buffer<Buffer<U>>, Buffer<OwnedString>, or an owning @repr(C) record Buffer",
+                        arg_span(0),
+                    );
+                };
+                let nested = matches!(self.types.kind(element), Some(TypeKind::Buffer(_)));
+                let owned_string = matches!(self.types.kind(element), Some(TypeKind::OwnedString));
+                let direct_record = if nested || owned_string {
+                    false
+                } else {
+                    let mut record_visiting = DeterministicSet::new();
+                    self.resize_record_fields_are_supported(element, &mut record_visiting)
+                        && self
+                            .buffer_remove_drop_element_is_supported(element, &mut record_visiting)
+                };
+                if !nested && !owned_string && !direct_record {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_clear_move requires Buffer<Buffer<U>>, Buffer<OwnedString>, or an owning @repr(C) record Buffer",
+                        arg_span(0),
+                    );
+                }
+                self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                let mut visiting = DeterministicSet::new();
+                if (nested && !self.nested_buffer_chain_leaf_is_resize_safe(element, &mut visiting))
+                    || (direct_record
+                        && !self.resize_record_fields_are_supported(element, &mut visiting))
+                {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_clear_move requires a copy-safe leaf, OwnedString, or owning @repr(C) record leaf",
+                        arg_span(0),
+                    );
+                }
+                self.require_buffer_element_move_abi(element, arg_span(0));
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "buffer_pop" => {
+                let Some(outer) = argument_types.first() else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_pop requires Buffer<Buffer<U>> or Buffer<OwnedString>",
+                        span,
+                    );
+                };
+                let Some(element) = self.buffer_element_from_type(*outer) else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_pop requires Buffer<Buffer<U>> or Buffer<OwnedString>",
+                        arg_span(0),
+                    );
+                };
+                let result_element = match self.types.kind(element).cloned() {
+                    Some(TypeKind::Buffer(inner)) => self.types.intern(TypeKind::Buffer(inner)),
+                    Some(TypeKind::OwnedString) => element,
+                    _ => {
+                        return self.type_error(
+                            "J0301",
+                            "buffer_pop requires Buffer<Buffer<U>> or Buffer<OwnedString>",
+                            arg_span(0),
+                        );
+                    }
+                };
+                if !self.buffer_element_is_abi_safe(element, &mut DeterministicSet::new(), true) {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_pop requires a move-safe owning element",
+                        arg_span(0),
+                    );
+                }
+                self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                self.require_buffer_element_move_abi(element, arg_span(0));
+                self.types.intern(TypeKind::Result {
+                    ok: result_element,
+                    error: core.int32,
+                })
+            }
+            "buffer_remove_move" => {
+                let Some(outer) = argument_types.first() else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_remove_move requires Buffer<Buffer<U>> or Buffer<OwnedString>",
+                        span,
+                    );
+                };
+                let Some(element) = self.buffer_element_from_type(*outer) else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_remove_move requires Buffer<Buffer<U>> or Buffer<OwnedString>",
+                        arg_span(0),
+                    );
+                };
+                let result_element = match self.types.kind(element).cloned() {
+                    Some(TypeKind::Buffer(inner)) => self.types.intern(TypeKind::Buffer(inner)),
+                    Some(TypeKind::OwnedString) => element,
+                    _ => {
+                        return self.type_error(
+                            "J0301",
+                            "buffer_remove_move requires Buffer<Buffer<U>> or Buffer<OwnedString>",
+                            arg_span(0),
+                        );
+                    }
+                };
+                self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                self.require_buffer_element_move_abi(element, arg_span(0));
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                self.types.intern(TypeKind::Result {
+                    ok: result_element,
+                    error: core.int32,
+                })
+            }
+            "buffer_pop_move_into"
+            | "buffer_pop_move_into_status"
+            | "buffer_remove_move_into"
+            | "buffer_remove_move_into_status" => {
+                let is_pop_move_into =
+                    matches!(name, "buffer_pop_move_into" | "buffer_pop_move_into_status");
+                let output_message = if is_pop_move_into {
+                    "buffer_pop_move_into requires Buffer<T> and a write output"
+                } else {
+                    "buffer_remove_move_into requires Buffer<T> and a write output"
+                };
+                let buffer_message = if is_pop_move_into {
+                    "buffer_pop_move_into requires Buffer<T>"
+                } else {
+                    "buffer_remove_move_into requires Buffer<T>"
+                };
+                let owning_message = if is_pop_move_into {
+                    "buffer_pop_move_into requires a move-safe owning Buffer element"
+                } else {
+                    "buffer_remove_move_into requires a move-safe owning Buffer element"
+                };
+                let descriptor_message = if is_pop_move_into {
+                    "buffer_pop_move_into requires an owned Buffer output descriptor"
+                } else {
+                    "buffer_remove_move_into requires an owned Buffer output descriptor"
+                };
+                let Some(outer) = argument_types.first() else {
+                    return self.type_error("J0301", output_message, span);
+                };
+                let Some(element) = self.buffer_element_from_type(*outer) else {
+                    return self.type_error("J0301", buffer_message, arg_span(0));
+                };
+                let mut visiting = DeterministicSet::new();
+                if !self.buffer_move_into_element_is_supported(element, &mut visiting) {
+                    return self.type_error("J0301", owning_message, arg_span(0));
+                }
+                self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                if !is_pop_move_into && let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                let write_element = self.types.intern(TypeKind::Capability {
+                    capability: Capability::Write,
+                    inner: element,
+                });
+                let output_index = if is_pop_move_into { 1 } else { 2 };
+                if let Some(actual) = argument_types.get(output_index) {
+                    let requires_owned_descriptor =
+                        matches!(self.types.kind(element), Some(TypeKind::Buffer(_)))
+                            && matches!(
+                                self.types.kind(*actual),
+                                Some(TypeKind::Capability { .. })
+                            );
+                    if requires_owned_descriptor {
+                        self.type_error("J0301", descriptor_message, arg_span(output_index));
+                    } else {
+                        self.unify_or_error(write_element, *actual, arg_span(output_index));
+                    }
+                }
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "buffer_insert_move" | "buffer_insert_move_status" => {
+                let Some(outer) = argument_types.first() else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_insert_move requires Buffer<Buffer<U>> or Buffer<OwnedString>",
+                        span,
+                    );
+                };
+                let Some(element) = self.buffer_element_from_type(*outer) else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_insert_move requires Buffer<Buffer<U>> or Buffer<OwnedString>",
+                        arg_span(0),
+                    );
+                };
+                let expected = match self.types.kind(element).cloned() {
+                    Some(TypeKind::Buffer(inner)) => self.types.intern(TypeKind::Buffer(inner)),
+                    Some(TypeKind::OwnedString) => element,
+                    _ => {
+                        return self.type_error(
+                            "J0301",
+                            "buffer_insert_move requires Buffer<Buffer<U>> or Buffer<OwnedString>",
+                            arg_span(0),
+                        );
+                    }
+                };
+                self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                self.require_buffer_element_move_abi(element, arg_span(0));
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(expected, *actual, arg_span(2));
+                }
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "buffer_insert_move_from" | "buffer_insert_move_from_status" => {
+                let Some(outer) = argument_types.first() else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_insert_move_from requires Buffer<T>, an index, and a move-safe T",
+                        span,
+                    );
+                };
+                let Some(element) = self.buffer_element_from_type(*outer) else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_insert_move_from requires Buffer<T>",
+                        arg_span(0),
+                    );
+                };
+                let mut visiting = DeterministicSet::new();
+                if !self.buffer_move_into_element_is_supported(element, &mut visiting) {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_insert_move_from requires a move-safe owning Buffer element",
+                        arg_span(0),
+                    );
+                }
+                self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(element, *actual, arg_span(2));
+                }
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "buffer_append_move" | "buffer_append_move_status" => {
+                let Some(outer) = argument_types.first() else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_append_move requires Buffer<T> and a move-safe T",
+                        span,
+                    );
+                };
+                let Some(element) = self.buffer_element_from_type(*outer) else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_append_move requires Buffer<T>",
+                        arg_span(0),
+                    );
+                };
+                let mut visiting = DeterministicSet::new();
+                if !self.buffer_move_into_element_is_supported(element, &mut visiting) {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_append_move requires a move-safe owning Buffer element",
+                        arg_span(0),
+                    );
+                }
+                self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(element, *actual, arg_span(1));
+                }
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "buffer_resize_move" | "buffer_resize_move_status" => {
+                let Some(outer) = argument_types.first() else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_resize_move requires Buffer<Buffer<U>>, Buffer<OwnedString>, or an owning @repr(C) record Buffer",
+                        span,
+                    );
+                };
+                let Some(element) = self.buffer_element_from_type(*outer) else {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_resize_move requires Buffer<Buffer<U>>, Buffer<OwnedString>, or an owning @repr(C) record Buffer",
+                        arg_span(0),
+                    );
+                };
+                let nested = matches!(self.types.kind(element), Some(TypeKind::Buffer(_)));
+                let owned_string = matches!(self.types.kind(element), Some(TypeKind::OwnedString));
+                let direct_record = if nested || owned_string {
+                    false
+                } else {
+                    let mut record_visiting = DeterministicSet::new();
+                    self.resize_record_fields_are_supported(element, &mut record_visiting)
+                        && self
+                            .buffer_remove_drop_element_is_supported(element, &mut record_visiting)
+                };
+                if !nested && !owned_string && !direct_record {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_resize_move requires Buffer<Buffer<U>>, Buffer<OwnedString>, or an owning @repr(C) record Buffer",
+                        arg_span(0),
+                    );
+                }
+                self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                let mut visiting = DeterministicSet::new();
+                if (nested && !self.nested_buffer_chain_leaf_is_resize_safe(element, &mut visiting))
+                    || (direct_record
+                        && !self.resize_record_fields_are_supported(element, &mut visiting))
+                {
+                    return self.type_error(
+                        "J0301",
+                        "buffer_resize_move requires a copy-safe leaf, OwnedString, or owning @repr(C) record leaf",
+                        arg_span(0),
+                    );
+                }
+                self.require_buffer_element_move_abi(element, arg_span(0));
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "buffer_resize" | "buffer_resize_status" => {
+                if let Some(element) = argument_types
+                    .first()
+                    .and_then(|actual| self.buffer_element_from_type(*actual))
+                {
+                    // Resize can expose previously uninitialized slots. The
+                    // existing API has no move-only initialization contract,
+                    // so nested owning elements stay out until a typed grow
+                    // operation is added.
+                    self.require_buffer_element_abi(element, arg_span(0));
+                }
+                if let Some(actual) = argument_types.first() {
+                    self.require_buffer_capability(*actual, Capability::Write, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "buffer_append_i32" | "buffer_append_i32_grow" => {
+                if let Some(actual) = argument_types.first() {
+                    self.require_buffer_capability(*actual, Capability::Write, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "buffer_reserve_i32" => {
+                if let Some(actual) = argument_types.first() {
+                    self.require_buffer_capability(*actual, Capability::Write, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "buffer_reserve" | "buffer_reserve_status" => {
+                if let Some(actual) = argument_types
+                    .first()
+                    .and_then(|actual| self.buffer_element_from_type(*actual))
+                {
+                    self.require_buffer_element_move_abi(actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.first() {
+                    self.require_buffer_capability(*actual, Capability::Write, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "buffer_append" | "buffer_append_status" => {
+                let element = argument_types
+                    .first()
+                    .and_then(|actual| self.buffer_element_from_type(*actual));
+                if let Some(element) = element {
+                    self.require_buffer_element_move_abi(element, arg_span(0));
+                }
+                if let Some(actual) = argument_types.first() {
+                    self.require_buffer_capability(*actual, Capability::Write, arg_span(0));
+                }
+                if let (Some(element), Some(actual)) = (element, argument_types.get(1)) {
+                    self.unify_or_error(element, *actual, arg_span(1));
+                }
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "buffer_insert" | "buffer_insert_status" => {
+                let element = argument_types
+                    .first()
+                    .and_then(|actual| self.buffer_element_from_type(*actual));
+                if let Some(element) = element {
+                    self.require_buffer_element_move_abi(element, arg_span(0));
+                }
+                if let Some(actual) = argument_types.first() {
+                    self.require_buffer_capability(*actual, Capability::Write, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let (Some(element), Some(actual)) = (element, argument_types.get(2)) {
+                    self.unify_or_error(element, *actual, arg_span(2));
+                }
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "buffer_remove" | "buffer_remove_status" => {
+                if let Some(element) = argument_types
+                    .first()
+                    .and_then(|actual| self.buffer_element_from_type(*actual))
+                {
+                    self.require_buffer_element_abi(element, arg_span(0));
+                }
+                if let Some(actual) = argument_types.first() {
+                    self.require_buffer_capability(*actual, Capability::Write, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "buffer_remove_drop" | "buffer_remove_drop_status" => {
+                if let Some(element) = argument_types
+                    .first()
+                    .and_then(|actual| self.buffer_element_from_type(*actual))
+                {
+                    let mut visiting = DeterministicSet::new();
+                    if !self.buffer_remove_drop_element_is_supported(element, &mut visiting) {
+                        self.type_error(
+                            "J0301",
+                            "buffer_remove_drop requires a copy-safe element or a direct @repr(C) record with owning Buffer fields",
+                            arg_span(0),
+                        );
+                    }
+                }
+                if let Some(actual) = argument_types.first() {
+                    self.require_buffer_capability(*actual, Capability::Write, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if name.ends_with("_status") {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "string_length" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                core.uint_size
+            }
+            "string_equals" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(read_string, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "string_builder_append" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "string_builder_append_bytes" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "string_owned_create" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                self.types.intern(TypeKind::Result {
+                    ok: core.owned_string,
+                    error: core.int32,
+                })
+            }
+            "string_owned_from" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                self.types.intern(TypeKind::Result {
+                    ok: core.owned_string,
+                    error: core.int32,
+                })
+            }
+            "string_owned_append" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_owned_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_string, *actual, arg_span(1));
+                }
+                core.int32
+            }
+            "string_owned_length" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_owned_string, *actual, arg_span(0));
+                }
+                core.uint_size
+            }
+            "string_owned_copy" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_owned_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "string_owned_clear" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_owned_string, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "file_delete" | "file_flush" | "file_exists" | "directory_create"
+            | "directory_exists" | "directory_delete" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "file_lock" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                core.uint_size
+            }
+            "file_unlock" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "directory_list" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "directory_list_ex" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                for (index, actual) in argument_types.iter().skip(1).take(2).enumerate() {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(index + 1));
+                }
+                core.uint_size
+            }
+            "file_replace_atomic" | "file_copy" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "file_size" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                core.uint_size
+            }
+            "file_read" | "file_read_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "file_read_exact" | "file_read_text_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "file_read_at" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "file_write" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "file_write_at" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "file_write_text" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                core.uint_size
+            }
+            "file_append_text" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                core.uint_size
+            }
+            "file_append" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "format_bool" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.bool_, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "format_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int64, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "format_uint" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint64, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "format_float" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.float64, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "parse_int" | "parse_uint" | "parse_float" | "parse_bool" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    let output = match name {
+                        "parse_int" => write_slice_int64,
+                        "parse_uint" => write_slice_uint64,
+                        "parse_float" => write_slice_float64,
+                        "parse_bool" => write_slice_bool,
+                        _ => unreachable!("parser builtin was matched above"),
+                    };
+                    self.unify_or_error(output, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "csv_escape" | "json_escape" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "json_object_field_string" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "json_object_read_string" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "json_object_read_string_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "json_object_read_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.int64
+            }
+            "json_object_read_uint" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.uint64
+            }
+            "json_object_read_float" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.float64
+            }
+            "json_object_read_bool" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "json_object_read_int_exact"
+            | "json_object_read_uint_exact"
+            | "json_object_read_float_exact"
+            | "json_object_read_bool_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    let output = match name {
+                        "json_object_read_int_exact" => write_slice_int64,
+                        "json_object_read_uint_exact" => write_slice_uint64,
+                        "json_object_read_float_exact" => write_slice_float64,
+                        _ => write_slice_bool,
+                    };
+                    self.unify_or_error(output, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "json_array_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_slice_int64, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "json_array_uint" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_slice_uint64, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "json_array_float" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_slice_float64, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "json_array_bool" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_slice_bool, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "app_state_clear" => core.unit,
+            "app_state_count" => core.int32,
+            "app_state_revision" => core.uint64,
+            "app_data_revision" => core.uint64,
+            "app_data_validate" => core.bool_,
+            "app_state_type_at" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "app_state_exists" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "app_state_tx_begin"
+            | "app_state_tx_commit"
+            | "app_state_tx_rollback"
+            | "app_data_tx_begin"
+            | "app_data_tx_begin_if_revision"
+            | "app_data_tx_commit"
+            | "app_data_tx_rollback" => core.bool_,
+            "app_state_remove" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "app_state_set_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int64, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_get_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                core.int64
+            }
+            "app_state_set_uint" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_get_uint" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                core.uint64
+            }
+            "app_state_set_float" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.float64, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_get_float" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                core.float64
+            }
+            "app_state_set_bool" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_get_bool" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "app_state_set_text" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_state_set_text_bytes" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_state_read_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "app_state_read_text_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_state_write_json_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_load_json_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_data_write_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_data_write_exact_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_data_load_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_data_load_exact_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_state_read_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_int64, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_read_uint" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_uint64, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_read_float" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_float64, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_read_bool" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_bool, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_read_key" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "app_state_save" | "app_state_load" | "app_data_save" | "app_data_load" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "app_state_save_atomic"
+            | "app_state_save_atomic_if_revision"
+            | "app_data_save_atomic_if_revision"
+            | "app_data_save_atomic"
+            | "app_data_tx_save_atomic"
+            | "app_data_journal_append"
+            | "app_data_journal_recover" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if (name == "app_state_save_atomic_if_revision"
+                    || name == "app_data_save_atomic_if_revision")
+                    && let Some(actual) = argument_types.get(2)
+                {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_data_journal_append_durable" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_data_tx_commit_durable" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_data_journal_recover_compact" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_data_journal_recover_compact_durable" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_data_journal_compact_if_over_durable" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                self.unify_or_error(core.uint_size, argument_types[4], arg_span(4));
+                core.bool_
+            }
+            "app_data_journal_compact_if_needed_durable" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                self.unify_or_error(core.uint_size, argument_types[4], arg_span(4));
+                self.unify_or_error(core.uint_size, argument_types[5], arg_span(5));
+                core.bool_
+            }
+            "app_data_journal_compact_if_frames_over_durable" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                self.unify_or_error(core.uint_size, argument_types[4], arg_span(4));
+                core.bool_
+            }
+            "app_data_journal_retain_last_durable" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                self.unify_or_error(core.uint_size, argument_types[4], arg_span(4));
+                core.bool_
+            }
+            "app_data_journal_recover_frame_durable" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                self.unify_or_error(core.uint_size, argument_types[3], arg_span(3));
+                core.bool_
+            }
+            "app_data_journal_count_frames_durable" => {
+                self.unify_or_error(core.string, argument_types[0], arg_span(0));
+                self.unify_or_error(core.string, argument_types[1], arg_span(1));
+                core.uint_size
+            }
+            "app_data_journal_stats_durable" => {
+                self.unify_or_error(core.string, argument_types[0], arg_span(0));
+                self.unify_or_error(core.string, argument_types[1], arg_span(1));
+                self.unify_or_error(write_slice_uint_size, argument_types[2], arg_span(2));
+                core.bool_
+            }
+            "app_data_journal_maintenance_plan_durable" => {
+                self.unify_or_error(core.string, argument_types[0], arg_span(0));
+                self.unify_or_error(core.string, argument_types[1], arg_span(1));
+                self.unify_or_error(core.uint_size, argument_types[2], arg_span(2));
+                self.unify_or_error(core.uint_size, argument_types[3], arg_span(3));
+                self.unify_or_error(write_slice_uint_size, argument_types[4], arg_span(4));
+                core.bool_
+            }
+            "app_data_journal_maintenance_retry_durable" => {
+                for (index, actual) in argument_types[..4].iter().enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                for (offset, actual) in argument_types[4..8].iter().enumerate() {
+                    let index = offset + 4;
+                    self.unify_or_error(core.uint_size, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_data_journal_read_frame_exact_durable" => {
+                self.unify_or_error(core.string, argument_types[0], arg_span(0));
+                self.unify_or_error(core.string, argument_types[1], arg_span(1));
+                self.unify_or_error(core.uint_size, argument_types[2], arg_span(2));
+                self.unify_or_error(write_byte_slice, argument_types[3], arg_span(3));
+                self.unify_or_error(write_slice_uint_size, argument_types[4], arg_span(4));
+                core.bool_
+            }
+            "app_data_journal_read_latest_frame_exact_durable" => {
+                self.unify_or_error(core.string, argument_types[0], arg_span(0));
+                self.unify_or_error(core.string, argument_types[1], arg_span(1));
+                self.unify_or_error(write_byte_slice, argument_types[2], arg_span(2));
+                self.unify_or_error(write_slice_uint_size, argument_types[3], arg_span(3));
+                core.bool_
+            }
+            "app_data_journal_frame_length_durable" => {
+                self.unify_or_error(core.string, argument_types[0], arg_span(0));
+                self.unify_or_error(core.string, argument_types[1], arg_span(1));
+                self.unify_or_error(core.uint_size, argument_types[2], arg_span(2));
+                core.uint_size
+            }
+            "app_data_journal_frame_span_durable" => {
+                self.unify_or_error(core.string, argument_types[0], arg_span(0));
+                self.unify_or_error(core.string, argument_types[1], arg_span(1));
+                self.unify_or_error(core.uint_size, argument_types[2], arg_span(2));
+                self.unify_or_error(write_slice_uint_size, argument_types[3], arg_span(3));
+                core.bool_
+            }
+            "app_data_journal_build_index_durable" => {
+                for (index, actual) in argument_types[..4].iter().enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_data_journal_index_lookup_durable" => {
+                for (index, actual) in argument_types[..3].iter().enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                self.unify_or_error(core.uint_size, argument_types[3], arg_span(3));
+                self.unify_or_error(write_slice_uint_size, argument_types[4], arg_span(4));
+                core.bool_
+            }
+            "app_data_journal_index_export_csv_durable" => {
+                self.unify_or_error(core.string, argument_types[0], arg_span(0));
+                self.unify_or_error(core.string, argument_types[1], arg_span(1));
+                self.unify_or_error(core.string, argument_types[2], arg_span(2));
+                self.unify_or_error(write_byte_slice, argument_types[3], arg_span(3));
+                core.uint_size
+            }
+            "app_data_journal_index_export_csv_file_durable" => {
+                for (index, actual) in argument_types[..5].iter().enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_data_journal_index_range_durable" => {
+                for (index, actual) in argument_types[..3].iter().enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                self.unify_or_error(core.uint_size, argument_types[3], arg_span(3));
+                self.unify_or_error(core.uint_size, argument_types[4], arg_span(4));
+                self.unify_or_error(write_slice_uint_size, argument_types[5], arg_span(5));
+                core.uint_size
+            }
+            "app_data_journal_index_read_page_durable" => {
+                for (index, actual) in argument_types[..3].iter().enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                self.unify_or_error(core.uint_size, argument_types[3], arg_span(3));
+                self.unify_or_error(core.uint_size, argument_types[4], arg_span(4));
+                self.unify_or_error(write_byte_slice, argument_types[5], arg_span(5));
+                self.unify_or_error(write_slice_uint_size, argument_types[6], arg_span(6));
+                core.uint_size
+            }
+            "app_list_clear" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.unit
+            }
+            "app_list_count" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "app_list_push_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_list_push_text_bytes" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_list_export_csv" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "app_list_sort_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_list_sort_callback" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    let comparator = self.types.intern(TypeKind::Function {
+                        parameters: vec![core.int32, core.int32, core.int32].into_boxed_slice(),
+                        result: core.int32,
+                    });
+                    self.unify_or_error(comparator, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_list_find_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.int32, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_list_filter_text" | "app_list_filter_text_ex" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if name == "app_list_filter_text_ex"
+                    && let Some(actual) = argument_types.get(3)
+                {
+                    self.unify_or_error(core.int32, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_list_filter_text_ex_bytes" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.int32, *actual, arg_span(4));
+                }
+                core.bool_
+            }
+            "app_list_filter_callback" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    let predicate = self.types.intern(TypeKind::Function {
+                        parameters: vec![core.int32, core.int32].into_boxed_slice(),
+                        result: core.bool_,
+                    });
+                    self.unify_or_error(predicate, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_list_page" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_list_read_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "app_list_read_text_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_list_set_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_list_set_text_bytes" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_list_remove" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_list_save" | "app_list_load" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_list_save_atomic" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                for (index, actual) in argument_types.iter().skip(1).take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index + 1));
+                }
+                core.bool_
+            }
+            "app_table_clear" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.unit
+            }
+            "app_table_tx_begin" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "app_table_tx_begin_all"
+            | "app_table_tx_commit"
+            | "app_table_tx_commit_all"
+            | "app_table_tx_rollback"
+            | "app_table_tx_rollback_all"
+            | "app_table_migration_commit"
+            | "app_table_migration_rollback" => core.bool_,
+            "app_table_migration_begin" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_table_migration_rename_column" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_table_migration_set_column_type" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_table_set_column_name" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_read_column_name" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "app_table_read_column_name_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_find_column" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.int32
+            }
+            "app_table_schema_version" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "app_table_set_schema_version" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_table_set_named_cell" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                for (index, actual) in argument_types.iter().skip(2).take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index + 2));
+                }
+                core.bool_
+            }
+            "app_table_read_named_cell" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                core.uint_size
+            }
+            "app_table_read_named_cell_exact" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(4));
+                }
+                core.bool_
+            }
+            "app_table_set_named_int"
+            | "app_table_set_named_uint"
+            | "app_table_set_named_float"
+            | "app_table_set_named_bool" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    let expected = match name {
+                        "app_table_set_named_int" => core.int64,
+                        "app_table_set_named_uint" => core.uint64,
+                        "app_table_set_named_float" => core.float64,
+                        _ => core.bool_,
+                    };
+                    self.unify_or_error(expected, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_read_named_int"
+            | "app_table_read_named_uint"
+            | "app_table_read_named_float"
+            | "app_table_read_named_bool" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                match name {
+                    "app_table_read_named_int" => core.int64,
+                    "app_table_read_named_uint" => core.uint64,
+                    "app_table_read_named_float" => core.float64,
+                    _ => core.bool_,
+                }
+            }
+            "app_table_read_named_int_exact"
+            | "app_table_read_named_uint_exact"
+            | "app_table_read_named_float_exact"
+            | "app_table_read_named_bool_exact" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    let expected = match name {
+                        "app_table_read_named_int_exact" => write_slice_int64,
+                        "app_table_read_named_uint_exact" => write_slice_uint64,
+                        "app_table_read_named_float_exact" => write_slice_float64,
+                        _ => write_slice_bool,
+                    };
+                    self.unify_or_error(expected, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_set_column_type" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.int32, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_column_type" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.int32
+            }
+            "app_table_validate" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "app_table_row_count" | "app_table_append_row" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if name == "app_table_row_count" {
+                    core.int32
+                } else {
+                    core.bool_
+                }
+            }
+            "app_table_remove_row" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_table_set_cell" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.int32, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.string, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_set_cell_bytes" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_set_cell_bytes_ex" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(4));
+                }
+                core.bool_
+            }
+            "app_table_read_cell" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.int32, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                core.uint_size
+            }
+            "app_table_read_cell_exact" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(4));
+                }
+                core.bool_
+            }
+            "app_table_set_int" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.int64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_set_uint" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_set_bool" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_set_float" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.float64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_read_int" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.int64
+            }
+            "app_table_read_uint" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.uint64
+            }
+            "app_table_read_bool" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_table_read_float" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.float64
+            }
+            "app_table_read_int_exact"
+            | "app_table_read_uint_exact"
+            | "app_table_read_float_exact"
+            | "app_table_read_bool_exact" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    let expected = match name {
+                        "app_table_read_int_exact" => write_slice_int64,
+                        "app_table_read_uint_exact" => write_slice_uint64,
+                        "app_table_read_float_exact" => write_slice_float64,
+                        _ => write_slice_bool,
+                    };
+                    self.unify_or_error(expected, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_sort_text"
+            | "app_table_sort_int"
+            | "app_table_sort_uint"
+            | "app_table_sort_float"
+            | "app_table_sort_bool" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_sort_callback" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    let comparator = self.types.intern(TypeKind::Function {
+                        parameters: vec![core.int32, core.int32, core.int32].into_boxed_slice(),
+                        result: core.int32,
+                    });
+                    self.unify_or_error(comparator, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_table_page" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_table_find_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.int32, *actual, arg_span(3));
+                }
+                core.int32
+            }
+            "app_table_find_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.int64, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.int32, *actual, arg_span(3));
+                }
+                core.int32
+            }
+            "app_table_find_uint" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.int32, *actual, arg_span(3));
+                }
+                core.int32
+            }
+            "app_table_find_float" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.float64, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.int32, *actual, arg_span(3));
+                }
+                core.int32
+            }
+            "app_table_find_bool" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.int32, *actual, arg_span(3));
+                }
+                core.int32
+            }
+            "app_table_remove_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_remove_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.int64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_remove_uint" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_remove_float" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.float64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_remove_bool" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_upsert_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_table_upsert_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.int64, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_table_upsert_uint" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_table_upsert_float" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.float64, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_table_upsert_bool" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_table_index_build"
+            | "app_table_index_build_int"
+            | "app_table_index_build_uint"
+            | "app_table_index_build_float"
+            | "app_table_index_build_bool" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_table_index_build_pair" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_table_index_clear" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "app_table_index_find_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_table_index_find_pair_text" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                for (index, actual) in argument_types.iter().skip(3).take(3).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index + 3));
+                }
+                core.int32
+            }
+            "app_table_index_collect_int_range" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                for (index, actual) in argument_types.iter().skip(2).take(2).enumerate() {
+                    self.unify_or_error(core.int64, *actual, arg_span(index + 2));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(4));
+                }
+                core.uint_size
+            }
+            "app_table_index_collect_uint_range" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                for (index, actual) in argument_types.iter().skip(2).take(2).enumerate() {
+                    self.unify_or_error(core.uint64, *actual, arg_span(index + 2));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(4));
+                }
+                core.uint_size
+            }
+            "app_table_index_collect_float_range" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                for (index, actual) in argument_types.iter().skip(2).take(2).enumerate() {
+                    self.unify_or_error(core.float64, *actual, arg_span(index + 2));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(4));
+                }
+                core.uint_size
+            }
+            "app_table_index_find_int" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.int64, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_table_index_find_uint" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_table_index_find_float" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.float64, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_table_index_find_bool" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_table_index_is_valid" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_table_filter_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.int32, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.string, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_filter_int" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.int64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_filter_uint" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_filter_float" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.float64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_filter_bool" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_filter_callback" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    let predicate = self.types.intern(TypeKind::Function {
+                        parameters: vec![core.int32, core.int32].into_boxed_slice(),
+                        result: core.bool_,
+                    });
+                    self.unify_or_error(predicate, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_filter_text_ex" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.string, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.int32, *actual, arg_span(4));
+                }
+                core.bool_
+            }
+            "app_table_filter_text_ex_bytes" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.int32, *actual, arg_span(5));
+                }
+                core.bool_
+            }
+            "app_table_export_csv" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "app_table_import_csv" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_save"
+            | "app_table_load"
+            | "app_table_save_schema"
+            | "app_table_load_schema"
+            | "app_table_save_schema_full"
+            | "app_table_load_schema_full" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_table_load_schema_full_if_version" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.int32, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_save_atomic"
+            | "app_table_save_schema_atomic"
+            | "app_table_save_schema_full_atomic" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                for (index, actual) in argument_types.iter().skip(1).take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index + 1));
+                }
+                core.bool_
+            }
+            "http_request_write_prefix" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(5));
+                }
+                core.uint_size
+            }
+            "http_request_write" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(4));
+                }
+                core.uint_size
+            }
+            "http_request_write_header" => {
+                for (index, actual) in argument_types.iter().take(5).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(5));
+                }
+                if let Some(actual) = argument_types.get(6) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(6));
+                }
+                core.uint_size
+            }
+            "http_request_write_header_block" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(5));
+                }
+                core.uint_size
+            }
+            "http_response_write" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                core.uint_size
+            }
+            "http_response_write_ex" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(4));
+                }
+                core.uint_size
+            }
+            "http_response_write_header" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                for index in 1..=3 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(core.string, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(5));
+                }
+                core.uint_size
+            }
+            "http_response_write_header_ex" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                for index in 1..=3 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(core.string, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(5));
+                }
+                if let Some(actual) = argument_types.get(6) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(6));
+                }
+                core.uint_size
+            }
+            "http_response_write_cookie" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                for index in 1..=4 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(core.string, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(5));
+                }
+                if let Some(actual) = argument_types.get(6) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(6));
+                }
+                core.uint_size
+            }
+            "http_response_write_cookie_ex" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                for index in 1..=4 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(core.string, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(5));
+                }
+                if let Some(actual) = argument_types.get(6) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(6));
+                }
+                if let Some(actual) = argument_types.get(7) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(7));
+                }
+                core.uint_size
+            }
+            "http_response_write_header_block" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                for index in 1..=2 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(core.string, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(4));
+                }
+                core.uint_size
+            }
+            "http_response_write_header_block_ex" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                for index in 1..=2 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(core.string, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(5));
+                }
+                core.uint_size
+            }
+            "http_response_status" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                core.uint16
+            }
+            "http_response_status_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.uint16
+            }
+            "http_response_header" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "http_response_header_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                core.uint_size
+            }
+            "http_response_header_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "http_response_body" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "http_response_body_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "http_response_body_chunked_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "http_request_body_chunked_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "http_response_body_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "http_request_is_complete" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "http_request_is_complete_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "http_request_frame_length_prefix" | "http_request_chunked_frame_length_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "http_request_consume_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "http_request_append" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                core.uint_size
+            }
+            "http_request_keep_alive" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "http_request_method" | "http_request_target" | "http_request_body" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "http_request_header" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "http_query_param" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "http_query_param_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "http_route_match" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                for (index, actual) in argument_types.iter().skip(1).take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index + 1));
+                }
+                core.bool_
+            }
+            "http_route_match_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                for (index, actual) in argument_types.iter().skip(2).take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index + 2));
+                }
+                core.bool_
+            }
+            "http_router_clear" => core.unit,
+            "http_router_add" | "http_router_add_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint16, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.string, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(4));
+                }
+                core.bool_
+            }
+            "http_router_add_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint16, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.string, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(5));
+                }
+                core.bool_
+            }
+            "http_router_remove" | "http_router_remove_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "http_router_respond" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "http_router_respond_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "http_router_count" => core.uint_size,
+            "http_session_open" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                for (index, actual) in argument_types.iter().skip(1).take(3).enumerate() {
+                    self.unify_or_error(core.uint32, *actual, arg_span(index + 1));
+                }
+                core.uint_size
+            }
+            "http_session_open_tls" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                for (index, actual) in argument_types.iter().skip(1).take(3).enumerate() {
+                    self.unify_or_error(core.uint32, *actual, arg_span(index + 1));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.string, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.string, *actual, arg_span(5));
+                }
+                core.uint_size
+            }
+            "http_session_step" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(1));
+                }
+                core.uint32
+            }
+            "http_session_close" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "net_tls_open_client" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "net_tls_open_server" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "net_tls_step" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(1));
+                }
+                core.uint32
+            }
+            "net_tls_state" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                core.uint32
+            }
+            "net_tls_error" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "net_tls_send" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "net_tls_receive" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "net_tls_close" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "net_tcp_connect" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint16, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "net_tcp_connect_dns" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint16, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "net_tcp_listen" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                core.uint_size
+            }
+            "net_tcp_accept" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                core.uint_size
+            }
+            "net_tcp_send" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "net_tcp_send_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "net_tcp_receive" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "net_reactor_submit_receive_buffer" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                core.uint_size
+            }
+            "net_reactor_submit_send_buffer" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                core.uint_size
+            }
+            "net_reactor_submit_send_buffer_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(4));
+                }
+                core.uint_size
+            }
+            "net_socket_set_timeout" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "net_socket_close" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "net_reactor_open" => {
+                for (index, actual) in argument_types.iter().enumerate() {
+                    self.unify_or_error(core.uint32, *actual, arg_span(index));
+                }
+                core.uint_size
+            }
+            "net_reactor_watch" => {
+                for index in [0usize, 1usize, 3usize] {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(core.uint_size, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "net_reactor_unwatch" => {
+                for (index, actual) in argument_types.iter().enumerate() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "net_reactor_poll" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(1));
+                }
+                core.uint32
+            }
+            "net_reactor_event_socket" | "net_reactor_event_user" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "net_reactor_event_flags" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(1));
+                }
+                core.uint32
+            }
+            "net_reactor_event_bytes" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "net_reactor_error" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "net_reactor_close" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "net_reactor_submit_accept"
+            | "net_reactor_submit_receive"
+            | "net_reactor_submit_send" => {
+                for (index, actual) in argument_types.iter().enumerate() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(index));
+                }
+                core.uint_size
+            }
+            "net_reactor_submit_connect" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint16, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                core.uint_size
+            }
+            "net_reactor_cancel" => {
+                for (index, actual) in argument_types.iter().enumerate() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "net_reactor_event_operation" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "json_object_field_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int64, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "json_object_field_uint" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "json_object_field_float" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.float64, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "json_object_field_bool" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "ui_app_begin" => {
+                for (index, expected) in [core.string, core.int32, core.int32, core.uint32]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_on_resize" | "ui_app_on_close" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.unit
+            }
+            "ui_app_window_width" | "ui_app_window_height" => core.int32,
+            "ui_app_window_set_constraints" => {
+                for (index, expected) in [core.int32, core.int32, core.int32, core.int32]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_window_min_width"
+            | "ui_app_window_min_height"
+            | "ui_app_window_max_width"
+            | "ui_app_window_max_height" => core.int32,
+            "ui_app_bind_app_state" => {
+                for (index, expected) in [core.int32, core.string].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_refresh_app_state" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.unit
+            }
+            "ui_app_panel" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_row" => {
+                for (index, expected) in [
+                    core.int32, core.int32, core.int32, core.int32, core.int32, core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_top_bar" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_menu" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_menu_item" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.int32, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "ui_app_tooltip" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_status" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_label" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_button" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_text_input" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_checkbox" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_select" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_select_option" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "ui_app_select_index" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "ui_app_select_set_index" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_list_item" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "ui_app_list_bind_app" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_clear" | "ui_app_list_refresh" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "ui_app_list_count" | "ui_app_list_index" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "ui_app_list_read_item" => {
+                for (index, expected) in [core.int32, core.int32, write_byte_slice]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.uint_size
+            }
+            "ui_app_list_set_index" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_table_column" => {
+                for (index, expected) in [core.int32, core.int32, core.string, core.int32]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table_cell" => {
+                for (index, expected) in [core.int32, core.int32, core.int32, core.string]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table_read_cell" => {
+                for (index, expected) in [core.int32, core.int32, core.int32, write_byte_slice]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.uint_size
+            }
+            "ui_app_table_bind_app" => {
+                for (index, expected) in [core.int32, core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table_refresh" | "ui_app_table_clear" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "ui_app_table_row_count" | "ui_app_table_selected_row" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "ui_app_table_set_selected_row" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table_sort_text"
+            | "ui_app_table_sort_int"
+            | "ui_app_table_sort_uint"
+            | "ui_app_table_sort_float"
+            | "ui_app_table_sort_bool" => {
+                for (index, expected) in [core.int32, core.int32, core.bool_].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table_filter_text" => {
+                for (index, expected) in [core.int32, core.int32, core.int32, core.string]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table_filter_text_ex" => {
+                for (index, expected) in
+                    [core.int32, core.int32, core.int32, core.string, core.int32]
+                        .iter()
+                        .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table_filter_int"
+            | "ui_app_table_filter_uint"
+            | "ui_app_table_filter_float"
+            | "ui_app_table_filter_bool" => {
+                for (index, expected) in [core.int32, core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                let expected = match name {
+                    "ui_app_table_filter_int" => core.int64,
+                    "ui_app_table_filter_uint" => core.uint64,
+                    "ui_app_table_filter_float" => core.float64,
+                    _ => core.bool_,
+                };
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(expected, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "ui_app_end" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "ui_app_run" => core.int32,
+            "ui_window" => {
+                for (index, expected) in [core.string, core.int32, core.int32, core.uint32]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_top_bar" => {
+                for (index, expected) in [core.int32, core.uint32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_label" | "ui_status" | "ui_text" => {
+                for (index, expected) in [
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_scroll_panel" => {
+                for (index, expected) in [
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_image" => {
+                for (index, expected) in
+                    [core.string, core.int32, core.int32, core.int32, core.int32]
+                        .iter()
+                        .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_button" | "ui_toggle_button" | "ui_menu_item" | "ui_icon_button" => {
+                for (index, expected) in [
+                    core.string,
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_menu" => {
+                for (index, expected) in [
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_event_button" => {
+                for (index, expected) in [
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_checkbox" | "ui_switch" | "ui_text_input" => {
+                for (index, expected) in [
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_column" => {
+                for (index, expected) in [
+                    core.int32, core.int32, core.int32, core.int32, core.int32, core.int32,
+                    core.int32, core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_row" => {
+                for (index, expected) in [
+                    core.int32, core.int32, core.int32, core.int32, core.int32, core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_panel" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_layout_label" | "ui_layout_status" => {
+                for (index, expected) in [
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_layout_event_button" => {
+                for (index, expected) in [
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_layout_end" => core.unit,
+            "ui_close_button" | "ui_disabled_button" => {
+                for (index, expected) in [
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_set_button_enabled" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_set_button_text" => {
+                for (index, expected) in [core.int32, core.string].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_checked" | "ui_select_index" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "ui_list_clear" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.unit
+            }
+            "ui_list_count" | "ui_list_index" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "ui_set_checked" | "ui_set_input_enabled" | "ui_select_set_index" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_list_set_index" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_set_input_text" | "ui_select_option" => {
+                for (index, expected) in [core.int32, core.string].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_select" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_list" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_list_item" => {
+                for (index, expected) in [core.int32, core.string].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_list_read_item" => {
+                for (index, expected) in [core.int32, core.int32, write_byte_slice]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.uint_size
+            }
+            "ui_list_set_item" => {
+                for (index, expected) in [core.int32, core.int32, core.string].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_list_bind_app" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_list_refresh_app" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.unit
+            }
+            "ui_table" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_table_column" => {
+                for (index, expected) in [core.int32, core.int32, core.string, core.int32]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_table_cell" => {
+                for (index, expected) in [core.int32, core.int32, core.int32, core.string]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_table_read_cell" => {
+                for (index, expected) in [core.int32, core.int32, core.int32, write_byte_slice]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.uint_size
+            }
+            "ui_table_bind_app" => {
+                for (index, expected) in [core.int32, core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_table_refresh_app" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.unit
+            }
+            "ui_refresh_bindings" => core.unit,
+            "ui_table_clear" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.unit
+            }
+            "ui_table_row_count" | "ui_table_selected_row" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "ui_table_set_selected_row" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_table_sort_text"
+            | "ui_table_sort_int"
+            | "ui_table_sort_uint"
+            | "ui_table_sort_float"
+            | "ui_table_sort_bool" => {
+                for (index, expected) in [core.int32, core.int32, core.bool_].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_table_filter_text" => {
+                for (index, expected) in [core.int32, core.int32, core.int32, core.string]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_table_filter_text_ex" => {
+                for (index, expected) in
+                    [core.int32, core.int32, core.int32, core.string, core.int32]
+                        .iter()
+                        .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_table_filter_int"
+            | "ui_table_filter_uint"
+            | "ui_table_filter_float"
+            | "ui_table_filter_bool" => {
+                for (index, expected) in [core.int32, core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                let expected = match name {
+                    "ui_table_filter_int" => core.int64,
+                    "ui_table_filter_uint" => core.uint64,
+                    "ui_table_filter_float" => core.float64,
+                    _ => core.bool_,
+                };
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(expected, *actual, arg_span(3));
+                }
+                core.unit
+            }
+            "ui_menu_option" => {
+                for (index, expected) in [core.int32, core.string, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_tooltip" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.string,
+                    core.int32,
+                    core.int32,
+                    core.uint32,
+                    core.uint32,
+                    core.int32,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_theme" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.unit
+            }
+            "ui_theme_color" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.uint32
+            }
+            "ui_set_status" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.string, *actual, arg_span(0));
+                }
+                core.unit
+            }
+            "ui_state_get" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.int32
+            }
+            "ui_state_bind" => {
+                for (index, expected) in [core.int32, core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_state_bind_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                core.unit
+            }
+            "ui_state_set" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_state_text_length" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.uint_size
+            }
+            "ui_state_text_read" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "ui_state_text_set" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "ui_input_length" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.uint_size
+            }
+            "ui_input_read" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "ui_input_read_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "ui_input_bind_app_state" => {
+                for (index, expected) in [core.int32, core.string].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_checkbox_bind_app_state"
+            | "ui_select_bind_app_state"
+            | "ui_list_bind_app_state"
+            | "ui_table_bind_app_state" => {
+                for (index, expected) in [core.int32, core.string].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_input_refresh_app_state" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.unit
+            }
+            "ui_checkbox_refresh_app_state"
+            | "ui_select_refresh_app_state"
+            | "ui_list_refresh_app_state"
+            | "ui_table_refresh_app_state" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.unit
+            }
+            "ui_run" => core.int32,
             "vector_splat2" | "vector_splat3" | "vector_splat4" | "vector_splat8" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(float32, *actual, arg_span(0));
@@ -2854,23 +8169,49 @@ impl<'a> Checker<'a> {
     fn unify_or_error(&mut self, expected: TypeId, actual: TypeId, span: Span) -> TypeId {
         let expected_resolved = self.unification.resolve_shallow(&self.types, expected);
         let actual_resolved = self.unification.resolve_shallow(&self.types, actual);
+        let unify_borrowed_inner =
+            |checker: &mut Self, expected_inner: TypeId, actual_inner: TypeId| {
+                let expected_kind = checker.types.kind(expected_inner).cloned();
+                let actual_kind = checker.types.kind(actual_inner).cloned();
+                if let Some(TypeKind::Slice(expected_element)) = expected_kind
+                    && let Some(actual_element) = match actual_kind {
+                        Some(
+                            TypeKind::Slice(element)
+                            | TypeKind::Buffer(element)
+                            | TypeKind::Array { element, .. },
+                        ) => Some(element),
+                        _ => None,
+                    }
+                {
+                    return checker.unification.unify(
+                        &mut checker.types,
+                        expected_element,
+                        actual_element,
+                    );
+                }
+                checker
+                    .unification
+                    .unify(&mut checker.types, expected_inner, actual_inner)
+            };
         if let (
             Some(TypeKind::Capability {
-                capability: Capability::Read,
+                capability: expected_capability @ (Capability::Read | Capability::Write),
                 inner: expected_inner,
             }),
             Some(TypeKind::Capability {
-                capability: Capability::Write,
+                capability: actual_capability,
                 inner: actual_inner,
             }),
         ) = (
             self.types.kind(expected_resolved).cloned(),
             self.types.kind(actual_resolved).cloned(),
+        ) && matches!(
+            (expected_capability, actual_capability),
+            (Capability::Read, Capability::Read)
+                | (Capability::Read, Capability::Write)
+                | (Capability::Write, Capability::Write)
         ) {
-            return match self
-                .unification
-                .unify(&mut self.types, expected_inner, actual_inner)
-            {
+            return match unify_borrowed_inner(self, expected_inner, actual_inner) {
                 Ok(_) => expected_resolved,
                 Err(_) => self.type_error("J0301", "incompatible borrowed type", span),
             };
@@ -2882,10 +8223,7 @@ impl<'a> Checker<'a> {
                 Some(TypeKind::Capability { .. })
             )
         {
-            return match self
-                .unification
-                .unify(&mut self.types, inner, actual_resolved)
-            {
+            return match unify_borrowed_inner(self, inner, actual_resolved) {
                 Ok(_) => expected_resolved,
                 Err(_) => self.type_error(
                     "J0301",
@@ -2901,6 +8239,704 @@ impl<'a> Checker<'a> {
             Ok(ty) => ty,
             Err(_) => self.type_error("J0301", "incompatible types", span),
         }
+    }
+
+    fn require_buffer_capability(&mut self, actual: TypeId, capability: Capability, span: Span) {
+        let resolved = self.unification.resolve_shallow(&self.types, actual);
+        let (actual_capability, inner) = match self.types.kind(resolved).cloned() {
+            Some(TypeKind::Capability { capability, inner }) => (Some(capability), inner),
+            _ => (None, resolved),
+        };
+        let is_buffer = matches!(self.types.kind(inner), Some(TypeKind::Buffer(_)));
+        let has_access = match capability {
+            Capability::Read => matches!(
+                actual_capability,
+                None | Some(Capability::Owned | Capability::Read | Capability::Write)
+            ),
+            Capability::Write => matches!(
+                actual_capability,
+                None | Some(Capability::Owned | Capability::Write)
+            ),
+            Capability::Owned => actual_capability.is_none(),
+        };
+        if !is_buffer || !has_access {
+            self.type_error(
+                "J0321",
+                "buffer operation requires a compatible Buffer capability",
+                span,
+            );
+        }
+    }
+
+    /// Recovers the element type from an expected generic buffer constructor
+    /// result.  A constructor used without an explicit result annotation gets
+    /// a fresh inference variable and is resolved by the surrounding binding.
+    fn generic_buffer_element_from_expected(&mut self, expected: TypeId) -> Option<TypeId> {
+        // Constructor calls are often inferred before the surrounding `let`
+        // annotation is unified. Resolve the full expected carrier here so a
+        // later annotation cannot silently bypass the element ownership ABI
+        // check with a still-unresolved inference variable.
+        let resolved = self
+            .unification
+            .resolve_deep(&mut self.types, expected)
+            .unwrap_or_else(|_| self.unification.resolve_shallow(&self.types, expected));
+        let TypeKind::Result { ok, .. } = self.types.kind(resolved)? else {
+            return None;
+        };
+        match self.types.kind(*ok)? {
+            TypeKind::Buffer(element) => Some(*element),
+            _ => None,
+        }
+    }
+
+    fn buffer_element_from_type(&self, ty: TypeId) -> Option<TypeId> {
+        let resolved = self.unification.resolve_shallow(&self.types, ty);
+        let inner = match self.types.kind(resolved) {
+            Some(TypeKind::Capability { inner, .. }) => *inner,
+            _ => resolved,
+        };
+        match self.types.kind(inner) {
+            Some(TypeKind::Buffer(element)) => Some(*element),
+            _ => None,
+        }
+    }
+
+    fn require_buffer_element_abi(&mut self, element: TypeId, span: Span) {
+        self.require_buffer_element_abi_with_moves(element, span, false);
+    }
+
+    fn require_buffer_element_move_abi(&mut self, element: TypeId, span: Span) {
+        self.require_buffer_element_abi_with_moves(element, span, true);
+    }
+
+    fn require_buffer_element_abi_with_moves(
+        &mut self,
+        element: TypeId,
+        span: Span,
+        allow_move_only: bool,
+    ) {
+        let mut visiting = DeterministicSet::new();
+        if !self.buffer_element_is_abi_safe(element, &mut visiting, allow_move_only) {
+            self.type_error(
+                "J0301",
+                if allow_move_only {
+                    "generic Buffer element must be copy-safe, a nested owning Buffer, an inline owning @repr(C) record, or a tag-selected owning carrier"
+                } else {
+                    "generic Buffer element must be a copy-safe scalar, array, vector, Option/Result carrier, zero-payload @repr(C) enum, or @repr(C) record"
+                },
+                span,
+            );
+        }
+    }
+
+    fn buffer_element_is_copy_safe(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        self.buffer_element_is_abi_safe(ty, visiting, false)
+    }
+
+    fn buffer_carrier_move_is_abi_safe(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        match self.types.kind(ty).cloned() {
+            Some(TypeKind::Option(inner)) => {
+                self.buffer_carrier_payload_move_is_abi_safe(inner, visiting)
+            }
+            Some(TypeKind::Result { ok, error }) => {
+                let ok_is_owning = self.buffer_carrier_payload_move_is_abi_safe(ok, visiting);
+                let error_is_owning = self.buffer_carrier_payload_move_is_abi_safe(error, visiting);
+                if !ok_is_owning && !error_is_owning {
+                    return false;
+                }
+                if ok_is_owning {
+                    (!error_is_owning && self.buffer_element_is_copy_safe(error, visiting))
+                        || (error_is_owning
+                            && self.buffer_carrier_payload_move_is_abi_safe(error, visiting))
+                } else {
+                    self.buffer_element_is_copy_safe(ok, visiting) && error_is_owning
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns whether a tag-selected payload owns a descriptor that can be
+    /// represented by the carrier field-table ABI. Both nested Buffers and
+    /// OwnedString use a three-word inline descriptor; the runtime selects the
+    /// destructor from the field depth marker.
+    fn buffer_carrier_payload_move_is_abi_safe(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        matches!(
+            self.types.kind(ty),
+            Some(TypeKind::Buffer(_)) | Some(TypeKind::OwnedString)
+        ) && self.buffer_element_is_abi_safe(ty, visiting, true)
+    }
+
+    fn buffer_enum_carrier_move_is_abi_safe(
+        &mut self,
+        constructor: NominalTypeId,
+        arguments: &[TypeId],
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        let Some(declaration) = self.enums.get(&constructor).cloned() else {
+            return false;
+        };
+        if declaration.repr != AbiRepr::C {
+            return false;
+        }
+        let mut substitution = Substitution::new();
+        for (parameter, argument) in declaration
+            .generic_parameters
+            .iter()
+            .zip(arguments.iter().copied())
+        {
+            substitution.insert(*parameter, argument);
+        }
+        let mut owning_variants = 0usize;
+        for variant_name in &declaration.variant_order {
+            let Some(variant) = declaration.variants.get(variant_name) else {
+                return false;
+            };
+            let mut owning_fields = 0usize;
+            for field in &variant.fields {
+                let field_ty = substitution
+                    .apply(&mut self.types, *field)
+                    .unwrap_or(self.types.core().error);
+                if matches!(
+                    self.types.kind(field_ty),
+                    Some(TypeKind::Buffer(_)) | Some(TypeKind::OwnedString)
+                ) {
+                    if !self.buffer_element_is_abi_safe(field_ty, visiting, true) {
+                        return false;
+                    }
+                    owning_fields += 1;
+                } else if !self.buffer_element_is_copy_safe(field_ty, visiting) {
+                    return false;
+                }
+            }
+            if owning_fields > 0 {
+                owning_variants += 1;
+            }
+        }
+        owning_variants > 0
+    }
+
+    fn owning_buffer_chain_is_abi_safe(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        let mut cursor = self.unification.resolve_shallow(&self.types, ty);
+        let mut depth = 0u32;
+        while let Some(TypeKind::Buffer(inner)) = self.types.kind(cursor) {
+            depth = depth.saturating_add(1);
+            cursor = *inner;
+        }
+        if depth == 0 {
+            return false;
+        }
+        // A C-layout record leaf may own its own Buffer fields.  Its cleanup
+        // metadata is flattened into the path-aware nested-record drop table
+        // in JIR; copy-safe leaves continue through the old recursive path.
+        if matches!(
+            self.types.kind(cursor),
+            Some(TypeKind::Nominal { constructor, .. }) if self.records.contains_key(constructor)
+        ) {
+            self.buffer_element_is_abi_safe(cursor, visiting, true)
+        } else if matches!(
+            self.types.kind(cursor),
+            Some(TypeKind::Option(_)) | Some(TypeKind::Result { .. })
+        ) {
+            self.buffer_carrier_move_is_abi_safe(cursor, visiting)
+        } else if matches!(self.types.kind(cursor), Some(TypeKind::OwnedString)) {
+            self.buffer_element_is_abi_safe(cursor, visiting, true)
+        } else {
+            self.buffer_element_is_copy_safe(cursor, visiting)
+        }
+    }
+
+    fn nested_buffer_chain_leaf_is_resize_safe(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        let mut cursor = self.unification.resolve_shallow(&self.types, ty);
+        let mut depth = 0u32;
+        while let Some(TypeKind::Buffer(inner)) = self.types.kind(cursor) {
+            depth = depth.saturating_add(1);
+            cursor = self.unification.resolve_shallow(&self.types, *inner);
+        }
+        if depth == 0 {
+            return false;
+        }
+        if matches!(
+            self.types.kind(cursor),
+            Some(TypeKind::Nominal { constructor, .. }) if self.records.contains_key(constructor)
+        ) {
+            self.resize_record_fields_are_supported(cursor, visiting)
+        } else if matches!(
+            self.types.kind(cursor),
+            Some(TypeKind::Option(_)) | Some(TypeKind::Result { .. })
+        ) {
+            self.buffer_carrier_move_is_abi_safe(cursor, visiting)
+        } else if matches!(self.types.kind(cursor), Some(TypeKind::OwnedString)) {
+            // Nested owning buffers need a string-aware runtime path when the
+            // final leaf is OwnedString; the descriptor layout is shared with
+            // Buffer, but byte-only nested cleanup would leak its UTF-8 payload.
+            true
+        } else {
+            self.buffer_element_is_copy_safe(cursor, visiting)
+        }
+    }
+
+    /// Returns whether a record leaf can use the current path-aware resize
+    /// metadata. The runtime field table can recursively destroy inline
+    /// records and Buffer chains whose final leaf is copy-safe. Option/Result
+    /// carriers are supported when their active branch owns a Buffer or
+    /// OwnedString descriptor.
+    fn resize_record_fields_are_supported(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        let resolved = self.unification.resolve_shallow(&self.types, ty);
+        if matches!(
+            self.types.kind(resolved),
+            Some(TypeKind::Option(_)) | Some(TypeKind::Result { .. })
+        ) {
+            return self.buffer_carrier_move_is_abi_safe(resolved, visiting);
+        }
+        if !visiting.insert(resolved) {
+            return false;
+        }
+        let result = match self.types.kind(resolved).cloned() {
+            Some(TypeKind::Array { .. }) => {
+                // Inline arrays use the same path-aware ownership contract as
+                // record fields; JIR later flattens every descriptor offset.
+                self.resize_record_value_is_supported(resolved, visiting)
+            }
+            Some(TypeKind::Nominal {
+                constructor,
+                arguments,
+            }) => {
+                if let Some(record) = self.records.get(&constructor).cloned() {
+                    if record.repr != AbiRepr::C {
+                        false
+                    } else {
+                        let mut substitution = Substitution::new();
+                        for (parameter, argument) in record
+                            .generic_parameters
+                            .iter()
+                            .zip(arguments.iter().copied())
+                        {
+                            substitution.insert(*parameter, argument);
+                        }
+                        record.fields.values().all(|field| {
+                            let field_ty = substitution
+                                .apply(&mut self.types, field.ty)
+                                .unwrap_or(self.types.core().error);
+                            self.resize_record_value_is_supported(field_ty, visiting)
+                        })
+                    }
+                } else if let Some(enum_declaration) = self.enums.get(&constructor) {
+                    enum_declaration.repr == AbiRepr::C
+                        && self.buffer_enum_carrier_move_is_abi_safe(
+                            constructor,
+                            &arguments,
+                            visiting,
+                        )
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+        visiting.remove(&resolved);
+        result
+    }
+
+    fn resize_record_value_is_supported(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        let resolved = self.unification.resolve_shallow(&self.types, ty);
+        // OwnedString is a move-only descriptor with the same inline layout
+        // as Buffer. Record field tables carry a dedicated cleanup marker,
+        // so it is safe to resize/clear a record containing this field.
+        if matches!(self.types.kind(resolved), Some(TypeKind::OwnedString)) {
+            return true;
+        }
+        // The record resize/clear runtime already consumes the same carrier
+        // field table as record drop/remove.  A carrier value never escapes
+        // this operation, so selecting its active Buffer branch is atomic and
+        // does not require a second ownership result ABI.
+        if matches!(
+            self.types.kind(resolved),
+            Some(TypeKind::Option(_)) | Some(TypeKind::Result { .. })
+        ) {
+            return self.buffer_carrier_move_is_abi_safe(resolved, visiting);
+        }
+        let mut leaf = resolved;
+        let mut depth = 0u32;
+        while let Some(TypeKind::Buffer(inner)) = self.types.kind(leaf) {
+            depth = depth.saturating_add(1);
+            leaf = self.unification.resolve_shallow(&self.types, *inner);
+        }
+        if depth > 0 {
+            // Nested descriptors may terminate in another inline array or an
+            // owning record. Continue through that value shape instead of
+            // stopping at the first non-Buffer leaf.
+            return self.resize_record_value_is_supported(leaf, visiting);
+        }
+        match self.types.kind(resolved).cloned() {
+            Some(TypeKind::Array { element, .. }) => {
+                self.resize_record_value_is_supported(element, visiting)
+            }
+            Some(TypeKind::Nominal { constructor, .. })
+                if self.records.contains_key(&constructor) =>
+            {
+                self.resize_record_fields_are_supported(resolved, visiting)
+            }
+            _ => self.buffer_element_is_copy_safe(resolved, visiting),
+        }
+    }
+
+    /// Returns whether a field is a move-safe value that can be represented in
+    /// a record stored inside a generic owning buffer. In addition to a direct
+    /// Buffer chain, a C-layout record may contain another C-layout record or
+    /// a fixed array of such owning values; lowering flattens their static
+    /// offsets into one drop table. Option/Result carriers are supported when
+    /// their active branch owns a Buffer or OwnedString descriptor.
+    fn owning_record_field_is_abi_safe(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        if matches!(self.types.kind(ty), Some(TypeKind::OwnedString)) {
+            return true;
+        }
+        if self.owning_buffer_chain_is_abi_safe(ty, visiting) {
+            return true;
+        }
+        if let Some(TypeKind::Array { element, .. }) = self.types.kind(ty).cloned() {
+            return self.owning_record_field_is_abi_safe(element, visiting);
+        }
+        // Option/Result are tagged inline carriers. Their owning payload is
+        // selected by the tag during record cleanup; the compact field-table
+        // ABI supports Buffer and OwnedString branches without allowing
+        // arbitrary enum metadata here.
+        if matches!(
+            self.types.kind(ty),
+            Some(TypeKind::Option(_)) | Some(TypeKind::Result { .. })
+        ) {
+            return self.buffer_carrier_move_is_abi_safe(ty, visiting);
+        }
+        matches!(self.types.kind(ty), Some(TypeKind::Nominal { constructor, .. }) if self.records.contains_key(constructor))
+            && self.buffer_element_is_abi_safe(ty, visiting, true)
+    }
+
+    /// Returns whether `buffer_remove_drop` can dispose one element without
+    /// returning it to the caller. Copy-safe elements need only byte-wise
+    /// compaction. Owning elements are supported for a direct C-layout record
+    /// and for a nested Buffer chain whose final leaf is such a record; the
+    /// existing path-aware field table carries the cleanup metadata.
+    fn buffer_remove_drop_element_is_supported(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        let resolved = self.unification.resolve_shallow(&self.types, ty);
+        if matches!(self.types.kind(resolved), Some(TypeKind::OwnedString)) {
+            return true;
+        }
+        if self.buffer_element_is_copy_safe(resolved, visiting) {
+            return true;
+        }
+        if matches!(
+            self.types.kind(resolved),
+            Some(TypeKind::Option(_)) | Some(TypeKind::Result { .. })
+        ) {
+            return self.buffer_carrier_move_is_abi_safe(resolved, visiting);
+        }
+        if !visiting.insert(resolved) {
+            return false;
+        }
+        let mut nested_cursor = resolved;
+        let mut nested_depth = 0u32;
+        while let Some(TypeKind::Buffer(inner)) = self.types.kind(nested_cursor) {
+            nested_depth = nested_depth.saturating_add(1);
+            nested_cursor = self.unification.resolve_shallow(&self.types, *inner);
+        }
+        if nested_depth > 0
+            && self
+                .buffer_remove_drop_value_is_supported(nested_cursor, &mut DeterministicSet::new())
+        {
+            visiting.remove(&resolved);
+            return true;
+        }
+        let result = match self.types.kind(resolved).cloned() {
+            Some(TypeKind::Array { .. }) => {
+                // Direct arrays are represented by the same offset table as
+                // records; owning members are destroyed before compaction.
+                self.buffer_remove_drop_value_is_supported(resolved, visiting)
+            }
+            Some(TypeKind::Nominal {
+                constructor,
+                arguments,
+            }) => {
+                if let Some(record) = self.records.get(&constructor).cloned() {
+                    if record.repr != AbiRepr::C {
+                        false
+                    } else {
+                        let mut substitution = Substitution::new();
+                        for (parameter, argument) in record
+                            .generic_parameters
+                            .iter()
+                            .zip(arguments.iter().copied())
+                        {
+                            substitution.insert(*parameter, argument);
+                        }
+                        let mut has_owning_field = false;
+                        let fields_supported = record.fields.values().all(|field| {
+                            let field_ty = substitution
+                                .apply(&mut self.types, field.ty)
+                                .unwrap_or(self.types.core().error);
+                            if self.buffer_element_is_copy_safe(field_ty, visiting) {
+                                true
+                            } else if self.buffer_remove_drop_value_is_supported(field_ty, visiting)
+                            {
+                                has_owning_field = true;
+                                true
+                            } else {
+                                false
+                            }
+                        });
+                        fields_supported && has_owning_field
+                    }
+                } else if let Some(enum_declaration) = self.enums.get(&constructor) {
+                    enum_declaration.repr == AbiRepr::C
+                        && self.buffer_enum_carrier_move_is_abi_safe(
+                            constructor,
+                            &arguments,
+                            visiting,
+                        )
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+        visiting.remove(&resolved);
+        result
+    }
+
+    /// Returns whether a direct `Buffer<T>` element can be transferred into a
+    /// caller-owned output slot.  The runtime operation is a byte-preserving
+    /// move: it copies the selected element once, compacts the remaining
+    /// bytes, and clears the stale tail.  Therefore every owner embedded in
+    /// `T` must already have a complete move/drop ABI, while copy-only values
+    /// intentionally stay on the ordinary `buffer_remove` path.
+    fn buffer_move_into_element_is_supported(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        let resolved = self.unification.resolve_shallow(&self.types, ty);
+        let mut copy_visiting = DeterministicSet::new();
+        if self.buffer_element_is_copy_safe(resolved, &mut copy_visiting) {
+            return false;
+        }
+        self.buffer_element_is_abi_safe(resolved, visiting, true)
+    }
+
+    fn buffer_remove_drop_value_is_supported(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        let resolved = self.unification.resolve_shallow(&self.types, ty);
+        if matches!(self.types.kind(resolved), Some(TypeKind::OwnedString)) {
+            return true;
+        }
+        // Drop-only remove never transfers the carrier value to a temporary.
+        // The existing field-table ABI can therefore select the active
+        // Option/Result Buffer branch before compaction without introducing a
+        // second ownership path. Move-return remove remains separate because
+        // its result would need to carry the same metadata to its drop glue.
+        if matches!(
+            self.types.kind(resolved),
+            Some(TypeKind::Option(_)) | Some(TypeKind::Result { .. })
+        ) {
+            return self.buffer_carrier_move_is_abi_safe(resolved, visiting);
+        }
+        let mut cursor = resolved;
+        let mut depth = 0u32;
+        while let Some(TypeKind::Buffer(inner)) = self.types.kind(cursor) {
+            depth = depth.saturating_add(1);
+            cursor = self.unification.resolve_shallow(&self.types, *inner);
+        }
+        if depth > 0 {
+            if self.buffer_element_is_copy_safe(cursor, visiting) {
+                return true;
+            }
+            return self.buffer_remove_drop_value_is_supported(cursor, visiting);
+        }
+        if let Some(TypeKind::Array { element, .. }) = self.types.kind(resolved).cloned() {
+            return self.buffer_remove_drop_value_is_supported(element, visiting);
+        }
+        if matches!(
+            self.types.kind(resolved),
+            Some(TypeKind::Nominal { constructor, .. }) if self.records.contains_key(constructor)
+        ) {
+            return self.buffer_remove_drop_element_is_supported(resolved, visiting);
+        }
+        false
+    }
+
+    fn buffer_element_is_abi_safe(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+        allow_move_only: bool,
+    ) -> bool {
+        let resolved = self.unification.resolve_shallow(&self.types, ty);
+        if !visiting.insert(resolved) {
+            return false;
+        }
+        let result = match self.types.kind(resolved).cloned() {
+            Some(
+                TypeKind::Error | TypeKind::InferenceVariable(_) | TypeKind::GenericParameter(_),
+            ) => true,
+            Some(
+                TypeKind::Bool | TypeKind::Char | TypeKind::Integer { .. } | TypeKind::Float(_),
+            ) => true,
+            Some(TypeKind::Array { element, .. } | TypeKind::Vector { element, .. }) => {
+                // Fixed arrays/vectors are inline values.  In the move-aware
+                // contract they may contain owning Buffer descriptors; the
+                // JIR field table flattens every descriptor offset so the
+                // runtime can destroy the array element without hidden
+                // metadata.  The copy-safe path remains intentionally strict.
+                if allow_move_only {
+                    self.buffer_element_is_abi_safe(element, visiting, true)
+                } else {
+                    self.buffer_element_is_copy_safe(element, visiting)
+                }
+            }
+            Some(TypeKind::Option(inner))
+                if allow_move_only
+                    && self.buffer_carrier_payload_move_is_abi_safe(inner, visiting) =>
+            {
+                self.buffer_carrier_move_is_abi_safe(resolved, visiting)
+            }
+            Some(TypeKind::Result { ok, error })
+                if allow_move_only
+                    && (self.buffer_carrier_payload_move_is_abi_safe(ok, visiting)
+                        || self.buffer_carrier_payload_move_is_abi_safe(error, visiting)) =>
+            {
+                self.buffer_carrier_move_is_abi_safe(resolved, visiting)
+            }
+            Some(TypeKind::Option(inner)) => {
+                // A carrier is copy-safe when every payload is copy-safe;
+                // it carries no hidden ownership or destructor metadata.
+                self.buffer_element_is_copy_safe(inner, visiting)
+            }
+            Some(TypeKind::Result { ok, error }) => {
+                // Both Result branches must remain plain copy values.
+                self.buffer_element_is_copy_safe(ok, visiting)
+                    && self.buffer_element_is_copy_safe(error, visiting)
+            }
+            Some(TypeKind::Nominal {
+                constructor,
+                arguments,
+            }) => {
+                if let Some(record) = self.records.get(&constructor).cloned() {
+                    if record.repr != AbiRepr::C {
+                        false
+                    } else {
+                        let mut substitution = Substitution::new();
+                        for (parameter, argument) in record
+                            .generic_parameters
+                            .iter()
+                            .zip(arguments.iter().copied())
+                        {
+                            substitution.insert(*parameter, argument);
+                        }
+                        record.fields.values().all(|field| {
+                            let field_ty = substitution
+                                .apply(&mut self.types, field.ty)
+                                .unwrap_or(self.types.core().error);
+                            if allow_move_only
+                                && self.owning_record_field_is_abi_safe(field_ty, visiting)
+                            {
+                                true
+                            } else {
+                                self.buffer_element_is_copy_safe(field_ty, visiting)
+                            }
+                        })
+                    }
+                } else if let Some(declaration) = self.enums.get(&constructor).cloned() {
+                    if declaration.repr != AbiRepr::C {
+                        false
+                    } else if allow_move_only
+                        && self.buffer_enum_carrier_move_is_abi_safe(
+                            constructor,
+                            &arguments,
+                            visiting,
+                        )
+                    {
+                        true
+                    } else {
+                        let mut substitution = Substitution::new();
+                        for (parameter, argument) in declaration
+                            .generic_parameters
+                            .iter()
+                            .zip(arguments.iter().copied())
+                        {
+                            substitution.insert(*parameter, argument);
+                        }
+                        declaration.variants.values().all(|variant| {
+                            variant.fields.iter().all(|field| {
+                                let field_ty = substitution
+                                    .apply(&mut self.types, *field)
+                                    .unwrap_or(self.types.core().error);
+                                self.buffer_element_is_copy_safe(field_ty, visiting)
+                            })
+                        })
+                    }
+                } else {
+                    false
+                }
+            }
+            Some(TypeKind::Buffer(_)) if allow_move_only => {
+                self.owning_buffer_chain_is_abi_safe(resolved, visiting)
+            }
+            // `OwnedString` is a move-only three-word descriptor.  The JIR
+            // layout is target-native and its drop glue is emitted by the
+            // owning `Buffer<OwnedString>` path.
+            Some(TypeKind::OwnedString) if allow_move_only => true,
+            Some(
+                TypeKind::String
+                | TypeKind::OwnedString
+                | TypeKind::Unit
+                | TypeKind::Never
+                | TypeKind::Buffer(_)
+                | TypeKind::Slice(_)
+                | TypeKind::Pointer(_)
+                | TypeKind::Function { .. }
+                | TypeKind::Capability { .. },
+            )
+            | None => false,
+        };
+        visiting.remove(&resolved);
+        result
     }
 
     fn reference_symbol(&self, span: Span, namespace: Namespace) -> Option<&Symbol> {
@@ -3074,6 +9110,86 @@ impl<'a> Checker<'a> {
         layouts.sort_by_key(|layout| layout.constructor);
         layouts
     }
+
+    /// Exports layouts for nominal declarations reachable through package
+    /// interfaces without adding every dependency enum to the current
+    /// constructor-resolution namespace.  Keeping these two concerns separate
+    /// prevents unrelated variants such as `BufferStatus.Ok` from making an
+    /// unqualified `Ok(...)` constructor ambiguous in another module.
+    fn export_catalog_nominal_layouts(&mut self) -> Vec<NominalLayout> {
+        let interfaces: Vec<_> = self
+            .module_catalog
+            .into_iter()
+            .flat_map(|catalog| catalog.interfaces())
+            .filter(|module| self.resolution.module_name.as_deref() != Some(module.name.as_str()))
+            .flat_map(|module| {
+                module.members.values().filter_map(|member| {
+                    if member.record_interface.is_none() && member.enum_interface.is_none() {
+                        return None;
+                    }
+                    Some((
+                        module.name.clone(),
+                        member.name.clone(),
+                        member.record_interface.clone(),
+                        member.enum_interface.clone(),
+                    ))
+                })
+            })
+            .collect();
+
+        let mut layouts = Vec::new();
+        for (module_name, member_name, record, enumeration) in interfaces {
+            let canonical_path = format!("{module_name}.{member_name}");
+            let owner =
+                jadren_resolve::QualifiedSymbolId::from_path(Namespace::Type, &canonical_path);
+            let constructor = NominalTypeId::from_symbol_fingerprint(owner.fingerprint());
+            if let Some(record) = record {
+                layouts.push(NominalLayout {
+                    constructor,
+                    generic_parameters: generic_parameter_ids(
+                        owner.fingerprint(),
+                        record.generic_count,
+                    ),
+                    repr: record.repr,
+                    kind: NominalLayoutKind::Record {
+                        fields: record
+                            .fields
+                            .iter()
+                            .map(|field| NominalFieldLayout {
+                                name: field.name.clone(),
+                                ty: self.lower_module_type(Some(owner), &field.ty),
+                            })
+                            .collect(),
+                    },
+                });
+            }
+            if let Some(enumeration) = enumeration {
+                layouts.push(NominalLayout {
+                    constructor,
+                    generic_parameters: generic_parameter_ids(
+                        owner.fingerprint(),
+                        enumeration.generic_count,
+                    ),
+                    repr: enumeration.repr,
+                    kind: NominalLayoutKind::Enum {
+                        variants: enumeration
+                            .variants
+                            .iter()
+                            .map(|variant| NominalVariantLayout {
+                                name: variant.name.clone(),
+                                fields: variant
+                                    .fields
+                                    .iter()
+                                    .map(|field| self.lower_module_type(Some(owner), field))
+                                    .collect(),
+                            })
+                            .collect(),
+                    },
+                });
+            }
+        }
+        layouts
+    }
 }
 
 fn is_binding_pattern(path: &jadren_parser::Path) -> bool {
@@ -3239,7 +9355,6 @@ mod tests {
         assert!(!resolution.has_errors(), "{:?}", resolution.diagnostics);
         check_types(source, &parsed.file, &resolution)
     }
-
     #[test]
     fn infers_literals_locals_and_arithmetic() {
         let output = check("module test; fn main() { let x = 1; let y = x + 2; print(y) }");
@@ -3536,6 +9651,461 @@ mod tests {
     }
 
     #[test]
+    fn validates_generic_buffer_mutations_and_copy_safe_element_contract() {
+        let valid = check(
+            "module test; fn mutate(values: write Buffer<UInt8>) { let appended: Bool = buffer_append(values, 7u8); let inserted: Bool = buffer_insert(values, 0usize, 3u8); let removed: Bool = buffer_remove(values, 1usize); }",
+        );
+        assert!(!valid.has_errors(), "{:?}", valid.diagnostics);
+
+        let record = check(
+            "module test; @repr(C) struct Pair { left: Int32, right: Int32 } fn mutate(values: write Buffer<Pair>) { buffer_append(values, Pair { left: 1, right: 2 }); }",
+        );
+        assert!(!record.has_errors(), "{:?}", record.diagnostics);
+
+        let enum_value = check(
+            "module test; @repr(C) enum State { Idle, Running } fn mutate(values: write Buffer<State>) { let state: State = Idle; buffer_append(values, state); }",
+        );
+        assert!(!enum_value.has_errors(), "{:?}", enum_value.diagnostics);
+
+        let option_value = check(
+            "module test; fn mutate(values: write Buffer<Option<Int32>>) { let state: Option<Int32> = Some(7); buffer_append(values, state); }",
+        );
+        assert!(!option_value.has_errors(), "{:?}", option_value.diagnostics);
+
+        let result_value = check(
+            "module test; fn mutate(values: write Buffer<Result<Int32, Int32>>) { let state: Result<Int32, Int32> = Ok(7); buffer_append(values, state); }",
+        );
+        assert!(!result_value.has_errors(), "{:?}", result_value.diagnostics);
+
+        let owning_option = check(
+            "module test; fn mutate(values: write Buffer<Option<Buffer<Int32>>>, inner: Buffer<Int32>) { let state: Option<Buffer<Int32>> = Some(inner); buffer_append(values, state); }",
+        );
+        assert!(
+            !owning_option.has_errors(),
+            "{:?}",
+            owning_option.diagnostics
+        );
+
+        let owning_result = check(
+            "module test; fn mutate(values: write Buffer<Result<Buffer<Int32>, Bool>>, inner: Buffer<Int32>) { let state: Result<Buffer<Int32>, Bool> = Ok(inner); buffer_append(values, state); }",
+        );
+        assert!(
+            !owning_result.has_errors(),
+            "{:?}",
+            owning_result.diagnostics
+        );
+
+        let multi_owning_carrier = check(
+            "module test; fn mutate(values: write Buffer<Result<Buffer<Int32>, Buffer<Int32>>>, inner: Buffer<Int32>) { let state: Result<Buffer<Int32>, Buffer<Int32>> = Ok(inner); buffer_append(values, state); }",
+        );
+        assert!(
+            !multi_owning_carrier.has_errors(),
+            "expected multi-owning carrier to be accepted, got {:?}",
+            multi_owning_carrier.diagnostics
+        );
+
+        let owning_enum = check(
+            "module test; @repr(C) enum Event { Idle, Ready(Buffer<Int32>), Done } fn mutate(values: write Buffer<Event>, inner: Buffer<Int32>) { let state: Event = Event.Ready(inner); buffer_append(values, state); }",
+        );
+        assert!(
+            !owning_enum.has_errors(),
+            "expected owning enum carrier to be accepted, got {:?}",
+            owning_enum.diagnostics
+        );
+
+        let multi_owning_enum = check(
+            "module test; @repr(C) enum Bad { First(Buffer<Int32>), Second(Buffer<Int32>), Empty } fn mutate(values: write Buffer<Bad>, inner: Buffer<Int32>) { let state: Bad = Bad.First(inner); buffer_append(values, state); }",
+        );
+        assert!(
+            !multi_owning_enum.has_errors(),
+            "expected multiple owning enum variants to be accepted, got {:?}",
+            multi_owning_enum.diagnostics
+        );
+
+        let multi_field_owning_enum = check(
+            "module test; @repr(C) enum Bad { First(Buffer<Int32>, Int32), Empty } fn mutate(values: write Buffer<Bad>, inner: Buffer<Int32>) { let state: Bad = Bad.First(inner, 1); buffer_append(values, state); }",
+        );
+        assert!(
+            !multi_field_owning_enum.has_errors(),
+            "expected multiple owning enum fields to be accepted, got {:?}",
+            multi_field_owning_enum.diagnostics
+        );
+
+        let owning_string_enum = check(
+            "module test; @repr(C) enum Event { Idle, Text(OwnedString), Pair(OwnedString, Int32), Done } fn mutate(values: write Buffer<Event>, item: OwnedString, other: OwnedString) { let text: Event = Event.Text(item); let pair: Event = Event.Pair(other, 7); buffer_append(values, text); buffer_append(values, pair); }",
+        );
+        assert!(
+            !owning_string_enum.has_errors(),
+            "expected direct OwnedString enum fields to be accepted, got {:?}",
+            owning_string_enum.diagnostics
+        );
+
+        let owning_string_enum_move = check(
+            "module test; @repr(C) enum Event { Idle, Text(OwnedString), Pair(OwnedString, Int32), Done } fn mutate(values: write Buffer<Event>, output: write Event, incoming: Event) { let removed: Bool = buffer_remove_move_into(values, 0usize, output); let removed_status: Int32 = buffer_remove_move_into_status(values, 99usize, output); let inserted: Bool = buffer_insert_move_from(values, 0usize, incoming); if !removed { } if removed_status == 0 { } if !inserted { } }",
+        );
+        assert!(
+            !owning_string_enum_move.has_errors(),
+            "expected enum OwnedString raw move operations to be accepted, got {:?}",
+            owning_string_enum_move.diagnostics
+        );
+
+        let owning_string_enum_mutations = check(
+            "module test; @repr(C) enum Event { Idle, Text(OwnedString), Pair(OwnedString, Int32), Done } fn mutate(values: write Buffer<Event>) { let resized: Bool = buffer_resize_move(values, 2usize); let cleared: Bool = buffer_clear_move(values); let removed: Bool = buffer_remove_drop(values, 0usize); if !resized { } if !cleared { } if !removed { } }",
+        );
+        assert!(
+            !owning_string_enum_mutations.has_errors(),
+            "expected enum OwnedString resize/clear/remove to be accepted, got {:?}",
+            owning_string_enum_mutations.diagnostics
+        );
+
+        let owning_array = check(
+            "module test; fn mutate(values: write Buffer<[Buffer<Int32>; 2]>, first: Buffer<Int32>, second: Buffer<Int32>) { let item: [Buffer<Int32>; 2] = [first, second]; buffer_append(values, item); let resized: Bool = buffer_resize_move(values, 1usize); let removed: Int32 = buffer_remove_drop_status(values, 0usize); let cleared: Bool = buffer_clear_move(values); }",
+        );
+        assert!(
+            !owning_array.has_errors(),
+            "expected owning Buffer array element to be accepted, got {:?}",
+            owning_array.diagnostics
+        );
+
+        let nested_owning = check(
+            "module test; fn mutate(values: write Buffer<Buffer<Int32>>, inner: Buffer<Int32>) { buffer_append(values, inner); }",
+        );
+        assert!(
+            !nested_owning.has_errors(),
+            "{:?}",
+            nested_owning.diagnostics
+        );
+
+        let owned_string_buffer = check(
+            "module test; fn mutate(values: write Buffer<OwnedString>, item: OwnedString) { buffer_append(values, item); }",
+        );
+        assert!(
+            !owned_string_buffer.has_errors(),
+            "expected Buffer<OwnedString> append to be accepted, got {:?}",
+            owned_string_buffer.diagnostics
+        );
+
+        let owned_string_pop = check(
+            "module test; fn take(values: write Buffer<OwnedString>) -> Result<OwnedString, Int32> { return buffer_pop(values); }",
+        );
+        assert!(
+            !owned_string_pop.has_errors(),
+            "expected Buffer<OwnedString> pop to be accepted, got {:?}",
+            owned_string_pop.diagnostics
+        );
+
+        let owned_string_remove = check(
+            "module test; fn take(values: write Buffer<OwnedString>) -> Result<OwnedString, Int32> { return buffer_remove_move(values, 0usize); }",
+        );
+        assert!(
+            !owned_string_remove.has_errors(),
+            "expected Buffer<OwnedString> remove_move to be accepted, got {:?}",
+            owned_string_remove.diagnostics
+        );
+
+        let owned_string_remove_into = check(
+            "module test; fn mutate(values: write Buffer<OwnedString>, output: write OwnedString) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); let status: Int32 = buffer_remove_move_into_status(values, 0usize, output); }",
+        );
+        assert!(
+            !owned_string_remove_into.has_errors(),
+            "expected Buffer<OwnedString> remove_move_into to be accepted, got {:?}",
+            owned_string_remove_into.diagnostics
+        );
+
+        let owned_string_pop_into = check(
+            "module test; fn mutate(values: write Buffer<OwnedString>, output: write OwnedString) { let moved: Bool = buffer_pop_move_into(values, output); let status: Int32 = buffer_pop_move_into_status(values, output); }",
+        );
+        assert!(
+            !owned_string_pop_into.has_errors(),
+            "expected Buffer<OwnedString> pop_move_into to be accepted, got {:?}",
+            owned_string_pop_into.diagnostics
+        );
+
+        let nested_owned_string_remove_into = check(
+            "module test; fn mutate(values: write Buffer<Buffer<OwnedString>>, output: Buffer<OwnedString>) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); let status: Int32 = buffer_remove_move_into_status(values, 0usize, output); }",
+        );
+        assert!(
+            !nested_owned_string_remove_into.has_errors(),
+            "expected nested Buffer<OwnedString> remove_move_into to be accepted, got {:?}",
+            nested_owned_string_remove_into.diagnostics
+        );
+
+        let owned_string_resize = check(
+            "module test; fn mutate(values: write Buffer<OwnedString>) { let resized: Bool = buffer_resize_move(values, 2usize); let cleared: Bool = buffer_clear_move(values); }",
+        );
+        assert!(
+            !owned_string_resize.has_errors(),
+            "expected Buffer<OwnedString> resize/clear to be accepted, got {:?}",
+            owned_string_resize.diagnostics
+        );
+
+        let owned_string_remove_drop = check(
+            "module test; fn mutate(values: write Buffer<OwnedString>) { let removed: Bool = buffer_remove_drop(values, 0usize); let status: Int32 = buffer_remove_drop_status(values, 0usize); }",
+        );
+        assert!(
+            !owned_string_remove_drop.has_errors(),
+            "expected Buffer<OwnedString> remove_drop to be accepted, got {:?}",
+            owned_string_remove_drop.diagnostics
+        );
+
+        let owned_string_option_carrier = check(
+            "module test; fn mutate(values: write Buffer<Option<OwnedString>>, item: OwnedString) { let state: Option<OwnedString> = Some(item); buffer_append(values, state); let resized: Int32 = buffer_resize_move_status(values, 1usize); let cleared: Int32 = buffer_clear_move_status(values); }",
+        );
+        assert!(
+            !owned_string_option_carrier.has_errors(),
+            "expected Option<OwnedString> carrier to be accepted, got {:?}",
+            owned_string_option_carrier.diagnostics
+        );
+
+        let owned_string_result_carrier = check(
+            "module test; fn mutate(values: write Buffer<Result<OwnedString, Int32>>, item: OwnedString) { let state: Result<OwnedString, Int32> = Ok(item); buffer_append(values, state); let removed: Bool = buffer_remove_drop(values, 0usize); }",
+        );
+        assert!(
+            !owned_string_result_carrier.has_errors(),
+            "expected Result<OwnedString, Int32> carrier to be accepted, got {:?}",
+            owned_string_result_carrier.diagnostics
+        );
+
+        let nested_pop = check(
+            "module test; fn take(values: write Buffer<Buffer<Int32>>) -> Result<Buffer<Int32>, Int32> { return buffer_pop(values); }",
+        );
+        assert!(!nested_pop.has_errors(), "{:?}", nested_pop.diagnostics);
+
+        let scalar_pop = check(
+            "module test; fn take(values: write Buffer<Int32>) { let candidate: Result<Buffer<Int32>, Int32> = buffer_pop(values); }",
+        );
+        assert!(
+            scalar_pop
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "expected nested pop diagnostic, got {:?}",
+            scalar_pop.diagnostics
+        );
+
+        let nested_remove_move = check(
+            "module test; fn take(values: write Buffer<Buffer<Int32>>) -> Result<Buffer<Int32>, Int32> { return buffer_remove_move(values, 0usize); }",
+        );
+        assert!(
+            !nested_remove_move.has_errors(),
+            "{:?}",
+            nested_remove_move.diagnostics
+        );
+
+        let scalar_remove_move = check(
+            "module test; fn take(values: write Buffer<Int32>) { let candidate: Result<Buffer<Int32>, Int32> = buffer_remove_move(values, 0usize); }",
+        );
+        assert!(
+            scalar_remove_move
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "expected nested remove_move diagnostic, got {:?}",
+            scalar_remove_move.diagnostics
+        );
+
+        let owning_record_remove_move_into = check(
+            "module test; @repr(C) struct Entry { values: Buffer<Int32>, id: Int32 } fn mutate(values: write Buffer<Entry>, output: write Entry) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); let status: Int32 = buffer_remove_move_into_status(values, 0usize, output); }",
+        );
+        assert!(
+            !owning_record_remove_move_into.has_errors(),
+            "expected owning record remove_move_into to be accepted, got {:?}",
+            owning_record_remove_move_into.diagnostics
+        );
+
+        let owning_enum_remove_move_into = check(
+            "module test; @repr(C) enum Event { Idle, Ready(Buffer<Int32>), Nested(Buffer<Buffer<Int32>>), Done } fn mutate(values: write Buffer<Event>, output: write Event) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); let status: Int32 = buffer_remove_move_into_status(values, 0usize, output); }",
+        );
+        assert!(
+            !owning_enum_remove_move_into.has_errors(),
+            "expected owning enum remove_move_into to be accepted, got {:?}",
+            owning_enum_remove_move_into.diagnostics
+        );
+
+        let nested_remove_move_into = check(
+            "module test; fn mutate(values: write Buffer<Buffer<Int32>>, output: Buffer<Int32>) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); }",
+        );
+        assert!(
+            !nested_remove_move_into.has_errors(),
+            "expected nested buffer remove_move_into to be accepted, got {:?}",
+            nested_remove_move_into.diagnostics
+        );
+
+        let borrowed_nested_remove_move_into = check(
+            "module test; fn mutate(values: write Buffer<Buffer<Int32>>, output: write Buffer<Int32>) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); }",
+        );
+        assert!(
+            borrowed_nested_remove_move_into
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "expected nested move_into to require an owned output descriptor, got {:?}",
+            borrowed_nested_remove_move_into.diagnostics
+        );
+
+        let copy_safe_record_remove_move_into = check(
+            "module test; @repr(C) struct Entry { id: Int32 } fn mutate(values: write Buffer<Entry>, output: write Entry) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); }",
+        );
+        assert!(
+            copy_safe_record_remove_move_into.has_errors(),
+            "expected remove_move_into to require an owning record, got {:?}",
+            copy_safe_record_remove_move_into.diagnostics
+        );
+
+        let nested_insert_move = check(
+            "module test; fn mutate(values: write Buffer<Buffer<Int32>>, inner: Buffer<Int32>) { let inserted: Bool = buffer_insert_move(values, 0usize, inner); }",
+        );
+        assert!(
+            !nested_insert_move.has_errors(),
+            "expected nested move-only insert to be accepted, got {:?}",
+            nested_insert_move.diagnostics
+        );
+
+        let scalar_insert_move = check(
+            "module test; fn mutate(values: write Buffer<Int32>, inner: Int32) { let inserted: Bool = buffer_insert_move(values, 0usize, inner); }",
+        );
+        assert!(
+            scalar_insert_move
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "expected nested insert_move diagnostic, got {:?}",
+            scalar_insert_move.diagnostics
+        );
+
+        let owning_record_insert_move_from = check(
+            "module test; @repr(C) struct Entry { values: Buffer<Int32>, id: Int32 } fn mutate(values: write Buffer<Entry>, incoming: Entry, incoming_status: Entry) { let moved: Bool = buffer_insert_move_from(values, 0usize, incoming); let status: Int32 = buffer_insert_move_from_status(values, 0usize, incoming_status); }",
+        );
+        assert!(
+            !owning_record_insert_move_from.has_errors(),
+            "expected owning record insert_move_from to be accepted, got {:?}",
+            owning_record_insert_move_from.diagnostics
+        );
+
+        let scalar_insert_move_from = check(
+            "module test; fn mutate(values: write Buffer<Int32>, incoming: Int32) { let moved: Bool = buffer_insert_move_from(values, 0usize, incoming); }",
+        );
+        assert!(
+            scalar_insert_move_from
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "expected scalar insert_move_from diagnostic, got {:?}",
+            scalar_insert_move_from.diagnostics
+        );
+
+        let nested_remove = check(
+            "module test; fn mutate(values: write Buffer<Buffer<Int32>>) { buffer_remove(values, 0usize); }",
+        );
+        assert!(
+            nested_remove
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "expected move-only remove diagnostic, got {:?}",
+            nested_remove.diagnostics
+        );
+
+        let nested_resize_move = check(
+            "module test; fn mutate(values: write Buffer<Buffer<Int32>>) { let resized: Bool = buffer_resize_move(values, 2usize); let resized_status: Int32 = buffer_resize_move_status(values, 0usize); }",
+        );
+        assert!(
+            !nested_resize_move.has_errors(),
+            "expected move-only resize to be accepted, got {:?}",
+            nested_resize_move.diagnostics
+        );
+
+        let scalar_resize_move = check(
+            "module test; fn mutate(values: write Buffer<Int32>) { buffer_resize_move(values, 2usize); }",
+        );
+        assert!(
+            scalar_resize_move
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "expected scalar move-only resize diagnostic, got {:?}",
+            scalar_resize_move.diagnostics
+        );
+
+        let nested_composite = check(
+            "module test; fn mutate() { let created: Result<Buffer<[Buffer<Int32>; 1]>, Int32> = buffer_create(1usize); }",
+        );
+        assert!(
+            !nested_composite.has_errors(),
+            "expected fixed owning array element to be accepted, got {:?}",
+            nested_composite.diagnostics
+        );
+
+        let statuses = check(
+            "module test; fn mutate(values: write Buffer<UInt8>) { let a: Int32 = buffer_reserve_status(values, 2usize); let b: Int32 = buffer_append_status(values, 7u8); let c: Int32 = buffer_insert_status(values, 0usize, 3u8); let d: Int32 = buffer_remove_status(values, 0usize); let e: Int32 = buffer_resize_status(values, 0usize); let f: Int32 = buffer_clear_status(values); let g: Bool = buffer_clear(values); }",
+        );
+        assert!(!statuses.has_errors(), "{:?}", statuses.diagnostics);
+
+        let nested_clear = check(
+            "module test; fn mutate(values: write Buffer<Buffer<Int32>>) { buffer_clear(values); }",
+        );
+        assert!(
+            nested_clear
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "expected nested clear to require a move-aware contract, got {:?}",
+            nested_clear.diagnostics
+        );
+
+        let nested_record_clear = check(
+            "module test; @repr(C) struct Entry { values: Buffer<Int32> } fn mutate(values: write Buffer<Buffer<Entry>>) { buffer_clear_move(values); }",
+        );
+        assert!(
+            !nested_record_clear.has_errors(),
+            "expected nested record clear to use the field-table contract, got {:?}",
+            nested_record_clear.diagnostics
+        );
+
+        let direct_record_resize = check(
+            "module test; @repr(C) struct Entry { id: Int32, values: Buffer<Int32> } fn mutate(values: write Buffer<Entry>) { let ok: Bool = buffer_resize_move(values, 2usize); let status: Int32 = buffer_resize_move_status(values, 0usize); }",
+        );
+        assert!(
+            !direct_record_resize.has_errors(),
+            "expected direct record resize to use the field-table contract, got {:?}",
+            direct_record_resize.diagnostics
+        );
+
+        let direct_record_clear = check(
+            "module test; @repr(C) struct Entry { id: Int32, values: Buffer<Int32> } fn mutate(values: write Buffer<Entry>) { let ok: Bool = buffer_clear_move(values); let status: Int32 = buffer_clear_move_status(values); }",
+        );
+        assert!(
+            !direct_record_clear.has_errors(),
+            "expected direct record clear to use the field-table contract, got {:?}",
+            direct_record_clear.diagnostics
+        );
+
+        let non_c_record_clear = check(
+            "module test; struct Entry { values: Buffer<Int32> } fn mutate(values: write Buffer<Buffer<Entry>>) { buffer_clear_move(values); }",
+        );
+        assert!(
+            non_c_record_clear
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "expected non-C record clear diagnostic, got {:?}",
+            non_c_record_clear.diagnostics
+        );
+
+        let invalid = check(
+            "module test; fn mutate(values: write Buffer<String>) { buffer_append(values, \"text\"); }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "expected copy-safe element diagnostic, got {:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
     fn validates_disjoint_borrow_contract_shape() {
         let valid = check(
             "module test; @disjoint fn update(a: write Slice<Int32>, b: read Slice<Int32>) { }",
@@ -3616,12 +10186,223 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code == "J0801")
         );
-        let payload_enum = check("module test; @repr(C) enum Bad { Value(Int32) }");
+        let payload_enum = check("module test; @repr(C) enum Event { Value(Int32), Empty }");
+        assert!(!payload_enum.has_errors(), "{:?}", payload_enum.diagnostics);
+        assert!(payload_enum.nominal_layouts.iter().any(|layout| {
+            layout.repr == jadren_types::AbiRepr::C
+                && matches!(layout.kind, jadren_types::NominalLayoutKind::Enum { .. })
+        }));
+
+        let payload_buffer = check(
+            "module test; @repr(C) enum Event { Value(Int32), Empty } fn mutate(values: write Buffer<Event>) { let event: Event = Event.Value(1); buffer_append(values, event); }",
+        );
         assert!(
-            payload_enum
+            !payload_buffer.has_errors(),
+            "{:?}",
+            payload_buffer.diagnostics
+        );
+
+        let invalid_payload = check("module test; @repr(C) enum Bad { Value(String) }");
+        assert!(
+            invalid_payload
                 .diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.code == "J0803")
+        );
+
+        let generic_record = check(
+            "module test; @repr(C) struct Box<T> { value: T } @repr(C) struct Frame<T> { first: Box<T>, samples: [T; 2] } fn mutate(values: write Buffer<Frame<Int64>>) { let frame: Frame<Int64> = Frame { first: Box { value: 42 as Int64 }, samples: [7 as Int64, 9 as Int64] }; buffer_append(values, frame); }",
+        );
+        assert!(
+            !generic_record.has_errors(),
+            "{:#?}",
+            generic_record.diagnostics
+        );
+
+        let generic_nested_owning_record = check(
+            "module test; @repr(C) struct Frame<T> { payload: T, marker: Int32 } fn mutate(values: write Buffer<Frame<Buffer<OwnedString>>>, inner: Buffer<OwnedString>) { let item: Frame<Buffer<OwnedString>> = Frame { payload: inner, marker: 42 }; buffer_append(values, item); }",
+        );
+        assert!(
+            !generic_nested_owning_record.has_errors(),
+            "expected generic nested owning record to be accepted, got {:#?}",
+            generic_nested_owning_record.diagnostics
+        );
+
+        let generic_record_carrier = check(
+            "module test; @repr(C) struct Frame<T> { payload: T, marker: Int32 } fn mutate(values: write Buffer<Frame<Option<Buffer<OwnedString>>>>, inner: Buffer<OwnedString>) { let item: Frame<Option<Buffer<OwnedString>>> = Frame { payload: Some(inner), marker: 42 }; buffer_append(values, item); }",
+        );
+        assert!(
+            !generic_record_carrier.has_errors(),
+            "expected generic carrier record to be accepted, got {:#?}",
+            generic_record_carrier.diagnostics
+        );
+
+        let generic_owning = check(
+            "module test; @repr(C) struct Box<T> { value: T } fn mutate(values: write Buffer<Box<String>>) { let item: Box<String> = Box { value: \"owned\" }; buffer_append(values, item); }",
+        );
+        assert!(
+            generic_owning
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:#?}",
+            generic_owning.diagnostics
+        );
+
+        let owning_record = check(
+            "module test; @repr(C) struct Entry { values: Buffer<Int32>, id: Int32 } fn mutate(values: write Buffer<Entry>, inner: Buffer<Int32>) { let item: Entry = Entry { values: inner, id: 7 }; buffer_append(values, item); }",
+        );
+        assert!(
+            !owning_record.has_errors(),
+            "{:#?}",
+            owning_record.diagnostics
+        );
+
+        let owning_record_carrier = check(
+            "module test; @repr(C) struct Entry { maybe: Option<Buffer<Int32>>, outcome: Result<Buffer<Int32>, Buffer<Int32>>, id: Int32 } fn mutate(values: write Buffer<Entry>, maybe: Option<Buffer<Int32>>, outcome: Result<Buffer<Int32>, Buffer<Int32>>) { let item: Entry = Entry { maybe: maybe, outcome: outcome, id: 7 }; buffer_append(values, item); }",
+        );
+        assert!(
+            !owning_record_carrier.has_errors(),
+            "expected tagged carrier fields to be accepted, got {:#?}",
+            owning_record_carrier.diagnostics
+        );
+
+        let owning_record_array = check(
+            "module test; @repr(C) struct Entry { slots: [Buffer<Int32>; 2], id: Int32 } fn mutate(values: write Buffer<Entry>, first: Buffer<Int32>, second: Buffer<Int32>) { let item: Entry = Entry { slots: [first, second], id: 7 }; buffer_append(values, item); }",
+        );
+        assert!(
+            !owning_record_array.has_errors(),
+            "expected fixed array owning record to be accepted, got {:#?}",
+            owning_record_array.diagnostics
+        );
+
+        let nested_owning_record_array = check(
+            "module test; @repr(C) struct Entry { slots: [Buffer<Int32>; 2], id: Int32 } fn mutate(values: write Buffer<Buffer<Entry>>) { buffer_resize_move(values, 1usize); }",
+        );
+        assert!(
+            !nested_owning_record_array.has_errors(),
+            "expected nested fixed array owning record resize to be accepted, got {:#?}",
+            nested_owning_record_array.diagnostics
+        );
+
+        let nested_owning_record = check(
+            "module test; @repr(C) struct Inner { values: Buffer<Int32>, id: Int32 } @repr(C) struct Entry { nested: Inner, marker: Int32 } fn mutate(values: write Buffer<Entry>, inner: Buffer<Int32>) { let nested: Inner = Inner { values: inner, id: 7 }; let item: Entry = Entry { nested: nested, marker: 42 }; buffer_append(values, item); }",
+        );
+        assert!(
+            !nested_owning_record.has_errors(),
+            "{:#?}",
+            nested_owning_record.diagnostics
+        );
+
+        let nested_owning_record_chain = check(
+            "module test; @repr(C) struct Inner { values: Buffer<Int32>, id: Int32 } @repr(C) struct Entry { nested: Inner, marker: Int32 } fn mutate(values: write Buffer<Buffer<Entry>>, inner: Buffer<Entry>) { buffer_append(values, inner); }",
+        );
+        assert!(
+            !nested_owning_record_chain.has_errors(),
+            "expected nested owning record chain to be accepted, got {:#?}",
+            nested_owning_record_chain.diagnostics
+        );
+
+        let nested_record_chain = check(
+            "module test; @repr(C) struct Inner { values: Buffer<Int32>, id: Int32 } @repr(C) struct Entry { nested: Inner, marker: Int32 } fn mutate(values: write Buffer<Buffer<Entry>>) { buffer_resize_move(values, 1usize); }",
+        );
+        assert!(
+            !nested_record_chain.has_errors(),
+            "expected path-aware nested record resize to be accepted, got {:#?}",
+            nested_record_chain.diagnostics
+        );
+
+        let nested_record_chain_status = check(
+            "module test; @repr(C) struct Inner { values: Buffer<Int32>, id: Int32 } @repr(C) struct Entry { nested: Inner, marker: Int32 } fn mutate(values: write Buffer<Buffer<Entry>>) -> Int32 { buffer_resize_move_status(values, 1usize) }",
+        );
+        assert!(
+            !nested_record_chain_status.has_errors(),
+            "expected path-aware nested record status resize to be accepted, got {:#?}",
+            nested_record_chain_status.diagnostics
+        );
+
+        let direct_buffer_carrier_remove = check(
+            "module test; fn mutate(values: write Buffer<Option<Buffer<Int32>>>) { buffer_remove_drop(values, 0usize); }",
+        );
+        assert!(
+            !direct_buffer_carrier_remove.has_errors(),
+            "expected direct Buffer carrier remove to be accepted, got {:#?}",
+            direct_buffer_carrier_remove.diagnostics
+        );
+
+        let direct_buffer_carrier_clear = check(
+            "module test; fn mutate(values: write Buffer<Result<Buffer<Int32>, Buffer<Int32>>>) { buffer_clear_move(values); }",
+        );
+        assert!(
+            !direct_buffer_carrier_clear.has_errors(),
+            "expected direct multi-carrier clear to be accepted, got {:#?}",
+            direct_buffer_carrier_clear.diagnostics
+        );
+
+        let nested_buffer_carrier_resize = check(
+            "module test; fn mutate(values: write Buffer<Buffer<Option<Buffer<Int32>>>>) { buffer_resize_move(values, 1usize); }",
+        );
+        assert!(
+            !nested_buffer_carrier_resize.has_errors(),
+            "expected nested Buffer carrier resize to be accepted, got {:#?}",
+            nested_buffer_carrier_resize.diagnostics
+        );
+
+        let nested_record_carrier_resize = check(
+            "module test; @repr(C) struct Entry { payload: Option<Buffer<Int32>> } fn mutate(values: write Buffer<Buffer<Entry>>) { buffer_resize_move(values, 1usize); }",
+        );
+        assert!(
+            !nested_record_carrier_resize.has_errors(),
+            "expected nested carrier record resize to be accepted, got {:#?}",
+            nested_record_carrier_resize.diagnostics
+        );
+
+        let direct_record_carrier_clear = check(
+            "module test; @repr(C) struct Entry { payload: Option<Buffer<Int32>> } fn mutate(values: write Buffer<Entry>) { buffer_clear_move(values); }",
+        );
+        assert!(
+            !direct_record_carrier_clear.has_errors(),
+            "expected direct carrier record clear to be accepted, got {:#?}",
+            direct_record_carrier_clear.diagnostics
+        );
+
+        let owning_record_copy_remove = check(
+            "module test; @repr(C) struct Entry { values: Buffer<Int32>, id: Int32 } fn mutate(values: write Buffer<Entry>) { buffer_remove(values, 0usize); }",
+        );
+        assert!(
+            owning_record_copy_remove
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "expected move-only record remove diagnostic, got {:#?}",
+            owning_record_copy_remove.diagnostics
+        );
+
+        let owning_record_drop_remove = check(
+            "module test; @repr(C) struct Entry { values: Buffer<Int32>, id: Int32 } fn mutate(values: write Buffer<Entry>) { buffer_remove_drop(values, 0usize); let status: Int32 = buffer_remove_drop_status(values, 0usize); }",
+        );
+        assert!(
+            !owning_record_drop_remove.has_errors(),
+            "expected explicit owning record remove_drop to be accepted, got {:#?}",
+            owning_record_drop_remove.diagnostics
+        );
+
+        let nested_owning_record_drop_remove = check(
+            "module test; @repr(C) struct Entry { values: Buffer<Int32>, id: Int32 } fn mutate(values: write Buffer<Buffer<Entry>>) { buffer_remove_drop(values, 0usize); let status: Int32 = buffer_remove_drop_status(values, 0usize); }",
+        );
+        assert!(
+            !nested_owning_record_drop_remove.has_errors(),
+            "expected nested owning record remove_drop to be accepted, got {:#?}",
+            nested_owning_record_drop_remove.diagnostics
+        );
+
+        let owning_record_carrier_drop_remove = check(
+            "module test; @repr(C) struct Entry { payload: Option<Buffer<Int32>>, id: Int32 } fn mutate(values: write Buffer<Entry>) { buffer_remove_drop(values, 0usize); }",
+        );
+        assert!(
+            !owning_record_carrier_drop_remove.has_errors(),
+            "expected tagged owning record remove_drop to be accepted, got {:#?}",
+            owning_record_carrier_drop_remove.diagnostics
         );
     }
 
@@ -3715,6 +10496,692 @@ mod tests {
                 .diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.code == "J0304")
+        );
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301")
+        );
+    }
+
+    #[test]
+    fn checks_windows_ui_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { ui_window(\"UI\", 640, 480, 0xF6F8FCu32); ui_top_bar(48, 0x252526u32); ui_text(\"J\", 12, 8, 28, 28, 0xFFFFFFu32, 0x168EF5u32, 6); ui_menu_item(\"File\", \"File menu selected\", 52, 8, 56, 28, 0xFFFFFFu32, 0x252526u32, 6); ui_icon_button(\"?\", \"Search selected\", 12, 8, 28, 28, 0xFFFFFFu32, 0x252526u32, 6); ui_label(\"Text\", 20, 60, 200, 32, 0x111827u32, 0xFFFFFFu32, 12); ui_status(\"Ready\", 20, 110, 200, 32, 0x111827u32, 0xDCFCE7u32, 16); ui_button(\"Run\", \"Done\", 20, 160, 120, 40, 0xFFFFFFu32, 0x168EF5u32, 16); ui_event_button(\"Event\", 1, 150, 160, 120, 40, 0xFFFFFFu32, 0x168EF5u32, 16); ui_set_status(\"Updated\"); ui_set_button_text(1, \"Event\"); ui_set_button_enabled(1, 1); ui_state_bind(1, 0, 0); ui_state_set(0, ui_state_get(0)); ui_toggle_button(\"Pin\", \"Pinned\", 280, 160, 120, 40, 0xFFFFFFu32, 0x18C964u32, 16); ui_disabled_button(\"Unavailable\", 410, 160, 120, 40, 0xFFFFFFu32, 0x64748Bu32, 16); ui_close_button(\"Close\", 540, 160, 80, 40, 0xFFFFFFu32, 0x0B6FC8u32, 16); return ui_run() }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_layout_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { ui_window(\"UI\", 640, 480, 0xF6F8FCu32); ui_column(20, 64, 600, 360, 16, 12, 0, 1); ui_panel(600, 120, 0xFFFFFFu32, 16, 12, 8, 0, 1); ui_layout_label(\"Heading\", 300, 28, 0x111827u32, 0xFFFFFFu32, 0, 1); ui_layout_status(\"Ready\", 300, 32, 0x111827u32, 0xDCFCE7u32, 12, 1); ui_layout_end(); ui_row(600, 48, 0, 12, 1, 1); ui_layout_event_button(\"Run\", 1, 160, 40, 0xFFFFFFu32, 0x168EF5u32, 12, 0); ui_layout_event_button(\"More\", 2, 160, 40, 0xFFFFFFu32, 0x18C964u32, 12, 0); ui_layout_end(); ui_layout_end(); return ui_run() }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_ui_contract_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let root: Int32 = ui_app_begin(\"UI\", 640, 420, 0xF6F8FCu32); let panel: Int32 = ui_app_panel(root, 560, 260, 0xFFFFFFu32, 16, 12, 8, 0, 1); let label: Int32 = ui_app_label(panel, \"Heading\", 480, 32, 0x111827u32, 0xFFFFFFu32, 8, 1); let input: Int32 = ui_app_text_input(panel, \"Name\", 2, 480, 38, 0x111827u32, 0xFFFFFFu32, 8, 1); let checkbox: Int32 = ui_app_checkbox(panel, \"Enabled\", 3, 220, 38, 0x111827u32, 0x168EF5u32, 8, 0, 1); let select: Int32 = ui_app_select(panel, 4, 240, 38, 0x111827u32, 0xFFFFFFu32, 8, 0); let option_one: Bool = ui_app_select_option(select, \"One\"); let option_two: Bool = ui_app_select_option(select, \"Two\"); let selected: Bool = ui_app_select_set_index(select, 1); let index: Int32 = ui_app_select_index(select); let list: Int32 = ui_app_list(panel, 5, 240, 100, 0x111827u32, 0xFFFFFFu32, 8, 0); let item: Bool = ui_app_list_item(list, \"Item\"); let count: Int32 = ui_app_list_count(list); let list_index: Int32 = ui_app_list_index(list); let table: Int32 = ui_app_table(panel, 6, 480, 120, 0x111827u32, 0xFFFFFFu32, 8, 1); let column: Bool = ui_app_table_column(table, 0, \"Name\", 180); let cell: Bool = ui_app_table_cell(table, 0, 0, \"Item\"); let rows: Int32 = ui_app_table_row_count(table); let table_index: Int32 = ui_app_table_selected_row(table); let table_selected: Bool = ui_app_table_set_selected_row(table, 0); let table_bound: Bool = ui_app_table_bind_app(table, 0, 1); let table_refreshed: Bool = ui_app_table_refresh(table); let button: Int32 = ui_app_button(panel, \"Run\", 1, 160, 40, 0xFFFFFFu32, 0x168EF5u32, 12, 0); let panel_closed: Bool = ui_app_end(panel); let root_closed: Bool = ui_app_end(root); if panel_closed && root_closed && label > 0 && input > 0 && checkbox > 0 && select > 0 && option_one && option_two && selected && index == 1 && list > 0 && item && count == 1 && list_index == -1 && table > 0 && column && cell && rows == 1 && table_index == -1 && table_selected && table_bound && table_refreshed && button > 0 { return ui_app_run() } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_row_contract_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let root: Int32 = ui_app_begin(\"UI\", 640, 420, 0xF6F8FCu32); let row: Int32 = ui_app_row(root, 600, 80, 8, 12, 0, 1); let button: Int32 = ui_app_button(row, \"Run\", 1, 140, 40, 0xFFFFFFu32, 0x168EF5u32, 8, 0); let row_closed: Bool = ui_app_end(row); let root_closed: Bool = ui_app_end(root); if row > 0 && button > 0 && row_closed && root_closed { return ui_app_run() } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_top_bar_contract_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let root: Int32 = ui_app_begin(\"UI\", 640, 420, 0xF6F8FCu32); let top_bar: Int32 = ui_app_top_bar(root, 600, 54, 0x1F2937u32, 0, 8, 12, 0, 1); let button: Int32 = ui_app_button(top_bar, \"Menu\", 1, 140, 40, 0xFFFFFFu32, 0x374151u32, 8, 0); let bar_closed: Bool = ui_app_end(top_bar); let root_closed: Bool = ui_app_end(root); if top_bar > 0 && button > 0 && bar_closed && root_closed { return ui_app_run() } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_popup_menu_contract_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let root: Int32 = ui_app_begin(\"UI\", 640, 420, 0xF6F8FCu32); let top_bar: Int32 = ui_app_top_bar(root, 600, 54, 0x1F2937u32, 0, 8, 12, 0, 1); let menu: Int32 = ui_app_menu(top_bar, \"File\", 96, 38, 0xFFFFFFu32, 0x374151u32, 8, 0); let item: Bool = ui_app_menu_item(menu, \"Open\", 21); let item_two: Bool = ui_app_menu_item(menu, \"Save\", 22); let bar_closed: Bool = ui_app_end(top_bar); let root_closed: Bool = ui_app_end(root); if menu > 0 && item && item_two && bar_closed && root_closed { return ui_app_run() } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_tooltip_contract_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let root: Int32 = ui_app_begin(\"UI\", 640, 420, 0xF6F8FCu32); let panel: Int32 = ui_app_panel(root, 560, 260, 0xFFFFFFu32, 16, 12, 8, 0, 1); let button: Int32 = ui_app_button(panel, \"Run\", 7, 160, 40, 0xFFFFFFu32, 0x168EF5u32, 12, 0); let tip: Bool = ui_app_tooltip(button, \"Run action\", 240, 42, 0xFFFFFFu32, 0x252526u32, 8); let panel_closed: Bool = ui_app_end(panel); let root_closed: Bool = ui_app_end(root); if button > 0 && tip && panel_closed && root_closed { return ui_app_run() } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_form_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { ui_window(\"UI\", 640, 480, 0xF6F8FCu32); ui_menu(\"Subor\", 1, 20, 20, 80, 32, 0xFFFFFFu32, 0x252526u32, 6); ui_menu_option(1, \"Otvorit\", 21); ui_checkbox(\"Zapnut\", 10, 20, 70, 180, 36, 0xFFFFFFu32, 0x168EF5u32, 8); ui_tooltip(10, \"Zapne ukazku\", 180, 32, 0xFFFFFFu32, 0x252526u32, 6); ui_switch(\"Tmavy rezim\", 11, 220, 70, 180, 36, 0xFFFFFFu32, 0x18C964u32, 18); ui_text_input(\"Meno\", 12, 20, 130, 220, 36, 0x111827u32, 0xFFFFFFu32, 8); ui_set_input_text(12, \"Nove meno\"); ui_set_input_enabled(12, 1); ui_set_checked(10, ui_checked(10)); ui_select(13, 20, 190, 220, 36, 0x111827u32, 0xFFFFFFu32); ui_select_option(13, \"Prva\"); ui_select_set_index(13, ui_select_index(13)); ui_scroll_panel(\"Text\", 260, 190, 180, 100, 0x111827u32, 0xFFFFFFu32, 8); ui_list(14, 460, 190, 160, 100, 0x111827u32, 0xFFFFFFu32); ui_list_item(14, \"Prva\"); ui_list_set_item(14, 0, \"Prva upravena\"); ui_list_set_index(14, ui_list_index(14)); ui_list_count(14); ui_list_clear(14); ui_table(15, 20, 300, 500, 120, 0x111827u32, 0xFFFFFFu32); ui_table_column(15, 0, \"Nazov\", 180); ui_table_column(15, 1, \"Stav\", 120); ui_table_cell(15, 0, 0, \"Prva\"); ui_table_cell(15, 0, 1, \"Otvorene\"); ui_table_row_count(15); ui_table_selected_row(15); ui_table_set_selected_row(15, 0); ui_table_clear(15); return ui_run() }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_collection_read_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let list: UIntSize = ui_list_read_item(20, 0, output); let cell: UIntSize = ui_table_read_cell(30, 0, 1, output); return (list + cell) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_table_read_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let copied: UIntSize = ui_app_table_read_cell(31, 0, 0, output); return copied as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_table_sort_filter_ui_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let root: Int32 = ui_app_begin(\"UI\", 640, 420, 0xF6F8FCu32); let panel: Int32 = ui_app_panel(root, 560, 260, 0xFFFFFFu32, 16, 12, 8, 0, 1); let source: Int32 = ui_app_table(panel, 30, 240, 120, 0x111827u32, 0xFFFFFFu32, 8, 1); let destination: Int32 = ui_app_table(panel, 31, 240, 120, 0x111827u32, 0xFFFFFFu32, 8, 1); let sorted: Bool = ui_app_table_sort_text(source, 0, false); let exact: Bool = ui_app_table_filter_text(source, 1, 1, \"Open\"); let contains: Bool = ui_app_table_filter_text_ex(source, 1, 1, \"pen\", 1); ui_table_sort_text(30, 0, true); ui_table_filter_text(30, 1, 1, \"Open\"); ui_table_filter_text_ex(30, 1, 1, \"pen\", 1); if root > 0 && panel > 0 && source > 0 && destination > 0 && sorted && exact && contains { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_app_collection_binding_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { ui_list_bind_app(20, 0); ui_list_refresh_app(20); ui_table_bind_app(30, 0, 2); ui_table_refresh_app(30); ui_refresh_bindings(); return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_ui_state_binding_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { ui_state_bind(10, 0, 0); ui_state_bind(20, 1, 1); ui_state_bind(30, 2, 2); ui_state_bind(40, 3, 3); ui_state_bind_text(50, 4); ui_state_text_set(4, \"Draft\"); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let length: UIntSize = ui_state_text_length(4); let copied: UIntSize = ui_state_text_read(4, output); if length != copied { return 1 } return ui_state_get(0) }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_input_read_signatures() {
+        let output = check(
+            "module test; fn read_input(output: write Slice<UInt8>) -> UIntSize { return ui_input_read(10, output) } fn main() -> Int32 { ui_window(\"UI\", 640, 360, 0xF6F8FCu32); ui_text_input(\"Text\", 10, 20, 80, 300, 36, 0x111827u32, 0xFFFFFFu32, 8); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let copied: UIntSize = ui_input_read(10, output); let length: UIntSize = ui_input_length(10); return (copied + length) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_input_exact_read_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { ui_window(\"UI\", 640, 360, 0xF6F8FCu32); ui_text_input(\"Text\", 10, 20, 80, 300, 36, 0x111827u32, 0xFFFFFFu32, 8); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let copied: Bool = ui_input_read_exact(10, output, length); if copied { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var wrong: [UInt64; 1] = [0u64]; ui_input_read_exact(10, output, wrong) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_windows_ui_input_app_state_binding_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { ui_text_input(\"Text\", 10, 20, 80, 300, 36, 0x111827u32, 0xFFFFFFu32, 8); ui_input_bind_app_state(10, \"note\"); ui_input_refresh_app_state(10); return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_control_app_state_binding_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { ui_checkbox(\"Enabled\", 10, 0, 0, 220, 36, 0x111827u32, 0x168EF5u32, 8); ui_select(20, 0, 42, 220, 36, 0x111827u32, 0xFFFFFFu32); ui_select_option(20, \"First\"); ui_list(30, 0, 80, 220, 120, 0x111827u32, 0xFFFFFFu32); ui_list_item(30, \"First\"); ui_table(40, 0, 80, 220, 120, 0x111827u32, 0xFFFFFFu32); ui_table_column(40, 0, \"Name\", 160); ui_table_cell(40, 0, 0, \"First\"); let enabled: Bool = ui_checkbox_bind_app_state(10, \"enabled\"); ui_checkbox_refresh_app_state(10); let choice: Bool = ui_select_bind_app_state(20, \"choice\"); ui_select_refresh_app_state(20); let list: Bool = ui_list_bind_app_state(30, \"list_choice\"); ui_list_refresh_app_state(30); let table: Bool = ui_table_bind_app_state(40, \"table_choice\"); ui_table_refresh_app_state(40); let retained: Bool = ui_app_bind_app_state(30, \"list_choice\"); ui_app_refresh_app_state(30); if enabled && choice && list && table && retained { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_persistence_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var payload: [UInt8; 4] = [1u8, 2u8, 3u8, 4u8]; let written: UIntSize = file_write(\"target/test.tmp\", payload); let text: UIntSize = file_append_text(\"target/test.tmp\", \"\\nrow\"); var digits: [UInt8; 20] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let number: UIntSize = format_int(1 as Int64, digits); let unsigned: UIntSize = format_uint(2u64, digits); let appended: UIntSize = file_append(\"target/test.tmp\", digits, number); let flag: UIntSize = format_bool(true, digits); let float: UIntSize = format_float(1.5f64, digits); let replaced: Bool = file_replace_atomic(\"target/test.tmp\", \"target/test.bin\"); var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let loaded: UIntSize = file_read(\"target/test.bin\", output); let exists: Bool = file_exists(\"target/test.bin\"); let size: UIntSize = file_size(\"target/test.bin\"); let removed: Bool = file_delete(\"target/test.bin\"); let lock: UIntSize = file_lock(\"target/test.lock\"); let unlocked: Bool = file_unlock(lock); return (written + text + number + unsigned + appended + flag + float + loaded + size) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_flush_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let flushed: Bool = file_flush(\"target/test.tmp\"); if flushed { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_directory_list_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 33] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let length: UIntSize = directory_list(\"target\", output); return length as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_read_text_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let length: UIntSize = file_read_text(\"target/text.txt\", output); return length as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_read_exact_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var bytes: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let binary: Bool = file_read_exact(\"target/data.bin\", bytes, length); let text: Bool = file_read_text_exact(\"target/data.txt\", bytes, length); if binary || text { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var bytes: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var wrong: [UInt64; 1] = [0u64]; file_read_exact(\"target/data.bin\", bytes, wrong) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_process_argument_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let count: UIntSize = process_arg_count(); var output: [UInt8; 1] = [0u8]; let length: UIntSize = process_arg_read(0usize, output); return length as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_standard_io_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let received: UIntSize = stdin_read(input); let written: UIntSize = stdout_write(input); let error_written: UIntSize = stderr_write(input); return written as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_read_at_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let length: UIntSize = file_read_at(\"target/text.txt\", 2usize, output); return length as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_write_at_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 3] = [97u8, 98u8, 99u8]; let length: UIntSize = file_write_at(\"target/text.txt\", 2usize, input); return length as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_directory_list_ex_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var names: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var kinds: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let count: UIntSize = directory_list_ex(\"target\", names, kinds); return count as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_string_builder_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var bytes: [UInt8; 3] = [33u8, 33u8, 33u8]; let first: UIntSize = string_builder_append(\"Aho\", output, 0usize); let second: UIntSize = string_builder_append_bytes(bytes, output, first); return second as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_owned_string_builtin_signatures_and_result_flow() {
+        let output = check(
+            "module test; fn main() -> Int32 { let created: Result<OwnedString, Int32> = string_owned_create(8usize); var result_code: Int32 = 1; match created { Ok(value) => { let appended: Int32 = string_owned_append(value, \"!\"); var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let copied: UIntSize = string_owned_copy(value, output); let length: UIntSize = string_owned_length(value); let cleared: Int32 = string_owned_clear(value); if appended == 0 { if copied == 1usize { if length == 1usize { result_code = cleared } } } } Error(status) => { result_code = status } } return result_code }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_state_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { app_state_clear(); let a: Bool = app_state_set_int(\"minutes\", 42 as Int64); let b: Bool = app_state_set_uint(\"total\", 7u64); let c: Bool = app_state_set_bool(\"done\", true); let d: Bool = app_state_set_text(\"name\", \"Focus\"); let count: Int32 = app_state_count(); let first_kind: Int32 = app_state_type_at(0); let exists: Bool = app_state_exists(\"name\"); let missing: Bool = app_state_exists(\"missing\"); let removed: Bool = app_state_remove(\"missing\"); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let key: UIntSize = app_state_read_key(0, output); let text: UIntSize = app_state_read_text(\"name\", output); let signed: Int64 = app_state_get_int(\"minutes\"); let unsigned: UInt64 = app_state_get_uint(\"total\"); let done: Bool = app_state_get_bool(\"done\"); let saved: Bool = app_state_save(\"target/state.json\"); let loaded: Bool = app_state_load(\"target/state.json\"); if !exists { return 1 } if missing { return 2 } return (text + key + (signed as UIntSize) + (unsigned as UIntSize) + (count as UIntSize) + (first_kind as UIntSize)) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_state_float_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let set: Bool = app_state_set_float(\"rate\", 1.25f64); let value: Float64 = app_state_get_float(\"rate\"); let length: UIntSize = format_float(value, output); if !set { return 1 } if length != 8usize { return 2 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_state_transaction_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let begun: Bool = app_state_tx_begin(); let committed: Bool = app_state_tx_commit(); let rolled_back: Bool = app_state_tx_rollback(); let data_begun: Bool = app_data_tx_begin(); let data_committed: Bool = app_data_tx_commit(); let data_rolled_back: Bool = app_data_tx_rollback(); if begun && committed && rolled_back && data_begun && data_committed && data_rolled_back { return 1 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_data_persistence_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 1] = [0u8]; var length: [UIntSize; 1] = [0usize]; var journal_stats: [UIntSize; 2] = [0usize, 0usize]; var journal_plan: [UIntSize; 3] = [0usize, 0usize, 0usize]; let saved: Bool = app_data_save(\"target/app-data.jdn\"); let atomic: Bool = app_data_save_atomic(\"target/app-data.tmp\", \"target/app-data.jdn\"); let tx_atomic: Bool = app_data_tx_save_atomic(\"target/app-data.tx.tmp\", \"target/app-data.jdn\"); let durable: Bool = app_data_tx_commit_durable(\"target/app-data.durable.tmp\", \"target/app-data.durable.jdn\", \"target/app-data.durable.lock\"); let journal: Bool = app_data_journal_append(\"target/app-data.journal\", \"target/app-data.scratch\"); let recovered: Bool = app_data_journal_recover(\"target/app-data.journal\", \"target/app-data.scratch\"); let compacted: Bool = app_data_journal_recover_compact(\"target/app-data.journal\", \"target/app-data.scratch\", \"target/app-data.tmp\"); let loaded: Bool = app_data_load(\"target/app-data.jdn\"); let exact_saved: Bool = app_data_write_exact(output, length); let exact_loaded: Bool = app_data_load_exact(output, length[0]); let frame_length: UIntSize = app_data_journal_frame_length_durable(\"target/app-data.journal\", \"target/app-data.lock\", 0usize); let latest: Bool = app_data_journal_read_latest_frame_exact_durable(\"target/app-data.journal\", \"target/app-data.lock\", output, length); let stats: Bool = app_data_journal_stats_durable(\"target/app-data.journal\", \"target/app-data.lock\", journal_stats); let plan: Bool = app_data_journal_maintenance_plan_durable(\"target/app-data.journal\", \"target/app-data.lock\", 4096usize, 8usize, journal_plan); let needed: Bool = app_data_journal_compact_if_needed_durable(\"target/app-data.journal\", \"target/app-data.scratch\", \"target/app-data.tmp\", \"target/app-data.lock\", 4096usize, 8usize); if saved && atomic && tx_atomic && durable && journal && recovered && compacted && loaded && exact_saved && exact_loaded && frame_length >= 0usize && latest && stats && plan && needed { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_list_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { app_list_clear(0); let pushed: Bool = app_list_push_text(0, \"Focus\"); var query: [UInt8; 2] = [70u8, 79u8]; let pushed_bytes: Bool = app_list_push_text_bytes(0, query, 2usize); let count: Int32 = app_list_count(0); let sorted: Bool = app_list_sort_text(0, false); let found: Int32 = app_list_find_text(0, \"Focus\", 0); let filtered: Bool = app_list_filter_text(0, 1, \"Focus\"); let filtered_ex: Bool = app_list_filter_text_ex(0, 1, \"FO\", 5); let filtered_bytes: Bool = app_list_filter_text_ex_bytes(0, 1, query, 2usize, 5); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let copied: UIntSize = app_list_read_text(0, 0, output); let exported: UIntSize = app_list_export_csv(0, output); let updated: Bool = app_list_set_text(0, 0, \"Done\"); let updated_bytes: Bool = app_list_set_text_bytes(0, 0, query, 2usize); let removed: Bool = app_list_remove(0, 0); let saved: Bool = app_list_save(0, \"target/list.json\"); let atomic: Bool = app_list_save_atomic(0, \"target/list.tmp\", \"target/list.json\"); let loaded: Bool = app_list_load(0, \"target/list.json\"); if !pushed { return 1 } if !pushed_bytes { return 2 } if !sorted { return 3 } if !filtered { return 4 } if !filtered_ex { return 5 } if !filtered_bytes { return 6 } if !updated || !updated_bytes { return 7 } return count + found + (copied as Int32) + (exported as Int32) }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { app_table_clear(0); app_table_clear(1); let type_set: Bool = app_table_set_column_type(0, 0, 1); let float_type_set: Bool = app_table_set_column_type(0, 1, 4); let kind: Int32 = app_table_column_type(0, 0); let valid: Bool = app_table_validate(0); let appended: Bool = app_table_append_row(0); let set: Bool = app_table_set_cell(0, 0, 0, \"42\"); let set_int: Bool = app_table_set_int(0, 0, 0, 42 as Int64); let set_uint: Bool = app_table_set_uint(0, 0, 0, 7u64); let set_float: Bool = app_table_set_float(0, 0, 1, 1.25f64); let set_bool: Bool = app_table_set_bool(0, 0, 0, true); let rows: Int32 = app_table_row_count(0); let sorted: Bool = app_table_sort_text(0, 0, false); let sorted_int: Bool = app_table_sort_int(0, 0, false); let sorted_uint: Bool = app_table_sort_uint(0, 0, false); let sorted_float: Bool = app_table_sort_float(0, 1, false); let sorted_bool: Bool = app_table_sort_bool(0, 0, false); let found: Int32 = app_table_find_text(0, 0, \"42\", 0); let filtered: Bool = app_table_filter_text(0, 1, 0, \"42\"); let filtered_ex: Bool = app_table_filter_text_ex(0, 1, 0, \"2\", 1); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let copied: UIntSize = app_table_read_cell(0, 0, 0, output); let typed_int: Int64 = app_table_read_int(0, 0, 0); let typed_uint: UInt64 = app_table_read_uint(0, 0, 0); let typed_float: Float64 = app_table_read_float(0, 0, 1); let typed_bool: Bool = app_table_read_bool(0, 0, 0); let removed: Bool = app_table_remove_row(0, 0); let schema_saved: Bool = app_table_save_schema(0, \"target/schema.json\"); let schema_atomic: Bool = app_table_save_schema_atomic(0, \"target/schema.tmp\", \"target/schema.json\"); let schema_loaded: Bool = app_table_load_schema(0, \"target/schema.json\"); let saved: Bool = app_table_save(0, \"target/table.json\"); let atomic: Bool = app_table_save_atomic(0, \"target/table.tmp\", \"target/table.json\"); let loaded: Bool = app_table_load(0, \"target/table.json\"); if !type_set || !float_type_set || !valid || !appended || !set || !set_int || !set_uint || !set_float || !set_bool || !schema_saved || !schema_atomic || !schema_loaded { return 1 } if typed_bool { return 2 } return rows + (copied as Int32) + found + (typed_int as Int32) + (typed_uint as Int32) + (typed_float as Int32) + kind }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_exact_text_read_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let column: Bool = app_table_read_column_name_exact(0, 0, output, length); let cell: Bool = app_table_read_cell_exact(0, 0, 0, output, length); let named: Bool = app_table_read_named_cell_exact(0, 0, \"title\", output, length); if column || cell || named { return 1 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_exact_typed_read_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var i: [Int64; 1] = [0 as Int64]; var u: [UInt64; 1] = [0u64]; var f: [Float64; 1] = [0.0f64]; var b: [Bool; 1] = [false]; let a: Bool = app_table_read_int_exact(0, 0, 0, i); let c: Bool = app_table_read_uint_exact(0, 0, 1, u); let d: Bool = app_table_read_float_exact(0, 0, 2, f); let e: Bool = app_table_read_bool_exact(0, 0, 3, b); let n: Bool = app_table_read_named_int_exact(0, 0, \"id\", i); if a || c || d || e || n { return 1 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_typed_query_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let i: Int32 = app_table_find_int(0, 0, 42 as Int64, 0); let u: Int32 = app_table_find_uint(0, 1, 7u64, 0); let f: Int32 = app_table_find_float(0, 2, 1.25f64, 0); let b: Int32 = app_table_find_bool(0, 3, true, 0); return i + u + f + b }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_upsert_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let text: Int32 = app_table_upsert_text(0, 0, \"task\"); let i: Int32 = app_table_upsert_int(0, 1, 42 as Int64); let u: Int32 = app_table_upsert_uint(0, 2, 7u64); let f: Int32 = app_table_upsert_float(0, 3, 1.25f64); let b: Int32 = app_table_upsert_bool(0, 4, true); return text + i + u + f + b }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_remove_key_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let text: Bool = app_table_remove_text(0, 0, \"task\"); let i: Bool = app_table_remove_int(0, 1, 42 as Int64); let u: Bool = app_table_remove_uint(0, 2, 7u64); let f: Bool = app_table_remove_float(0, 3, 1.25f64); let b: Bool = app_table_remove_bool(0, 4, true); if text || i || u || f || b { return 1 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_index_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let built: Bool = app_table_index_build(0, 0); let built_i: Bool = app_table_index_build_int(0, 0); let built_u: Bool = app_table_index_build_uint(0, 0); let built_f: Bool = app_table_index_build_float(0, 0); let built_b: Bool = app_table_index_build_bool(0, 0); let valid: Bool = app_table_index_is_valid(0, 0); let found: Int32 = app_table_index_find_text(0, 0, \"Task\"); let found_i: Int32 = app_table_index_find_int(0, 0, 1 as Int64); let found_u: Int32 = app_table_index_find_uint(0, 0, 1u64); let found_f: Int32 = app_table_index_find_float(0, 0, 1.0f64); let found_b: Int32 = app_table_index_find_bool(0, 0, true); let cleared: Bool = app_table_index_clear(0); if built && built_i && built_u && built_f && built_b && valid && cleared { return found + found_i + found_u + found_f + found_b } return -1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_byte_setter_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { app_table_clear(0); app_table_append_row(0); var value: [UInt8; 4] = [84u8, 97u8, 115u8, 107u8]; let written: Bool = app_table_set_cell_bytes(0, 0, 0, value); if written { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_byte_setter_length_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { app_table_clear(0); app_table_append_row(0); var value: [UInt8; 8] = [84u8, 97u8, 115u8, 107u8, 0u8, 0u8, 0u8, 0u8]; let written: Bool = app_table_set_cell_bytes_ex(0, 0, 0, value, 4usize); if written { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_byte_filter_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { app_table_clear(0); app_table_clear(1); app_table_append_row(0); var query: [UInt8; 4] = [80u8, 108u8, 97u8, 110u8]; let filtered: Bool = app_table_filter_text_ex_bytes(0, 1, 0, query, 4usize, 1); if filtered { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_transaction_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let begun: Bool = app_table_tx_begin(0); let committed: Bool = app_table_tx_commit(); let rolled_back: Bool = app_table_tx_rollback(); let all_begun: Bool = app_table_tx_begin_all(); let all_committed: Bool = app_table_tx_commit_all(); let all_rolled_back: Bool = app_table_tx_rollback_all(); if begun && committed && rolled_back && all_begun && all_committed && all_rolled_back { return 1 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_migration_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let begun: Bool = app_table_migration_begin(0, 1, 2); let renamed: Bool = app_table_migration_rename_column(\"old\", \"new\"); let typed: Bool = app_table_migration_set_column_type(\"new\", 0); let committed: Bool = app_table_migration_commit(); let rolled_back: Bool = app_table_migration_rollback(); if begun && renamed && typed && committed && rolled_back { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_named_app_table_schema_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let named: Bool = app_table_set_column_name(0, 0, \"id\"); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let length: UIntSize = app_table_read_column_name(0, 0, output); let found: Int32 = app_table_find_column(0, \"id\"); if named { return (length as Int32) + found } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_named_app_table_field_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let text_set: Bool = app_table_set_named_cell(0, 0, \"title\", \"Focus\"); let int_set: Bool = app_table_set_named_int(0, 0, \"id\", 42 as Int64); let uint_set: Bool = app_table_set_named_uint(0, 0, \"total\", 7u64); let bool_set: Bool = app_table_set_named_bool(0, 0, \"done\", true); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let _text_read: UIntSize = app_table_read_named_cell(0, 0, \"title\", output); let _signed: Int64 = app_table_read_named_int(0, 0, \"id\"); let _unsigned: UInt64 = app_table_read_named_uint(0, 0, \"total\"); let done: Bool = app_table_read_named_bool(0, 0, \"done\"); let version: Int32 = app_table_schema_version(0); let version_set: Bool = app_table_set_schema_version(0, version); let guarded: Bool = app_table_load_schema_full_if_version(0, \"schema.json\", version); if text_set && int_set && uint_set && bool_set && done && version_set && guarded { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_float_field_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let set: Bool = app_table_set_float(0, 0, 0, 1.25f64); let _value: Float64 = app_table_read_float(0, 0, 0); let named_set: Bool = app_table_set_named_float(0, 0, \"rate\", 2.5f64); let _named: Float64 = app_table_read_named_float(0, 0, \"rate\"); if !set { return 1 } if !named_set { return 1 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_csv_and_json_escape_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let csv: UIntSize = csv_escape(\"a,b\", output); let json: UIntSize = json_escape(\"a\\\"b\", output); return (csv + json) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_csv_export_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let length: UIntSize = app_table_export_csv(0, output); return length as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_table_csv_import_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let imported: Bool = app_table_import_csv(0, input, 4usize); if imported { return 1 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_json_object_field_string_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let member: UIntSize = json_object_field_string(\"name\", \"Ada\", output); return member as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_json_object_field_numeric_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 33] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let signed: UIntSize = json_object_field_int(\"signed\", 42 as Int64, output); let unsigned: UIntSize = json_object_field_uint(\"unsigned\", 7u64, output); let decimal: UIntSize = json_object_field_float(\"decimal\", 1.5f64, output); let flag: UIntSize = json_object_field_bool(\"flag\", true, output); return (signed + unsigned + decimal + flag) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_json_object_read_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let text: UIntSize = json_object_read_string(input, \"name\", output); let signed: Int64 = json_object_read_int(input, \"minutes\"); let unsigned: UInt64 = json_object_read_uint(input, \"total\"); let rate: Float64 = json_object_read_float(input, \"rate\"); let done: Bool = json_object_read_bool(input, \"done\"); if done { return (text as Int32) + (signed as Int32) + (unsigned as Int32) + (rate as Int32) } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_utc_calendar_parts_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var parts: [Int32; 6] = [0, 0, 0, 0, 0, 0]; let ok: Bool = time_utc_parts(0 as Int64, parts); return if ok { parts[0] } else { 1 } }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_utc_offset_calendar_parts_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var parts: [Int32; 6] = [0, 0, 0, 0, 0, 0]; let ok: Bool = time_utc_offset_parts(0 as Int64, 60, parts); return if ok { parts[3] } else { 1 } }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_native_tls_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let socket: UIntSize = net_tcp_connect_dns(\"localhost\", 38127u16); let tls: UIntSize = net_tls_open_client(socket, \"localhost\", false); let server_tls: UIntSize = net_tls_open_server(socket, \"cert.pem\", \"key.pem\"); let step: UInt32 = net_tls_step(tls, 1000u32); let state: UInt32 = net_tls_state(tls); let error: Int32 = net_tls_error(tls); var input: [UInt8; 2] = [1u8, 2u8]; var output: [UInt8; 2] = [0u8, 0u8]; let sent: UIntSize = net_tls_send(tls, input); let received: UIntSize = net_tls_receive(tls, output); let closed: Bool = net_tls_close(tls); let server_closed: Bool = net_tls_close(server_tls); if !server_closed { return 1 } if closed { return (step as Int32) + (state as Int32) + (sent as Int32) + (received as Int32) } return error }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_net_reactor_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let listener: UIntSize = net_tcp_listen(38129u16); let reactor: UIntSize = net_reactor_open(4u32, 4u32); let watched: Bool = net_reactor_watch(reactor, listener, 1u32, 7usize); let count: UInt32 = net_reactor_poll(reactor, 1u32); let socket: UIntSize = net_reactor_event_socket(reactor, 0u32); let flags: UInt32 = net_reactor_event_flags(reactor, 0u32); let user: UIntSize = net_reactor_event_user(reactor, 0u32); let error: Int32 = net_reactor_error(reactor); let unwatched: Bool = net_reactor_unwatch(reactor, listener); let closed: Bool = net_reactor_close(reactor); if watched && unwatched && closed { return (count + flags) as Int32 } return (socket + user) as Int32 + error }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_net_reactor_operation_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let listener: UIntSize = net_tcp_listen(38130u16); let reactor: UIntSize = net_reactor_open(4u32, 8u32); let accept_operation: UIntSize = net_reactor_submit_accept(reactor, listener, 10usize); let connect_operation: UIntSize = net_reactor_submit_connect(reactor, \"127.0.0.1\", 38130u16, 11usize); let receive_operation: UIntSize = net_reactor_submit_receive(reactor, listener, 12usize); let send_operation: UIntSize = net_reactor_submit_send(reactor, listener, 13usize); let cancelled: Bool = net_reactor_cancel(reactor, accept_operation); let event_operation: UIntSize = net_reactor_event_operation(reactor, 0u32); if cancelled { return (connect_operation + receive_operation + send_operation + event_operation) as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_bounded_scheduler_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { app_scheduler_clear(); let created: Bool = app_scheduler_set(7, 100 as Int64, 60u64); var due: [Int32; 4] = [0, 0, 0, 0]; let count: UIntSize = app_scheduler_poll(100 as Int64, due); let removed: Bool = app_scheduler_cancel(7); let active: UIntSize = app_scheduler_count(); if created && count == 1usize && removed && active == 0usize { return due[0] } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_json_array_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var signed: [Int64; 2] = [1 as Int64, 2 as Int64]; var unsigned: [UInt64; 2] = [3u64, 4u64]; var decimals: [Float64; 2] = [1.0f64, 2.0f64]; var flags: [Bool; 2] = [true, false]; var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let a: UIntSize = json_array_int(signed, output); let b: UIntSize = json_array_uint(unsigned, output); let c: UIntSize = json_array_float(decimals, output); let d: UIntSize = json_array_bool(flags, output); return (a + b + c + d) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_response_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var body: [UInt8; 4] = [65u8, 104u8, 111u8, 106u8]; var output: [UInt8; 131] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let response: UIntSize = http_response_write(200u16, \"text/plain\", body, output); return response as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_response_reader_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let status: UInt16 = http_response_status(input); let bounded_status: UInt16 = http_response_status_prefix(input, 8usize); let header: UIntSize = http_response_header(input, \"Content-Type\", output); let bounded_header: UIntSize = http_response_header_prefix(input, 8usize, \"Content-Type\", output); let body: UIntSize = http_response_body(input, output); let bounded_body: UIntSize = http_response_body_prefix(input, 8usize, output); return (status as Int32) + (bounded_status as Int32) + (header + bounded_header + body + bounded_body) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_response_exact_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let header: Bool = http_response_header_exact(input, \"Content-Type\", output, length); let body: Bool = http_response_body_exact(input, output, length); if header { return length[0] as Int32 } if body { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_response_chunked_exact_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 1] = [0u8]; var output: [UInt8; 1] = [0u8]; var length: [UIntSize; 1] = [0usize]; let decoded: Bool = http_response_body_chunked_exact(input, output, length); if decoded { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_request_chunked_exact_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 1] = [0u8]; var output: [UInt8; 1] = [0u8]; var length: [UIntSize; 1] = [0usize]; let decoded: Bool = http_request_body_chunked_exact(input, output, length); if decoded { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_router_builtin_signatures_active() {
+        let output = check(
+            r#"module test; fn main() -> Int32 { var body: [UInt8; 1] = [79u8]; var input: [UInt8; 1] = [0u8]; var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; http_router_clear(); let added: Bool = http_router_add("GET", "/", 200u16, "text/plain", body); let prefix_added: Bool = http_router_add_prefix("GET", "/api/", 200u16, "text/plain", body); let removed: Bool = http_router_remove("GET", "/"); let prefix_removed: Bool = http_router_remove_prefix("GET", "/api/"); let count: UIntSize = http_router_count(); let written: UIntSize = http_router_respond(input, output); if added && prefix_added && removed && prefix_removed && count == 0usize { return written as Int32 } return 0 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_keep_alive_builtin_signatures_active() {
+        let output = check(
+            r#"module test; fn main() -> Int32 { var body: [UInt8; 1] = [79u8]; var input: [UInt8; 1] = [0u8]; var output: [UInt8; 140] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let keep: Bool = http_request_keep_alive(input); let response: UIntSize = http_response_write_ex(200u16, "text/plain", body, true, output); if keep { return response as Int32 } return 0 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_response_custom_header_builtin_signatures_active() {
+        let output = check(
+            r#"module test; fn main() -> Int32 { var body: [UInt8; 1] = [79u8]; var output: [UInt8; 112] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let close: UIntSize = http_response_write_header(429u16, "text/plain", "Retry-After", "1", body, output); let keep: UIntSize = http_response_write_header_ex(200u16, "text/plain", "X-Trace", "ready", body, true, output); return (close + keep) as Int32 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_response_custom_header_block_builtin_signatures_active() {
+        let output = check(
+            r#"module test; fn main() -> Int32 { var body: [UInt8; 1] = [79u8]; var output: [UInt8; 1] = [0u8]; let close: UIntSize = http_response_write_header_block(429u16, "text/plain", "Retry-After: 1\r\nX-Trace: limited", body, output); let keep: UIntSize = http_response_write_header_block_ex(200u16, "text/plain", "X-Trace: ready", body, true, output); return (close + keep) as Int32 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_session_builtin_signatures_active() {
+        let output = check(
+            r#"module test; fn main() -> Int32 { let listener: UIntSize = net_tcp_listen(38125u16); let session: UIntSize = http_session_open(listener, 2u32, 1024u32, 1024u32); let tls_session: UIntSize = http_session_open_tls(listener, 2u32, 1024u32, 1024u32, "cert.pem", "key.pem"); let state: UInt32 = http_session_step(session, 1u32); let closed: Bool = http_session_close(session); let tls_closed: Bool = http_session_close(tls_session); if closed && tls_closed { return state as Int32 } return 0 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_request_writer_builtin_signature() {
+        let output = check(
+            r#"module test; fn main() -> Int32 { var body: [UInt8; 4] = [65u8, 104u8, 111u8, 106u8]; var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let request: UIntSize = http_request_write("GET", "/hello", "localhost", body, output); return request as Int32 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_request_writer_prefix_builtin_signature() {
+        let output = check(
+            r#"module test; fn main() -> Int32 { var body: [UInt8; 4] = [65u8, 104u8, 111u8, 106u8]; var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let request: UIntSize = http_request_write_prefix("POST", "/hello", "localhost", body, 2usize, output); return request as Int32 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    /*
+    #[test]
+    fn checks_http_request_writer_builtin_signature_broken_previous() {
+        let output = check(
+            "module test; fn main() -> Int32 { var body: [UInt8; 4] = [65u8, 104u8, 111u8, 106u8]; var output: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8. let response: UIntSize = http_response_write(200u16, "text/plain", body, output); return response as Int32 }",
+            "module test; fn main() -> Int32 { var body: [UInt8; 4] = [65u8, 104u8, 111u8, 106u8]; var output: [UInt8; 131] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8. let response: UIntSize = http_response_write(200u16, "text/plain", body, output); return response as Int32 }",
+
+    */
+
+    #[test]
+    fn checks_http_request_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var request: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var query_length: [UIntSize; 1] = [0usize]; let complete: Bool = http_request_is_complete(request); let method: UIntSize = http_request_method(request, output); let target: UIntSize = http_request_target(request, output); let header: UIntSize = http_request_header(request, \"Host\", output); let body: UIntSize = http_request_body(request, output); let query: UIntSize = http_query_param(request, \"id\", output); let query_exact: Bool = http_query_param_exact(request, \"id\", output, query_length); let route: Bool = http_route_match(request, \"GET\", \"/\"); if query_exact { return query as Int32 } return (method + target + header + body + query) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_request_framing_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var request: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let frame: UIntSize = http_request_frame_length_prefix(request, 8usize); let remaining: UIntSize = http_request_consume_prefix(request, 8usize, frame); return (frame + remaining) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_request_chunked_framing_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var request: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let frame: UIntSize = http_request_chunked_frame_length_prefix(request, 8usize); return frame as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_tcp_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let listener: UIntSize = net_tcp_listen(38123u16); let connected: UIntSize = net_tcp_connect(\"127.0.0.1\", 38123u16); let named: UIntSize = net_tcp_connect_dns(\"localhost\", 38123u16); let accepted: UIntSize = net_tcp_accept(listener); let timed: Bool = net_socket_set_timeout(accepted, 1000u32); var request: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var response: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let sent: UIntSize = net_tcp_send(connected, request); let received: UIntSize = net_tcp_receive(accepted, response); let closed: Bool = net_socket_close(connected); return (listener + connected + named + accepted + sent + received) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_tcp_send_prefix_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var request: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let sent: UIntSize = net_tcp_send_prefix(1usize, request, 4usize); return sent as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_theme_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { ui_theme(1); let background: UInt32 = ui_theme_color(0); ui_window(\"UI\", 640, 480, background); ui_image(\"logo.png\", 20, 20, 64, 64); ui_theme(0); return ui_run() }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn rejects_windows_ui_builtin_type_mismatch() {
+        let output = check(
+            "module test; fn main() { ui_top_bar(true, 0x252526u32); ui_column(20, 64, 600, true, 16, 12, 0, 1) }",
         );
         assert!(
             output
@@ -4098,6 +11565,66 @@ mod tests {
                 .diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.code == "J0508")
+        );
+    }
+
+    #[test]
+    fn checks_bounded_scalar_parser_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var text: [UInt8; 5] = [49u8, 50u8, 46u8, 53u8, 48u8]; var signed: [Int64; 1] = [0 as Int64]; var unsigned: [UInt64; 1] = [0u64]; var float: [Float64; 1] = [0.0f64]; var boolean: [Bool; 1] = [false]; let signed_ok: Bool = parse_int(text, 2usize, signed); let unsigned_ok: Bool = parse_uint(text, 2usize, unsigned); let float_ok: Bool = parse_float(text, 5usize, float); let boolean_ok: Bool = parse_bool(text, 2usize, boolean); if signed_ok || unsigned_ok || float_ok || boolean_ok { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var text: [UInt8; 1] = [49u8]; var wrong: [UInt64; 1] = [0u64]; parse_int(text, 1usize, wrong) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_app_state_typed_read_signatures_and_rejects_mismatches() {
+        let output = check(
+            "module test; fn main() -> Int32 { var signed: [Int64; 1] = [0 as Int64]; var unsigned: [UInt64; 1] = [0u64]; var decimal: [Float64; 1] = [0.0f64]; var flag: [Bool; 1] = [false]; let a: Bool = app_state_read_int(\"signed\", signed); let b: Bool = app_state_read_uint(\"unsigned\", unsigned); let c: Bool = app_state_read_float(\"decimal\", decimal); let d: Bool = app_state_read_bool(\"flag\", flag); if a || b || c || d { return 1 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var wrong: [UInt64; 1] = [0u64]; app_state_read_int(\"signed\", wrong) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_app_state_exact_text_read_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var bytes: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let ok: Bool = app_state_read_text_exact(\"name\", bytes, length); if ok { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var bytes: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var wrong: [UInt64; 1] = [0u64]; app_state_read_text_exact(\"name\", bytes, wrong) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
         );
     }
 }

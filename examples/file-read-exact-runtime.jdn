@@ -1,0 +1,59 @@
+module examples.file_read_exact_runtime;
+
+// Exact file reads return a Bool and write the byte count through a separate
+// caller-owned slot. This keeps valid zero-byte files distinct from failure.
+fn main() -> Int32 {
+    if !directory_create("target/jadren") { return 10 }
+    file_delete("target/jadren/file-read-exact.bin")
+    file_delete("target/jadren/file-read-exact.txt")
+    file_delete("target/jadren/file-read-exact-empty.txt")
+
+    var payload: [UInt8; 4] = [1u8, 2u8, 3u8, 4u8]
+    if file_write("target/jadren/file-read-exact.bin", payload) != 4usize { return 11 }
+
+    var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    var length: [UIntSize; 1] = [777usize]
+    if !file_read_exact("target/jadren/file-read-exact.bin", output, length) { return 12 }
+    if length[0] != 4usize { return 13 }
+    if output[0] != 1u8 { return 14 }
+    if output[3] != 4u8 { return 14 }
+
+    var short_output: [UInt8; 3] = [9u8, 9u8, 9u8]
+    var short_length: [UIntSize; 1] = [888usize]
+    if file_read_exact("target/jadren/file-read-exact.bin", short_output, short_length) { return 15 }
+    if short_length[0] != 888usize { return 16 }
+    if short_output[0] != 9u8 { return 16 }
+
+    if file_write_text("target/jadren/file-read-exact.txt", "Aho") != 3usize { return 17 }
+    var text_output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    var text_length: [UIntSize; 1] = [999usize]
+    if !file_read_text_exact("target/jadren/file-read-exact.txt", text_output, text_length) { return 18 }
+    if text_length[0] != 3usize { return 19 }
+    if text_output[0] != 65u8 { return 19 }
+    if text_output[2] != 111u8 { return 19 }
+    if text_output[3] != 0u8 { return 19 }
+
+    var text_short: [UInt8; 3] = [8u8, 8u8, 8u8]
+    var text_short_length: [UIntSize; 1] = [111usize]
+    if file_read_text_exact("target/jadren/file-read-exact.txt", text_short, text_short_length) { return 20 }
+    if text_short_length[0] != 111usize { return 21 }
+    if text_short[0] != 8u8 { return 21 }
+
+    if file_write_text("target/jadren/file-read-exact-empty.txt", "") != 0usize { return 22 }
+    var empty_output: [UInt8; 1] = [7u8]
+    var empty_length: [UIntSize; 1] = [222usize]
+    if !file_read_exact("target/jadren/file-read-exact-empty.txt", empty_output, empty_length) { return 23 }
+    if empty_length[0] != 0usize { return 24 }
+    if !file_read_text_exact("target/jadren/file-read-exact-empty.txt", empty_output, empty_length) { return 25 }
+    if empty_length[0] != 0usize { return 26 }
+    if empty_output[0] != 0u8 { return 26 }
+
+    var missing_length: [UIntSize; 1] = [333usize]
+    if file_read_exact("target/jadren/file-read-exact-missing.bin", output, missing_length) { return 27 }
+    if missing_length[0] != 333usize { return 28 }
+
+    if !file_delete("target/jadren/file-read-exact.bin") { return 29 }
+    if !file_delete("target/jadren/file-read-exact.txt") { return 30 }
+    if !file_delete("target/jadren/file-read-exact-empty.txt") { return 31 }
+    return 0
+}

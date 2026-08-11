@@ -1,0 +1,58 @@
+module examples.stdlib_buffer_insert_move_from
+
+// Move a caller-owned value into a generic Buffer<T> without passing the
+// aggregate through the platform C ABI. The source is consumed on success.
+@repr(C)
+struct Entry {
+    values: Buffer<Int32>,
+    id: Int32
+}
+
+fn main() -> Int32 {
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let first_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let third_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match entries_created {
+        Ok(entries) => {
+            match first_values_created {
+                Ok(first_values) => {
+                    match second_values_created {
+                        Ok(second_values) => {
+                            match third_values_created {
+                                Ok(third_values) => {
+                                    if !buffer_append(first_values, 7) { result_code = 1 }
+                                    if !buffer_append(second_values, 3) { result_code = 2 }
+                                    let existing: Entry = Entry { values: second_values, id: 1 }
+                                    let incoming: Entry = Entry { values: first_values, id: 42 }
+                                    if !buffer_append(entries, existing) { result_code = 3 }
+                                    if !buffer_insert_move_from(entries, 0usize, incoming) { result_code = 4 }
+                                    if buffer_length(entries) != 2usize { result_code = 5 }
+                                    if entries[0].id != 42 { result_code = 6 }
+                                    if entries[0].values[0] != 7 { result_code = 7 }
+                                    if entries[1].id != 1 { result_code = 8 }
+                                    if entries[1].values[0] != 3 { result_code = 9 }
+                                    if !buffer_append(third_values, 9) { result_code = 10 }
+                                    let status_source: Entry = Entry { values: third_values, id: 7 }
+                                    let status: Int32 = buffer_insert_move_from_status(entries, 1usize, status_source)
+                                    if status != 0 { result_code = 11 }
+                                    if buffer_length(entries) != 3usize { result_code = 12 }
+                                    if entries[1].id != 7 { result_code = 13 }
+                                    if entries[1].values[0] != 9 { result_code = 14 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

@@ -1,0 +1,40 @@
+module examples.stdlib_buffer_append_move
+
+// Append a caller-owned move-safe nested buffer without copying its descriptor.
+// A successful move leaves the source slot zeroed so only the destination owns
+// the nested allocation.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    if !buffer_append(first, 7) { result_code = 1 }
+                    if !buffer_append_move(outer, first) { result_code = 2 }
+                    if buffer_length(outer) != 1usize { result_code = 3 }
+                    if buffer_length(outer[0]) != 1usize { result_code = 4 }
+                    if outer[0][0] != 7 { result_code = 5 }
+
+                    match second_created {
+                        Ok(second) => {
+                            if !buffer_append(second, 9) { result_code = 6 }
+                            let status: Int32 = buffer_append_move_status(outer, second)
+                            if status != 0 { result_code = 7 }
+                            if buffer_length(outer) != 2usize { result_code = 8 }
+                            if outer[1][0] != 9 { result_code = 9 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

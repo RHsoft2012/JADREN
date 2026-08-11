@@ -1,0 +1,34 @@
+module examples.http_response_parser;
+
+// Bounded HTTP/1.1 response reader. The explicit prefix length lets a client
+// parse only the bytes returned by a socket without exposing the unused tail
+// of its receive buffer to the parser.
+fn main() -> Int32 {
+    var body: [UInt8; 4] = [65u8, 104u8, 111u8, 106u8]
+    var response: [UInt8; 87] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let written: UIntSize = http_response_write(200u16, "text/plain", body, response)
+    if (written as Int32) != 87 { return 10 }
+
+    if http_response_status_prefix(response, written) != 200u16 { return 11 }
+    if http_response_status(response) != 200u16 { return 12 }
+
+    var content_type: [UInt8; 10] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if http_response_header_prefix(response, written, "content-type", content_type) != 10usize { return 13 }
+    if content_type[0] != 116u8 { return 14 }
+    if content_type[9] != 110u8 { return 14 }
+
+    var content_length: [UInt8; 1] = [0u8]
+    if http_response_header(response, "Content-Length", content_length) != 1usize { return 15 }
+    if content_length[0] != 52u8 { return 16 }
+
+    var parsed_body: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    if http_response_body_prefix(response, written, parsed_body) != 4usize { return 17 }
+    if parsed_body[0] != 65u8 { return 18 }
+    if parsed_body[3] != 106u8 { return 18 }
+    if http_response_body(response, parsed_body) != 4usize { return 19 }
+
+    var too_small: [UInt8; 3] = [0u8, 0u8, 0u8]
+    if http_response_body_prefix(response, written, too_small) != 0usize { return 20 }
+    if http_response_status_prefix(response, 11usize) != 0u16 { return 21 }
+    return 0
+}

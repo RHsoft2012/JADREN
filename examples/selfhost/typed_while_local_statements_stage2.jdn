@@ -1,0 +1,13 @@
+module examples.selfhost.typed_while_local_statements_stage2
+
+// Companion source for an ordered multi-statement bounded while body.
+// Both assignments update the same Int32 local before the next condition check.
+
+fn main() -> Int32 {
+    var counter: Int32 = 0
+    while counter < 4 {
+        counter = counter + 1
+        counter = counter + 1
+    }
+    return counter
+}

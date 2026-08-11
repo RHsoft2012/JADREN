@@ -1,0 +1,15 @@
+module examples.format_special;
+
+fn main() -> Int32 {
+    var buffer: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let nan_length: UIntSize = format_float(0.0f64 / 0.0f64, buffer)
+    if (nan_length as Int32) != 3 { return 10 }
+    if buffer[0] != 110u8 { return 11 }
+    let inf_length: UIntSize = format_float(1.0f64 / 0.0f64, buffer)
+    if (inf_length as Int32) != 3 { return 12 }
+    if buffer[0] != 105u8 { return 13 }
+    let negative_inf_length: UIntSize = format_float(-1.0f64 / 0.0f64, buffer)
+    if (negative_inf_length as Int32) != 4 { return 14 }
+    if buffer[0] != 45u8 { return 15 }
+    return 0
+}

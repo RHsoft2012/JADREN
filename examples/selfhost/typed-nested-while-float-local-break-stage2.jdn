@@ -1,0 +1,20 @@
+module examples.selfhost.typed_nested_while_float_local_break_stage2
+
+// Float64 nested loop with an explicit inner break edge.
+
+fn main() -> Int32 {
+    var outer: Float64 = 0.0f64
+    while outer < 1.0f64 {
+        outer = outer + 1.0f64
+        var inner: Float64 = 0.0f64
+        while inner < 2.0f64 {
+            inner = inner + 1.0f64
+            break
+        }
+        outer = outer + inner
+    }
+    if outer == 2.0f64 {
+        return 0
+    }
+    return 1
+}

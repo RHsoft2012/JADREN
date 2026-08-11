@@ -1,0 +1,18 @@
+module examples.directory_runtime;
+
+// Adresárové builtiny sú idempotentné iba pri create: existujúci adresár
+// vráti true, ale cesta k súboru alebo odstránenie neprázdneho adresára zlyhá.
+fn main() -> Int32 {
+    file_delete("target/jadren/directory-runtime/marker.txt")
+    directory_delete("target/jadren/directory-runtime")
+
+    if !directory_create("target/jadren/directory-runtime") { return 10 }
+    if !directory_exists("target/jadren/directory-runtime") { return 11 }
+    if !directory_create("target/jadren/directory-runtime") { return 12 }
+    if file_write_text("target/jadren/directory-runtime/marker.txt", "ok") != 2usize { return 13 }
+    if !file_exists("target/jadren/directory-runtime/marker.txt") { return 14 }
+    if !file_delete("target/jadren/directory-runtime/marker.txt") { return 15 }
+    if !directory_delete("target/jadren/directory-runtime") { return 16 }
+    if directory_exists("target/jadren/directory-runtime") { return 17 }
+    return 0
+}

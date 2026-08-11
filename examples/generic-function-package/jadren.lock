@@ -1,0 +1,8 @@
+version = 1
+manifest_fingerprint = "6fae1a74efda160a"
+
+[package]
+name = "generic-function-package"
+version = "0.1.0"
+edition = "2026"
+

@@ -1,0 +1,30 @@
+module examples.json_object_export;
+
+// Stateless JSON object member serializer. The caller owns separators/order.
+fn main() -> Int32 {
+    file_delete("target/jadren/jadren-object.json")
+    file_append_text("target/jadren/jadren-object.json", "{")
+
+    var member: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let first_length: UIntSize = json_object_field_string("name", "Aho", member)
+    if (first_length as Int32) != 12 { return 10 }
+    file_append("target/jadren/jadren-object.json", member, first_length)
+    file_append_text("target/jadren/jadren-object.json", ",")
+
+    let second_length: UIntSize = json_object_field_string("note", "Aho \"x\"\n", member)
+    if (second_length as Int32) != 20 { return 11 }
+    file_append("target/jadren/jadren-object.json", member, second_length)
+    file_append_text("target/jadren/jadren-object.json", "}")
+
+    var output: [UInt8; 58] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let loaded: UIntSize = file_read("target/jadren/jadren-object.json", output)
+    if (loaded as Int32) != 35 { return 12 }
+    if output[0] != 123u8 { return 13 }
+    if output[1] != 34u8 { return 14 }
+    if output[13] != 44u8 { return 15 }
+    if output[26] != 92u8 { return 16 }
+    if output[27] != 34u8 { return 17 }
+    if output[34] != 125u8 { return 18 }
+    file_delete("target/jadren/jadren-object.json")
+    return 0
+}

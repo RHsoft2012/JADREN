@@ -1,0 +1,30 @@
+module app_list_input_bytes.main
+
+// Caller-owned UTF-8 input can populate and update a bounded list directly.
+// The explicit length is checked against the array capacity before mutation.
+fn main() -> Int32 {
+    app_list_clear(0)
+
+    var value: [UInt8; 8] = [84u8, 97u8, 115u8, 107u8, 0u8, 0u8, 0u8, 0u8]
+
+    let rejected_push: Bool = app_list_push_text_bytes(0, value, 9usize)
+    if rejected_push { return 1 }
+    if app_list_count(0) != 0 { return 2 }
+
+    let pushed: Bool = app_list_push_text_bytes(0, value, 4usize)
+    if !pushed { return 3 }
+
+    let rejected_set: Bool = app_list_set_text_bytes(0, 0, value, 9usize)
+    if rejected_set { return 4 }
+
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = app_list_read_text(0, 0, output)
+    if length != 4usize { return 5 }
+    if output[0] != 84u8 { return 6 }
+
+    let updated: Bool = app_list_set_text_bytes(0, 0, value, 4usize)
+    if !updated { return 7 }
+
+    app_list_clear(0)
+    return 0
+}

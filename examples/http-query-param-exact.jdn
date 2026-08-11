@@ -1,0 +1,27 @@
+module examples.http_query_param_exact
+
+// Exact query read-back distinguishes an empty value from a missing key.
+fn main() -> Int32 {
+    var request = [63u8, 105u8, 100u8, 61u8, 52u8, 50u8, 38u8, 101u8, 109u8, 112u8, 116u8, 121u8, 61u8, 38u8, 101u8, 110u8, 99u8, 111u8, 100u8, 101u8, 100u8, 61u8, 74u8, 97u8, 100u8, 114u8, 101u8, 110u8, 43u8, 85u8, 73u8, 37u8, 50u8, 49u8]
+    var output: [UInt8; 16] = [77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8]
+    var length: [UIntSize; 1] = [91usize]
+
+    if !http_query_param_exact(request, "empty", output, length) { return 1 }
+    if length[0] != 0usize { return 2 }
+    if output[0] != 77u8 { return 2 }
+
+    if !http_query_param_exact(request, "encoded", output, length) { return 3 }
+    if length[0] != 10usize { return 4 }
+    if output[6] != 32u8 { return 5 }
+    if output[9] != 33u8 { return 5 }
+
+    var too_small: [UInt8; 1] = [55u8]
+    if http_query_param_exact(request, "encoded", too_small, length) { return 6 }
+    if too_small[0] != 55u8 { return 7 }
+    if length[0] != 10usize { return 7 }
+
+    var missing_length: [UIntSize; 1] = [123usize]
+    if http_query_param_exact(request, "missing", output, missing_length) { return 8 }
+    if missing_length[0] != 123usize { return 9 }
+    return 0
+}

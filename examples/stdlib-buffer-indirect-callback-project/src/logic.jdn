@@ -1,0 +1,15 @@
+module buffer_callback.logic
+
+pub fn append_indirect(values: write Buffer<Int32>, incoming: Buffer<Int32>) -> Bool {
+    if buffer_length(incoming) != 0usize { return false }
+    if !buffer_append(values, 42) { return false }
+    return buffer_length(values) == 1usize
+}
+
+pub fn invoke(
+    callback: fn(write Buffer<Int32>, Buffer<Int32>) -> Bool,
+    values: write Buffer<Int32>,
+    incoming: Buffer<Int32>
+) -> Bool {
+    return callback(values, incoming)
+}

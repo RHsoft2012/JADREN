@@ -1,0 +1,8 @@
+version = 1
+manifest_fingerprint = "d65a85f8bf841fcd"
+
+[package]
+name = "generic-nominal-package"
+version = "0.1.0"
+edition = "2026"
+

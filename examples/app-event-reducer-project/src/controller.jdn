@@ -1,0 +1,37 @@
+module app_event_reducer_project.controller
+
+import jadren.app.event.AppEvent
+import jadren.app.event.checked_changed
+import jadren.app.event.click
+import jadren.app.event.select_changed
+import jadren.app.event.list_changed
+import jadren.app.event.table_changed
+import jadren.app.event.text_changed
+import jadren.app.event.unknown
+import jadren.app.input.checked
+import jadren.app.input.select_index
+import jadren.app.input.list_index
+import jadren.app.input.table_selected_row
+import jadren.app.input.text_length
+import app_event_reducer_project.model.FormModel
+import app_event_reducer_project.model.commit
+import app_event_reducer_project.model.load
+import app_event_reducer_project.reducer.reduce
+
+fn event_from_id(event_id: Int32) -> AppEvent {
+    if event_id == 7 { return click(event_id) }
+    if event_id == 8 { return checked_changed(event_id, checked(event_id) != 0) }
+    if event_id == 9 { return text_changed(event_id, text_length(event_id) as Int64) }
+    if event_id == 10 { return select_changed(event_id, select_index(event_id)) }
+    if event_id == 11 { return list_changed(event_id, list_index(event_id)) }
+    if event_id == 12 { return table_changed(event_id, table_selected_row(event_id)) }
+    return unknown(event_id)
+}
+
+pub fn handle(event_id: Int32) -> Int32 {
+    let event: AppEvent = event_from_id(event_id)
+    var model: [FormModel; 1] = [load()]
+    reduce(event, model, 1usize)
+    if !commit(model[0]) { return -1 }
+    return event_id
+}

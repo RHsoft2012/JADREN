@@ -1,0 +1,34 @@
+module examples.app_table_migration
+
+fn main() -> Int32 {
+    // Prepare a typed-record table at schema version 1.
+    app_table_clear(0)
+    if !app_table_set_column_name(0, 0, "task_id") { return 1 }
+    if !app_table_set_column_name(0, 1, "title") { return 2 }
+    if !app_table_set_column_type(0, 0, 1) { return 3 }
+    if !app_table_set_column_type(0, 1, 0) { return 4 }
+    if !app_table_set_schema_version(0, 1) { return 5 }
+    if !app_table_append_row(0) { return 6 }
+    if !app_table_set_named_int(0, 0, "task_id", 42 as Int64) { return 7 }
+    if !app_table_set_named_cell(0, 0, "title", "Focus") { return 8 }
+
+    // Queue a rename and a compatible type operation, then commit atomically.
+    if !app_table_migration_begin(0, 1, 2) { return 10 }
+    if !app_table_migration_rename_column("title", "name") { return 11 }
+    if !app_table_migration_set_column_type("name", 0) { return 12 }
+    if !app_table_migration_commit() { return 13 }
+    if app_table_schema_version(0) != 2 { return 14 }
+    if app_table_find_column(0, "name") != 1 { return 15 }
+    if app_table_find_column(0, "title") != -1 { return 16 }
+
+    // An incompatible type change must fail and restore the complete snapshot.
+    if !app_table_migration_begin(0, 2, 3) { return 20 }
+    if !app_table_migration_rename_column("name", "label") { return 21 }
+    if !app_table_migration_set_column_type("task_id", 3) { return 22 }
+    if app_table_migration_commit() { return 23 }
+    if app_table_schema_version(0) != 2 { return 24 }
+    if app_table_find_column(0, "name") != 1 { return 25 }
+    if app_table_find_column(0, "label") != -1 { return 26 }
+
+    return 0
+}

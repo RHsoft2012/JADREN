@@ -1,0 +1,83 @@
+module examples.stdlib_buffer_owning_terminators
+
+// Inline owning arguments remain valid in a return terminator and in a loop
+// condition. The compiler materializes the argument, keeps it live across the
+// native move call, and releases it on every control-flow edge.
+fn append_return(
+    values: Buffer<Option<Buffer<Int32>>>,
+    incoming: Buffer<Int32>,
+) -> Bool {
+    return buffer_append(values, Some(incoming))
+}
+
+fn append_loop(
+    values: Buffer<Option<Buffer<Int32>>>,
+    incoming: Buffer<Int32>,
+) -> Int32 {
+    var result_code: Int32 = 0
+    while buffer_append(values, Some(incoming)) {
+        result_code = 1
+        break
+    }
+    return result_code
+}
+
+fn append_write(
+    values: write Buffer<Option<Buffer<Int32>>>,
+    incoming: Buffer<Int32>,
+) -> Bool {
+    if !buffer_append(values, Some(incoming)) { return false }
+    return buffer_length(values) == 1usize
+}
+
+fn main() -> Int32 {
+    let return_output_created: Result<Buffer<Option<Buffer<Int32>>>, Int32> = buffer_create(0usize)
+    let return_inner_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let loop_output_created: Result<Buffer<Option<Buffer<Int32>>>, Int32> = buffer_create(0usize)
+    let loop_inner_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let write_output_created: Result<Buffer<Option<Buffer<Int32>>>, Int32> = buffer_create(0usize)
+    let write_inner_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match return_output_created {
+        Ok(output) => {
+            match return_inner_created {
+                Ok(inner) => {
+                    if !append_return(output, inner) { result_code = 1 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    match loop_output_created {
+        Ok(output) => {
+            match loop_inner_created {
+                Ok(inner) => {
+                    if append_loop(output, inner) != 1 {
+                        if result_code == 0 { result_code = 2 }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    match write_output_created {
+        Ok(output) => {
+            match write_inner_created {
+                Ok(inner) => {
+                    if !append_write(output, inner) {
+                        if result_code == 0 { result_code = 3 }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

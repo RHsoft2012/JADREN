@@ -1,0 +1,41 @@
+module examples.stdlib_buffer_generic_nested
+
+// A nested copy-safe layout: a C-layout record contains another C-layout
+// record and a fixed array. Buffer<T> copies the complete native stride.
+@repr(C)
+struct Sample {
+    tick: UInt16,
+    value: Float32
+}
+
+@repr(C)
+struct Frame {
+    first: Sample,
+    samples: [UInt16; 3]
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<Frame>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            let frame: Frame = Frame {
+                first: Sample { tick: 7u16, value: 1.25f32 },
+                samples: [2u16, 4u16, 8u16]
+            }
+            if !buffer_append(values, frame) { result_code = 1 }
+            if values[0].first.tick != 7u16 { result_code = 2 }
+            if values[0].first.value != 1.25f32 { result_code = 3 }
+            if values[0].samples[1] != 4u16 { result_code = 4 }
+            if !buffer_insert(values, 0usize, Frame {
+                first: Sample { tick: 7u16, value: 1.25f32 },
+                samples: [2u16, 4u16, 8u16]
+            }) { result_code = 5 }
+            if buffer_length(values) != 2usize { result_code = 6 }
+            if !buffer_remove(values, 0usize) { result_code = 7 }
+            if values[0].samples[2] != 8u16 { result_code = 8 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

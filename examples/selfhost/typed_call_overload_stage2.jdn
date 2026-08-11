@@ -1,0 +1,28 @@
+module examples.selfhost.typed_call_overload_stage2
+
+// Source companion for the bounded typed-lowering overload hand-off.
+// The caller owns this table and passes it to
+// `lower_typed_expression_ast_with_candidates` (Rust/host side): an exact
+// `[Integer]` candidate is preferred to a generic Numeric fallback, while an
+// equal-specificity tie is rejected instead of being chosen by declaration
+// order.
+@repr(C)
+pub struct TypedCallCandidateHeader {
+    pub name_start: UInt64,
+    pub name_end: UInt64,
+    pub parameter_count: UInt64,
+    pub generic_parameter_count: UInt64,
+    pub return_type_kind: UInt8,
+    pub parameter_type_kind: UInt8,
+    pub parameter_type_start: UInt16,
+    pub parameter_type_end: UInt16,
+    pub generic_bound_kind: UInt8,
+    pub generic_substitution_kind: UInt8,
+}
+
+@export(name: "jadren_typed_call_overload_fixture", abi: "C")
+pub fn main() -> Int32 {
+    // The runtime result is deliberately simple; overload selection is the
+    // caller-owned semantic step demonstrated by the accompanying tests.
+    return 40 + 2
+}

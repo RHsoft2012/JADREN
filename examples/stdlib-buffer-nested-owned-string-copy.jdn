@@ -1,0 +1,40 @@
+module examples.stdlib_buffer_nested_owned_string_copy
+
+// Read an OwnedString through two owning Buffer projections into a
+// caller-owned byte array. This closes the read-back side of the nested
+// move-aware collection contract without copying the descriptor itself.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<OwnedString>>, Int32> = buffer_create(0usize)
+    let inner_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    let first_created: Result<OwnedString, Int32> = string_owned_from("Jadren")
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match inner_created {
+                Ok(inner) => {
+                    match first_created {
+                        Ok(first) => {
+                            if !buffer_append(inner, first) { result_code = 1 }
+                            if !buffer_append(outer, inner) { result_code = 2 }
+                            let copied: UIntSize = string_owned_copy(outer[0][0], output)
+                            if copied != 6usize { result_code = 3 }
+                            if output[0] != 74u8 { result_code = 4 }
+                            if output[5] != 110u8 { result_code = 4 }
+                            if string_owned_length(outer[0][0]) != 6usize { result_code = 5 }
+                            if !buffer_clear_move(outer[0]) { result_code = 6 }
+                            if buffer_length(outer[0]) != 0usize { result_code = 7 }
+                            if !buffer_clear_move(outer) { result_code = 8 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

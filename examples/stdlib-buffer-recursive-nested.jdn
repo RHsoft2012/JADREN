@@ -1,0 +1,33 @@
+module examples.stdlib_buffer_recursive_nested
+
+// Recursive owning buffers move each descriptor level into the next outer
+// buffer. The generated drop glue releases the full chain without leaks or
+// double-free, while the leaf remains a regular copy-safe element.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Buffer<Int32>>>, Int32> = buffer_create(0usize)
+    let middle_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let leaf_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match middle_created {
+                Ok(middle) => {
+                    match leaf_created {
+                        Ok(leaf) => {
+                            if !buffer_append(leaf, 42) { result_code = 1 }
+                            if !buffer_append(middle, leaf) { result_code = 2 }
+                            if !buffer_append(outer, middle) { result_code = 3 }
+                            if buffer_length(outer) != 1usize { result_code = 4 }
+                            if outer[0][0][0] != 42 { result_code = 5 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

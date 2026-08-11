@@ -1,0 +1,31 @@
+module examples.app_state_persistence
+
+// Bounded process-local application state. Values are persisted as a flat JSON object.
+fn main() -> Int32 {
+    app_state_clear()
+    let set_minutes: Bool = app_state_set_int("minutes", 42 as Int64)
+    let set_total: Bool = app_state_set_uint("total", 7u64)
+    let set_done: Bool = app_state_set_bool("done", true)
+    let set_name: Bool = app_state_set_text("name", "Focus")
+    let saved: Bool = app_state_save("target/jadren/app-state.json")
+    app_state_clear()
+    let loaded: Bool = app_state_load("target/jadren/app-state.json")
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let name_length: UIntSize = app_state_read_text("name", output)
+    let minutes: Int64 = app_state_get_int("minutes")
+    let total: UInt64 = app_state_get_uint("total")
+    let done: Bool = app_state_get_bool("done")
+    let removed: Bool = file_delete("target/jadren/app-state.json")
+    if !set_minutes { return 1 }
+    if !set_total { return 2 }
+    if !set_done { return 3 }
+    if !set_name { return 4 }
+    if !saved { return 5 }
+    if !loaded { return 6 }
+    if minutes != 42 as Int64 { return 7 }
+    if total != 7u64 { return 8 }
+    if !done { return 9 }
+    if name_length != 5usize { return 10 }
+    if !removed { return 11 }
+    return 0
+}

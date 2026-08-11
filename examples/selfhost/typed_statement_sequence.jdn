@@ -1,0 +1,9 @@
+module examples.selfhost.typed_statement_sequence
+
+// Bounded native producer fixture for the first typed straight-line statement
+// hand-off. The current contract is intentionally small: one immutable Int32
+// local, one binary initializer and a bound return.
+fn local_value(x: Int32) -> Int32 {
+    let next: Int32 = x + 1
+    return next
+}

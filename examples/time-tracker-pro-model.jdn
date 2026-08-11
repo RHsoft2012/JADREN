@@ -1,0 +1,95 @@
+module examples.time_tracker_pro_model
+
+// Headless model contract for the desktop TimeTracker scenario. The same
+// application model is persisted atomically and exported without any UI or
+// Electron bridge, so this fixture can run in a native runtime smoke.
+fn cleanup() {
+    file_delete("target/jadren/time-tracker-pro-model.tmp")
+    file_delete("target/jadren/time-tracker-pro-model.data")
+    file_delete("target/jadren/time-tracker-pro-model.csv")
+    file_delete("target/jadren/time-tracker-pro-model-readback.csv")
+}
+
+fn main() -> Int32 {
+    cleanup()
+    app_state_clear()
+    app_table_clear(0)
+    if !app_table_set_column_name(0, 0, "title") { return 1 }
+    if !app_table_set_column_name(0, 1, "minutes") { return 2 }
+    if !app_table_set_column_name(0, 2, "done") { return 3 }
+    if !app_table_append_row(0) { return 4 }
+    if !app_table_set_cell(0, 0, 0, "Plan UI") { return 5 }
+    if !app_table_set_cell(0, 0, 1, "42") { return 6 }
+    if !app_table_set_cell(0, 0, 2, "false") { return 7 }
+    if !app_state_set_text("draft", "Plan UI") { return 8 }
+    if !app_state_set_int("minutes", 42 as Int64) { return 9 }
+
+    if !app_data_tx_begin() { return 10 }
+    if !app_table_append_row(0) { return 11 }
+    if !app_table_set_cell(0, 1, 0, "Review build") { return 12 }
+    if !app_table_set_cell(0, 1, 1, "15") { return 13 }
+    if !app_table_set_cell(0, 1, 2, "true") { return 14 }
+    if !app_data_tx_commit() { return 15 }
+    if !app_data_save_atomic(
+        "target/jadren/time-tracker-pro-model.tmp",
+        "target/jadren/time-tracker-pro-model.data"
+    ) { return 16 }
+
+    app_state_set_text("draft", "mutated")
+    app_table_set_cell(0, 0, 0, "mutated")
+    if !app_data_load("target/jadren/time-tracker-pro-model.data") { return 17 }
+    if app_table_row_count(0) != 2 { return 18 }
+    if app_state_get_int("minutes") != 42 as Int64 { return 19 }
+
+    let csv_header: UIntSize = file_write_text(
+        "target/jadren/time-tracker-pro-model.csv",
+        "title,minutes,done\n"
+    )
+    if csv_header == 0usize { return 20 }
+    var title: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let copied: UIntSize = app_table_read_cell(0, 0, 0, title)
+    if copied != 7usize { return 21 }
+    if title[0] != 80u8 { return 22 }
+    file_append("target/jadren/time-tracker-pro-model.csv", title, copied)
+    file_append_text("target/jadren/time-tracker-pro-model.csv", ",42,false\n")
+    if file_size("target/jadren/time-tracker-pro-model.csv") <= csv_header { return 23 }
+
+    // Round-trip the exported file into a second typed table. The read buffer
+    // is caller-owned and bounded; a file that does not fit is rejected before
+    // the import can mutate the destination model.
+    var input: [UInt8; 96] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    let input_length: UIntSize = file_read_text(
+        "target/jadren/time-tracker-pro-model.csv",
+        input
+    )
+    if input_length == 0usize { return 24 }
+    app_table_clear(1)
+    if !app_table_set_column_name(1, 0, "title") { return 25 }
+    if !app_table_set_column_name(1, 1, "minutes") { return 26 }
+    if !app_table_set_column_name(1, 2, "done") { return 27 }
+    if !app_table_set_column_type(1, 0, 0) { return 28 }
+    if !app_table_set_column_type(1, 1, 0) { return 29 }
+    if !app_table_set_column_type(1, 2, 0) { return 30 }
+    if !app_table_import_csv(1, input, input_length) { return 31 }
+    if app_table_row_count(1) != 1 { return 32 }
+    var imported_title: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if app_table_read_cell(1, 0, 0, imported_title) != 7usize { return 33 }
+    if imported_title[0] != 80u8 { return 34 }
+    cleanup()
+    return 0
+}

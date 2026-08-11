@@ -514,8 +514,8 @@ mod tests {
 
     use inkwell::context::Context;
     use jadren_jir::{
-        BinaryOp, Block, BlockId, Function, FunctionId, Instruction, InstructionKind, Linkage,
-        Module, Parameter, Terminator, Type, TypeId, TypedValue, ValueId,
+        AddressSpace, BinaryOp, Block, BlockId, Function, FunctionId, Instruction, InstructionKind,
+        Linkage, Module, Parameter, Terminator, Type, TypeId, TypedValue, ValueId,
     };
     use jadren_source::{SourceManager, Span};
 
@@ -523,7 +523,7 @@ mod tests {
         ObjectOptions, emit_assembly, lower_to_object, lower_to_object_with_debug,
         lower_to_object_with_summary, write_object,
     };
-    use crate::{DebugInfoConfig, TypeLoweringConfig, lower_module_with_debug};
+    use crate::{DebugInfoConfig, DebugLocal, TypeLoweringConfig, lower_module_with_debug};
 
     #[test]
     fn cpu_feature_selection_has_a_safe_baseline_fallback() {
@@ -851,6 +851,65 @@ mod tests {
         assert!(inspection.contains("S_COMPILE3"), "{inspection}");
         assert!(inspection.contains("add.jdn"), "{inspection}");
         assert!(inspection.contains("add_values"), "{inspection}");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn emits_source_local_declare_in_codeview() {
+        let (mut jir, sources) = debug_module();
+        let source = sources.iter().next().expect("debug source");
+        let declaration_start = source.text().find("sum").expect("local name");
+        let declaration_span = Span::new(source.id(), declaration_start, declaration_start + 3)
+            .expect("local declaration span");
+        let pointer = TypeId::new(jir.types.len());
+        jir.types.push(Type::Pointer {
+            pointee: TypeId::new(0),
+            address_space: AddressSpace::Stack,
+        });
+        jir.functions[0].blocks[0].instructions.insert(
+            0,
+            Instruction {
+                result: Some(TypedValue {
+                    value: ValueId::new(3),
+                    ty: pointer,
+                }),
+                kind: InstructionKind::StackAlloc {
+                    ty: TypeId::new(0),
+                    count: None,
+                },
+                span: Some(declaration_span),
+            },
+        );
+        let debug = DebugInfoConfig::from_source_manager(&sources, r"C:\workspace", false)
+            .expect("debug configuration")
+            .with_stack_locals([DebugLocal {
+                function: 0,
+                allocation: 0,
+                name: "sum".to_owned(),
+                span: declaration_span,
+            }])
+            .expect("debug local configuration");
+        let context = Context::create();
+        let config = TypeLoweringConfig::x86_64_windows_msvc();
+        let llvm = lower_module_with_debug(&context, &jir, "codeview_local_test", &config, &debug)
+            .expect("debug LLVM module");
+        let ir = llvm.print_to_string().to_string();
+        assert!(ir.contains("DILocalVariable(name: \"sum\""), "{ir}");
+
+        let object = lower_to_object_with_debug(
+            &context,
+            &jir,
+            "codeview_local_test",
+            &config,
+            &debug,
+            &ObjectOptions::default(),
+        )
+        .expect("CodeView local object");
+        let path =
+            std::env::temp_dir().join(format!("jadren-codeview-local-{}.obj", std::process::id()));
+        write_object(&path, &object).expect("write CodeView local object");
+        let inspection = llvm_readobj(&path, &["--codeview"]);
+        assert!(inspection.contains("sum"), "{inspection}");
         let _ = fs::remove_file(path);
     }
 

@@ -1,0 +1,6 @@
+module generic_function.library
+
+pub fn identity<T>(value: T) -> T {
+    return value
+}
+

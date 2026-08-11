@@ -1,0 +1,13 @@
+version = 1
+manifest_fingerprint = "2a1dc3767549e5f4"
+
+[package]
+name = "network-policy-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"
+

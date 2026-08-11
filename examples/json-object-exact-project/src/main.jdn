@@ -1,0 +1,55 @@
+module json_object_exact_project.main
+
+import jadren.app.fs.read_text_exact
+import jadren.app.fs.write_text
+import jadren.json.object.read_bool_exact
+import jadren.json.object.read_float_exact
+import jadren.json.object.read_int_exact
+import jadren.json.object.read_string_exact
+import jadren.json.object.read_uint_exact
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    let marker_path: String = "target/jadren/json-object-exact.result"
+    let payload: String = "{\"n\":\"\",\"i\":0,\"u\":0,\"f\":0.0,\"b\":false}"
+    if write_text("target/jadren/json-object-exact.fixture", payload) == 0usize { return 1 }
+
+    region frame {
+        var input = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+        var input_length: [UIntSize; 1] = [0usize]
+        if !read_text_exact("target/jadren/json-object-exact.fixture", input, input_length) { return 2 }
+
+        var name: [UInt8; 4] = [77u8, 77u8, 77u8, 77u8]
+        var name_length: [UIntSize; 1] = [99usize]
+        if !read_string_exact(input, "n", name, name_length) { return 3 }
+        if name_length[0] != 0usize { return 4 }
+        if name[0] != 77u8 { return 5 }
+
+        var minutes: [Int64; 1] = [99i64]
+        var total: [UInt64; 1] = [99u64]
+        var rate: [Float64; 1] = [99.0]
+        var done: [Bool; 1] = [true]
+        let int_ok: Bool = read_int_exact(input, "i", minutes)
+        if !int_ok { return 6 }
+        if minutes[0] != 0i64 { return 7 }
+        let uint_ok: Bool = read_uint_exact(input, "u", total)
+        if !uint_ok { return 8 }
+        if total[0] != 0u64 { return 9 }
+        let float_ok: Bool = read_float_exact(input, "f", rate)
+        if !float_ok { return 10 }
+        if rate[0] != 0.0 { return 11 }
+        let bool_ok: Bool = read_bool_exact(input, "b", done)
+        if !bool_ok { return 12 }
+        if done[0] { return 13 }
+
+        let missing_ok: Bool = read_int_exact(input, "missing", minutes)
+        if missing_ok { return 14 }
+        if minutes[0] != 0i64 { return 15 }
+    }
+    if write_text(marker_path, "json-object-exact:pass\n") == 0usize { return 16 }
+    return 0
+}

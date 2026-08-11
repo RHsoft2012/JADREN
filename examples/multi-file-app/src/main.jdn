@@ -1,0 +1,8 @@
+module multi_file.main
+
+import multi_file.logic.answer
+
+fn main() -> Int32 {
+    let value: Int32 = answer()
+    return value
+}

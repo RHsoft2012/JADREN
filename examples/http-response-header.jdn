@@ -1,0 +1,26 @@
+module examples.http_response_header;
+
+fn main() -> Int32 {
+    var body: [UInt8; 4] = [66u8, 117u8, 115u8, 121u8]
+    var response: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let written: UIntSize = http_response_write_header(
+        429u16,
+        "text/plain",
+        "Retry-After",
+        "1",
+        body,
+        response
+    )
+    if written == 0usize { return 10 }
+    if http_response_status(response) != 429u16 { return 11 }
+
+    var retry_after: [UInt8; 1] = [0u8]
+    if http_response_header(response, "retry-after", retry_after) != 1usize { return 12 }
+    if retry_after[0] != 49u8 { return 13 }
+
+    var parsed_body: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    if http_response_body(response, parsed_body) != 4usize { return 14 }
+    if parsed_body[0] != 66u8 { return 15 }
+    if parsed_body[3] != 121u8 { return 15 }
+    return 0
+}

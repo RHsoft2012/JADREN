@@ -1,0 +1,57 @@
+module examples.stdlib_buffer_owning_record_array
+
+// Fixed arrays of owning Buffer fields are flattened into the same record
+// field table as direct fields. No metadata pointer is stored in the record.
+@repr(C)
+struct Entry {
+    id: Int32,
+    slots: [Buffer<Int32>; 2]
+}
+
+fn main() -> Int32 {
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let records_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let outer_created: Result<Buffer<Buffer<Entry>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match first_created {
+        Ok(first) => {
+            match second_created {
+                Ok(second) => {
+                    match records_created {
+                        Ok(records) => {
+                            match outer_created {
+                                Ok(outer) => {
+                                    if !buffer_append(first, 11) { result_code = 1 }
+                                    if !buffer_append(second, 22) { result_code = 2 }
+                                    let item: Entry = Entry { id: 7, slots: [first, second] }
+                                    if !buffer_append(records, item) { result_code = 3 }
+                                    if !buffer_append(outer, records) { result_code = 4 }
+
+                                    let grown: Int32 = buffer_resize_move_status(outer, 2usize)
+                                    if grown != 0 { result_code = 5 }
+                                    if buffer_length(outer) != 2usize { result_code = 6 }
+
+                                    let shrunk: Int32 = buffer_resize_move_status(outer, 1usize)
+                                    if shrunk != 0 { result_code = 7 }
+                                    if buffer_length(outer) != 1usize { result_code = 8 }
+
+                                    let emptied: Bool = buffer_resize_move(outer, 0usize)
+                                    if !emptied { result_code = 9 }
+                                    if buffer_length(outer) != 0usize { result_code = 10 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

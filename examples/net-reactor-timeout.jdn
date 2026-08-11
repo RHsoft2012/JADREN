@@ -1,0 +1,29 @@
+module examples.net_reactor_timeout;
+
+// A poll timeout completes the pending accept with event flag 16.
+// No worker thread or caller-owned socket is hidden by the reactor.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38131u16)
+    if (listener as Int32) == 0 { return 10 }
+    let reactor: UIntSize = net_reactor_open(2u32, 2u32)
+    if (reactor as Int32) == 0 { net_socket_close(listener); return 11 }
+    let operation: UIntSize = net_reactor_submit_accept(reactor, listener, 1usize)
+    if (operation as Int32) == 0 {
+        net_reactor_close(reactor)
+        net_socket_close(listener)
+        return 12
+    }
+    let events: UInt32 = net_reactor_poll(reactor, 200u32)
+    let flags: UInt32 = if events == 0u32 {
+        0u32
+    } else {
+        net_reactor_event_flags(reactor, 0u32)
+    }
+    let reactor_closed: Bool = net_reactor_close(reactor)
+    let listener_closed: Bool = net_socket_close(listener)
+    if events == 0u32 { return 13 }
+    if flags != 16u32 { return 14 }
+    if !reactor_closed { return 15 }
+    if !listener_closed { return 16 }
+    return 0
+}

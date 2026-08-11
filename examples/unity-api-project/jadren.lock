@@ -1,0 +1,13 @@
+version = 1
+manifest_fingerprint = "e529131b38be9b84"
+
+[package]
+name = "unity-api-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-unity"
+requirement = ""
+source = "path:../../stdlib/unity"
+

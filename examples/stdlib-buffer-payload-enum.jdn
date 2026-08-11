@@ -1,0 +1,28 @@
+module examples.stdlib_buffer_payload_enum
+
+// A copy-safe @repr(C) payload enum uses a fixed tag + max-payload stride.
+// Pointer/owning payloads remain rejected by the Buffer<T> copy contract.
+@repr(C)
+enum Event {
+    Count(Int32),
+    Total(Int64),
+    Idle
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<Event>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            if !buffer_append(values, Event.Count(42)) { result_code = 1 }
+            if !buffer_append(values, Event.Total(1500 as Int64)) { result_code = 2 }
+            if buffer_length(values) != 2usize { result_code = 3 }
+            if !buffer_insert(values, 1usize, Event.Idle) { result_code = 4 }
+            if buffer_length(values) != 3usize { result_code = 5 }
+            if !buffer_remove(values, 0usize) { result_code = 6 }
+            if buffer_length(values) != 2usize { result_code = 7 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

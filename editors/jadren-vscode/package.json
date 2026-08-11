@@ -1,11 +1,28 @@
 {
   "name": "jadren-vscode",
   "displayName": "Jadren Language Support",
-  "description": "Jadren syntax highlighting, offline snippets, and LSP diagnostics/navigation.",
-  "version": "0.1.0",
+  "description": "Jadren syntax highlighting, offline tooling, LSP navigation, and Jadren Debugger 0.2 for Windows.",
+  "version": "0.1.3",
   "publisher": "jadren",
   "icon": "icons/JADREN.png",
   "license": "Apache-2.0",
+  "preview": true,
+  "homepage": "https://jadren.rhsoft.eu/vscode.html",
+  "bugs": {
+    "url": "https://github.com/RHsoft2012/JADREN/issues"
+  },
+  "galleryBanner": {
+    "color": "#07111f",
+    "theme": "dark"
+  },
+  "keywords": [
+    "jadren",
+    "programming language",
+    "language server",
+    "debugger",
+    "native"
+  ],
+  "jadrenRelease": "0.1.3-preview.11",
   "repository": {
     "type": "git",
     "url": "https://github.com/RHsoft2012/JADREN.git"
@@ -17,9 +34,16 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:jadren"
+    "onLanguage:jadren",
+    "onCommand:jadren.debugCurrentFile",
+    "onCommand:jadren.buildReleaseExe",
+    "onCommand:jadren.toggleSourceBreakpoint",
+    "onCommand:jadren.checkForUpdates"
   ],
   "main": "./src/extension.js",
+  "extensionDependencies": [
+    "ms-vscode.cpptools"
+  ],
   "contributes": {
     "languages": [
       {
@@ -34,11 +58,36 @@
         "configuration": "./language-configuration.json"
       }
     ],
+    "themes": [
+      {
+        "label": "Jadren Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/jadren-dark-color-theme.json"
+      }
+    ],
     "grammars": [
       {
         "language": "jadren",
         "scopeName": "source.jadren",
         "path": "./syntaxes/jadren.tmLanguage.json"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "jadren",
+        "scopes": {
+          "namespace": ["entity.name.namespace"],
+          "type": ["storage.type.java", "storage.type"],
+          "function": ["entity.name.function.definition", "entity.name.function"],
+          "parameter": ["variable.parameter"],
+          "variable": ["variable.other.definition", "variable.other.readwrite"],
+          "property": ["variable.other.property"],
+          "enumMember": ["variable.other.constant"],
+          "keyword": ["keyword.control"],
+          "number": ["constant.numeric"],
+          "string": ["string.quoted"],
+          "comment": ["comment"]
+        }
       }
     ],
     "snippets": [
@@ -54,6 +103,76 @@
         "path": "./icons/jadren-file-icon-theme.json"
       }
     ],
+    "commands": [
+      {
+        "command": "jadren.debugCurrentFile",
+        "title": "Jadren: Debug Current File",
+        "category": "Jadren",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "jadren.buildReleaseExe",
+        "title": "Jadren: Build Release EXE",
+        "category": "Jadren",
+        "icon": "$(package)"
+      },
+      {
+        "command": "jadren.toggleSourceBreakpoint",
+        "title": "Jadren: Toggle Source Breakpoint",
+        "category": "Jadren",
+        "icon": "$(debug-breakpoint)",
+        "enablement": "editorLangId == jadren"
+      },
+      {
+        "command": "jadren.checkForUpdates",
+        "title": "Jadren: Check for Extension Updates",
+        "category": "Jadren",
+        "icon": "$(cloud-download)"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "jadren.debugCurrentFile",
+          "when": "editorLangId == jadren && !inDebugMode",
+          "group": "navigation@0"
+        },
+        {
+          "command": "jadren.buildReleaseExe",
+          "when": "editorLangId == jadren && !inDebugMode",
+          "group": "navigation@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "jadren.debugCurrentFile",
+          "when": "resourceLangId == jadren && !inDebugMode",
+          "group": "navigation@0"
+        },
+        {
+          "command": "jadren.buildReleaseExe",
+          "when": "resourceLangId == jadren && !inDebugMode",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "jadren.toggleSourceBreakpoint",
+        "key": "f9",
+        "when": "editorTextFocus && editorLangId == jadren && !inDebugMode"
+      },
+      {
+        "command": "jadren.debugCurrentFile",
+        "key": "f5",
+        "when": "editorLangId == jadren && !inDebugMode"
+      },
+      {
+        "command": "jadren.debugCurrentFile",
+        "key": "f5",
+        "when": "resourceLangId == jadren && !inDebugMode"
+      }
+    ],
     "configuration": {
       "title": "Jadren",
       "properties": {
@@ -61,6 +180,165 @@
           "type": "string",
           "default": "jadren",
           "description": "Path or command name for the Jadren CLI with `jadren lsp` support."
+        },
+        "jadren.debug.outputDirectory": {
+          "type": "string",
+          "default": "target/jadren/debug",
+          "description": "Workspace-relative directory for Jadren Debugger 0.2 executables and PDB files."
+        },
+        "jadren.debug.stopAtEntry": {
+          "type": "boolean",
+          "default": false,
+          "description": "Pause the native Jadren debugger at the program entry point before executing user code."
+        },
+        "jadren.build.releaseOutputDirectory": {
+          "type": "string",
+          "default": "target/jadren/release",
+          "description": "Workspace-relative directory for Jadren release EXE builds."
+        },
+      "jadren.documentationLanguage": {
+          "type": "string",
+          "enum": [
+            "en",
+            "sk"
+          ],
+          "enumDescriptions": [
+            "English editor documentation (default).",
+            "Slovak editor documentation."
+          ],
+        "default": "en",
+        "description": "Language used by Jadren completion, hover, and signature help."
+      },
+      "jadren.updates.enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Check the trusted Jadren release server for newer VS Code extension packages."
+      },
+      "jadren.updates.server": {
+        "type": "string",
+        "default": "https://jadren.rhsoft.eu/api/releases",
+        "description": "HTTPS release catalog used by the optional Jadren self-hosted updater."
+      },
+      "jadren.updates.checkIntervalHours": {
+        "type": "number",
+        "minimum": 1,
+        "maximum": 168,
+        "default": 24,
+        "description": "Hours between background update checks for the Jadren extension."
+      }
+      }
+    },
+    "configurationDefaults": {
+      "[jadren]": {
+        "editor.semanticHighlighting.enabled": true,
+        "editor.tokenColorCustomizations": {
+          "textMateRules": [
+            {
+              "scope": [
+                "comment",
+                "comment.jadren"
+              ],
+              "settings": {
+                "foreground": "#6A9955"
+              }
+            },
+            {
+              "scope": [
+                "keyword.control.jadren",
+                "keyword.control.module.jadren",
+                "keyword.control.import.jadren",
+                "keyword.control.function.jadren",
+                "storage.modifier.binding.jadren",
+                "storage.modifier.annotation.jadren",
+                "storage.modifier.capability.jadren"
+              ],
+              "settings": {
+                "foreground": "#CF8E6D"
+              }
+            },
+            {
+              "scope": [
+                "entity.name.namespace.jadren",
+                "storage.type.jadren",
+                "storage.type.declaration.jadren",
+                "storage.type.java.jadren"
+              ],
+              "settings": {
+                "foreground": "#56A8F5"
+              }
+            },
+            {
+              "scope": [
+                "entity.name.function.jadren",
+                "entity.name.function.definition.jadren"
+              ],
+              "settings": {
+                "foreground": "#FFC66D"
+              }
+            },
+            {
+              "scope": [
+                "variable.other.definition.jadren",
+                "variable.parameter.jadren",
+                "variable.other.property.jadren"
+              ],
+              "settings": {
+                "foreground": "#C77DBB"
+              }
+            },
+            {
+              "scope": [
+                "constant.numeric.jadren"
+              ],
+              "settings": {
+                "foreground": "#2AACBB"
+              }
+            },
+            {
+              "scope": [
+                "string.quoted.double.jadren",
+                "constant.character.escape.jadren"
+              ],
+              "settings": {
+                "foreground": "#6AAB73"
+              }
+            },
+            {
+              "scope": [
+                "constant.language.boolean.jadren",
+                "constant.language.constructor.jadren",
+                "keyword.operator.jadren"
+              ],
+              "settings": {
+                "foreground": "#E5C07B"
+              }
+            },
+            {
+              "scope": [
+                "punctuation.separator.jadren",
+                "punctuation.accessor.jadren"
+              ],
+              "settings": {
+                "foreground": "#B8C0CC"
+              }
+            }
+          ]
+        },
+        "editor.semanticTokenColorCustomizations": {
+          "enabled": true,
+          "rules": {
+            "comment": "#6A9955",
+            "keyword": "#CF8E6D",
+            "namespace": "#56A8F5",
+            "type": "#56A8F5",
+            "function": "#FFC66D",
+            "parameter": "#C77DBB",
+            "variable": "#C77DBB",
+            "property": "#C77DBB",
+            "number": "#2AACBB",
+            "string": "#6AAB73",
+            "operator": "#E5C07B"
+          }
         }
       }
     }

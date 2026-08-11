@@ -1,0 +1,15 @@
+module examples.selfhost.typed_statement_call_stage2
+
+// Companion source for the additive Stage-2 statement-call hand-off.
+// The caller-owned typed stream represents helper(1, 2) as an expression
+// argument stream, then stores its Int32 result in a local and returns it.
+// The source remains valid ordinary Jadren so the main compiler can also run it.
+
+fn helper(left: Int32, right: Int32) -> Int32 {
+    return left + right
+}
+
+fn main() -> Int32 {
+    let value: Int32 = helper(1, 2)
+    return value
+}

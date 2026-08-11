@@ -1,0 +1,46 @@
+module examples.directory_list_ex_runtime;
+
+// directory_list_ex returns the entry count. Names are sorted and separated
+// by LF; kinds use 1=file, 2=directory and 3=other in the same order.
+fn main() -> Int32 {
+    file_delete("target/jadren/directory-list-ex-root/directory-list-ex-file.txt")
+    directory_delete("target/jadren/directory-list-ex-root/directory-list-ex-dir")
+    directory_delete("target/jadren/directory-list-ex-root")
+    if !directory_create("target/jadren/directory-list-ex-root") { return 10 }
+    if file_write_text("target/jadren/directory-list-ex-root/directory-list-ex-file.txt", "file") != 4usize { return 11 }
+    if !directory_create("target/jadren/directory-list-ex-root/directory-list-ex-dir") { return 12 }
+
+    var too_small_names: [UInt8; 4] = [9u8, 9u8, 9u8, 9u8]
+    var too_small_kinds: [UInt8; 1] = [8u8]
+    if directory_list_ex("target/jadren/directory-list-ex-root", too_small_names, too_small_kinds) != 0usize { return 13 }
+    if too_small_names[0] != 9u8 { return 14 }
+    if too_small_kinds[0] != 8u8 { return 15 }
+
+    var names: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var kinds: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    let count: UIntSize = directory_list_ex("target/jadren/directory-list-ex-root", names, kinds)
+    if count != 2usize { return 16 }
+    if names[0] != 100u8 { return 17 }
+    if kinds[0] != 2u8 { return 18 }
+    if kinds[1] != 1u8 { return 19 }
+
+    if !file_delete("target/jadren/directory-list-ex-root/directory-list-ex-file.txt") { return 20 }
+    if !directory_delete("target/jadren/directory-list-ex-root/directory-list-ex-dir") { return 21 }
+    if !directory_delete("target/jadren/directory-list-ex-root") { return 22 }
+    return 0
+}

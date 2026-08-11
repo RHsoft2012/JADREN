@@ -1,0 +1,45 @@
+module examples.app_table_text_exact
+
+// Exact table reads distinguish valid empty names/cells from invalid access.
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !app_table_set_column_name(0, 0, "title") { return 1 }
+    if !app_table_set_column_name(0, 1, "") { return 2 }
+    if !app_table_append_row(0) { return 3 }
+    if !app_table_set_cell(0, 0, 0, "") { return 4 }
+
+    var output: [UInt8; 8] = [90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8]
+    var length: [UIntSize; 1] = [99usize]
+    if !app_table_read_cell_exact(0, 0, 0, output, length) { return 5 }
+    if length[0] != 0usize { return 6 }
+    if output[0] != 90u8 { return 7 }
+
+    if !app_table_read_named_cell_exact(0, 0, "title", output, length) { return 8 }
+    if length[0] != 0usize { return 9 }
+
+    if !app_table_set_cell(0, 0, 0, "Focus") { return 10 }
+    if !app_table_read_cell_exact(0, 0, 0, output, length) { return 11 }
+    if length[0] != 5usize { return 12 }
+    if output[0] != 70u8 { return 13 }
+
+    length[0] = 77usize
+    if !app_table_read_named_cell_exact(0, 0, "title", output, length) { return 14 }
+    if length[0] != 5usize { return 15 }
+
+    length[0] = 88usize
+    if !app_table_read_column_name_exact(0, 1, output, length) { return 16 }
+    if length[0] != 0usize { return 17 }
+
+    var small: [UInt8; 2] = [41u8, 42u8]
+    length[0] = 66usize
+    if app_table_read_cell_exact(0, 0, 0, small, length) { return 18 }
+    if length[0] != 66usize { return 19 }
+    if small[0] != 41u8 { return 20 }
+
+    length[0] = 55usize
+    if app_table_read_cell_exact(0, 9, 0, output, length) { return 21 }
+    if length[0] != 55usize { return 22 }
+
+    app_table_clear(0)
+    return 0
+}

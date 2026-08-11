@@ -1,0 +1,54 @@
+module examples.tls_server_pfx
+
+// Windows Schannel fixture: certificate is a PKCS#12/PFX file and the third
+// argument is its password. The native server token still owns the socket.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38129u16)
+    if (listener as Int32) == 0 { return 10 }
+    let socket: UIntSize = net_tcp_accept(listener)
+    if (socket as Int32) == 0 {
+        net_socket_close(listener)
+        return 11
+    }
+    let tls: UIntSize = net_tls_open_server(
+        socket,
+        "target/jadren-tls-smoke/server.pfx",
+        "testpass"
+    )
+    if (tls as Int32) == 0 {
+        net_socket_close(socket)
+        net_socket_close(listener)
+        return 12
+    }
+    let first: UInt32 = net_tls_step(tls, 2000u32)
+    let second: UInt32 = net_tls_step(tls, 2000u32)
+    let third: UInt32 = net_tls_step(tls, 2000u32)
+    let fourth: UInt32 = net_tls_step(tls, 2000u32)
+    let fifth: UInt32 = net_tls_step(tls, 2000u32)
+    let sixth: UInt32 = net_tls_step(tls, 2000u32)
+    let seventh: UInt32 = net_tls_step(tls, 2000u32)
+    let eighth: UInt32 = net_tls_step(tls, 2000u32)
+    if first == 4u32 { net_tls_close(tls); net_socket_close(listener); return 13 }
+    if second == 4u32 { net_tls_close(tls); net_socket_close(listener); return 13 }
+    if third == 4u32 { net_tls_close(tls); net_socket_close(listener); return 13 }
+    if fourth == 4u32 { net_tls_close(tls); net_socket_close(listener); return 13 }
+    if fifth == 4u32 { net_tls_close(tls); net_socket_close(listener); return 13 }
+    if sixth == 4u32 { net_tls_close(tls); net_socket_close(listener); return 13 }
+    if seventh == 4u32 { net_tls_close(tls); net_socket_close(listener); return 13 }
+    if eighth == 4u32 { net_tls_close(tls); net_socket_close(listener); return 13 }
+    if net_tls_state(tls) != 2u32 {
+        net_tls_close(tls)
+        net_socket_close(listener)
+        return 14
+    }
+    var request: [UInt8; 1] = [0u8]
+    let received: UIntSize = net_tls_receive(tls, request)
+    var response: [UInt8; 5] = [79u8, 75u8, 45u8, 84u8, 76u8]
+    let sent: UIntSize = net_tls_send(tls, response)
+    let closed: Bool = net_tls_close(tls)
+    net_socket_close(listener)
+    if (received as Int32) == 0 { return 15 }
+    if (sent as Int32) != 5 { return 16 }
+    if !closed { return 17 }
+    return 0
+}

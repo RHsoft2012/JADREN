@@ -1,0 +1,13 @@
+module examples.selfhost.typed_while_local_body_let_stage2
+
+// Companion source for a bounded while with an iteration-local let.
+// The local is initialized on every pass and feeds the counter assignment.
+
+fn main() -> Int32 {
+    var counter: Int32 = 0
+    while counter < 3 {
+        let step: Int32 = 1
+        counter = counter + step
+    }
+    return counter
+}

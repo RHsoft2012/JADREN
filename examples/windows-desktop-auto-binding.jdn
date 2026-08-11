@@ -1,0 +1,46 @@
+module examples.windows_desktop_auto_binding
+
+// The application collections remain the single source of truth. A native
+// list, table and text input are projections that refresh together after a UI
+// callback, so the handler does not need one refresh call per control.
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 90 {
+        app_list_set_text(0, 0, "Updated")
+        app_table_set_cell(0, 0, 1, "09:00")
+        app_state_set_text("note", "Model changed from one callback")
+        ui_set_status("Model zmeneny; vsetky bound controls sa obnovili.")
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    app_list_clear(0)
+    app_list_push_text(0, "Focus")
+    app_list_push_text(0, "Review")
+    app_table_clear(0)
+    app_table_append_row(0)
+    app_table_set_cell(0, 0, 0, "Focus")
+    app_table_set_cell(0, 0, 1, "08:30")
+    app_state_set_text("note", "Ready")
+
+    ui_window("Jadren automatic bindings", 760, 520, 0xF6F8FCu32)
+    ui_text("One model, three native projections", 24, 24, 700, 32,
+        0x111827u32, 0xFFFFFFu32, 8)
+    ui_list(20, 24, 80, 240, 120, 0x111827u32, 0xFFFFFFu32)
+    ui_list_bind_app(20, 0)
+    ui_table(30, 300, 80, 400, 120, 0x111827u32, 0xFFFFFFu32)
+    ui_table_column(30, 0, "Task", 220)
+    ui_table_column(30, 1, "Time", 120)
+    ui_table_bind_app(30, 0, 2)
+    ui_text_input("Note", 20, 24, 230, 676, 38, 0x111827u32, 0xFFFFFFu32, 8)
+    ui_input_bind_app_state(20, "note")
+    ui_event_button("Change model", 90, 24, 300, 180, 42,
+        0xFFFFFFu32, 0x168EF5u32, 10)
+    ui_status("Klikni a sleduj zoznam, tabulku aj input.",
+        24, 370, 676, 42, 0x111827u32, 0xDCFCE7u32, 10)
+    ui_refresh_bindings()
+    return ui_run()
+}

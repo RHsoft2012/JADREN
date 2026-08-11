@@ -1,0 +1,46 @@
+module examples.app_table_export_csv
+
+// Direct bounded CSV export from the process-local app_table model.
+fn main() -> Int32 {
+    file_delete("target/jadren/app-table-export.csv")
+    app_table_clear(0)
+    if !app_table_set_column_name(0, 0, "id") { return 1 }
+    if !app_table_set_column_name(0, 1, "title") { return 2 }
+    if !app_table_set_column_name(0, 2, "note") { return 3 }
+
+    if !app_table_append_row(0) { return 4 }
+    if !app_table_set_cell(0, 0, 0, "1") { return 5 }
+    if !app_table_set_cell(0, 0, 1, "A,B") { return 6 }
+    if !app_table_set_cell(0, 0, 2, "ok") { return 7 }
+
+    if !app_table_append_row(0) { return 8 }
+    if !app_table_set_cell(0, 1, 0, "2") { return 9 }
+    if !app_table_set_cell(0, 1, 1, "Done") { return 10 }
+    if !app_table_set_cell(0, 1, 2, "has \"quote\"") { return 11 }
+
+    var too_small: [UInt8; 4] = [9u8, 9u8, 9u8, 9u8]
+    let rejected: UIntSize = app_table_export_csv(0, too_small)
+    if (rejected as Int32) != 0 { return 12 }
+    if too_small[0] != 9u8 { return 12 }
+
+    var output: [UInt8; 96] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = app_table_export_csv(0, output)
+    if (length as Int32) <= 0 { return 13 }
+    file_append("target/jadren/app-table-export.csv", output, length)
+
+    var loaded: [UInt8; 96] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let loaded_length: UIntSize = file_read("target/jadren/app-table-export.csv", loaded)
+    if loaded_length != length { return 14 }
+    if loaded[0] != 105u8 { return 15 }
+    if loaded[2] != 44u8 { return 15 }
+    if loaded[13] != 10u8 { return 15 }
+    if loaded[16] != 34u8 { return 16 }
+    if loaded[18] != 44u8 { return 16 }
+    if loaded[20] != 34u8 { return 16 }
+    if loaded[32] != 34u8 { return 17 }
+    if loaded[37] != 34u8 { return 17 }
+    if loaded[38] != 34u8 { return 17 }
+
+    if !file_delete("target/jadren/app-table-export.csv") { return 18 }
+    return 0
+}

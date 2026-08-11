@@ -1,0 +1,126 @@
+module examples.net_reactor_buffered_edges;
+
+// Buffered edge contract: a caller-owned receive reports a completed payload,
+// then a second receive reports peer-close with zero bytes. Cancellation reports
+// the cancelled flag without touching the caller-owned buffer. The external
+// smoke opens two short-lived clients.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38134u16)
+    if (listener as Int32) == 0 { return 10 }
+    let reactor: UIntSize = net_reactor_open(4u32, 8u32)
+    if (reactor as Int32) == 0 { net_socket_close(listener); return 11 }
+
+    let accept_operation: UIntSize = net_reactor_submit_accept(reactor, listener, 10usize)
+    if (accept_operation as Int32) == 0 {
+        net_reactor_close(reactor); net_socket_close(listener); return 12
+    }
+    let accepted_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if accepted_events == 0u32 {
+        net_reactor_close(reactor); net_socket_close(listener); return 13
+    }
+    let closed_client: UIntSize = net_reactor_event_socket(reactor, 0u32)
+    if (closed_client as Int32) == 0 {
+        net_reactor_close(reactor); net_socket_close(listener); return 14
+    }
+    var closed_request: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    let payload_receive: UIntSize = net_reactor_submit_receive_buffer(
+        reactor, closed_client, closed_request, 20usize)
+    if (payload_receive as Int32) == 0 {
+        net_socket_close(closed_client); net_reactor_close(reactor); net_socket_close(listener); return 15
+    }
+    let payload_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    let payload_bytes: UIntSize = if payload_events == 0u32 {
+        0usize
+    } else {
+        net_reactor_event_bytes(reactor, 0u32)
+    }
+    if payload_events == 0u32 {
+        net_socket_close(closed_client); net_reactor_close(reactor); net_socket_close(listener); return 16
+    }
+    if (payload_bytes as Int32) != 4 {
+        net_socket_close(closed_client); net_reactor_close(reactor); net_socket_close(listener); return 17
+    }
+    if closed_request[0] != 112u8 { net_socket_close(closed_client); net_reactor_close(reactor); net_socket_close(listener); return 18 }
+    if closed_request[3] != 103u8 { net_socket_close(closed_client); net_reactor_close(reactor); net_socket_close(listener); return 19 }
+    var acknowledgement: [UInt8; 2] = [79u8, 75u8]
+    let acknowledgement_send: UIntSize = net_reactor_submit_send_buffer(
+        reactor, closed_client, acknowledgement, 40usize)
+    if (acknowledgement_send as Int32) == 0 {
+        net_socket_close(closed_client); net_reactor_close(reactor); net_socket_close(listener); return 20
+    }
+    let acknowledgement_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    let acknowledgement_bytes: UIntSize = if acknowledgement_events == 0u32 {
+        0usize
+    } else {
+        net_reactor_event_bytes(reactor, 0u32)
+    }
+    if acknowledgement_events == 0u32 {
+        net_socket_close(closed_client); net_reactor_close(reactor); net_socket_close(listener); return 21
+    }
+    if (acknowledgement_bytes as Int32) != 2 {
+        net_socket_close(closed_client); net_reactor_close(reactor); net_socket_close(listener); return 22
+    }
+    let close_receive: UIntSize = net_reactor_submit_receive_buffer(
+        reactor, closed_client, closed_request, 20usize)
+    if (close_receive as Int32) == 0 {
+        net_socket_close(closed_client); net_reactor_close(reactor); net_socket_close(listener); return 23
+    }
+    let close_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    let close_flags: UInt32 = if close_events == 0u32 {
+        0u32
+    } else {
+        net_reactor_event_flags(reactor, 0u32)
+    }
+    let close_bytes: UIntSize = if close_events == 0u32 {
+        1usize
+    } else {
+        net_reactor_event_bytes(reactor, 0u32)
+    }
+    let closed_socket: Bool = net_socket_close(closed_client)
+    if close_events == 0u32 { net_reactor_close(reactor); net_socket_close(listener); return 24 }
+    if (close_flags & 8u32) == 0u32 { net_reactor_close(reactor); net_socket_close(listener); return 25 }
+    if (close_bytes as Int32) != 0 { net_reactor_close(reactor); net_socket_close(listener); return 26 }
+    if !closed_socket { net_reactor_close(reactor); net_socket_close(listener); return 27 }
+
+    let second_accept: UIntSize = net_reactor_submit_accept(reactor, listener, 20usize)
+    if (second_accept as Int32) == 0 {
+        net_reactor_close(reactor); net_socket_close(listener); return 28
+    }
+    let second_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if second_events == 0u32 {
+        net_reactor_close(reactor); net_socket_close(listener); return 29
+    }
+    let pending_client: UIntSize = net_reactor_event_socket(reactor, 0u32)
+    if (pending_client as Int32) == 0 {
+        net_reactor_close(reactor); net_socket_close(listener); return 30
+    }
+    var cancelled_request: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    let pending_receive: UIntSize = net_reactor_submit_receive_buffer(
+        reactor, pending_client, cancelled_request, 30usize)
+    if (pending_receive as Int32) == 0 {
+        net_socket_close(pending_client); net_reactor_close(reactor); net_socket_close(listener); return 40
+    }
+    let cancelled: Bool = net_reactor_cancel(reactor, pending_receive)
+    let cancelled_events: UInt32 = net_reactor_poll(reactor, 1000u32)
+    let cancelled_flags: UInt32 = if cancelled_events == 0u32 {
+        0u32
+    } else {
+        net_reactor_event_flags(reactor, 0u32)
+    }
+    let cancelled_bytes: UIntSize = if cancelled_events == 0u32 {
+        1usize
+    } else {
+        net_reactor_event_bytes(reactor, 0u32)
+    }
+    let pending_closed: Bool = net_socket_close(pending_client)
+    let reactor_closed: Bool = net_reactor_close(reactor)
+    let listener_closed: Bool = net_socket_close(listener)
+    if !cancelled { return 24 }
+    if cancelled_events == 0u32 { return 25 }
+    if cancelled_flags != 32u32 { return 31 }
+    if (cancelled_bytes as Int32) != 0 { return 32 }
+    if !pending_closed { return 33 }
+    if !reactor_closed { return 34 }
+    if !listener_closed { return 35 }
+    return 0
+}

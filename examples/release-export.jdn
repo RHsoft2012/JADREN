@@ -1,0 +1,8 @@
+module examples.release_export
+
+// This tiny program is compiled into the complete preview release bundle.
+// It proves that the published CLI can export and run a native Jadren app.
+fn main() -> Int32 {
+    print("Jadren release export smoke")
+    return 42
+}

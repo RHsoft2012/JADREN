@@ -1,0 +1,73 @@
+module app_event_reducer_project.main
+
+import app_event_reducer_project.model.commit
+import app_event_reducer_project.model.load
+import app_event_reducer_project.view.build
+import jadren.app.input.set_checked
+import jadren.app.input.set_select_index
+import jadren.app.input.set_list_index
+import jadren.app.input.set_table_selected_row
+import jadren.app.input.set_value
+import jadren.app.state.clear
+import jadren.app.state.get_bool
+import jadren.app.state.get_int
+import jadren.app.state.set_bool
+import jadren.app.state.set_int
+import jadren.app.state.set_text
+import jadren.app.ui.begin
+import jadren.app.ui.dispatch
+import jadren.app.ui.finish
+import jadren.app.ui.panel
+import jadren.app.fs.write_text
+
+fn main() -> Int32 {
+    clear()
+    if !set_int("reducer.runs", 0i64) { return 1 }
+    if !set_bool("reducer.completed", false) { return 2 }
+    if !set_int("reducer.selected", 0i64) { return 3 }
+    if !set_int("reducer.list_index", -1i64) { return 4 }
+    if !set_int("reducer.table_row", -1i64) { return 5 }
+    if !set_int("reducer.text_length", 0i64) { return 6 }
+    if !set_text("reducer.text", "") { return 7 }
+
+    let root: Int32 = begin("Jadren typed event reducer", 720, 520, 0xF6F8FCu32)
+    if root == 0 { return 8 }
+    let panel_node: Int32 = panel(root, 670, 480, 0xFFFFFFu32, 18, 18, 10, 0, 1)
+    if panel_node == 0 { return 9 }
+    if !build(panel_node) { return 10 }
+
+    // The controller receives the same numeric event IDs as the native UI,
+    // but immediately converts them to typed AppEvent values.
+    if !dispatch(7) { return 11 }
+    if get_int("reducer.runs") != 1i64 { return 12 }
+    set_checked(8, 1)
+    if !dispatch(8) { return 13 }
+    if !get_bool("reducer.completed") { return 14 }
+    set_value(9, "Jadren")
+    if !dispatch(9) { return 15 }
+    if get_int("reducer.text_length") != 6i64 { return 16 }
+    set_select_index(10, 1)
+    if !dispatch(10) { return 17 }
+    if get_int("reducer.selected") != 1i64 { return 18 }
+    set_list_index(11, 2)
+    if !dispatch(11) { return 19 }
+    if get_int("reducer.list_index") != 2i64 { return 20 }
+    set_table_selected_row(12, 1)
+    if !dispatch(12) { return 21 }
+    if get_int("reducer.table_row") != 1i64 { return 22 }
+    if dispatch(99) { return 23 }
+
+    let model = load()
+    if model.runs != 1i64 { return 24 }
+    if !model.completed { return 25 }
+    if model.selected != 1 { return 26 }
+    if model.list_index != 2 { return 27 }
+    if model.table_row != 1 { return 28 }
+    if model.text_length != 6i64 { return 29 }
+    if !commit(model) { return 30 }
+    if !finish(panel_node) { return 31 }
+    if !finish(root) { return 32 }
+    if write_text("target/jadren/app-event-reducer-project.result",
+                  "app-event-reducer:pass\n") == 0usize { return 33 }
+    return 0
+}

@@ -1,0 +1,36 @@
+module examples.tcp_server;
+
+// Minimal direct Jadren TCP server.
+// The runtime is intentionally bounded and blocking: one loopback listener,
+// one accepted client, one receive and one response send, then close.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38123u16)
+    if (listener as Int32) == 0 { return 10 }
+
+    let client: UIntSize = net_tcp_accept(listener)
+    if (client as Int32) == 0 {
+        net_socket_close(listener)
+        return 11
+    }
+    let timeout_configured: Bool = net_socket_set_timeout(client, 2000u32)
+    if !timeout_configured {
+        net_socket_close(client)
+        net_socket_close(listener)
+        return 14
+    }
+
+    var request: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let received: UIntSize = net_tcp_receive(client, request)
+    if (received as Int32) == 0 {
+        net_socket_close(client)
+        net_socket_close(listener)
+        return 12
+    }
+
+    var response: [UInt8; 62] = [72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 32u8, 50u8, 48u8, 48u8, 32u8, 79u8, 75u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 53u8, 13u8, 10u8, 67u8, 111u8, 110u8, 110u8, 101u8, 99u8, 116u8, 105u8, 111u8, 110u8, 58u8, 32u8, 99u8, 108u8, 111u8, 115u8, 101u8, 13u8, 10u8, 13u8, 10u8, 65u8, 104u8, 111u8, 106u8, 10u8]
+    let sent: UIntSize = net_tcp_send(client, response)
+    net_socket_close(client)
+    net_socket_close(listener)
+    if (sent as Int32) != 62 { return 13 }
+    return 0
+}

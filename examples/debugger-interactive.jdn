@@ -1,0 +1,22 @@
+module examples.debugger_interactive
+
+// Long-running native preview used for interactive Debugger 0.2 checks.
+// Set `jadren.debug.stopAtEntry` to true, inspect `answer` in Variables, then
+// continue. The window stays alive in ui_run(), so a breakpoint can be added
+// while the debugger is paused.
+
+fn main() -> Int32 {
+    let answer = 42
+    ui_window("Jadren Debugger Smoke", 520, 260, 0xF6F8FCu32)
+    ui_text(
+        "Stop at entry, inspect answer, then continue.",
+        20,
+        24,
+        470,
+        40,
+        0x111827u32,
+        0xF6F8FCu32,
+        8
+    )
+    return ui_run()
+}

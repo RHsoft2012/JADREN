@@ -1,0 +1,42 @@
+module app_table_index.main
+
+// Bounded exact-text index example.
+// The index returns the first source row for duplicate keys and becomes
+// invalid automatically when the table contents change.
+fn main() -> Int32 {
+    app_table_clear(0)
+
+    let first: Bool = app_table_append_row(0)
+    let first_set: Bool = app_table_set_cell(0, 0, 0, "Task B")
+    let second: Bool = app_table_append_row(0)
+    let second_set: Bool = app_table_set_cell(0, 1, 0, "Task A")
+    let third: Bool = app_table_append_row(0)
+    let third_set: Bool = app_table_set_cell(0, 2, 0, "Task B")
+
+    let built: Bool = app_table_index_build(0, 0)
+    let valid: Bool = app_table_index_is_valid(0, 0)
+    let first_b: Int32 = app_table_index_find_text(0, 0, "Task B")
+    let first_a: Int32 = app_table_index_find_text(0, 0, "Task A")
+    let changed: Bool = app_table_set_cell(0, 1, 0, "Task C")
+    let invalidated: Bool = !app_table_index_is_valid(0, 0)
+    let missing: Int32 = app_table_index_find_text(0, 0, "Task A")
+    let cleared: Bool = app_table_index_clear(0)
+
+    if !first { return 1 }
+    if !first_set { return 1 }
+    if !second { return 2 }
+    if !second_set { return 2 }
+    if !third { return 3 }
+    if !third_set { return 3 }
+    if !built { return 4 }
+    if !valid { return 4 }
+    if first_b != 0 { return 5 }
+    if first_a != 1 { return 5 }
+    if !changed { return 6 }
+    if !invalidated { return 6 }
+    if missing != -1 { return 7 }
+    if !cleared { return 7 }
+
+    app_table_clear(0)
+    return 0
+}

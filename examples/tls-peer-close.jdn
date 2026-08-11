@@ -1,0 +1,40 @@
+module examples.tls_peer_close
+
+// The Jadren PFX server sends one payload and closes its TLS token. The second
+// read must expose the explicit peer-closed state before client cleanup.
+fn main() -> Int32 {
+    let socket: UIntSize = net_tcp_connect_dns("localhost", 38129u16)
+    if (socket as Int32) == 0 { return 10 }
+    let tls: UIntSize = net_tls_open_client(socket, "localhost", false)
+    if (tls as Int32) == 0 { net_socket_close(socket); return 11 }
+    let first: UInt32 = net_tls_step(tls, 2000u32)
+    let second: UInt32 = net_tls_step(tls, 2000u32)
+    let third: UInt32 = net_tls_step(tls, 2000u32)
+    let fourth: UInt32 = net_tls_step(tls, 2000u32)
+    let fifth: UInt32 = net_tls_step(tls, 2000u32)
+    let sixth: UInt32 = net_tls_step(tls, 2000u32)
+    let seventh: UInt32 = net_tls_step(tls, 2000u32)
+    let eighth: UInt32 = net_tls_step(tls, 2000u32)
+    if first == 4u32 { net_tls_close(tls); return 12 }
+    if second == 4u32 { net_tls_close(tls); return 12 }
+    if third == 4u32 { net_tls_close(tls); return 12 }
+    if fourth == 4u32 { net_tls_close(tls); return 12 }
+    if fifth == 4u32 { net_tls_close(tls); return 12 }
+    if sixth == 4u32 { net_tls_close(tls); return 12 }
+    if seventh == 4u32 { net_tls_close(tls); return 12 }
+    if eighth == 4u32 { net_tls_close(tls); return 12 }
+    if net_tls_state(tls) != 2u32 { net_tls_close(tls); return 13 }
+    var probe: [UInt8; 1] = [104u8]
+    let sent: UIntSize = net_tls_send(tls, probe)
+    if (sent as Int32) != 1 { net_tls_close(tls); return 14 }
+    var first_output: [UInt8; 5] = [0u8, 0u8, 0u8, 0u8, 0u8]
+    var second_output: [UInt8; 1] = [0u8]
+    let first_read: UIntSize = net_tls_receive(tls, first_output)
+    let second_read: UIntSize = net_tls_receive(tls, second_output)
+    let state: UInt32 = net_tls_state(tls)
+    net_tls_close(tls)
+    if (first_read as Int32) != 5 { return 15 }
+    if (second_read as Int32) != 0 { return 16 }
+    if state != 4u32 { return 17 }
+    return 0
+}

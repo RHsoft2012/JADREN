@@ -1,0 +1,79 @@
+module examples.stdlib_buffer_nested_record_clear_move
+
+// Clear a Buffer<Buffer<Entry>> where Entry owns a nested Buffer field.
+// The compiler reuses the record-aware resize instruction with a zero length,
+// so the field table destroys every Entry.values buffer before clearing the
+// nested descriptors.
+@repr(C)
+struct Entry {
+    id: Int32,
+    values: Buffer<Int32>
+}
+
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Entry>>, Int32> = buffer_create(0usize)
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match entries_created {
+                Ok(entries) => {
+                    match values_created {
+                        Ok(values) => {
+                            if !buffer_append(values, 7) { result_code = 1 }
+                            let item: Entry = Entry { id: 42, values: values }
+                            if !buffer_append(entries, item) { result_code = 2 }
+                            if !buffer_append(outer, entries) { result_code = 3 }
+
+                            let cleared: Bool = buffer_clear_move(outer)
+                            if !cleared { result_code = 4 }
+                            if buffer_length(outer) != 0usize { result_code = 5 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    // The status form exercises the same field table through two nested
+    // descriptor levels and leaves no owning record behind.
+    let recursive_outer: Result<Buffer<Buffer<Buffer<Entry>>>, Int32> = buffer_create(0usize)
+    let recursive_middle: Result<Buffer<Buffer<Entry>>, Int32> = buffer_create(0usize)
+    let recursive_entries: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let recursive_values: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    match recursive_outer {
+        Ok(outer) => {
+            match recursive_middle {
+                Ok(middle) => {
+                    match recursive_entries {
+                        Ok(entries) => {
+                            match recursive_values {
+                                Ok(values) => {
+                                    if !buffer_append(values, 33) { result_code = 6 }
+                                    let item: Entry = Entry { id: 99, values: values }
+                                    if !buffer_append(entries, item) { result_code = 7 }
+                                    if !buffer_append(middle, entries) { result_code = 8 }
+                                    if !buffer_append(outer, middle) { result_code = 9 }
+                                    let status: Int32 = buffer_clear_move_status(outer)
+                                    if status != 0 { result_code = 10 }
+                                    if buffer_length(outer) != 0usize { result_code = 11 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

@@ -1,0 +1,29 @@
+module examples.stdlib_buffer_multi_type
+
+// A single Jadren module may use several Buffer<T> instantiations.  The
+// native ABI keeps the descriptor and value pointer opaque while each call
+// still carries its concrete element size/alignment constants.
+fn main() -> Int32 {
+    let integers: Result<Buffer<Int32>, Int32> = buffer_create(1usize)
+    let decimals: Result<Buffer<Float32>, Int32> = buffer_create(1usize)
+    var result_code: Int32 = 0
+
+    match integers {
+        Ok(values) => {
+            if !buffer_append(values, 40) { result_code = 1 }
+            if !buffer_append(values, 2) { result_code = 2 }
+            if values[0] + values[1] != 42 { result_code = 3 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    match decimals {
+        Ok(values) => {
+            if !buffer_append(values, 1.5f32) { result_code = 4 }
+            if values[0] != 1.5f32 { result_code = 5 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

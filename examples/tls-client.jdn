@@ -1,0 +1,108 @@
+module examples.tls_client
+
+// Local TLS client fixture. The smoke script starts an OpenSSL test server.
+// verify_peer=false is intentionally explicit because the fixture uses a
+// temporary self-signed certificate; production code must use true.
+fn main() -> Int32 {
+    let socket: UIntSize = net_tcp_connect_dns("localhost", 38127u16)
+    if (socket as Int32) == 0 { return 10 }
+    let tls: UIntSize = net_tls_open_client(socket, "localhost", false)
+    if (tls as Int32) == 0 {
+        net_socket_close(socket)
+        return 11
+    }
+    if net_tls_state(tls) == 3u32 {
+        net_tls_close(tls)
+        return 21
+    }
+
+    let first: UInt32 = net_tls_step(tls, 2000u32)
+    if first == 4u32 {
+        net_tls_close(tls)
+        return 22
+    }
+    if first == 3u32 {
+        net_tls_close(tls)
+        return 23
+    }
+    let second: UInt32 = net_tls_step(tls, 2000u32)
+    let third: UInt32 = net_tls_step(tls, 2000u32)
+    let fourth: UInt32 = net_tls_step(tls, 2000u32)
+    let fifth: UInt32 = net_tls_step(tls, 2000u32)
+    let sixth: UInt32 = net_tls_step(tls, 2000u32)
+    let seventh: UInt32 = net_tls_step(tls, 2000u32)
+    let eighth: UInt32 = net_tls_step(tls, 2000u32)
+    if second == 4u32 {
+        net_tls_close(tls)
+        return 13
+    }
+    if third == 4u32 {
+        net_tls_close(tls)
+        return 13
+    }
+    if fourth == 4u32 {
+        net_tls_close(tls)
+        return 13
+    }
+    if fifth == 4u32 {
+        net_tls_close(tls)
+        return 13
+    }
+    if sixth == 4u32 {
+        net_tls_close(tls)
+        return 13
+    }
+    if seventh == 4u32 {
+        net_tls_close(tls)
+        return 13
+    }
+    if eighth == 4u32 {
+        net_tls_close(tls)
+        return 13
+    }
+    if net_tls_state(tls) != 2u32 { net_tls_close(tls); return 14 }
+
+    var request: [UInt8; 18] = [71u8, 69u8, 84u8, 32u8, 47u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 48u8, 13u8, 10u8, 13u8, 10u8]
+    let sent: UIntSize = net_tls_send(tls, request)
+    if (sent as Int32) != 18 {
+        net_tls_close(tls)
+        return 15
+    }
+    var response: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let received: UIntSize = net_tls_receive(tls, response)
+    let closed: Bool = net_tls_close(tls)
+    if (received as Int32) == 0 { return 16 }
+    if !closed { return 16 }
+
+    // The same self-signed certificate must be rejected when verification is on.
+    let rejected_socket: UIntSize = net_tcp_connect_dns("localhost", 38127u16)
+    if (rejected_socket as Int32) == 0 { return 17 }
+    let rejected_tls: UIntSize = net_tls_open_client(rejected_socket, "localhost", true)
+    if (rejected_tls as Int32) == 0 {
+        net_socket_close(rejected_socket)
+        return 18
+    }
+    let rejected_first: UInt32 = net_tls_step(rejected_tls, 2000u32)
+    let rejected_second: UInt32 = net_tls_step(rejected_tls, 2000u32)
+    let rejected_third: UInt32 = net_tls_step(rejected_tls, 2000u32)
+    let rejected_fourth: UInt32 = net_tls_step(rejected_tls, 2000u32)
+    let rejected_state: UInt32 = net_tls_state(rejected_tls)
+    let rejected_error: Int32 = net_tls_error(rejected_tls)
+    net_tls_close(rejected_tls)
+    if rejected_state == 2u32 { return 19 }
+    if rejected_state != 3u32 {
+        if rejected_state != 4u32 {
+            return 20
+        }
+    }
+    if rejected_error == 0 {
+        if rejected_first == 0u32 {
+            if rejected_second == 0u32 {
+                if rejected_third == 0u32 {
+                    if rejected_fourth == 0u32 { return 21 }
+                }
+            }
+        }
+    }
+    return 0
+}

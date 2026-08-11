@@ -1,0 +1,52 @@
+module examples.time_utc_parts
+
+// time_utc_parts decomposes Unix seconds into UTC calendar fields:
+// [year, month, day, hour, minute, second]. It never consults local timezone.
+fn main() -> Int32 {
+    var parts: [Int32; 6] = [0, 0, 0, 0, 0, 0]
+    if !time_utc_parts(0 as Int64, parts) {
+        return 1
+    }
+    if parts[0] != 1970 { return 2 }
+    if parts[1] != 1 { return 3 }
+    if parts[2] != 1 { return 4 }
+    if parts[3] != 0 { return 5 }
+    if parts[4] != 0 { return 6 }
+    if parts[5] != 0 { return 7 }
+
+    if !time_utc_parts(1609459199 as Int64, parts) {
+        return 8
+    }
+    if parts[0] != 2020 { return 9 }
+    if parts[1] != 12 { return 10 }
+    if parts[2] != 31 { return 11 }
+    if parts[3] != 23 { return 12 }
+    if parts[4] != 59 { return 13 }
+    if parts[5] != 59 { return 14 }
+
+    // Negative Unix seconds use mathematical floor division, so the instant
+    // immediately before the epoch is still represented as a valid UTC date.
+    if !time_utc_parts(-1 as Int64, parts) {
+        return 15
+    }
+    if parts[0] != 1969 { return 16 }
+    if parts[1] != 12 { return 17 }
+    if parts[2] != 31 { return 18 }
+    if parts[3] != 23 { return 19 }
+    if parts[4] != 59 { return 20 }
+    if parts[5] != 59 { return 21 }
+
+    // A short output buffer is rejected before any field is written.
+    var short: [Int32; 5] = [77, 77, 77, 77, 77]
+    if time_utc_parts(0 as Int64, short) {
+        return 22
+    }
+    if short[0] != 77 { return 23 }
+    if short[1] != 77 { return 24 }
+    if short[2] != 77 { return 25 }
+    if short[3] != 77 { return 26 }
+    if short[4] != 77 { return 27 }
+
+    print("utc parts ok")
+    return 0
+}

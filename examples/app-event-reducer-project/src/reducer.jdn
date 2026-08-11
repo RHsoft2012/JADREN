@@ -1,0 +1,49 @@
+module app_event_reducer_project.reducer
+
+import jadren.app.event.AppEvent
+import jadren.app.event.AppEventKind
+import app_event_reducer_project.model.FormModel
+
+pub enum ReducerEffect {
+    Ignored,
+    Changed,
+}
+
+/// Pure bounded reducer: one typed event updates one caller-owned model slot.
+/// No UI call or hidden callback is performed here.
+pub fn reduce(
+    event: AppEvent,
+    model: write Slice<FormModel>,
+    capacity: UIntSize,
+) -> ReducerEffect {
+    if capacity < 1usize { return ReducerEffect.Ignored }
+
+    return match event.kind {
+        AppEventKind.Click => {
+            model[0].runs = model[0].runs + 1i64
+            ReducerEffect.Changed
+        }
+        AppEventKind.CheckedChanged => {
+            model[0].completed = event.value != 0i64
+            ReducerEffect.Changed
+        }
+        AppEventKind.SelectChanged => {
+            model[0].selected = event.value as Int32
+            ReducerEffect.Changed
+        }
+        AppEventKind.ListChanged => {
+            model[0].list_index = event.value as Int32
+            ReducerEffect.Changed
+        }
+        AppEventKind.TableChanged => {
+            model[0].table_row = event.value as Int32
+            ReducerEffect.Changed
+        }
+        AppEventKind.TextChanged => {
+            model[0].text_length = event.value
+            ReducerEffect.Changed
+        }
+        AppEventKind.Refresh => ReducerEffect.Changed,
+        _ => ReducerEffect.Ignored,
+    }
+}

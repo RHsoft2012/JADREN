@@ -1,0 +1,32 @@
+module lessons.first_window
+
+// Event callback je hranica medzi natívnym tlačidlom a Jadren logikou.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 1 {
+        ui_set_status("Button clicked: the event reached Jadren.")
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    let root: Int32 = ui_app_begin("My first Jadren window", 640, 420, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+
+    let panel: Int32 = ui_app_panel(root, 560, 260, 0xFFFFFFu32, 16, 12, 8, 0, 1)
+    if panel == 0 { return 2 }
+
+    let title: Int32 = ui_app_label(panel, "Hello from Jadren", 480, 34,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let status: Int32 = ui_app_status(panel, "Move the mouse over the button and click it.",
+        480, 44, 0x111827u32, 0xDCFCE7u32, 8, 1)
+    let button: Int32 = ui_app_button(panel, "Click me", 1, 180, 42,
+        0xFFFFFFu32, 0x168EF5u32, 12, 0)
+
+    if title == 0 { return 3 }
+    if status == 0 { return 4 }
+    if button == 0 { return 5 }
+    if !ui_app_end(panel) { return 6 }
+    if !ui_app_end(root) { return 7 }
+    return ui_app_run()
+}

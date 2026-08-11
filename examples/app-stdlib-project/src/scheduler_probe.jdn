@@ -1,0 +1,25 @@
+module app_stdlib_project.scheduler_probe
+
+import jadren.app.scheduler.cancel
+import jadren.app.scheduler.clear
+import jadren.app.scheduler.count
+import jadren.app.scheduler.poll
+import jadren.app.scheduler.set
+
+/// Package-aware proof that the application timer API is usable without
+/// importing builtin names into the application module.
+pub fn run() -> Bool {
+    clear()
+    if !set(101, 50i64, 0u64) { return false }
+    if !set(102, 50i64, 0u64) { return false }
+    var due: [Int32; 2] = [0, 0]
+    if poll(49i64, due) != 0usize { return false }
+    if count() != 2usize { return false }
+    if poll(50i64, due) != 2usize { return false }
+    if due[0] != 101 { return false }
+    if due[1] != 102 { return false }
+    if count() != 0usize { return false }
+    if !set(103, 60i64, 0u64) { return false }
+    if !cancel(103) { return false }
+    return count() == 0usize
+}

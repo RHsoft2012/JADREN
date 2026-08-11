@@ -1,0 +1,168 @@
+module examples.network_session_client
+import jadren.app.fs.write_text
+import jadren.app.state.get_int
+import jadren.app.state.save_atomic
+import jadren.app.state.set_int
+import jadren.network.tcp.connect_dns
+import jadren.network.tcp.set_timeout
+import jadren.network.tls.close
+import jadren.network.tls.open_client
+import jadren.network.tls.receive
+import jadren.network.tls.send
+import jadren.network.tls.state
+import jadren.network.tls.step
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    let socket = connect_dns("localhost",
+    38150u16)
+    if socket == 0usize {
+        return 10
+    }
+    if ! set_timeout(socket,
+    3000u32) {
+        return 11
+    }
+    let tls = open_client(socket,
+    "localhost",
+    false)
+    if tls == 0usize {
+        return 12
+    }
+    let first = step(tls,
+    2000u32)
+    let second = step(tls,
+    2000u32)
+    let third = step(tls,
+    2000u32)
+    let fourth = step(tls,
+    2000u32)
+    let fifth = step(tls,
+    2000u32)
+    let sixth = step(tls,
+    2000u32)
+    let seventh = step(tls,
+    2000u32)
+    let eighth = step(tls,
+    2000u32)
+    if state(tls) != 2u32 {
+        return 14
+    }
+    var request:[UInt8;
+    59] =[71u8,
+    69u8,
+    84u8,
+    32u8,
+    47u8,
+    104u8,
+    101u8,
+    108u8,
+    108u8,
+    111u8,
+    32u8,
+    72u8,
+    84u8,
+    84u8,
+    80u8,
+    47u8,
+    49u8,
+    46u8,
+    49u8,
+    13u8,
+    10u8,
+    72u8,
+    111u8,
+    115u8,
+    116u8,
+    58u8,
+    32u8,
+    108u8,
+    111u8,
+    99u8,
+    97u8,
+    108u8,
+    104u8,
+    111u8,
+    115u8,
+    116u8,
+    13u8,
+    10u8,
+    67u8,
+    111u8,
+    110u8,
+    110u8,
+    101u8,
+    99u8,
+    116u8,
+    105u8,
+    111u8,
+    110u8,
+    58u8,
+    32u8,
+    99u8,
+    108u8,
+    111u8,
+    115u8,
+    101u8,
+    13u8,
+    10u8,
+    13u8,
+    10u8]
+    if send(tls,
+    request) != 59usize {
+        return 15
+    }
+    var response:[UInt8;
+    16] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    if receive(tls,
+    response) == 0usize {
+        return 16
+    }
+    if response[0] != 72u8 {
+        return 17
+    }
+    if response[11] != 48u8 {
+        return 18
+    }
+    if ! close(tls) {
+        return 19
+    }
+    if ! set_int("session_status", 200i64) {
+        return 20
+    }
+    if get_int("session_status") != 200i64 {
+        return 21
+    }
+    if ! save_atomic(
+        "target/jadren/network-session-client.tmp",
+        "target/jadren/network-session-client.data"
+    ) {
+        return 22
+    }
+    if write_text(
+        "target/jadren/network-session-client.result",
+        "network-session-client:200\n"
+    ) == 0usize {
+        return 23
+    }
+    return 0
+}

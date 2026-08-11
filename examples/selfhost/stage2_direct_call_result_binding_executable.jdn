@@ -1,0 +1,8 @@
+fn helper(value: Int32) -> Int32 {
+    return value + 1;
+}
+
+fn main() -> Int32 {
+    let result: Int32 = helper(41);
+    return result;
+}

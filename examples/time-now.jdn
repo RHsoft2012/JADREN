@@ -1,0 +1,13 @@
+module examples.time_now
+
+// Natívny UTC Unix čas v sekundách bez hostiteľského mosta.
+// Hodnota je vhodná ako základ pre TimeTracker záznamy a checkpointy.
+fn main() -> Int32 {
+    let now: Int64 = time_now_unix_seconds()
+    if now <= (0 as Int64) {
+        print("time_now_unix_seconds failed")
+        return 1
+    }
+    print("time_now_unix_seconds ok")
+    return 0
+}

@@ -16,6 +16,7 @@ fn compile_fail_memory_effect_suite() {
         ("borrow-conflict.jdn", "J0503"),
         ("borrow-escape.jdn", "J0505"),
         ("region-escape.jdn", "J0507"),
+        ("callback-region-escape.jdn", "J0507"),
         ("noalloc-allocation.jdn", "J0600"),
         ("realtime-blocking.jdn", "J0611"),
         ("compute-string.jdn", "J0625"),
@@ -42,7 +43,10 @@ fn prints_version() {
         .output()
         .expect("jadren should start");
     assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).starts_with("jadren 0.1.0"));
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .starts_with(concat!("jadren ", env!("CARGO_PKG_VERSION")))
+    );
 }
 
 #[cfg(any(windows, target_os = "linux"))]
@@ -86,6 +90,34 @@ fn builds_and_runs_host_executables_from_main() {
         Command::new(&exit_executable)
             .status()
             .expect("built executable should run")
+            .code(),
+        Some(42)
+    );
+
+    let float_source = directory.join("float_exit_code.jdn");
+    let float_executable = directory.join(if cfg!(windows) {
+        "float_exit_code.exe"
+    } else {
+        "float_exit_code"
+    });
+    fs::write(&float_source, "fn main() -> Float64 { return 42.5f64 }")
+        .expect("Float64 source should be writable");
+    let float_build = Command::new(binary())
+        .arg("build")
+        .arg(&float_source)
+        .args(["--profile", "release", "--cpu", "baseline", "-o"])
+        .arg(&float_executable)
+        .output()
+        .expect("Jadren Float64 build should start");
+    assert!(
+        float_build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&float_build.stderr)
+    );
+    assert_eq!(
+        Command::new(&float_executable)
+            .status()
+            .expect("built Float64 executable should run")
             .code(),
         Some(42)
     );
@@ -193,6 +225,371 @@ fn checks_package_and_resolves_cross_file_imports() {
         String::from_utf8_lossy(&check.stderr)
     );
     assert!(String::from_utf8_lossy(&check.stdout).contains("module imports resolved"));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn builds_and_runs_cross_file_package_imports() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-package-build-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("package")
+    ));
+    let source = directory.join("src");
+    fs::create_dir_all(&source).expect("package source directory should be writable");
+    fs::write(
+        directory.join("jadren.toml"),
+        "[package]\nname = \"demo-build\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\n\n[targets]\nlibrary = true\n",
+    )
+    .expect("manifest should be writable");
+    let lock = Command::new(binary())
+        .args(["lock"])
+        .arg(&directory)
+        .output()
+        .expect("jadren lock should start");
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    fs::write(
+        source.join("math.jdn"),
+        "module demo_build.math\npub fn answer() -> Int32 { return 42 }\n",
+    )
+    .expect("module source should be writable");
+    fs::write(
+        source.join("main.jdn"),
+        "module demo_build.main\nimport demo_build.math.answer\nfn main() -> Int32 { return answer() }\n",
+    )
+    .expect("entry source should be writable");
+
+    let output = directory.join(if cfg!(windows) {
+        "demo-build.exe"
+    } else {
+        "demo-build"
+    });
+    let build = Command::new(binary())
+        .args(["build"])
+        .arg(&directory)
+        .args(["-o"])
+        .arg(&output)
+        .args(["--profile", "release"])
+        .output()
+        .expect("package build should start");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&output)
+        .status()
+        .expect("package executable should run");
+    assert_eq!(run.code(), Some(42));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn builds_and_runs_package_modules_with_colliding_function_names() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-qualified-symbols-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("package")
+    ));
+    let source = directory.join("src");
+    fs::create_dir_all(&source).expect("package source directory should be writable");
+    fs::write(
+        directory.join("jadren.toml"),
+        "[package]\nname = \"demo-qualified-symbols\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\n\n[targets]\nlibrary = true\n",
+    )
+    .expect("manifest should be writable");
+    let lock = Command::new(binary())
+        .args(["lock"])
+        .arg(&directory)
+        .output()
+        .expect("jadren lock should start");
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    fs::write(
+        source.join("alpha.jdn"),
+        "module demo_collision.alpha\npub fn compute() -> Int32 { return 10 }\n",
+    )
+    .expect("alpha source should be writable");
+    fs::write(
+        source.join("beta.jdn"),
+        "module demo_collision.beta\npub fn compute() -> Int32 { return 32 }\n",
+    )
+    .expect("beta source should be writable");
+    fs::write(
+        source.join("main.jdn"),
+        "module demo_collision.main\nimport demo_collision.alpha\nimport demo_collision.beta\nfn main() -> Int32 { return alpha.compute() + beta.compute() }\n",
+    )
+    .expect("entry source should be writable");
+
+    let output = directory.join(if cfg!(windows) {
+        "demo-qualified-symbols.exe"
+    } else {
+        "demo-qualified-symbols"
+    });
+    let build = Command::new(binary())
+        .args(["build"])
+        .arg(&directory)
+        .args(["-o"])
+        .arg(&output)
+        .args(["--profile", "release"])
+        .output()
+        .expect("qualified-symbol package build should start");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&output)
+        .status()
+        .expect("qualified-symbol package executable should run");
+    assert_eq!(run.code(), Some(42));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn builds_cross_file_nominal_signature_without_type_import() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-nominal-build-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("nominal")
+    ));
+    let source = directory.join("src");
+    fs::create_dir_all(&source).expect("package source directory should be writable");
+    fs::write(
+        directory.join("jadren.toml"),
+        "[package]\nname = \"demo-nominal\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\n\n[targets]\nlibrary = true\n",
+    )
+    .expect("manifest should be writable");
+    let lock = Command::new(binary())
+        .args(["lock"])
+        .arg(&directory)
+        .output()
+        .expect("jadren lock should start");
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    fs::write(
+        source.join("status.jdn"),
+        "module demo_nominal.status\npub enum DemoState { Ready, Failed(Int32) }\npub fn make_status(value: Int32) -> DemoState { if value == 42 { return Ready } return Failed(value) }\npub fn status_code(value: DemoState) -> Int32 { return match value { Ready => 42, Failed(_) => 1 } }\n",
+    )
+    .expect("nominal source should be writable");
+    fs::write(
+        source.join("main.jdn"),
+        "module demo_nominal.main\nimport demo_nominal.status.make_status\nimport demo_nominal.status.status_code\nfn main() -> Int32 { return status_code(make_status(42)) }\n",
+    )
+    .expect("entry source should be writable");
+
+    let output = directory.join(if cfg!(windows) {
+        "demo-nominal.exe"
+    } else {
+        "demo-nominal"
+    });
+    let build = Command::new(binary())
+        .args(["build"])
+        .arg(&directory)
+        .args(["-o"])
+        .arg(&output)
+        .args(["--profile", "release"])
+        .output()
+        .expect("nominal package build should start");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&output)
+        .status()
+        .expect("nominal package executable should run");
+    assert_eq!(run.code(), Some(42));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn builds_cross_file_nested_generic_nominal_buffer() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-nested-generic-nominal-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("package")
+    ));
+    let source = directory.join("src");
+    fs::create_dir_all(&source).expect("package source directory should be writable");
+    fs::write(
+        directory.join("jadren.toml"),
+        "[package]\nname = \"demo-nested-generic-nominal\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\n\n[targets]\nlibrary = true\n",
+    )
+    .expect("manifest should be writable");
+    let lock = Command::new(binary())
+        .args(["lock"])
+        .arg(&directory)
+        .output()
+        .expect("jadren lock should start");
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    fs::write(
+        source.join("model.jdn"),
+        "module demo_nested.model\n@repr(C)\npub struct Box<T> { pub value: T }\n@repr(C)\npub struct Frame<T> { pub first: Box<T>, pub samples: [T; 2] }\n",
+    )
+    .expect("model source should be writable");
+    fs::write(
+        source.join("main.jdn"),
+        "module demo_nested.main\nimport demo_nested.model.Box\nimport demo_nested.model.Frame\nfn main() -> Int32 { let created: Result<Buffer<Frame<Int64>>, Int32> = buffer_create(0usize) var result_code: Int32 = 0 match created { Ok(values) => { let item: Frame<Int64> = Frame { first: Box { value: 42 as Int64 }, samples: [7 as Int64, 9 as Int64] } if !buffer_append(values, item) { result_code = 1 } if values[0].first.value != 42 as Int64 { result_code = 2 } if values[0].samples[1] != 9 as Int64 { result_code = 3 } } Error(status) => { result_code = status } } return result_code }\n",
+    )
+    .expect("entry source should be writable");
+
+    let output = directory.join(if cfg!(windows) {
+        "demo-nested-generic-nominal.exe"
+    } else {
+        "demo-nested-generic-nominal"
+    });
+    let build = Command::new(binary())
+        .args(["build"])
+        .arg(&directory)
+        .args(["-o"])
+        .arg(&output)
+        .args(["--profile", "release"])
+        .output()
+        .expect("nested generic nominal package build should start");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&output)
+        .status()
+        .expect("nested generic nominal package executable should run");
+    assert_eq!(run.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn builds_cross_file_generic_nominal_with_owning_buffer_field() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-generic-owning-nominal-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("package")
+    ));
+    let source = directory.join("src");
+    fs::create_dir_all(&source).expect("package source directory should be writable");
+    fs::write(
+        directory.join("jadren.toml"),
+        "[package]\nname = \"demo-generic-owning-nominal\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\n\n[targets]\nlibrary = true\n",
+    )
+    .expect("manifest should be writable");
+    let lock = Command::new(binary())
+        .args(["lock"])
+        .arg(&directory)
+        .output()
+        .expect("jadren lock should start");
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    fs::write(
+        source.join("model.jdn"),
+        "module demo_owning.model\n@repr(C)\npub struct Holder<T> { pub values: Buffer<T>, pub id: Int32 }\n",
+    )
+    .expect("model source should be writable");
+    fs::write(
+        source.join("main.jdn"),
+        "module demo_owning.main\nimport demo_owning.model.Holder\nfn main() -> Int32 { let inner: Result<Buffer<Int32>, Int32> = buffer_create(0usize) let outer: Result<Buffer<Holder<Int32>>, Int32> = buffer_create(0usize) var result_code: Int32 = 0 match inner { Ok(values) => { if !buffer_append(values, 7) { result_code = 1 } match outer { Ok(items) => { let item: Holder<Int32> = Holder { values: values, id: 42 } if !buffer_append(items, item) { result_code = 2 } if items[0].values[0] != 7 { result_code = 3 } if items[0].id != 42 { result_code = 4 } } Error(status) => { result_code = status } } } Error(status) => { result_code = status } } return result_code }\n",
+    )
+    .expect("entry source should be writable");
+
+    let output = directory.join(if cfg!(windows) {
+        "demo-generic-owning-nominal.exe"
+    } else {
+        "demo-generic-owning-nominal"
+    });
+    let build = Command::new(binary())
+        .args(["build"])
+        .arg(&directory)
+        .args(["-o"])
+        .arg(&output)
+        .args(["--profile", "release"])
+        .output()
+        .expect("generic owning nominal package build should start");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&output)
+        .status()
+        .expect("generic owning nominal package executable should run");
+    assert_eq!(run.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn builds_cross_file_nested_generic_nominal_with_owning_leaf() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-nested-generic-owning-leaf-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("package")
+    ));
+    let source = directory.join("src");
+    fs::create_dir_all(&source).expect("package source directory should be writable");
+    fs::write(
+        directory.join("jadren.toml"),
+        "[package]\nname = \"demo-nested-generic-owning-leaf\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\n\n[targets]\nlibrary = true\n",
+    )
+    .expect("manifest should be writable");
+    let lock = Command::new(binary())
+        .args(["lock"])
+        .arg(&directory)
+        .output()
+        .expect("jadren lock should start");
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    fs::write(
+        source.join("model.jdn"),
+        "module demo_nested_owning.model\n@repr(C)\npub struct Box<T> { pub value: T }\n@repr(C)\npub struct Frame<T> { pub first: Box<T> }\n",
+    )
+    .expect("model source should be writable");
+    fs::write(
+        source.join("main.jdn"),
+        "module demo_nested_owning.main\nimport demo_nested_owning.model.Box\nimport demo_nested_owning.model.Frame\nfn main() -> Int32 { let inner: Result<Buffer<Int32>, Int32> = buffer_create(0usize) let outer: Result<Buffer<Frame<Buffer<Int32>>>, Int32> = buffer_create(0usize) var result_code: Int32 = 0 match inner { Ok(values) => { if !buffer_append(values, 7) { result_code = 1 } let item: Frame<Buffer<Int32>> = Frame { first: Box { value: values } } match outer { Ok(items) => { if !buffer_append(items, item) { result_code = 2 } if items[0].first.value[0] != 7 { result_code = 3 } } Error(status) => { result_code = status } } } Error(status) => { result_code = status } } return result_code }\n",
+    )
+    .expect("entry source should be writable");
+
+    let output = directory.join(if cfg!(windows) {
+        "demo-nested-generic-owning-leaf.exe"
+    } else {
+        "demo-nested-generic-owning-leaf"
+    });
+    let build = Command::new(binary())
+        .args(["build"])
+        .arg(&directory)
+        .args(["-o"])
+        .arg(&output)
+        .args(["--profile", "release"])
+        .output()
+        .expect("nested generic owning leaf package build should start");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&output)
+        .status()
+        .expect("nested generic owning leaf package executable should run");
+    assert_eq!(run.code(), Some(0));
     let _ = fs::remove_dir_all(directory);
 }
 
@@ -647,7 +1044,7 @@ fn doctor_reports_target_and_deterministic_config() {
     assert!(stdout.contains("deterministic ordering: enabled"));
     assert!(stdout.contains("LLVM toolchain: 22.1.8 verified"));
     assert!(stdout.contains(
-            "runtime ABI 0.10 system+region allocators, abort panic boundary, callbacks, Buffer/Slice, UTF-8 String, math scalar, vector value and quaternion Slerp core available"
+            "runtime ABI 0.21 system+region allocators, abort panic boundary, callbacks, Buffer/Slice, UTF-8 String, math scalar, vector value, quaternion Slerp, enum carrier branch tables, field tables, direct/nested drop-only record remove and caller-owned insert/remove/pop move available"
     ));
 }
 

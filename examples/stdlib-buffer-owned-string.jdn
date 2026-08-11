@@ -1,0 +1,92 @@
+module examples.stdlib_buffer_owned_string
+
+// Move-only text values can be stored in a generic owning Buffer.  The
+// compiler emits string-aware cleanup for every initialized element.
+fn main() -> Int32 {
+    let created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 1
+    match created {
+        Ok(values) => {
+            let first: Result<OwnedString, Int32> = string_owned_from("Jadren")
+            match first {
+                Ok(value) => {
+                    if !buffer_append(values, value) {
+                        result_code = 2
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+            let second: Result<OwnedString, Int32> = string_owned_from("UI")
+            match second {
+                Ok(value) => {
+                    if !buffer_insert_move(values, 0usize, value) {
+                        result_code = 3
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+            let output_created: Result<OwnedString, Int32> = string_owned_create(0usize)
+            match output_created {
+                Ok(output) => {
+                    if !buffer_remove_move_into(values, 0usize, output) {
+                        result_code = 11
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+            let removed: Result<OwnedString, Int32> = buffer_remove_move(values, 0usize)
+            match removed {
+                Ok(value) => {
+                    if string_owned_length(value) == 6usize {
+                        if result_code == 1 {
+                            result_code = 0
+                        }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+            let resized: Bool = buffer_resize_move(values, 0usize)
+            if !resized {
+                result_code = 4
+            }
+            let resize_value: Result<OwnedString, Int32> = string_owned_from("resize")
+            match resize_value {
+                Ok(value) => {
+                    if !buffer_append(values, value) {
+                        result_code = 5
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+            if !buffer_clear_move(values) {
+                result_code = 6
+            }
+            let drop_value: Result<OwnedString, Int32> = string_owned_from("drop")
+            match drop_value {
+                Ok(value) => {
+                    if !buffer_append(values, value) {
+                        result_code = 7
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+            let status_value: Result<OwnedString, Int32> = string_owned_from("status")
+            match status_value {
+                Ok(value) => {
+                    if !buffer_append(values, value) {
+                        result_code = 8
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+            if !buffer_remove_drop(values, 0usize) {
+                result_code = 9
+            }
+            if buffer_remove_drop_status(values, 0usize) != 0 {
+                result_code = 10
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

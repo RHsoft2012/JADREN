@@ -1,0 +1,27 @@
+module examples.app_table_float;
+
+// Praktická typed tabuľka s desatinným stĺpcom. Kind 4 je Float64.
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !app_table_set_column_type(0, 0, 4) { return 1 }
+    if !app_table_set_column_name(0, 0, "rate") { return 2 }
+    if !app_table_append_row(0) { return 3 }
+    if !app_table_set_float(0, 0, 0, 1.25f64) { return 4 }
+    if !app_table_set_named_float(0, 0, "rate", 2.5f64) { return 5 }
+    let value: Float64 = app_table_read_float(0, 0, 0)
+    let named: Float64 = app_table_read_named_float(0, 0, "rate")
+    if value != 2.5f64 { return 6 }
+    if named != 2.5f64 { return 7 }
+    if !app_table_validate(0) { return 8 }
+    if !app_table_save_schema_full(0, "target/jadren/app-table-float-schema.json") { return 9 }
+    if !app_table_save(0, "target/jadren/app-table-float.json") { return 10 }
+
+    app_table_clear(0)
+    if !app_table_load_schema_full(0, "target/jadren/app-table-float-schema.json") { return 11 }
+    if !app_table_load(0, "target/jadren/app-table-float.json") { return 12 }
+    if app_table_read_named_float(0, 0, "rate") != 2.5f64 { return 13 }
+
+    file_delete("target/jadren/app-table-float-schema.json")
+    file_delete("target/jadren/app-table-float.json")
+    return 0
+}

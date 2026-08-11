@@ -1,0 +1,38 @@
+module examples.app_state_float
+
+// Float64 application state is persisted as a finite JSON number.
+fn main() -> Int32 {
+    if !directory_exists("target") {
+        if !directory_create("target") { return 1 }
+    }
+    if !directory_exists("target/jadren") {
+        if !directory_create("target/jadren") { return 2 }
+    }
+    app_state_clear()
+    let set_rate: Bool = app_state_set_float("hourly_rate", 1.25f64)
+    let set_hours: Bool = app_state_set_float("hours", 2.5f64)
+    let set_whole: Bool = app_state_set_int("whole", 3 as Int64)
+    let rejected_nan: Bool = app_state_set_float("invalid", 0.0f64 / 0.0f64)
+    let saved: Bool = app_state_save("target/jadren/app-state-float.json")
+    app_state_clear()
+    let loaded: Bool = app_state_load("target/jadren/app-state-float.json")
+    let rate: Float64 = app_state_get_float("hourly_rate")
+    let hours: Float64 = app_state_get_float("hours")
+    let whole: Float64 = app_state_get_float("whole")
+    var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let rate_length: UIntSize = format_float(rate, output)
+    let hours_length: UIntSize = format_float(hours, output)
+    let whole_length: UIntSize = format_float(whole, output)
+    let removed: Bool = file_delete("target/jadren/app-state-float.json")
+    if !set_rate { return 3 }
+    if !set_hours { return 4 }
+    if !set_whole { return 5 }
+    if rejected_nan { return 6 }
+    if !saved { return 7 }
+    if !loaded { return 8 }
+    if rate_length != 8usize { return 9 }
+    if hours_length != 8usize { return 10 }
+    if whole_length != 8usize { return 11 }
+    if !removed { return 12 }
+    return 0
+}

@@ -1,0 +1,51 @@
+module windows_desktop_portable_table.main
+
+// Retained report table example. Columns and a local row are declared through
+// node ids; binding then projects the same control from an app_table store.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 2 {
+        ui_set_status("Table row selected.")
+    }
+    if event_id == 3 {
+        ui_set_status("Saved table selection.")
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !app_table_append_row(0) { return 1 }
+    if !app_table_set_cell(0, 0, 0, "Bound task") { return 2 }
+    if !app_table_set_cell(0, 0, 1, "Open") { return 3 }
+
+    let root: Int32 = ui_app_begin("Jadren Portable Table", 760, 480, 0xF6F8FCu32)
+    if root == 0 { return 4 }
+    let panel: Int32 = ui_app_panel(root, 680, 320, 0xFFFFFFu32, 16, 12, 8, 0, 1)
+    if panel == 0 { return 5 }
+    ui_layout_status("Columns and rows are declared in Jadren and refreshed from app_table.",
+                     620, 34, 0x111827u32, 0xDCFCE7u32, 10, 1)
+    let table: Int32 = ui_app_table(panel, 2, 620, 160,
+                                    0x111827u32, 0xFFFFFFu32, 8, 1)
+    if table == 0 { return 6 }
+    if !ui_app_table_column(table, 0, "Task", 340) { return 7 }
+    if !ui_app_table_column(table, 1, "Status", 220) { return 8 }
+    if !ui_app_table_cell(table, 0, 0, "Local task") { return 9 }
+    if !ui_app_table_cell(table, 0, 1, "Draft") { return 10 }
+    if ui_app_table_row_count(table) != 1 { return 11 }
+    if !ui_app_table_bind_app(table, 0, 2) { return 12 }
+    if ui_app_table_row_count(table) != 1 { return 13 }
+    if !ui_app_table_set_selected_row(table, 0) { return 14 }
+    if ui_app_table_selected_row(table) != 0 { return 15 }
+    var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                               0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if ui_app_table_read_cell(table, 0, 0, output) == 0usize { return 16 }
+    let button: Int32 = ui_app_button(panel, "Save selection", 3, 220, 42,
+                                      0xFFFFFFu32, 0x168EF5u32, 12, 0)
+    if button == 0 { return 17 }
+    if !ui_app_end(panel) { return 18 }
+    if !ui_app_end(root) { return 19 }
+    return ui_app_run()
+}

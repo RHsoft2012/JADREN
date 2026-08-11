@@ -1,0 +1,9 @@
+module examples.file_lock_acquire
+
+// After the holder exits, a new process can acquire and release the lock.
+fn main() -> Int32 {
+    let token: UIntSize = file_lock("target/jadren-file-lock.lock")
+    if token == 0usize { return 1 }
+    if !file_unlock(token) { return 2 }
+    return 0
+}

@@ -1,0 +1,26 @@
+module examples.stdlib_buffer_status
+
+// Status variants preserve the Bool convenience API while exposing stable
+// negative BufferStatus codes at an application boundary.
+fn main() -> Int32 {
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            let reserved: Int32 = buffer_reserve_status(values, 2usize)
+            if reserved != 0 { result_code = 1 }
+            let appended: Int32 = buffer_append_status(values, 7u8)
+            if appended != 0 { result_code = 2 }
+            let inserted: Int32 = buffer_insert_status(values, 0usize, 3u8)
+            if inserted != 0 { result_code = 3 }
+            let removed: Int32 = buffer_remove_status(values, 1usize)
+            if removed != 0 { result_code = 4 }
+            let bad_index: Int32 = buffer_remove_status(values, 99usize)
+            if bad_index != -20 { result_code = 5 }
+            let bad_capacity: Int32 = buffer_resize_status(values, 3usize)
+            if bad_capacity != -20 { result_code = 6 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

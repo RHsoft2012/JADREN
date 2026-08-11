@@ -1,0 +1,95 @@
+module examples.network_tls_server
+import jadren.network.tcp.accept
+import jadren.network.tcp.close_socket
+import jadren.network.tcp.listen
+import jadren.network.tls.close
+import jadren.network.tls.open_server
+import jadren.network.tls.receive
+import jadren.network.tls.send
+import jadren.network.tls.state
+import jadren.network.tls.step
+fn main() -> Int32 {
+    let listener = listen(38149u16)
+    if listener == 0usize {
+        return 10
+    }
+    let socket = accept(listener)
+    if socket == 0usize {
+        close_socket(listener)
+        return 11
+    }
+    let tls = open_server(socket,
+    "target/network-tls-smoke/server.pfx",
+    "testpass")
+    if tls == 0usize {
+        close_socket(socket)
+        close_socket(listener)
+        return 12
+    }
+    let first = step(tls,
+    2000u32)
+    let second = step(tls,
+    2000u32)
+    let third = step(tls,
+    2000u32)
+    let fourth = step(tls,
+    2000u32)
+    let fifth = step(tls,
+    2000u32)
+    let sixth = step(tls,
+    2000u32)
+    let seventh = step(tls,
+    2000u32)
+    let eighth = step(tls,
+    2000u32)
+    if first == 4u32 {
+        return 13
+    }
+    if second == 4u32 {
+        return 13
+    }
+    if third == 4u32 {
+        return 13
+    }
+    if fourth == 4u32 {
+        return 13
+    }
+    if fifth == 4u32 {
+        return 13
+    }
+    if sixth == 4u32 {
+        return 13
+    }
+    if seventh == 4u32 {
+        return 13
+    }
+    if eighth == 4u32 {
+        return 13
+    }
+    if state(tls) != 2u32 {
+        return 14
+    }
+    var request:[UInt8;
+    1] =[84u8]
+    if receive(tls,
+    request) != 1usize {
+        return 15
+    }
+    var response:[UInt8;
+    5] =[74u8,
+    65u8,
+    68u8,
+    82u8,
+    78u8]
+    if send(tls,
+    response) != 5usize {
+        return 16
+    }
+    if ! close(tls) {
+        return 17
+    }
+    if ! close_socket(listener) {
+        return 18
+    }
+    return 0
+}

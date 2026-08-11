@@ -1,0 +1,38 @@
+module app_list_filter.main
+
+// Bounded list projection example.
+// Modes: exact 0, contains 1, prefix 2, suffix 3; add 4 for ASCII case-folding.
+fn main() -> Int32 {
+    app_list_clear(0)
+    app_list_clear(1)
+
+    app_list_push_text(0, "Focus")
+    app_list_push_text(0, "Open")
+    app_list_push_text(0, "Refocus")
+
+    let exact: Bool = app_list_filter_text(0, 1, "Focus")
+    let exact_count: Int32 = app_list_count(1)
+    if !exact { return 1 }
+    if exact_count != 1 { return 2 }
+
+    let contains: Bool = app_list_filter_text_ex(0, 1, "FOCUS", 5)
+    let contains_count: Int32 = app_list_count(1)
+    if !contains { return 3 }
+    if contains_count != 2 { return 4 }
+
+    let prefix: Bool = app_list_filter_text_ex(0, 1, "Re", 2)
+    let prefix_count: Int32 = app_list_count(1)
+    if !prefix { return 5 }
+    if prefix_count != 1 { return 6 }
+
+    let suffix: Bool = app_list_filter_text_ex(0, 1, "en", 3)
+    let suffix_count: Int32 = app_list_count(1)
+    if !suffix { return 7 }
+    if suffix_count != 1 { return 8 }
+    if app_list_count(0) != 3 { return 9 }
+    if app_list_filter_text(0, 0, "Focus") { return 10 }
+
+    app_list_clear(0)
+    app_list_clear(1)
+    return 0
+}

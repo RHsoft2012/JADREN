@@ -1,0 +1,12 @@
+[package]
+name = "json-api-client-project"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+jadren-network = { path = "../../stdlib/network" }
+jadren-json = { path = "../../stdlib/json" }
+
+[targets]
+library = true
+

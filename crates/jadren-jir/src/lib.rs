@@ -308,6 +308,196 @@ pub enum InstructionKind {
     Drop {
         value: ValueId,
     },
+    /// Releases the heap allocation owned by an `OwnedString` value.
+    OwnedStringDrop {
+        value: ValueId,
+    },
+    /// Releases a heap-owned `Buffer<T>` descriptor using its lowered element
+    /// layout. Region-owned buffers never use this instruction; their region
+    /// cleanup is represented by `RegionDestroy`.
+    BufferDrop {
+        value: ValueId,
+        element: TypeId,
+    },
+    /// Releases an owning `Buffer<OwnedString>` descriptor and destroys every
+    /// initialized string element before releasing the outer allocation.
+    OwnedStringBufferDrop {
+        value: ValueId,
+        element: TypeId,
+    },
+    /// Resizes or clears an owning `Buffer<OwnedString>` and destroys every
+    /// removed string descriptor before publishing the new length.
+    BufferResizeMoveOwnedString {
+        descriptor: ValueId,
+        new_length: ValueId,
+        element: TypeId,
+        status_result: bool,
+    },
+    /// Resizes or clears an owning nested Buffer chain whose final leaf is
+    /// OwnedString. The runtime recursively destroys removed UTF-8 payloads.
+    BufferResizeMoveNestedOwnedString {
+        descriptor: ValueId,
+        new_length: ValueId,
+        element: TypeId,
+        string_element: TypeId,
+        depth: u32,
+        status_result: bool,
+    },
+    /// Releases every nested `Buffer<U>` element before releasing the outer
+    /// buffer allocation. The inner element layout is carried explicitly so
+    /// the runtime can destroy each descriptor without type metadata.
+    NestedBufferDrop {
+        value: ValueId,
+        element: TypeId,
+        nested_element: TypeId,
+    },
+    /// Releases an owning buffer whose elements contain two or more nested
+    /// `Buffer` descriptors. `depth` counts the nested owning edges below the
+    /// outer buffer; `leaf_element` carries the final non-buffer layout.
+    RecursiveBufferDrop {
+        value: ValueId,
+        element: TypeId,
+        leaf_element: TypeId,
+        depth: u32,
+    },
+    /// Releases an owning nested buffer whose final leaf is OwnedString.
+    /// `depth` counts the nested Buffer descriptors below the outer buffer;
+    /// the dedicated runtime path destroys UTF-8 payloads instead of treating
+    /// the three-word string descriptor as a copy-safe Buffer.
+    RecursiveOwnedStringBufferDrop {
+        value: ValueId,
+        element: TypeId,
+        string_element: TypeId,
+        depth: u32,
+    },
+    /// Releases a nested owning buffer whose final leaf is a `@repr(C)`
+    /// record with unconditional owning Buffer fields. `depth` counts the
+    /// Buffer descriptors below the outer allocation before the record leaf;
+    /// the field table is reused for every record at that leaf.
+    RecursiveRecordBufferFieldsDrop {
+        value: ValueId,
+        element: TypeId,
+        record_element: TypeId,
+        fields: Vec<RecordDropField>,
+        depth: u32,
+    },
+    /// Resizes an owning nested buffer whose final leaf is a record with
+    /// owning Buffer fields. `depth == 0` denotes a direct
+    /// `Buffer<@repr(C) Record>`; positive values denote nested descriptors.
+    /// The result is the source-level Bool/Int32 status contract and the
+    /// field table is compiler metadata.
+    BufferResizeMoveRecordFields {
+        descriptor: ValueId,
+        new_length: ValueId,
+        element: TypeId,
+        record_element: TypeId,
+        fields: Vec<RecordDropField>,
+        depth: u32,
+        status_result: bool,
+    },
+    /// Removes one `OwnedString` from a buffer, destroys its byte allocation,
+    /// then move-compacts later descriptors without copying ownership.
+    BufferRemoveDropOwnedString {
+        descriptor: ValueId,
+        index: ValueId,
+        element: TypeId,
+        status_result: bool,
+    },
+    /// Removes one owning C-layout record from a buffer, destroys all of its
+    /// owning Buffer fields, then moves later records left to close the gap.
+    /// The operation intentionally returns only the Bool/Int32 status so no
+    /// ownership is transferred to a temporary result value.
+    BufferRemoveDropRecordFields {
+        descriptor: ValueId,
+        index: ValueId,
+        element: TypeId,
+        fields: Vec<RecordDropField>,
+        status_result: bool,
+    },
+    /// Removes one nested owning Buffer element whose final leaf is a C-layout
+    /// record with unconditional owning Buffer fields. The selected nested
+    /// chain is destroyed before later outer descriptors are moved left.
+    BufferRemoveDropNestedRecordFields {
+        descriptor: ValueId,
+        index: ValueId,
+        element: TypeId,
+        record_element: TypeId,
+        fields: Vec<RecordDropField>,
+        depth: u32,
+        status_result: bool,
+    },
+    /// One tag-selected owning payload descriptor for a named `@repr(C)` enum.
+    /// The descriptor table is used when the enum has multiple owning
+    /// variants; copy-only variants simply have no branch entry.
+    EnumCarrierBufferDrop {
+        value: ValueId,
+        element: TypeId,
+        payload_offset: u64,
+        branches: Vec<CarrierDropBranch>,
+    },
+    /// Standalone form of [`InstructionKind::EnumCarrierBufferDrop`].
+    EnumOwningCarrierDrop {
+        value: ValueId,
+        element: TypeId,
+        payload_offset: u64,
+        branches: Vec<CarrierDropBranch>,
+    },
+    /// Releases all owning Buffer fields of a tag-selected named enum
+    /// variant. Each field carries its own payload offset, so variants may
+    /// contain multiple owning descriptors or place them after copy fields.
+    EnumCarrierFieldsDrop {
+        value: ValueId,
+        element: TypeId,
+        fields: Vec<CarrierDropField>,
+    },
+    /// Standalone form of [`InstructionKind::EnumCarrierFieldsDrop`].
+    EnumOwningFieldsDrop {
+        value: ValueId,
+        element: TypeId,
+        fields: Vec<CarrierDropField>,
+    },
+    /// Releases every owning Buffer field of a record element in an outer
+    /// owning Buffer. Record fields are unconditional; unlike enum fields
+    /// they do not consult a discriminant.
+    RecordBufferFieldsDrop {
+        value: ValueId,
+        element: TypeId,
+        fields: Vec<RecordDropField>,
+    },
+    /// Releases every owning Buffer field of a standalone record value.
+    RecordOwningFieldsDrop {
+        value: ValueId,
+        element: TypeId,
+        fields: Vec<RecordDropField>,
+    },
+    /// Releases a buffer whose element is an inline Option/Result carrier or
+    /// named `@repr(C)` enum containing exactly one owning Buffer payload. The
+    /// tag selects whether the payload descriptor must be destroyed.
+    CarrierBufferDrop {
+        value: ValueId,
+        element: TypeId,
+        leaf_element: TypeId,
+        payload_variant: u32,
+        payload_offset: u64,
+        depth: u32,
+        alternate_leaf_element: Option<TypeId>,
+        alternate_payload_variant: Option<u32>,
+        alternate_depth: Option<u32>,
+    },
+    /// Releases a standalone Option/Result carrier or named `@repr(C)` enum
+    /// with one owning Buffer payload. Unlike `CarrierBufferDrop`, the value
+    /// itself is the carrier, not an outer Buffer allocation.
+    OwningCarrierDrop {
+        value: ValueId,
+        element: TypeId,
+        leaf_element: TypeId,
+        payload_variant: u32,
+        payload_offset: u64,
+        depth: u32,
+        alternate_leaf_element: Option<TypeId>,
+        alternate_payload_variant: Option<u32>,
+        alternate_depth: Option<u32>,
+    },
     Load {
         pointer: ValueId,
         alignment: u32,
@@ -372,6 +562,48 @@ pub enum InstructionKind {
         lane: ValueId,
         value: ValueId,
     },
+}
+
+/// Target-independent metadata for one owning payload branch in a named enum.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CarrierDropBranch {
+    /// Zero-based enum discriminant.
+    pub payload_variant: u32,
+    /// Number of nested owning Buffer descriptors below the enum payload.
+    pub depth: u32,
+    /// Final non-owning leaf type used by runtime destruction.
+    pub leaf_element: TypeId,
+}
+
+/// Target-independent metadata for one owning Buffer field in a named enum.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CarrierDropField {
+    /// Zero-based enum discriminant selecting this field.
+    pub payload_variant: u32,
+    /// Byte offset from the beginning of the enum value to the Buffer
+    /// descriptor.
+    pub payload_offset: u64,
+    /// Number of nested owning Buffer descriptors below the field.
+    pub depth: u32,
+    /// Final non-owning leaf type used by runtime destruction.
+    pub leaf_element: TypeId,
+}
+
+/// Target-independent metadata for one owning Buffer or OwnedString field in
+/// a `@repr(C)` record. `payload_variant == u64::MAX` denotes an unconditional
+/// field; other values select the active `Option`/`Result` carrier variant.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecordDropField {
+    /// Carrier discriminant, or `u64::MAX` for a direct Buffer field.
+    pub payload_variant: u64,
+    /// Byte offset from the beginning of the record value to the Buffer
+    /// descriptor.
+    pub payload_offset: u64,
+    /// Number of nested owning Buffer descriptors below the field. The value
+    /// `u32::MAX` denotes a direct OwnedString descriptor.
+    pub depth: u32,
+    /// Final non-owning leaf type used by runtime destruction.
+    pub leaf_element: TypeId,
 }
 
 /// Builtin values available to the portable GPU subset.
@@ -754,6 +986,484 @@ fn write_instruction(output: &mut String, instruction: &InstructionKind) {
         InstructionKind::Drop { value } => {
             write!(output, "drop %v{}", value.index()).expect("writing to String cannot fail")
         }
+        InstructionKind::OwnedStringDrop { value } => {
+            write!(output, "owned_string_drop %v{}", value.index())
+                .expect("writing to String cannot fail")
+        }
+        InstructionKind::BufferDrop { value, element } => write!(
+            output,
+            "buffer_drop %v{}, %t{}",
+            value.index(),
+            element.index()
+        )
+        .expect("writing to String cannot fail"),
+        InstructionKind::OwnedStringBufferDrop { value, element } => write!(
+            output,
+            "owned_string_buffer_drop %v{}, %t{}",
+            value.index(),
+            element.index()
+        )
+        .expect("writing to String cannot fail"),
+        InstructionKind::BufferResizeMoveOwnedString {
+            descriptor,
+            new_length,
+            element,
+            status_result,
+        } => write!(
+            output,
+            "buffer_resize_move_owned_string %v{}, %v{}, %t{}, result {}",
+            descriptor.index(),
+            new_length.index(),
+            element.index(),
+            if *status_result { "status" } else { "bool" }
+        )
+        .expect("writing to String cannot fail"),
+        InstructionKind::BufferResizeMoveNestedOwnedString {
+            descriptor,
+            new_length,
+            element,
+            string_element,
+            depth,
+            status_result,
+        } => write!(
+            output,
+            "buffer_resize_move_nested_owned_string %v{}, %v{}, %t{}, %t{}, depth {}, result {}",
+            descriptor.index(),
+            new_length.index(),
+            element.index(),
+            string_element.index(),
+            depth,
+            if *status_result { "status" } else { "bool" }
+        )
+        .expect("writing to String cannot fail"),
+        InstructionKind::NestedBufferDrop {
+            value,
+            element,
+            nested_element,
+        } => write!(
+            output,
+            "nested_buffer_drop %v{}, %t{}, %t{}",
+            value.index(),
+            element.index(),
+            nested_element.index()
+        )
+        .expect("writing to String cannot fail"),
+        InstructionKind::RecursiveBufferDrop {
+            value,
+            element,
+            leaf_element,
+            depth,
+        } => write!(
+            output,
+            "recursive_buffer_drop %v{}, %t{}, %t{}, depth {}",
+            value.index(),
+            element.index(),
+            leaf_element.index(),
+            depth
+        )
+        .expect("writing to String cannot fail"),
+        InstructionKind::RecursiveOwnedStringBufferDrop {
+            value,
+            element,
+            string_element,
+            depth,
+        } => write!(
+            output,
+            "recursive_owned_string_buffer_drop %v{}, %t{}, %t{}, depth {}",
+            value.index(),
+            element.index(),
+            string_element.index(),
+            depth
+        )
+        .expect("writing to String cannot fail"),
+        InstructionKind::RecursiveRecordBufferFieldsDrop {
+            value,
+            element,
+            record_element,
+            fields,
+            depth,
+        } => {
+            write!(
+                output,
+                "recursive_record_buffer_fields_drop %v{}, %t{}, %t{}, depth {}, fields [",
+                value.index(),
+                element.index(),
+                record_element.index(),
+                depth
+            )
+            .expect("writing to String cannot fail");
+            for (index, field) in fields.iter().enumerate() {
+                if index != 0 {
+                    output.push_str(", ");
+                }
+                write!(
+                    output,
+                    "variant {}, offset {}, %t{}, depth {}",
+                    field.payload_variant,
+                    field.payload_offset,
+                    field.leaf_element.index(),
+                    field.depth
+                )
+                .expect("writing to String cannot fail");
+            }
+            output.push(']');
+        }
+        InstructionKind::BufferResizeMoveRecordFields {
+            descriptor,
+            new_length,
+            element,
+            record_element,
+            fields,
+            depth,
+            status_result,
+        } => {
+            write!(
+                output,
+                "buffer_resize_move_record_fields %v{}, %v{}, %t{}, %t{}, depth {}, result {}, fields [",
+                descriptor.index(),
+                new_length.index(),
+                element.index(),
+                record_element.index(),
+                depth,
+                if *status_result { "status" } else { "bool" }
+            )
+            .expect("writing to String cannot fail");
+            for (index, field) in fields.iter().enumerate() {
+                if index != 0 {
+                    output.push_str(", ");
+                }
+                write!(
+                    output,
+                    "variant {}, offset {}, %t{}, depth {}",
+                    field.payload_variant,
+                    field.payload_offset,
+                    field.leaf_element.index(),
+                    field.depth
+                )
+                .expect("writing to String cannot fail");
+            }
+            output.push(']');
+        }
+        InstructionKind::BufferRemoveDropOwnedString {
+            descriptor,
+            index,
+            element,
+            status_result,
+        } => write!(
+            output,
+            "buffer_remove_drop_owned_string %v{}, %v{}, %t{}, result {}",
+            descriptor.index(),
+            index.index(),
+            element.index(),
+            if *status_result { "status" } else { "bool" }
+        )
+        .expect("writing to String cannot fail"),
+        InstructionKind::BufferRemoveDropRecordFields {
+            descriptor,
+            index,
+            element,
+            fields,
+            status_result,
+        } => {
+            write!(
+                output,
+                "buffer_remove_drop_record_fields %v{}, %v{}, %t{}, result {}, fields [",
+                descriptor.index(),
+                index.index(),
+                element.index(),
+                if *status_result { "status" } else { "bool" }
+            )
+            .expect("writing to String cannot fail");
+            for (field_index, field) in fields.iter().enumerate() {
+                if field_index != 0 {
+                    output.push_str(", ");
+                }
+                write!(
+                    output,
+                    "variant {}, offset {}, %t{}, depth {}",
+                    field.payload_variant,
+                    field.payload_offset,
+                    field.leaf_element.index(),
+                    field.depth
+                )
+                .expect("writing to String cannot fail");
+            }
+            output.push(']');
+        }
+        InstructionKind::BufferRemoveDropNestedRecordFields {
+            descriptor,
+            index,
+            element,
+            record_element,
+            fields,
+            depth,
+            status_result,
+        } => {
+            write!(
+                output,
+                "buffer_remove_drop_nested_record_fields %v{}, %v{}, %t{}, %t{}, depth {}, result {}, fields [",
+                descriptor.index(),
+                index.index(),
+                element.index(),
+                record_element.index(),
+                depth,
+                if *status_result { "status" } else { "bool" }
+            )
+            .expect("writing to String cannot fail");
+            for (field_index, field) in fields.iter().enumerate() {
+                if field_index != 0 {
+                    output.push_str(", ");
+                }
+                write!(
+                    output,
+                    "variant {}, offset {}, %t{}, depth {}",
+                    field.payload_variant,
+                    field.payload_offset,
+                    field.leaf_element.index(),
+                    field.depth
+                )
+                .expect("writing to String cannot fail");
+            }
+            output.push(']');
+        }
+        InstructionKind::EnumCarrierBufferDrop {
+            value,
+            element,
+            payload_offset,
+            branches,
+        } => {
+            write!(
+                output,
+                "enum_carrier_buffer_drop %v{}, %t{}, offset {}, branches [",
+                value.index(),
+                element.index(),
+                payload_offset
+            )
+            .expect("writing to String cannot fail");
+            for (index, branch) in branches.iter().enumerate() {
+                if index != 0 {
+                    output.push_str(", ");
+                }
+                write!(
+                    output,
+                    "variant {}, %t{}, depth {}",
+                    branch.payload_variant,
+                    branch.leaf_element.index(),
+                    branch.depth
+                )
+                .expect("writing to String cannot fail");
+            }
+            output.push(']');
+        }
+        InstructionKind::EnumOwningCarrierDrop {
+            value,
+            element,
+            payload_offset,
+            branches,
+        } => {
+            write!(
+                output,
+                "enum_owning_carrier_drop %v{}, %t{}, offset {}, branches [",
+                value.index(),
+                element.index(),
+                payload_offset
+            )
+            .expect("writing to String cannot fail");
+            for (index, branch) in branches.iter().enumerate() {
+                if index != 0 {
+                    output.push_str(", ");
+                }
+                write!(
+                    output,
+                    "variant {}, %t{}, depth {}",
+                    branch.payload_variant,
+                    branch.leaf_element.index(),
+                    branch.depth
+                )
+                .expect("writing to String cannot fail");
+            }
+            output.push(']');
+        }
+        InstructionKind::EnumCarrierFieldsDrop {
+            value,
+            element,
+            fields,
+        } => {
+            write!(
+                output,
+                "enum_carrier_fields_drop %v{}, %t{}, fields [",
+                value.index(),
+                element.index()
+            )
+            .expect("writing to String cannot fail");
+            for (index, field) in fields.iter().enumerate() {
+                if index != 0 {
+                    output.push_str(", ");
+                }
+                write!(
+                    output,
+                    "variant {}, offset {}, %t{}, depth {}",
+                    field.payload_variant,
+                    field.payload_offset,
+                    field.leaf_element.index(),
+                    field.depth
+                )
+                .expect("writing to String cannot fail");
+            }
+            output.push(']');
+        }
+        InstructionKind::EnumOwningFieldsDrop {
+            value,
+            element,
+            fields,
+        } => {
+            write!(
+                output,
+                "enum_owning_fields_drop %v{}, %t{}, fields [",
+                value.index(),
+                element.index()
+            )
+            .expect("writing to String cannot fail");
+            for (index, field) in fields.iter().enumerate() {
+                if index != 0 {
+                    output.push_str(", ");
+                }
+                write!(
+                    output,
+                    "variant {}, offset {}, %t{}, depth {}",
+                    field.payload_variant,
+                    field.payload_offset,
+                    field.leaf_element.index(),
+                    field.depth
+                )
+                .expect("writing to String cannot fail");
+            }
+            output.push(']');
+        }
+        InstructionKind::RecordBufferFieldsDrop {
+            value,
+            element,
+            fields,
+        } => {
+            write!(
+                output,
+                "record_buffer_fields_drop %v{}, %t{}, fields [",
+                value.index(),
+                element.index()
+            )
+            .expect("writing to String cannot fail");
+            for (index, field) in fields.iter().enumerate() {
+                if index != 0 {
+                    output.push_str(", ");
+                }
+                write!(
+                    output,
+                    "variant {}, offset {}, %t{}, depth {}",
+                    field.payload_variant,
+                    field.payload_offset,
+                    field.leaf_element.index(),
+                    field.depth
+                )
+                .expect("writing to String cannot fail");
+            }
+            output.push(']');
+        }
+        InstructionKind::RecordOwningFieldsDrop {
+            value,
+            element,
+            fields,
+        } => {
+            write!(
+                output,
+                "record_owning_fields_drop %v{}, %t{}, fields [",
+                value.index(),
+                element.index()
+            )
+            .expect("writing to String cannot fail");
+            for (index, field) in fields.iter().enumerate() {
+                if index != 0 {
+                    output.push_str(", ");
+                }
+                write!(
+                    output,
+                    "variant {}, offset {}, %t{}, depth {}",
+                    field.payload_variant,
+                    field.payload_offset,
+                    field.leaf_element.index(),
+                    field.depth
+                )
+                .expect("writing to String cannot fail");
+            }
+            output.push(']');
+        }
+        InstructionKind::CarrierBufferDrop {
+            value,
+            element,
+            leaf_element,
+            payload_variant,
+            payload_offset,
+            depth,
+            alternate_leaf_element,
+            alternate_payload_variant,
+            alternate_depth,
+        } => write!(
+            output,
+            "carrier_buffer_drop %v{}, %t{}, %t{}, variant {}, offset {}, depth {}{}",
+            value.index(),
+            element.index(),
+            leaf_element.index(),
+            payload_variant,
+            payload_offset,
+            depth,
+            match (
+                alternate_leaf_element,
+                alternate_payload_variant,
+                alternate_depth
+            ) {
+                (Some(leaf), Some(variant), Some(depth)) => format!(
+                    ", alt %t{}, variant {}, depth {}",
+                    leaf.index(),
+                    variant,
+                    depth
+                ),
+                _ => String::new(),
+            }
+        )
+        .expect("writing to String cannot fail"),
+        InstructionKind::OwningCarrierDrop {
+            value,
+            element,
+            leaf_element,
+            payload_variant,
+            payload_offset,
+            depth,
+            alternate_leaf_element,
+            alternate_payload_variant,
+            alternate_depth,
+        } => write!(
+            output,
+            "owning_carrier_drop %v{}, %t{}, %t{}, variant {}, offset {}, depth {}{}",
+            value.index(),
+            element.index(),
+            leaf_element.index(),
+            payload_variant,
+            payload_offset,
+            depth,
+            match (
+                alternate_leaf_element,
+                alternate_payload_variant,
+                alternate_depth
+            ) {
+                (Some(leaf), Some(variant), Some(depth)) => format!(
+                    ", alt %t{}, variant {}, depth {}",
+                    leaf.index(),
+                    variant,
+                    depth
+                ),
+                _ => String::new(),
+            }
+        )
+        .expect("writing to String cannot fail"),
         InstructionKind::Load {
             pointer,
             alignment,

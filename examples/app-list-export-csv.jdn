@@ -1,0 +1,39 @@
+module app_list_export_csv.main
+
+// A bounded app_list can be exported as one-column CSV without assembling a
+// temporary String. Quoting is standard CSV and capacity failure is atomic.
+fn main() -> Int32 {
+    if !directory_create("target") { return 1 }
+    if !directory_create("target/jadren") { return 2 }
+    file_delete("target/jadren/app-list-export.csv")
+    app_list_clear(0)
+    app_list_push_text(0, "A,B")
+    app_list_push_text(0, "has \"quote\"")
+    app_list_push_text(0, "plain")
+
+    var too_small: [UInt8; 4] = [9u8, 9u8, 9u8, 9u8]
+    let rejected: UIntSize = app_list_export_csv(0, too_small)
+    if rejected != 0usize { return 3 }
+    if too_small[0] != 9u8 { return 4 }
+
+    var output: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = app_list_export_csv(0, output)
+    if length <= 0usize { return 5 }
+    if output[0] != 34u8 { return 6 }
+    if output[1] != 65u8 { return 7 }
+    if output[2] != 44u8 { return 7 }
+    if output[3] != 66u8 { return 7 }
+    if output[4] != 34u8 { return 8 }
+    if output[5] != 10u8 { return 8 }
+    let written: UIntSize = file_append("target/jadren/app-list-export.csv", output, length)
+    if written != length { return 9 }
+
+    var loaded: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if file_read("target/jadren/app-list-export.csv", loaded) != length { return 10 }
+    if loaded[0] != output[0] { return 11 }
+    if loaded[5] != output[5] { return 11 }
+
+    if !file_delete("target/jadren/app-list-export.csv") { return 12 }
+    app_list_clear(0)
+    return 0
+}

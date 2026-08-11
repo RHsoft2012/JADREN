@@ -1,0 +1,48 @@
+module examples.json_numeric_export;
+
+// Bounded JSON object members for numbers and booleans.
+// The caller owns commas, braces, ordering, and the file sink.
+fn main() -> Int32 {
+    file_delete("target/jadren/jadren-numeric.json")
+    file_append_text("target/jadren/jadren-numeric.json", "{")
+
+    var too_small: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    let rejected: UIntSize = json_object_field_int("signed", -42 as Int64, too_small)
+    if (rejected as Int32) != 0 { return 10 }
+
+    var member: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let rejected_nan: UIntSize = json_object_field_float("invalid", 0.0f64 / 0.0f64, member)
+    if (rejected_nan as Int32) != 0 { return 11 }
+    let rejected_inf: UIntSize = json_object_field_float("invalid", 1.0f64 / 0.0f64, member)
+    if (rejected_inf as Int32) != 0 { return 12 }
+    let signed_length: UIntSize = json_object_field_int("id", -42 as Int64, member)
+    if (signed_length as Int32) != 8 { return 13 }
+    file_append("target/jadren/jadren-numeric.json", member, signed_length)
+    file_append_text("target/jadren/jadren-numeric.json", ",")
+
+    let unsigned_length: UIntSize = json_object_field_uint("count", 7u64, member)
+    if (unsigned_length as Int32) != 9 { return 14 }
+    file_append("target/jadren/jadren-numeric.json", member, unsigned_length)
+    file_append_text("target/jadren/jadren-numeric.json", ",")
+
+    let float_length: UIntSize = json_object_field_float("ratio", 1.5f64, member)
+    if (float_length as Int32) != 16 { return 15 }
+    file_append("target/jadren/jadren-numeric.json", member, float_length)
+    file_append_text("target/jadren/jadren-numeric.json", ",")
+
+    let bool_length: UIntSize = json_object_field_bool("active", true, member)
+    if (bool_length as Int32) != 13 { return 16 }
+    file_append("target/jadren/jadren-numeric.json", member, bool_length)
+    file_append_text("target/jadren/jadren-numeric.json", "}")
+
+    var output: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let loaded: UIntSize = file_read("target/jadren/jadren-numeric.json", output)
+    if (loaded as Int32) != 51 { return 17 }
+    if output[0] != 123u8 { return 18 }
+    if output[9] != 44u8 { return 19 }
+    if output[19] != 44u8 { return 20 }
+    if output[36] != 44u8 { return 21 }
+    if output[50] != 125u8 { return 22 }
+    file_delete("target/jadren/jadren-numeric.json")
+    return 0
+}

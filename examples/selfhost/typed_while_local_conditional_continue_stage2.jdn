@@ -1,0 +1,14 @@
+module examples.selfhost.typed_while_local_conditional_continue_stage2
+
+// A conditional continue skips the remaining body statements and starts the
+// next iteration. The third pass reaches the tail assignment and returns 13.
+
+fn main() -> Int32 {
+    var counter: Int32 = 0
+    while counter < 4 {
+        counter = counter + 1
+        if counter < 3 { continue }
+        counter = counter + 10
+    }
+    return counter
+}

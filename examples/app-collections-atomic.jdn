@@ -1,0 +1,48 @@
+module examples.app_collections_atomic
+
+// Crash-safe saves for both bounded text collections and tables.
+fn main() -> Int32 {
+    app_list_clear(0)
+    let pushed: Bool = app_list_push_text(0, "Atomic list")
+    let list_saved: Bool = app_list_save_atomic(
+        0,
+        "target/jadren/app-list-atomic.tmp",
+        "target/jadren/app-list-atomic.json"
+    )
+    if !pushed { return 1 }
+    if !list_saved { return 2 }
+    if !file_exists("target/jadren/app-list-atomic.json") { return 3 }
+    if file_exists("target/jadren/app-list-atomic.tmp") { return 4 }
+
+    app_list_clear(0)
+    let list_loaded: Bool = app_list_load(0, "target/jadren/app-list-atomic.json")
+    if !list_loaded { return 5 }
+    if app_list_count(0) != 1 { return 6 }
+
+    app_table_clear(0)
+    let row_added: Bool = app_table_append_row(0)
+    let cell_set: Bool = app_table_set_cell(0, 0, 0, "Atomic table")
+    let table_saved: Bool = app_table_save_atomic(
+        0,
+        "target/jadren/app-table-atomic.tmp",
+        "target/jadren/app-table-atomic.json"
+    )
+    if !row_added { return 7 }
+    if !cell_set { return 8 }
+    if !table_saved { return 9 }
+    if !file_exists("target/jadren/app-table-atomic.json") { return 10 }
+    if file_exists("target/jadren/app-table-atomic.tmp") { return 11 }
+
+    app_table_clear(0)
+    let table_loaded: Bool = app_table_load(0, "target/jadren/app-table-atomic.json")
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let copied: UIntSize = app_table_read_cell(0, 0, 0, output)
+    let removed_list: Bool = file_delete("target/jadren/app-list-atomic.json")
+    let removed_table: Bool = file_delete("target/jadren/app-table-atomic.json")
+    if !table_loaded { return 12 }
+    if copied != 12usize { return 13 }
+    if output[0] != 65u8 { return 14 }
+    if !removed_list { return 15 }
+    if !removed_table { return 16 }
+    return 0
+}

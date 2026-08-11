@@ -1,0 +1,53 @@
+module examples.windows_desktop_state_binding;
+
+// State binding keeps the callback focused on application logic. The runtime
+// updates the selected/checked value before invoking this export.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 10 {
+        if ui_state_get(0) != 0 {
+            ui_set_status("Hotovo: checkbox je zapnuty.")
+        } else {
+            ui_set_status("Hotovo: checkbox je vypnuty.")
+        }
+    }
+    if event_id == 20 {
+        if ui_state_get(1) >= 0 {
+            ui_set_status("Výber zoznamu je ulozeny v state slote.")
+        } else {
+            ui_set_status("Zoznam nema vybranu polozku.")
+        }
+    }
+    if event_id == 30 {
+        if ui_state_get(2) > 0 {
+            ui_set_status("Vstup ma text; jeho dlzka je v state slote.")
+        } else {
+            ui_set_status("Vstup je prazdny.")
+        }
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    ui_window("Jadren UI State Binding", 760, 460, 0xF6F8FCu32)
+    ui_top_bar(48, 0x252526u32)
+    ui_text("Jadren UI - automaticke väzby stavu", 24, 64, 700, 34,
+            0x111827u32, 0xFFFFFFu32, 8)
+
+    ui_checkbox("Hotovo", 10, 24, 120, 220, 40,
+                0x111827u32, 0x18C964u32, 10)
+    ui_state_bind(10, 0, 0)
+
+    ui_list(20, 270, 120, 220, 140, 0x111827u32, 0xFFFFFFu32)
+    ui_list_item(20, "Prvy zaznam")
+    ui_list_item(20, "Druhy zaznam")
+    ui_state_bind(20, 1, 1)
+
+    ui_text_input("Napíš text", 30, 520, 120, 210, 40,
+                  0x111827u32, 0xFFFFFFu32, 8)
+    ui_state_bind(30, 2, 2)
+
+    ui_status("Klikni na prvok alebo napis text.", 24, 300, 706, 48,
+              0x111827u32, 0xDCFCE7u32, 12)
+    return ui_run()
+}

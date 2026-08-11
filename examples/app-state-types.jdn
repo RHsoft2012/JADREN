@@ -1,0 +1,25 @@
+module examples.app_state_types
+
+// app_state_type_at enumerates the logical state entries without exposing
+// the bounded runtime storage layout. Kind codes are: 1 Int, 2 UInt,
+// 3 Bool, 4 Text and 5 Float; an invalid index returns 0.
+fn main() -> Int32 {
+    app_state_clear()
+    app_state_set_int("minutes", 42 as Int64)
+    app_state_set_uint("total", 7u64)
+    app_state_set_bool("done", true)
+    app_state_set_text("title", "Plan")
+    app_state_set_float("rate", 1.25f64)
+
+    if app_state_count() != 5 { return 1 }
+    if app_state_type_at(0) != 1 { return 2 }
+    if app_state_type_at(1) != 2 { return 3 }
+    if app_state_type_at(2) != 3 { return 4 }
+    if app_state_type_at(3) != 4 { return 5 }
+    if app_state_type_at(4) != 5 { return 6 }
+    if app_state_type_at(-1) != 0 { return 7 }
+    if app_state_type_at(99) != 0 { return 8 }
+
+    app_state_clear()
+    return 0
+}

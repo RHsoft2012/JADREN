@@ -1,0 +1,13 @@
+version = 1
+manifest_fingerprint = "79aa5a91a3f66385"
+
+[package]
+name = "network-cookie-response-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"
+

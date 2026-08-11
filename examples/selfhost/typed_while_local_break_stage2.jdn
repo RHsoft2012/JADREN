@@ -1,0 +1,13 @@
+module examples.selfhost.typed_while_local_break_stage2
+
+// Companion source for the bounded while break hand-off.
+// The explicit break leaves the loop after the first increment.
+
+fn main() -> Int32 {
+    var counter: Int32 = 0
+    while counter < 4 {
+        counter = counter + 1
+        break
+    }
+    return counter
+}

@@ -28,7 +28,7 @@ use jadren_parser::{AstFile, parse};
 use jadren_resolve::{ModuleCatalog, ResolutionOutput, resolve_with_modules};
 use jadren_source::{SourceError, SourceFile, SourceId, SourceManager, Span};
 use jadren_syntax::SyntaxTree;
-use jadren_typeck::{TypeCheckOutput, check_types};
+use jadren_typeck::{TypeCheckOutput, check_types_with_modules};
 
 const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -419,6 +419,16 @@ impl CompilerSession {
         &self.sources
     }
 
+    /// Consumes the session and returns its registered sources.
+    ///
+    /// Native debug artifact generation uses this after frontend validation so
+    /// CodeView/DWARF metadata is derived from the exact source set that
+    /// produced the verified JIR.
+    #[must_use]
+    pub fn into_sources(self) -> SourceManager {
+        self.sources
+    }
+
     /// Adds a source using a deterministic lexical display path.
     pub fn add_source(
         &mut self,
@@ -453,7 +463,7 @@ impl CompilerSession {
             let resolution = resolve_with_modules(source, &parsed.file, &catalog);
             let resolution_errors = resolution.has_errors();
             diagnostics.extend(resolution.diagnostics.iter().cloned());
-            let type_check = check_types(source, &parsed.file, &resolution);
+            let type_check = check_types_with_modules(source, &parsed.file, &resolution, &catalog);
             let type_errors = type_check.has_errors();
             diagnostics.extend(type_check.diagnostics.iter().cloned());
             let (hir, effects, mir, jir, optimization) = if syntax_errors
@@ -657,7 +667,7 @@ impl CompilerSession {
             if resolution.has_errors() {
                 continue;
             }
-            let checked = check_types(source, &parsed.file, &resolution);
+            let checked = check_types_with_modules(source, &parsed.file, &resolution, catalog);
             if checked.has_errors() {
                 continue;
             }
@@ -832,7 +842,7 @@ mod tests {
             target: target.clone(),
             ..CompilerConfig::default()
         };
-        assert_eq!(first.semantic_fingerprint().to_string(), "d55b3a1088fb6c67");
+        assert_eq!(first.semantic_fingerprint().to_string(), "3f638a8c85a69268");
         let mut second = first.clone();
         second.diagnostic_format = DiagnosticFormat::Json;
         assert_eq!(
@@ -1490,6 +1500,27 @@ extern "C" {
         let invalid_artifacts = invalid_output.artifacts.expect("artifacts");
         assert!(invalid_artifacts.hir.is_none());
         assert!(invalid_artifacts.jir.is_none());
+    }
+
+    #[test]
+    fn session_builds_time_tracker_practical_example() {
+        let mut session = CompilerSession::new(CompilerConfig {
+            profile: BuildProfile::Debug,
+            ..CompilerConfig::default()
+        });
+        let source = session
+            .add_source(
+                "examples/time-tracker.jdn",
+                include_str!("../../../examples/time-tracker.jdn"),
+            )
+            .expect("practical example should fit");
+
+        let output = session.check(source).expect("source should exist");
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+        let artifacts = output.artifacts.expect("frontend artifacts");
+        assert!(artifacts.hir.is_some());
+        assert!(artifacts.mir.is_some());
+        assert!(artifacts.jir.is_some());
     }
 
     #[test]

@@ -1,0 +1,24 @@
+module examples.selfhost.typed_nested_while_mixed_int32_float64_stage2
+
+// The outer loop uses Int32 while its nested loop uses Float64 storage and a
+// mixed Int32/Float64 call crosses the outer-tail expression boundary.
+
+fn mix(value: Int32, amount: Float64) -> Int32 {
+    return value + 1
+}
+
+fn main() -> Int32 {
+    var outer: Int32 = 0
+    while outer < 2 {
+        outer = outer + 1
+        var inner: Float64 = 0.0f64
+        while inner < 2.0f64 {
+            inner = inner + 1.0f64
+        }
+        outer = mix(outer, inner)
+    }
+    if outer == 2 {
+        return 0
+    }
+    return 1
+}

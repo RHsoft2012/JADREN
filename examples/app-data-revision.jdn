@@ -1,0 +1,26 @@
+module examples.app_data_revision
+
+fn main() -> Int32 {
+    app_state_clear()
+    app_list_clear(0)
+    app_table_clear(0)
+
+    let initial: UInt64 = app_data_revision()
+    if app_data_revision() != initial { return 1 }
+
+    if !app_state_set_text("mode", "focus") { return 2 }
+    let state_token: UInt64 = app_data_revision()
+    if state_token == initial { return 3 }
+
+    if !app_list_push_text(0, "Task") { return 4 }
+    let list_token: UInt64 = app_data_revision()
+    if list_token == state_token { return 5 }
+
+    if !app_table_set_column_type(0, 0, 1) { return 6 }
+    if !app_table_append_row(0) { return 7 }
+    if !app_table_set_int(0, 0, 0, 42 as Int64) { return 8 }
+    let table_token: UInt64 = app_data_revision()
+    if table_token == list_token { return 9 }
+    if app_data_revision() != table_token { return 10 }
+    return 0
+}

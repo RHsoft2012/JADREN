@@ -1,16 +1,65 @@
 module examples.stdlib_core_demo
 
+import jadren.core.collections.set_buffer_i32
+import jadren.core.collections.sum_buffer_i32
 import jadren.core.collections.sum_i32
+import jadren.core.io.write_stdout
 import jadren.core.option.unwrap_or_i32
 import jadren.core.outcome.ok_i32
 import jadren.core.outcome.unwrap_or_result_i32
+import jadren.core.process.arg_count
+import jadren.core.process.arg_read
+import jadren.core.time.monotonic_ms
+import jadren.core.time.unix_seconds
+import jadren.core.time.utc_offset_parts
+import jadren.core.time.utc_parts
 import jadren.core.utf8.pass_owned
 
 pub fn summarize(values: read Slice<Int32>) -> Int32 {
     return sum_i32(values)
 }
 
-fn main() {
+pub fn summarize_buffer(values: read Buffer<Int32>) -> Int32 {
+    return sum_buffer_i32(values)
+}
+
+pub fn emit_marker(marker: read Slice<UInt8>) -> UIntSize {
+    return write_stdout(marker)
+}
+
+fn main() -> Int32 {
+    let process_count = arg_count()
+    if process_count == 0usize { return 6 }
+    var first_argument: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if process_count > 1usize {
+        let first_length = arg_read(1usize, first_argument)
+        if first_length == 0usize { return 6 }
+    }
+    var epoch: [Int32; 6] = [0, 0, 0, 0, 0, 0]
+    if !utc_parts(0i64, epoch) { return 6 }
+    if epoch[0] != 1970 { return 6 }
+    if epoch[1] != 1 { return 6 }
+    if epoch[2] != 1 { return 6 }
+    var offset_epoch: [Int32; 6] = [0, 0, 0, 0, 0, 0]
+    if !utc_offset_parts(0i64, 60, offset_epoch) { return 6 }
+    if offset_epoch[3] != 1 { return 6 }
+    if unix_seconds() <= 0i64 { return 6 }
+    let monotonic_start = monotonic_ms()
+    let monotonic_end = monotonic_ms()
+    if monotonic_end < monotonic_start { return 6 }
+    var marker: [UInt8; 1] = [32u8]
+    if emit_marker(marker) != 1usize { return 6 }
+    region frame {
+        let values: Buffer<Int32> = frame.allocate(3)
+        if !set_buffer_i32(values, 0usize, 10) { return 1 }
+        if !set_buffer_i32(values, 1usize, 20) { return 2 }
+        if !set_buffer_i32(values, 2usize, 30) { return 3 }
+        if set_buffer_i32(values, 3usize, 40) { return 4 }
+        if summarize_buffer(values) != 60 { return 5 }
+    }
     let fallback: Option<Int32> = Some(7)
     let stable_total = unwrap_or_i32(fallback, 0)
     let checked = ok_i32(stable_total)
@@ -21,4 +70,5 @@ fn main() {
         Ok(_) => print(message),
         Error(_) => print("unexpected error"),
     }
+    return checked_total
 }

@@ -1,0 +1,8 @@
+version = 1
+manifest_fingerprint = "9f08b8d12493bed3"
+
+[package]
+name = "multi-file-app"
+version = "0.1.0"
+edition = "2026"
+

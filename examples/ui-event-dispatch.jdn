@@ -1,0 +1,39 @@
+module examples.ui_event_dispatch
+
+// Headless event smoke: the same callback is used by native clicks and by
+// ui_dispatch_event, so application logic can be tested without an OS click.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 8 {
+        if !app_state_get_bool("enabled") { return 2 }
+        if !app_state_set_int("checked_events", app_state_get_int("checked_events") + 1 as Int64) { return 3 }
+        return 0
+    }
+    if event_id == 7 {
+        if !app_state_set_int("runs", app_state_get_int("runs") + 1 as Int64) { return 4 }
+        return 0
+    }
+    return 1
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    let root: Int32 = ui_app_begin("Jadren event dispatch", 420, 240, 0xF6F8FCu32)
+    if root == 0 { return 3 }
+    let button: Int32 = ui_app_button(root, "Run", 7, 120, 36,
+                                       0xFFFFFFu32, 0x168EF5u32, 8, 0)
+    if button == 0 { return 4 }
+    let checkbox: Int32 = ui_app_checkbox(root, "Enabled", 8, 120, 36,
+                                           0x111827u32, 0x168EF5u32, 8, 0, 0)
+    if checkbox == 0 { return 5 }
+    ui_set_checked(8, 1)
+    if !ui_app_bind_app_state(checkbox, "enabled") { return 6 }
+    if !app_state_get_bool("enabled") { return 7 }
+    if ui_dispatch_event(99) { return 5 }
+    if !ui_dispatch_event(8) { return 8 }
+    if app_state_get_int("checked_events") != 1 as Int64 { return 9 }
+    if !ui_dispatch_event(7) { return 10 }
+    if app_state_get_int("runs") != 1 as Int64 { return 11 }
+    if !ui_app_end(root) { return 12 }
+    return 0
+}

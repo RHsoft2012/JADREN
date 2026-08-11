@@ -1,0 +1,10 @@
+[package]
+name = "app-window-constraints-project"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+jadren-app = { path = "../../stdlib/app" }
+
+[targets]
+library = true

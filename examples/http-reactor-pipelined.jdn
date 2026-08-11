@@ -1,0 +1,130 @@
+module examples.http_reactor_pipelined;
+
+// A single bounded reactor buffer can hold multiple HTTP/1.1 requests.
+// The client sends two requests in one TCP write. The server discovers the
+// exact first frame length, replies, consumes that prefix, then routes the
+// second frame without reallocating or copying into a second request buffer.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38142u16)
+    if (listener as Int32) == 0 { return 10 }
+    let reactor: UIntSize = net_reactor_open(4u32, 8u32)
+    if (reactor as Int32) == 0 { net_socket_close(listener); return 11 }
+
+    let accept_operation: UIntSize = net_reactor_submit_accept(reactor, listener, 10usize)
+    if (accept_operation as Int32) == 0 {
+        net_reactor_close(reactor); net_socket_close(listener); return 12
+    }
+    let accepted_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if accepted_events == 0u32 {
+        net_reactor_close(reactor); net_socket_close(listener); return 13
+    }
+    let client: UIntSize = net_reactor_event_socket(reactor, 0u32)
+    if (client as Int32) == 0 {
+        net_reactor_close(reactor); net_socket_close(listener); return 14
+    }
+
+    var request: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var chunk: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var response: [UInt8; 144] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var body: [UInt8; 2] = [79u8, 75u8]
+    var request_length: UIntSize = 0usize
+
+    // Keep receiving until both 40-byte requests are present. A single
+    // buffered receive may return all 80 bytes or only a smaller prefix.
+    while request_length < 80usize {
+        let receive_operation: UIntSize = net_reactor_submit_receive_buffer(
+            reactor, client, chunk, 128usize)
+        if (receive_operation as Int32) == 0 {
+            net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 15
+        }
+        let received_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+        if received_events == 0u32 {
+            net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 16
+        }
+        let received_bytes: UIntSize = net_reactor_event_bytes(reactor, 0u32)
+        if received_bytes == 0usize {
+            net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 17
+        }
+        let next_length: UIntSize = http_request_append(
+            request, request_length, chunk, received_bytes)
+        if next_length <= request_length {
+            net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 18
+        }
+        request_length = next_length
+        if request_length > 80usize {
+            net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 19
+        }
+    }
+
+    let first_frame: UIntSize = http_request_frame_length_prefix(request, request_length)
+    if (first_frame as Int32) != 40 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 20
+    }
+    if !http_request_is_complete_prefix(request, first_frame) {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 21
+    }
+    if !http_route_match_prefix(request, first_frame, "GET", "/hello") {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 22
+    }
+
+    let first_response_length: UIntSize = http_response_write_ex(
+        200u16, "text/plain", body, true, response)
+    if first_response_length == 0usize {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 23
+    }
+    let first_send: UIntSize = net_reactor_submit_send_buffer_prefix(
+        reactor, client, response, first_response_length, 30usize)
+    if (first_send as Int32) == 0 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 24
+    }
+    let first_sent_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if first_sent_events == 0u32 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 25
+    }
+    let first_sent_bytes: UIntSize = net_reactor_event_bytes(reactor, 0u32)
+    if (first_sent_bytes as Int32) != (first_response_length as Int32) {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 26
+    }
+
+    request_length = http_request_consume_prefix(request, request_length, first_frame)
+    if (request_length as Int32) != 40 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 27
+    }
+    let second_frame: UIntSize = http_request_frame_length_prefix(request, request_length)
+    if (second_frame as Int32) != 40 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 28
+    }
+    if !http_request_is_complete_prefix(request, second_frame) {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 29
+    }
+    if !http_route_match_prefix(request, second_frame, "GET", "/hello") {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 30
+    }
+
+    let second_response_length: UIntSize = http_response_write(
+        200u16, "text/plain", body, response)
+    if second_response_length == 0usize {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 31
+    }
+    let second_send: UIntSize = net_reactor_submit_send_buffer_prefix(
+        reactor, client, response, second_response_length, 40usize)
+    if (second_send as Int32) == 0 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 32
+    }
+    let second_sent_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if second_sent_events == 0u32 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 33
+    }
+    let second_sent_bytes: UIntSize = net_reactor_event_bytes(reactor, 0u32)
+    if (second_sent_bytes as Int32) != (second_response_length as Int32) {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 34
+    }
+
+    let client_closed: Bool = net_socket_close(client)
+    let reactor_closed: Bool = net_reactor_close(reactor)
+    let listener_closed: Bool = net_socket_close(listener)
+    if !client_closed { return 35 }
+    if !reactor_closed { return 36 }
+    if !listener_closed { return 37 }
+    return 0
+}

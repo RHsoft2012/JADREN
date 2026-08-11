@@ -1,0 +1,9 @@
+module examples.selfhost.typed_if_local_merge_stage2
+
+// Companion source for branch-local stack storage. The two if branches
+// produce one value that is materialized as `value` before the return.
+
+fn main() -> Int32 {
+    let value: Int32 = if 2 > 1 { 10 } else { 20 }
+    return value
+}

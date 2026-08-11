@@ -1,0 +1,49 @@
+module examples.stdlib_buffer_owning_enum_string_move_into
+
+// Raw-pointer move APIs transfer arbitrary move-safe enum bytes without an
+// aggregate C ABI return. The enum field table remains responsible for
+// cleaning the OwnedString descriptor in the output value at scope exit.
+@repr(C) enum Event {
+    Idle,
+    Text(OwnedString),
+    Pair(OwnedString, Int32),
+    Done
+}
+
+fn main() -> Int32 {
+    let events_created: Result<Buffer<Event>, Int32> = buffer_create(0usize)
+    let first_created: Result<OwnedString, Int32> = string_owned_from("first")
+    let second_created: Result<OwnedString, Int32> = string_owned_from("second")
+    var result_code: Int32 = 0
+
+    match events_created {
+        Ok(events) => {
+            match first_created {
+                Ok(first) => {
+                    if !buffer_append(events, Event.Text(first)) { result_code = 1 }
+                    var output: Event = Event.Idle
+                    if !buffer_remove_move_into(events, 0usize, output) { result_code = 2 }
+                    if buffer_length(events) != 0usize { result_code = 3 }
+                    let status: Int32 = buffer_remove_move_into_status(events, 99usize, output)
+                    if status != -20 { result_code = 4 }
+
+                    match second_created {
+                        Ok(second) => {
+                            let incoming: Event = Event.Pair(second, 7)
+                            if !buffer_insert_move_from(events, 0usize, incoming) { result_code = 5 }
+                            if buffer_length(events) != 1usize { result_code = 6 }
+                            var output_pair: Event = Event.Idle
+                            if !buffer_pop_move_into(events, output_pair) { result_code = 7 }
+                            if buffer_length(events) != 0usize { result_code = 8 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

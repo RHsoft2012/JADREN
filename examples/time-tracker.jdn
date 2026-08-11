@@ -1,0 +1,157 @@
+module examples.time_tracker
+
+// TimeTracker-like desktop application written only in Jadren.
+// The rows are deliberately bounded in this first vertical slice: the same
+// program exercises state, JSON persistence, input read-back, native model
+// bindings and CSV export without an Electron or C/Win32 bridge.
+
+fn restore_rows() {
+    let loaded: Bool = app_state_load("target/jadren/time-tracker.json")
+    if loaded {
+        if app_state_get_bool("done_0") {
+            ui_table_cell(30, 0, 2, "Hotovo")
+        }
+        if app_state_get_bool("done_1") {
+            ui_table_cell(30, 1, 2, "Hotovo")
+        }
+        if app_state_get_bool("done_2") {
+            ui_table_cell(30, 2, 2, "Hotovo")
+        }
+    } else {
+        app_state_set_bool("done_0", false)
+        app_state_set_bool("done_1", false)
+        app_state_set_bool("done_2", false)
+        ui_set_status("Novy stav: ulohy su pripravene.")
+    }
+}
+
+fn export_csv() {
+    file_write_text("target/jadren/time-tracker.csv", "task,time,status\n")
+    if app_state_get_bool("done_0") {
+        file_append_text("target/jadren/time-tracker.csv", "Plan UI,08:30,Hotovo\n")
+    } else {
+        file_append_text("target/jadren/time-tracker.csv", "Plan UI,08:30,Otvorene\n")
+    }
+    if app_state_get_bool("done_1") {
+        file_append_text("target/jadren/time-tracker.csv", "Over build,09:15,Hotovo\n")
+    } else {
+        file_append_text("target/jadren/time-tracker.csv", "Over build,09:15,Caka\n")
+    }
+    if app_state_get_bool("done_2") {
+        file_append_text("target/jadren/time-tracker.csv", "Spusti smoke,10:00,Hotovo\n")
+    } else {
+        file_append_text("target/jadren/time-tracker.csv", "Spusti smoke,10:00,Pripravene\n")
+    }
+}
+
+fn persist() {
+    app_state_save("target/jadren/time-tracker.json")
+    export_csv()
+}
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 20 {
+        var input: [UInt8; 64] = [
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+        ]
+        let copied: UIntSize = ui_input_read(20, input)
+        app_state_set_uint("last_input_bytes", copied as UInt64)
+        if copied == 0usize {
+            ui_set_status("Poznamka je prazdna.")
+        } else {
+            app_state_set_text("last_action", "Poznamka nacitana z inputu")
+            ui_set_status("Poznamka bola nacitana do Jadren stavu.")
+        }
+        persist()
+    }
+    if event_id == 90 {
+        let selected: Int32 = ui_table_selected_row(30)
+        if selected == 0 {
+            app_state_set_bool("done_0", true)
+            ui_table_cell(30, 0, 2, "Hotovo")
+            ui_set_status("Uloha Plan UI je hotova.")
+            persist()
+        }
+        if selected == 1 {
+            app_state_set_bool("done_1", true)
+            ui_table_cell(30, 1, 2, "Hotovo")
+            ui_set_status("Uloha Over build je hotova.")
+            persist()
+        }
+        if selected == 2 {
+            app_state_set_bool("done_2", true)
+            ui_table_cell(30, 2, 2, "Hotovo")
+            ui_set_status("Uloha Spusti smoke je hotova.")
+            persist()
+        }
+        if selected < 0 {
+            ui_set_status("Najprv vyber riadok.")
+        }
+    }
+    if event_id == 91 {
+        export_csv()
+        ui_set_status("CSV export bol ulozeny do target/jadren/time-tracker.csv.")
+    }
+    if event_id == 92 {
+        app_state_save("target/jadren/time-tracker.json")
+        ui_set_status("Stav bol ulozeny do target/jadren/time-tracker.json.")
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    app_list_clear(0)
+    app_list_push_text(0, "Plan UI")
+    app_list_push_text(0, "Over build")
+    app_list_push_text(0, "Spusti smoke")
+    let task_count: Int32 = app_list_count(0)
+    app_state_set_int("task_count", task_count as Int64)
+    // A dynamic application table is kept separately from the Win32 widget.
+    // The UI below is a projection; future binding layers can read these cells.
+    app_table_clear(0)
+    app_table_append_row(0)
+    app_table_append_row(0)
+    app_table_append_row(0)
+    app_table_set_cell(0, 0, 0, "Plan UI")
+    app_table_set_cell(0, 0, 1, "08:30")
+    app_table_set_cell(0, 0, 2, "Otvorene")
+    app_table_set_cell(0, 1, 0, "Over build")
+    app_table_set_cell(0, 1, 1, "09:15")
+    app_table_set_cell(0, 1, 2, "Caka")
+    app_table_set_cell(0, 2, 0, "Spusti smoke")
+    app_table_set_cell(0, 2, 1, "10:00")
+    app_table_set_cell(0, 2, 2, "Pripravene")
+    let task_table_rows: Int32 = app_table_row_count(0)
+    app_state_set_int("task_table_rows", task_table_rows as Int64)
+    ui_window("Jadren TimeTracker", 860, 620, 0xF6F8FCu32)
+    ui_top_bar(48, 0x252526u32)
+    ui_text("Jadren TimeTracker - natívna aplikácia", 24, 64, 800, 34, 0x111827u32, 0xFFFFFFu32, 8)
+    ui_text("Stav, input, tabuľka, JSON a CSV sú naprogramované priamo v Jadrene.", 24, 104, 800, 30, 0x475569u32, 0xFFFFFFu32, 8)
+
+    ui_table(30, 24, 150, 812, 250, 0x111827u32, 0xFFFFFFu32)
+    ui_table_column(30, 0, "Uloha", 360)
+    ui_table_column(30, 1, "Cas", 140)
+    ui_table_column(30, 2, "Stav", 220)
+    ui_table_bind_app(30, 0, 3)
+    ui_state_bind(30, 0, 1)
+
+    ui_text_input("Poznamka pre aktivitu", 20, 24, 424, 812, 42, 0x111827u32, 0xFFFFFFu32, 8)
+    ui_input_bind_app_state(20, "last_note")
+    ui_status("Vyber riadok, oznac ho ako hotovy alebo nacitaj poznamku.", 24, 486, 812, 44, 0x111827u32, 0xDCFCE7u32, 12)
+    ui_event_button("Oznac vybranu ulohu", 90, 24, 550, 250, 42, 0xFFFFFFu32, 0x168EF5u32, 12)
+    ui_event_button("Export CSV", 91, 294, 550, 180, 42, 0xFFFFFFu32, 0x18C964u32, 12)
+    ui_event_button("Uloz stav", 92, 490, 550, 160, 42, 0xFFFFFFu32, 0x64748Bu32, 12)
+
+    restore_rows()
+    ui_input_refresh_app_state(20)
+    return ui_run()
+}

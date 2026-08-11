@@ -1,0 +1,52 @@
+module examples.app_state_typed_read
+
+// Typed reads return Bool instead of using a numeric sentinel. The caller
+// keeps ownership of every output slot and the slot is unchanged on failure.
+fn main() -> Int32 {
+    app_state_clear()
+
+    if !app_state_set_int("minutes", 25 as Int64) { return 1 }
+    if !app_state_set_uint("total", 7u64) { return 2 }
+    if !app_state_set_float("rate", 1.25f64) { return 3 }
+    if !app_state_set_bool("running", true) { return 4 }
+    if !app_state_set_text("name", "Jadren") { return 5 }
+    if !app_state_set_text("empty", "") { return 6 }
+
+    var minutes: [Int64; 1] = [0 as Int64]
+    var total: [UInt64; 1] = [0u64]
+    var rate: [Float64; 1] = [0.0f64]
+    var running: [Bool; 1] = [false]
+    var name: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var name_length: [UIntSize; 1] = [99usize]
+    var empty: [UInt8; 4] = [90u8, 90u8, 90u8, 90u8]
+    var empty_length: [UIntSize; 1] = [99usize]
+
+    if !app_state_read_int("minutes", minutes) { return 7 }
+    if !app_state_read_uint("total", total) { return 8 }
+    if !app_state_read_float("rate", rate) { return 9 }
+    if !app_state_read_bool("running", running) { return 10 }
+    if !app_state_read_text_exact("name", name, name_length) { return 11 }
+    if !app_state_read_text_exact("empty", empty, empty_length) { return 12 }
+
+    if minutes[0] != 25 as Int64 { return 13 }
+    if total[0] != 7u64 { return 14 }
+    if rate[0] != 1.25f64 { return 15 }
+    if !running[0] { return 16 }
+    if name_length[0] != 6usize { return 17 }
+    if empty_length[0] != 0usize { return 18 }
+    if empty[0] != 90u8 { return 19 }
+
+    // A missing key and an exact-kind mismatch are both rejected without
+    // overwriting the caller-owned output slot.
+    if app_state_read_int("missing", minutes) { return 20 }
+    if app_state_read_int("total", minutes) { return 21 }
+    if minutes[0] != 25 as Int64 { return 22 }
+    name_length[0] = 123usize
+    if app_state_read_text_exact("missing", name, name_length) { return 23 }
+    if name_length[0] != 123usize { return 24 }
+    if app_state_read_text_exact("minutes", name, name_length) { return 25 }
+    if name_length[0] != 123usize { return 26 }
+
+    app_state_clear()
+    return 0
+}

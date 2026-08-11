@@ -1,0 +1,42 @@
+module examples.http_session_tls_server_pfx
+
+// HTTPS-style bounded session fixture. Windows uses a PFX path and password;
+// the same API accepts PEM certificate/key paths on Linux.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38130u16)
+    if (listener as Int32) == 0 { return 10 }
+    let session: UIntSize = http_session_open_tls(
+        listener,
+        2u32,
+        1024u32,
+        1024u32,
+        "target/jadren-tls-smoke/server.pfx",
+        "testpass"
+    )
+    if (session as Int32) == 0 { net_socket_close(listener); return 11 }
+
+    http_router_clear()
+    var body: [UInt8; 5] = [72u8, 69u8, 76u8, 76u8, 79u8]
+    let added: Bool = http_router_add("GET", "/hello", 200u16, "text/plain", body)
+    if !added { http_session_close(session); return 12 }
+
+    let first: UInt32 = http_session_step(session, 2000u32)
+    let second: UInt32 = http_session_step(session, 2000u32)
+    let third: UInt32 = http_session_step(session, 2000u32)
+    let fourth: UInt32 = http_session_step(session, 2000u32)
+    let fifth: UInt32 = http_session_step(session, 2000u32)
+    let sixth: UInt32 = http_session_step(session, 2000u32)
+    let seventh: UInt32 = http_session_step(session, 2000u32)
+    let eighth: UInt32 = http_session_step(session, 2000u32)
+    if first == 2u32 { http_session_close(session); return 0 }
+    if second == 2u32 { http_session_close(session); return 0 }
+    if third == 2u32 { http_session_close(session); return 0 }
+    if fourth == 2u32 { http_session_close(session); return 0 }
+    if fifth == 2u32 { http_session_close(session); return 0 }
+    if sixth == 2u32 { http_session_close(session); return 0 }
+    if seventh == 2u32 { http_session_close(session); return 0 }
+    if eighth == 2u32 { http_session_close(session); return 0 }
+    let closed: Bool = http_session_close(session)
+    if !closed { return 13 }
+    return 14
+}
