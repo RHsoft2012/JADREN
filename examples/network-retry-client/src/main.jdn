@@ -1,0 +1,358 @@
+module examples.network_retry_client
+import jadren.network.http.response_body_prefix
+import jadren.network.http.response_status_prefix
+import jadren.network.http.write_request_prefix
+import jadren.network.policy.backoff_ms
+import jadren.network.policy.can_retry
+import jadren.network.policy.http_status_retryable
+import jadren.network.tcp.close_socket
+import jadren.network.tcp.connect
+import jadren.network.tcp.receive
+import jadren.network.tcp.send_prefix
+import jadren.network.tcp.set_timeout
+fn main() -> Int32 {
+    var body:[UInt8;
+    1] =[0u8]
+    var request:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    let request_length = write_request_prefix("GET",
+    "/hello",
+    "localhost",
+    body,
+    0usize,
+    request)
+    if request_length == 0usize {
+        return 10
+    }
+    var attempt: UInt32 = 0u32
+    var succeeded: Bool = false
+    var used_backoff: UInt32 = 0u32
+    while can_retry(attempt,
+    2u32) {
+        used_backoff = backoff_ms(10u32,
+        attempt,
+        100u32)
+        let socket = connect("127.0.0.1",
+        38158u16)
+        if socket == 0usize {
+            attempt = attempt + 1u32
+        } else {
+            if set_timeout(socket,
+            1000u32 + used_backoff) {
+                if send_prefix(socket,
+                request,
+                request_length) == request_length {
+                    var response:[UInt8;
+                    128] =[0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8,
+                    0u8]
+                    let received = receive(socket,
+                    response)
+                    if received != 0usize {
+                        let status = response_status_prefix(response,
+                        received)
+                        if status == 200u16 {
+                            var output:[UInt8;
+                            8] =[0u8,
+                            0u8,
+                            0u8,
+                            0u8,
+                            0u8,
+                            0u8,
+                            0u8,
+                            0u8]
+                            let body_length = response_body_prefix(response,
+                            received,
+                            output)
+                            if body_length == 2usize {
+                                if output[0] == 79u8 {
+                                    if output[1] == 75u8 {
+                                        succeeded = true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            close_socket(socket)
+            if succeeded {
+                break
+            }
+            attempt = attempt + 1u32
+        }
+    }
+    if ! succeeded {
+        return 11
+    }
+    if attempt != 1u32 {
+        return 12
+    }
+    if used_backoff != 20u32 {
+        return 13
+    }
+    if ! http_status_retryable(503u16) {
+        return 14
+    }
+    if http_status_retryable(404u16) {
+        return 15
+    }
+    if file_write_text("target/jadren/network-retry.ok",
+    "attempts=2\nbackoff_ms=20\nstatus=200\n") == 0usize {
+        return 16
+    }
+    print("network retry client recovered after one transient failure")
+    return 0
+}

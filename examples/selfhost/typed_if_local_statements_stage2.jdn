@@ -1,0 +1,12 @@
+module examples.selfhost.typed_if_local_statements_stage2
+
+// Companion source for a multi-statement tail after a branch-local merge.
+// Each assignment updates the same merged local before the final return.
+
+fn main() -> Int32 {
+    // branch-local stack storage
+    let value: Int32 = if 2 > 1 { 10 } else { 20 }
+    value = value + 1
+    value = value + 2
+    return value
+}

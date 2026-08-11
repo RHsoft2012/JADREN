@@ -1,0 +1,7 @@
+module examples.selfhost.typed_if_value_local_assignment
+
+fn local_value() -> Int32 {
+    let mut value: Int32 = if 2 > 1 { 10 } else { 20 };
+    value = value + 1;
+    return value;
+}

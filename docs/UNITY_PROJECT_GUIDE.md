@@ -1,10 +1,9 @@
 # Unity project guide
 
-This guide is for a Unity user who wants to add Jadren to an existing project,
-create a small animation test scene, and run the supplied validation scripts.
-The examples target Unity 6; the current development fixtures were checked with
-Unity `6000.4.8f1`. Jadren 0.1 is a development preview, so keep a backup or a
-separate test branch before changing a production project.
+This guide is for a Unity user who wants to add Jadren to an existing Unity 6
+project, create a small animation scene and verify the result in the Editor and
+Game views. Jadren 0.1 is a development preview, so keep a backup or a separate
+development branch before changing a production project.
 
 ## 1. Install the packages
 
@@ -58,48 +57,28 @@ Start with 250 agents. Increase to 500 and 1,000 only after the scene is
 visible and the fallback path has been checked. A missing GPU capability must
 fall back to the managed evaluator; it must not make the scene invisible.
 
-## 3. Ready-made SampleScene 3
+## 3. Create a first scene
 
-The development Unity project contains `Assets/Scenes/SampleScene 3.unity`.
-It already has the camera, light/volume setup, a
-`Jadren SampleScene 3 Animation Test` root, the crowd animator, and a small
-runtime ground/diagnostic overlay. The ground and the 250-agent crowd are
-created at runtime, so no per-agent scene objects are required.
+Create a scene with a camera, light and one empty host object. Add a
+`JadrenAnimationGpuCrowdAnimator` component to the host and assign a baked
+character prefab. The prefab should contain an `Animator`, a
+`JadrenAnimationAuthoring` component with a configured rig/controller, and a
+readable `SkinnedMeshRenderer` with valid bones, bind poses and materials.
 
-Open the scene and press **Play**. The overlay reports the selected route,
-agent count, pose updates and draw submissions. If the Game view is empty,
-first check the prefab reference, baked authoring data, camera position and the
-Console for a `character_prefab_missing` or `character_baked_authoring_missing`
-diagnostic.
+Start with 250 agents, enable the managed fallback and press **Play**. If the
+Game view is empty, check the prefab reference, baked authoring data, camera
+position and the Unity Console for the first diagnostic.
 
-## 4. Run the validation scripts
+## 4. Validate in the Editor
 
-The editor runners are available from the Unity menu after scripts compile:
+Use the Unity Test Runner for EditMode and PlayMode checks supplied by the
+package. Validate one character first, then a small crowd, then multi-material
+and LOD variants. Keep the Console free of errors before moving to a Release
+Player build.
 
-- **Jadren → Validation → SampleScene 3 Animation** checks scene loading,
-  crowd build, GPU/CPU fallback, pose updates, draw submissions and visible
-  pixels.
-- **Jadren → Validation → SampleScene 3 Multi-Material + LOD** makes an
-  in-memory clone of the real character, adds a second submesh/material and a
-  two-level `LODGroup`, then checks the LOD-1 selection and rendered output.
-
-The same runners can be used in automation without opening a second scene:
-
-```powershell
-Unity.exe -batchmode -force-d3d11 `
-  -projectPath <unity-project> `
-  -executeMethod Jadren.Unity.Samples.AgentSimulation.Editor.JadrenSampleScene3BatchRunner.Run `
-  -logFile <output-log>
-
-Unity.exe -batchmode -force-d3d11 `
-  -projectPath <unity-project> `
-  -executeMethod Jadren.Unity.Samples.AgentSimulation.Editor.JadrenSampleScene3MultiMaterialLodBatchRunner.Run `
-  -logFile <output-log>
-```
-
-The runners write JSON reports in the project root unless the corresponding
-report environment variable is supplied. Reports are fixture evidence only;
-they are not a Rukhanka parity or public speedup claim.
+A passing Editor or PlayMode check is evidence for the tested scene and
+platform. It is not a general performance claim or a promise of complete
+Mecanim and Animation Rigging parity.
 
 ## 5. Choosing the runtime path
 
@@ -123,7 +102,7 @@ Use this order when diagnosing a new project:
 3. 250 agents with GPU preferred and managed fallback available;
 4. multi-material/LOD validation;
 5. Release Player build on the target architecture;
-6. only then compare the same fixture with Burst or another animation system.
+6. only then compare the same scene with Burst or another animation system.
 
 Common fixes:
 
@@ -150,6 +129,6 @@ Common fixes:
 
 This preview does not promise that every Unity Animator feature, controller,
 constraint, IK graph, shader, render pipeline or asset import is supported.
-Measure Release Players on identical fixtures and hardware. Keep public claims
+Measure Release Players on identical scenes and hardware. Keep public claims
 limited to the exact report scope; a local editor FPS number is not a general
 compiler speedup claim.

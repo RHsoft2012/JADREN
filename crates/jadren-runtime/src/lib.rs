@@ -7,7 +7,7 @@
 
 use std::alloc::{Layout, alloc, dealloc, realloc};
 use std::ffi::c_void;
-use std::mem::transmute;
+use std::mem::{align_of, size_of, transmute};
 use std::process;
 use std::ptr;
 use std::slice;
@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 /// First incompatible-change generation of the native runtime ABI.
 pub const RUNTIME_ABI_MAJOR: u32 = 0;
 /// Backward-compatible feature generation of the native runtime ABI.
-pub const RUNTIME_ABI_MINOR: u32 = 10;
+pub const RUNTIME_ABI_MINOR: u32 = 21;
 /// Deterministic identity of this runtime build and ABI contract.
 pub const RUNTIME_BUILD_ID: u64 = runtime_build_id();
 
@@ -178,6 +178,39 @@ pub struct Buffer {
     pub length: u64,
     pub capacity: u64,
 }
+
+/// C-compatible branch descriptor used by named enum carrier drop glue.
+///
+/// Generated code materializes a short, immutable table on the stack and
+/// passes it to the runtime. A missing tag entry denotes a copy-only enum
+/// variant and therefore needs no destructor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
+pub struct CarrierDropBranchAbi {
+    pub payload_variant: u64,
+    pub depth: u64,
+    pub leaf_element_size: u64,
+    pub leaf_alignment: u64,
+}
+
+/// C-compatible descriptor for one owning Buffer or OwnedString field in a named enum
+/// carrier. Unlike [`CarrierDropBranchAbi`], multiple entries may share the
+/// same variant; their offsets identify the individual descriptors to drop.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C)]
+pub struct CarrierDropFieldAbi {
+    pub payload_variant: u64,
+    pub payload_offset: u64,
+    pub depth: u64,
+    pub leaf_element_size: u64,
+    pub leaf_alignment: u64,
+}
+
+/// Sentinel used by record field tables for an unconditional Buffer field.
+/// Other discriminants select an active `Option`/`Result` carrier branch.
+const RECORD_FIELD_UNCONDITIONAL: u64 = u64::MAX;
+/// Reserved field-table depth marker for a direct OwnedString descriptor.
+const RECORD_FIELD_OWNED_STRING: u64 = u32::MAX as u64;
 
 impl Buffer {
     const EMPTY: Self = Self {
@@ -456,12 +489,15 @@ impl Region {
         }
 
         // SAFETY: `layout` is a validated nonzero allocation layout. Region
-        // storage is raw; typed initialization remains a compiler/core
-        // responsibility before a value is observed.
+        // storage is zero-initialized so a freshly allocated Buffer has a
+        // deterministic element value before the Jadren program mutates it.
         let pointer = unsafe { alloc(layout) };
         if pointer.is_null() {
             return AllocationResult::failure(AllocatorStatus::OutOfMemory);
         }
+        // SAFETY: `pointer` references the complete allocation described by
+        // `layout`; writing bytes does not require a typed Rust value.
+        unsafe { ptr::write_bytes(pointer, 0, layout.size()) };
         self.allocations.push(RegionAllocation { pointer, layout });
         AllocationResult::success(pointer)
     }
@@ -759,6 +795,159 @@ fn validate_buffer(buffer: &Buffer) -> Result<(), BufferStatus> {
     }
 }
 
+const MAX_ENUM_CARRIER_BRANCHES: u64 = 1024;
+
+#[allow(unsafe_code)]
+unsafe fn validate_enum_carrier_branches(
+    branches: *const CarrierDropBranchAbi,
+    branch_count: u64,
+) -> Result<(), BufferStatus> {
+    if branches.is_null() || branch_count == 0 || branch_count > MAX_ENUM_CARRIER_BRANCHES {
+        return Err(BufferStatus::InvalidSize);
+    }
+    for index in 0..branch_count {
+        // SAFETY: callers of the public drop APIs provide a live table with
+        // exactly `branch_count` entries; unaligned reads keep the C ABI
+        // tolerant of stack packing from foreign hosts.
+        let branch = unsafe { branches.add(index as usize).read_unaligned() };
+        if branch.depth == 0 {
+            return Err(BufferStatus::InvalidSize);
+        }
+        validate_element_layout(branch.leaf_element_size, branch.leaf_alignment)?;
+        for previous in 0..index {
+            // SAFETY: `previous < index < branch_count` is inside the table.
+            let previous_branch = unsafe { branches.add(previous as usize).read_unaligned() };
+            if previous_branch.payload_variant == branch.payload_variant {
+                return Err(BufferStatus::InvalidBuffer);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(unsafe_code)]
+unsafe fn enum_carrier_branch_for_tag(
+    branches: *const CarrierDropBranchAbi,
+    branch_count: u64,
+    tag: u64,
+) -> Option<CarrierDropBranchAbi> {
+    for index in 0..branch_count {
+        // SAFETY: validation has established the table bounds.
+        let branch = unsafe { branches.add(index as usize).read_unaligned() };
+        if branch.payload_variant == tag {
+            return Some(branch);
+        }
+    }
+    None
+}
+
+#[allow(unsafe_code)]
+unsafe fn validate_enum_carrier_fields(
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+    element_size: u64,
+) -> Result<(), BufferStatus> {
+    if fields.is_null() || field_count == 0 || field_count > MAX_ENUM_CARRIER_BRANCHES {
+        return Err(BufferStatus::InvalidSize);
+    }
+    for index in 0..field_count {
+        // SAFETY: callers provide a table with exactly `field_count` entries.
+        let field = unsafe { fields.add(index as usize).read_unaligned() };
+        if field.depth == 0 {
+            return Err(BufferStatus::InvalidSize);
+        }
+        validate_element_layout(field.leaf_element_size, field.leaf_alignment)?;
+        if field.depth == RECORD_FIELD_OWNED_STRING
+            && (field.leaf_element_size != size_of::<Utf8String>() as u64
+                || field.leaf_alignment != align_of::<Utf8String>() as u64)
+        {
+            return Err(BufferStatus::InvalidSize);
+        }
+        let Some(payload_end) = field.payload_offset.checked_add(size_of::<Buffer>() as u64) else {
+            return Err(BufferStatus::InvalidAlignment);
+        };
+        if field.payload_offset % align_of::<Buffer>() as u64 != 0 || payload_end > element_size {
+            return Err(BufferStatus::InvalidAlignment);
+        }
+        for previous in 0..index {
+            // SAFETY: `previous < index < field_count` is inside the table.
+            let previous_field = unsafe { fields.add(previous as usize).read_unaligned() };
+            if previous_field.payload_variant == field.payload_variant
+                && previous_field.payload_offset == field.payload_offset
+            {
+                return Err(BufferStatus::InvalidBuffer);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns whether one record field is active for the current value.  The
+/// compact record field ABI derives the tag location for the supported
+/// `Option`/`Result` carriers from the fixed 8-byte Buffer payload offset.
+#[allow(unsafe_code)]
+unsafe fn record_field_is_active(
+    record: *const u8,
+    field: CarrierDropFieldAbi,
+) -> Result<bool, BufferStatus> {
+    if field.payload_variant == RECORD_FIELD_UNCONDITIONAL {
+        return Ok(true);
+    }
+    if field.payload_offset < 8 {
+        return Err(BufferStatus::InvalidAlignment);
+    }
+    // SAFETY: the field validator checked the payload offset; the carrier tag
+    // is the four-byte word eight bytes before its aligned Buffer payload.
+    let tag = unsafe {
+        record
+            .add((field.payload_offset - 8) as usize)
+            .cast::<u32>()
+            .read_unaligned()
+    };
+    Ok(u64::from(tag) == field.payload_variant)
+}
+
+/// Destroys one already-validated record field. The field-table ABI uses the
+/// same descriptor-sized slot for Buffer and OwnedString; the depth marker
+/// selects the correct destructor without adding per-record hidden metadata.
+#[allow(unsafe_code)]
+unsafe fn destroy_record_field(record: *mut u8, field: CarrierDropFieldAbi) -> BufferStatus {
+    // SAFETY: callers validate the field offset and descriptor layout before
+    // invoking this helper.
+    let payload = unsafe { record.add(field.payload_offset as usize) };
+    if field.depth == RECORD_FIELD_OWNED_STRING {
+        // SAFETY: the validator checked the exact Utf8String layout.
+        let status = unsafe { string_destroy(payload.cast::<Utf8String>()) };
+        return match status {
+            StringStatus::Ok => BufferStatus::Ok,
+            StringStatus::RuntimeNotInitialized => BufferStatus::RuntimeNotInitialized,
+            StringStatus::NullPointer => BufferStatus::NullPointer,
+            StringStatus::InvalidSize => BufferStatus::InvalidSize,
+            StringStatus::InvalidAlignment => BufferStatus::InvalidAlignment,
+            StringStatus::SizeOverflow => BufferStatus::SizeOverflow,
+            StringStatus::OutOfMemory => BufferStatus::OutOfMemory,
+            _ => BufferStatus::InvalidBuffer,
+        };
+    }
+    let nested = payload.cast::<Buffer>();
+    if field.depth == 1 {
+        // SAFETY: the field table describes a live Buffer descriptor.
+        unsafe { buffer_destroy(nested, field.leaf_element_size, field.leaf_alignment) }
+    } else {
+        // SAFETY: the field table describes a live nested Buffer chain.
+        unsafe {
+            buffer_destroy_nested_buffer_recursive(
+                nested,
+                size_of::<Buffer>() as u64,
+                align_of::<Buffer>() as u64,
+                field.depth - 1,
+                field.leaf_element_size,
+                field.leaf_alignment,
+            )
+        }
+    }
+}
+
 /// Creates an owning buffer with zero logical length and the requested
 /// element capacity.
 #[must_use]
@@ -877,6 +1066,366 @@ pub unsafe fn buffer_resize(buffer: *mut Buffer, new_length: u64) -> BufferStatu
     }
 }
 
+/// Clears a copy-safe buffer by publishing logical length zero.
+///
+/// This intentionally does not destroy element storage.  The compiler only
+/// exposes the builtin for copy-safe `Buffer<T>` elements; owning nested
+/// values require an explicit move-aware resize operation.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive header accepted by [`buffer_resize`].
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_clear(buffer: *mut Buffer) -> BufferStatus {
+    // SAFETY: the caller contract is identical to `buffer_resize` with a
+    // constant zero length.
+    unsafe { buffer_resize(buffer, 0) }
+}
+
+/// Changes the logical length of an owning nested `Buffer<Buffer<U>>`.
+///
+/// Growth reserves descriptor slots and zero-initializes the newly exposed
+/// slots. Shrinking recursively destroys every nested descriptor leaving the
+/// logical range before publishing the new length.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive outer header. `element_size` and
+/// `alignment` must describe the native `Buffer` descriptor, while `depth`
+/// and the leaf layout must describe every initialized nested chain.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_resize_move(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if element_size != size_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    if depth == 0 {
+        return BufferStatus::InvalidSize;
+    }
+    if let Err(status) = validate_element_layout(leaf_element_size, leaf_alignment) {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    let old_length = buffer.length;
+    if new_length > old_length {
+        let status = unsafe { buffer_reserve(buffer, element_size, alignment, new_length) };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+        let byte_offset = (old_length as usize) * size_of::<Buffer>();
+        let byte_length = ((new_length - old_length) as usize) * size_of::<Buffer>();
+        // SAFETY: reserve established capacity for the full descriptor range;
+        // the destination is within that allocation and is intentionally zeroed.
+        unsafe { ptr::write_bytes(buffer.pointer.cast::<u8>().add(byte_offset), 0, byte_length) };
+    } else if new_length < old_length {
+        for index in new_length..old_length {
+            // SAFETY: every slot in the initialized range is a native Buffer.
+            let nested = unsafe { buffer.pointer.cast::<Buffer>().add(index as usize) };
+            let status = if depth == 1 {
+                // SAFETY: the nested descriptor contains the final leaf type.
+                unsafe { buffer_destroy(nested, leaf_element_size, leaf_alignment) }
+            } else {
+                // SAFETY: one descriptor edge is consumed by this outer slot.
+                unsafe {
+                    buffer_destroy_nested_buffer_recursive(
+                        nested,
+                        size_of::<Buffer>() as u64,
+                        align_of::<Buffer>() as u64,
+                        depth - 1,
+                        leaf_element_size,
+                        leaf_alignment,
+                    )
+                }
+            };
+            if status != BufferStatus::Ok {
+                return status;
+            }
+        }
+    }
+    buffer.length = new_length;
+    BufferStatus::Ok
+}
+
+/// Changes the logical length of an owning nested Buffer chain whose final
+/// leaf is OwnedString. Removed chains release UTF-8 payloads recursively.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive nested-buffer header. `element_size`,
+/// `alignment`, `depth`, and the leaf string layout must describe the actual
+/// allocation and initialized descriptors.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_resize_move_nested_owned_string(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    string_element_size: u64,
+    string_alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if depth == 0 {
+        return BufferStatus::InvalidSize;
+    }
+    if element_size != size_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    if string_element_size != size_of::<Utf8String>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if string_alignment != align_of::<Utf8String>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    let old_length = buffer.length;
+    if new_length > old_length {
+        let status = unsafe { buffer_reserve(buffer, element_size, alignment, new_length) };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+        let byte_offset = match old_length.checked_mul(size_of::<Buffer>() as u64) {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        let byte_length = match (new_length - old_length).checked_mul(size_of::<Buffer>() as u64) {
+            Some(length) => length,
+            None => return BufferStatus::SizeOverflow,
+        };
+        // SAFETY: reserve established the destination descriptor range.
+        unsafe {
+            ptr::write_bytes(
+                buffer.pointer.cast::<u8>().add(byte_offset as usize),
+                0,
+                byte_length as usize,
+            )
+        };
+    } else if new_length < old_length {
+        for index in new_length..old_length {
+            // SAFETY: every removed outer slot is an initialized Buffer.
+            let nested = unsafe { buffer.pointer.cast::<Buffer>().add(index as usize) };
+            let status = if depth == 1 {
+                unsafe {
+                    buffer_destroy_owned_string(nested, string_element_size, string_alignment)
+                }
+            } else {
+                unsafe {
+                    buffer_destroy_nested_owned_string(
+                        nested,
+                        size_of::<Buffer>() as u64,
+                        align_of::<Buffer>() as u64,
+                        depth - 1,
+                        string_element_size,
+                        string_alignment,
+                    )
+                }
+            };
+            if status != BufferStatus::Ok {
+                return status;
+            }
+        }
+    }
+    buffer.length = new_length;
+    BufferStatus::Ok
+}
+
+/// Clears an owning nested `Buffer<Buffer<U>>` and recursively releases every
+/// initialized nested descriptor without releasing the outer allocation.
+///
+/// This is the move-aware counterpart of [`buffer_clear`].
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive nested-buffer header, and the supplied
+/// descriptor/depth/leaf layout must match the initialized allocation.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_clear_move(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> BufferStatus {
+    // SAFETY: the caller supplies the same validated nested layout as
+    // `buffer_resize_move`; zero is the only requested new length.
+    unsafe {
+        buffer_resize_move(
+            buffer,
+            0,
+            element_size,
+            alignment,
+            depth,
+            leaf_element_size,
+            leaf_alignment,
+        )
+    }
+}
+
+/// Clears an owning nested Buffer chain whose final leaf is OwnedString.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive nested-buffer header, and the supplied
+/// nested depth and string layout must match the initialized allocation.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_clear_move_nested_owned_string(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    string_element_size: u64,
+    string_alignment: u64,
+) -> BufferStatus {
+    // SAFETY: the caller supplies the same validated layout as the resize
+    // helper; zero is the only requested new length.
+    unsafe {
+        buffer_resize_move_nested_owned_string(
+            buffer,
+            0,
+            element_size,
+            alignment,
+            depth,
+            string_element_size,
+            string_alignment,
+        )
+    }
+}
+
+/// Changes the logical length of an owning `Buffer<OwnedString>`.
+///
+/// Growth reserves and zero-initializes new string descriptors. Shrinking
+/// destroys every removed UTF-8 allocation before publishing the new length.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive `Buffer<OwnedString>` header and the
+/// supplied element layout must match [`Utf8String`].
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_resize_move_owned_string(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if element_size != size_of::<Utf8String>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Utf8String>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    let old_length = buffer.length;
+    if new_length > old_length {
+        let status = unsafe { buffer_reserve(buffer, element_size, alignment, new_length) };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+        let byte_offset = match old_length.checked_mul(element_size) {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        let byte_length = match (new_length - old_length).checked_mul(element_size) {
+            Some(length) => length,
+            None => return BufferStatus::SizeOverflow,
+        };
+        // SAFETY: reserve established capacity for the descriptor range.
+        unsafe {
+            ptr::write_bytes(
+                buffer.pointer.cast::<u8>().add(byte_offset as usize),
+                0,
+                byte_length as usize,
+            )
+        };
+    } else if new_length < old_length {
+        for index in new_length..old_length {
+            // SAFETY: every removed slot is an initialized UTF-8 descriptor.
+            let string = unsafe { buffer.pointer.cast::<Utf8String>().add(index as usize) };
+            let status = unsafe { string_destroy(string) };
+            if status != StringStatus::Ok {
+                return match status {
+                    StringStatus::RuntimeNotInitialized => BufferStatus::RuntimeNotInitialized,
+                    StringStatus::NullPointer => BufferStatus::NullPointer,
+                    StringStatus::InvalidSize => BufferStatus::InvalidSize,
+                    StringStatus::InvalidAlignment => BufferStatus::InvalidAlignment,
+                    StringStatus::SizeOverflow => BufferStatus::SizeOverflow,
+                    StringStatus::OutOfMemory => BufferStatus::OutOfMemory,
+                    _ => BufferStatus::InvalidBuffer,
+                };
+            }
+        }
+    }
+    buffer.length = new_length;
+    BufferStatus::Ok
+}
+
+/// Clears an owning `Buffer<OwnedString>` without releasing its outer
+/// allocation.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive buffer header containing valid owned
+/// string descriptors, and `element_size`/`alignment` must match its layout.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_clear_move_owned_string(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+) -> BufferStatus {
+    // SAFETY: the caller supplies the same validated layout as the resize
+    // helper; zero is the only requested new length.
+    unsafe { buffer_resize_move_owned_string(buffer, 0, element_size, alignment) }
+}
+
 /// Releases an owning buffer and resets its header to empty.
 ///
 /// # Safety
@@ -914,6 +1463,2044 @@ pub unsafe fn buffer_destroy(
     }
     *buffer = Buffer::EMPTY;
     BufferStatus::Ok
+}
+
+/// Releases an owning `Buffer<OwnedString>` and destroys each initialized
+/// string descriptor before releasing the outer allocation.
+///
+/// `OwnedString` has the same native three-word descriptor shape as `Buffer`,
+/// but its elements own UTF-8 byte allocations and therefore cannot use the
+/// ordinary byte-only `buffer_destroy` path.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive `Buffer<OwnedString>` header and the
+/// supplied element layout must match the target descriptor.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_destroy_owned_string(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if element_size != size_of::<Utf8String>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Utf8String>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    for index in 0..buffer.length {
+        // SAFETY: the validated allocation contains initialized, aligned
+        // OwnedString descriptors for every logical element.
+        let string = unsafe { buffer.pointer.cast::<Utf8String>().add(index as usize) };
+        // SAFETY: each descriptor is owned by this outer buffer and is
+        // destroyed exactly once before the outer allocation is released.
+        let status = unsafe { string_destroy(string) };
+        if status != StringStatus::Ok {
+            return match status {
+                StringStatus::RuntimeNotInitialized => BufferStatus::RuntimeNotInitialized,
+                StringStatus::NullPointer => BufferStatus::NullPointer,
+                StringStatus::InvalidSize => BufferStatus::InvalidSize,
+                StringStatus::InvalidAlignment => BufferStatus::InvalidAlignment,
+                StringStatus::SizeOverflow => BufferStatus::SizeOverflow,
+                StringStatus::OutOfMemory => BufferStatus::OutOfMemory,
+                _ => BufferStatus::InvalidBuffer,
+            };
+        }
+    }
+    // SAFETY: all element ownership has been released; the remaining
+    // allocation is an ordinary Buffer<OwnedString> payload.
+    unsafe { buffer_destroy(buffer, element_size, alignment) }
+}
+
+/// Releases an owning `Buffer<Buffer<U>>` and all initialized nested buffers.
+///
+/// The outer element must have the native `Buffer` descriptor layout. Nested
+/// descriptors are destroyed before the outer allocation, so moving a buffer
+/// into another buffer does not leak or double-free its allocation.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive outer header from this runtime. Both
+/// element layouts must match the generated descriptors and all initialized
+/// nested elements must be valid owning buffers.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_destroy_nested_buffer(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    nested_element_size: u64,
+    nested_alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if element_size != size_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    if let Err(status) = validate_element_layout(nested_element_size, nested_alignment) {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive outer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    for index in 0..buffer.length {
+        // SAFETY: the outer layout check makes every initialized element a
+        // properly aligned Buffer descriptor within the allocation.
+        let nested = unsafe { (buffer.pointer.cast::<Buffer>()).add(index as usize) };
+        // SAFETY: nested descriptors are owned by the outer buffer and are
+        // destroyed exactly once before the outer allocation is released.
+        let status = unsafe { buffer_destroy(nested, nested_element_size, nested_alignment) };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+    }
+    if buffer.capacity != 0 {
+        let layout = match buffer_layout(element_size, alignment, buffer.capacity) {
+            Ok(layout) => layout,
+            Err(status) => return status,
+        };
+        // SAFETY: caller guarantees pointer provenance and exact outer layout.
+        unsafe { dealloc(buffer.pointer.cast(), layout) };
+    }
+    *buffer = Buffer::EMPTY;
+    BufferStatus::Ok
+}
+
+/// Releases an owning buffer with an arbitrary nested `Buffer` descriptor
+/// depth. `depth` counts nested owning edges below the outer descriptor and
+/// `leaf_element_size`/`leaf_alignment` describe the final non-buffer element.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive outer header. Every initialized nested
+/// descriptor must use the native `Buffer` layout and the leaf allocations
+/// must use the supplied final element layout.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_destroy_nested_buffer_recursive(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if depth == 0 {
+        return BufferStatus::InvalidSize;
+    }
+    if element_size != size_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    if let Err(status) = validate_element_layout(leaf_element_size, leaf_alignment) {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive outer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    for index in 0..buffer.length {
+        // SAFETY: every initialized outer slot is a native Buffer descriptor.
+        let nested = unsafe { buffer.pointer.cast::<Buffer>().add(index as usize) };
+        let status = if depth == 1 {
+            // SAFETY: the nested descriptor is the final Buffer<leaf> level.
+            unsafe { buffer_destroy(nested, leaf_element_size, leaf_alignment) }
+        } else {
+            // SAFETY: the nested descriptor remains an owning Buffer chain.
+            unsafe {
+                buffer_destroy_nested_buffer_recursive(
+                    nested,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    depth - 1,
+                    leaf_element_size,
+                    leaf_alignment,
+                )
+            }
+        };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+    }
+    if buffer.capacity != 0 {
+        let layout = match buffer_layout(element_size, alignment, buffer.capacity) {
+            Ok(layout) => layout,
+            Err(status) => return status,
+        };
+        // SAFETY: caller guarantees pointer provenance and exact outer layout.
+        unsafe { dealloc(buffer.pointer.cast(), layout) };
+    }
+    *buffer = Buffer::EMPTY;
+    BufferStatus::Ok
+}
+
+/// Releases an owning nested Buffer chain whose final leaf is OwnedString.
+/// Unlike the copy-safe nested destructor, this path destroys every UTF-8
+/// allocation in the leaf descriptors before freeing nested buffers.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive nested-buffer header. The supplied
+/// layout and depth must match the allocation and initialized descriptors.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_destroy_nested_owned_string(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    string_element_size: u64,
+    string_alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if depth == 0 {
+        return BufferStatus::InvalidSize;
+    }
+    if element_size != size_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    if string_element_size != size_of::<Utf8String>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if string_alignment != align_of::<Utf8String>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    // SAFETY: caller guarantees a live exclusive outer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    for index in 0..buffer.length {
+        // SAFETY: every initialized outer slot is a native Buffer descriptor.
+        let nested = unsafe { buffer.pointer.cast::<Buffer>().add(index as usize) };
+        let status = if depth == 1 {
+            // SAFETY: the final nested descriptor is Buffer<OwnedString>.
+            unsafe { buffer_destroy_owned_string(nested, string_element_size, string_alignment) }
+        } else {
+            // SAFETY: one nested Buffer edge is consumed recursively.
+            unsafe {
+                buffer_destroy_nested_owned_string(
+                    nested,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    depth - 1,
+                    string_element_size,
+                    string_alignment,
+                )
+            }
+        };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+    }
+    if buffer.capacity != 0 {
+        let layout = match buffer_layout(element_size, alignment, buffer.capacity) {
+            Ok(layout) => layout,
+            Err(status) => return status,
+        };
+        // SAFETY: nested ownership has been released before the outer
+        // allocation is deallocated.
+        unsafe { dealloc(buffer.pointer.cast(), layout) };
+    }
+    *buffer = Buffer::EMPTY;
+    BufferStatus::Ok
+}
+
+/// Releases a nested owning buffer whose final leaf is a record with owning
+/// Buffer fields. `depth` counts Buffer descriptors below the outer buffer;
+/// when it reaches one, the record field table is applied to the nested
+/// `Buffer<Record>` allocation.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive outer header. Every nested descriptor
+/// must use the native Buffer layout, and `fields` must describe initialized
+/// owning Buffer fields inside the final record element.
+#[must_use]
+#[allow(unsafe_code, clippy::manual_is_multiple_of, clippy::too_many_arguments)]
+pub unsafe fn buffer_destroy_nested_record_fields(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    record_element_size: u64,
+    record_alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if depth == 0 {
+        return BufferStatus::InvalidSize;
+    }
+    if element_size != size_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    if let Err(status) = validate_element_layout(record_element_size, record_alignment) {
+        return status;
+    }
+    if let Err(status) =
+        unsafe { validate_enum_carrier_fields(fields, field_count, record_element_size) }
+    {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive outer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    for index in 0..buffer.length {
+        // SAFETY: the outer layout check makes every initialized element a
+        // properly aligned Buffer descriptor within the allocation.
+        let nested = unsafe { buffer.pointer.cast::<Buffer>().add(index as usize) };
+        let status = if depth == 1 {
+            // SAFETY: the nested descriptor is the final Buffer<Record> level.
+            unsafe {
+                buffer_destroy_record_fields(
+                    nested,
+                    record_element_size,
+                    record_alignment,
+                    fields,
+                    field_count,
+                )
+            }
+        } else {
+            // SAFETY: the nested descriptor remains an owning Buffer chain.
+            unsafe {
+                buffer_destroy_nested_record_fields(
+                    nested,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    depth - 1,
+                    record_element_size,
+                    record_alignment,
+                    fields,
+                    field_count,
+                )
+            }
+        };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+    }
+    if buffer.capacity != 0 {
+        let layout = match buffer_layout(element_size, alignment, buffer.capacity) {
+            Ok(layout) => layout,
+            Err(status) => return status,
+        };
+        // SAFETY: caller guarantees pointer provenance and exact outer layout.
+        unsafe { dealloc(buffer.pointer.cast(), layout) };
+    }
+    *buffer = Buffer::EMPTY;
+    BufferStatus::Ok
+}
+
+/// Changes the logical length of an owning nested buffer whose final leaf is
+/// a record with owning Buffer fields.
+///
+/// Growth reserves descriptor slots and zero-initializes newly exposed slots.
+/// Shrinking recursively destroys every nested record chain that leaves the
+/// logical range before publishing the new length.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive outer header. The nested descriptor
+/// layout, record layout and field table must describe initialized chains
+/// accepted by [`buffer_destroy_nested_record_fields`].
+#[must_use]
+#[allow(unsafe_code, clippy::manual_is_multiple_of, clippy::too_many_arguments)]
+pub unsafe fn buffer_resize_move_nested_record_fields(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    record_element_size: u64,
+    record_alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if depth == 0 {
+        return BufferStatus::InvalidSize;
+    }
+    if element_size != size_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    if let Err(status) = validate_element_layout(record_element_size, record_alignment) {
+        return status;
+    }
+    if let Err(status) =
+        unsafe { validate_enum_carrier_fields(fields, field_count, record_element_size) }
+    {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive outer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    let old_length = buffer.length;
+    if new_length > old_length {
+        let status = unsafe { buffer_reserve(buffer, element_size, alignment, new_length) };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+        let byte_offset = match old_length.checked_mul(element_size) {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        let byte_length = match (new_length - old_length).checked_mul(element_size) {
+            Some(length) => length,
+            None => return BufferStatus::SizeOverflow,
+        };
+        // SAFETY: reserve established capacity for the full descriptor range;
+        // the newly exposed slots are intentionally zero-initialized.
+        unsafe {
+            ptr::write_bytes(
+                buffer.pointer.cast::<u8>().add(byte_offset as usize),
+                0,
+                byte_length as usize,
+            )
+        };
+    } else if new_length < old_length {
+        for index in new_length..old_length {
+            // SAFETY: every slot in the initialized range is a native Buffer
+            // descriptor because the outer element layout is fixed above.
+            let nested = unsafe { buffer.pointer.cast::<Buffer>().add(index as usize) };
+            let status = if depth == 1 {
+                unsafe {
+                    buffer_destroy_record_fields(
+                        nested,
+                        record_element_size,
+                        record_alignment,
+                        fields,
+                        field_count,
+                    )
+                }
+            } else {
+                unsafe {
+                    buffer_destroy_nested_record_fields(
+                        nested,
+                        size_of::<Buffer>() as u64,
+                        align_of::<Buffer>() as u64,
+                        depth - 1,
+                        record_element_size,
+                        record_alignment,
+                        fields,
+                        field_count,
+                    )
+                }
+            };
+            if status != BufferStatus::Ok {
+                return status;
+            }
+        }
+    }
+    buffer.length = new_length;
+    BufferStatus::Ok
+}
+
+/// Changes the logical length of an owning buffer whose elements are direct
+/// `@repr(C)` records with owning Buffer or OwnedString fields.
+///
+/// Growth reserves record slots and zero-initializes newly exposed storage.
+/// Shrinking destroys each removed record's field-table Buffers before the
+/// new length is published.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive header. `element_size`/`alignment` and
+/// `fields` must describe initialized records accepted by
+/// [`carrier_destroy_record_fields`].
+#[must_use]
+#[allow(unsafe_code, clippy::manual_is_multiple_of)]
+pub unsafe fn buffer_resize_move_record_fields(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = validate_element_layout(element_size, alignment) {
+        return status;
+    }
+    if let Err(status) = unsafe { validate_enum_carrier_fields(fields, field_count, element_size) }
+    {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    let old_length = buffer.length;
+    if new_length > old_length {
+        let status = unsafe { buffer_reserve(buffer, element_size, alignment, new_length) };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+        let byte_offset = match old_length.checked_mul(element_size) {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        let byte_length = match (new_length - old_length).checked_mul(element_size) {
+            Some(length) => length,
+            None => return BufferStatus::SizeOverflow,
+        };
+        // SAFETY: reserve established the full record range.
+        unsafe {
+            ptr::write_bytes(
+                buffer.pointer.cast::<u8>().add(byte_offset as usize),
+                0,
+                byte_length as usize,
+            )
+        };
+    } else if new_length < old_length {
+        for index in new_length..old_length {
+            // SAFETY: every initialized element is a record with the declared
+            // native layout and field table.
+            let record = unsafe {
+                buffer
+                    .pointer
+                    .cast::<u8>()
+                    .add((index * element_size) as usize)
+            };
+            let status =
+                unsafe { carrier_destroy_record_fields(record, element_size, fields, field_count) };
+            if status != BufferStatus::Ok {
+                return status;
+            }
+        }
+    }
+    buffer.length = new_length;
+    BufferStatus::Ok
+}
+
+/// Releases an owning buffer whose element is an inline `Option`/`Result`
+/// carrier with exactly one `Buffer` payload. Only the selected tag owns a
+/// descriptor; the other variant is copy-safe and needs no cleanup.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive header. `payload_offset` must point to a
+/// properly aligned Buffer descriptor inside every initialized carrier slot,
+/// and the supplied leaf layout must match the descriptor chain.
+#[must_use]
+#[allow(
+    unsafe_code,
+    clippy::too_many_arguments,
+    clippy::manual_is_multiple_of,
+    clippy::unnecessary_cast
+)]
+pub unsafe fn buffer_destroy_carrier_buffer(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    payload_offset: u64,
+    payload_variant: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if depth == 0 {
+        return BufferStatus::InvalidSize;
+    }
+    if let Err(status) = validate_element_layout(element_size, alignment) {
+        return status;
+    }
+    let Some(payload_end) = payload_offset.checked_add(size_of::<Buffer>() as u64) else {
+        return BufferStatus::InvalidAlignment;
+    };
+    if payload_offset % align_of::<Buffer>() as u64 != 0 || payload_end > element_size {
+        return BufferStatus::InvalidAlignment;
+    }
+    if let Err(status) = validate_element_layout(leaf_element_size, leaf_alignment) {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive outer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    for index in 0..buffer.length {
+        let slot_offset = match (index as u64).checked_mul(element_size) {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        // SAFETY: descriptor validity and carrier layout checks keep this
+        // offset within the initialized carrier allocation.
+        let carrier = unsafe { buffer.pointer.cast::<u8>().add(slot_offset as usize) };
+        // SAFETY: the carrier tag is the first four bytes of the lowered enum.
+        let tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
+        if tag == payload_variant {
+            // SAFETY: payload_offset was validated against the carrier size
+            // and Buffer alignment above.
+            let nested = unsafe { carrier.add(payload_offset as usize).cast::<Buffer>() };
+            let status = if depth == 1 {
+                // SAFETY: selected carrier payload is a live owning Buffer.
+                unsafe { buffer_destroy(nested, leaf_element_size, leaf_alignment) }
+            } else {
+                // SAFETY: selected payload is a nested descriptor chain.
+                unsafe {
+                    buffer_destroy_nested_buffer_recursive(
+                        nested,
+                        size_of::<Buffer>() as u64,
+                        align_of::<Buffer>() as u64,
+                        depth - 1,
+                        leaf_element_size,
+                        leaf_alignment,
+                    )
+                }
+            };
+            if status != BufferStatus::Ok {
+                return status;
+            }
+        }
+    }
+    if buffer.capacity != 0 {
+        let layout = match buffer_layout(element_size, alignment, buffer.capacity) {
+            Ok(layout) => layout,
+            Err(status) => return status,
+        };
+        // SAFETY: caller guarantees pointer provenance and exact outer layout.
+        unsafe { dealloc(buffer.pointer.cast(), layout) };
+    }
+    *buffer = Buffer::EMPTY;
+    BufferStatus::Ok
+}
+
+/// Releases a standalone Option/Result carrier or named `@repr(C)` enum with
+/// one owning Buffer payload. The carrier itself is caller-owned storage and
+/// is not freed.
+///
+/// # Safety
+///
+/// `carrier` must point to initialized carrier storage whose descriptor and
+/// leaf layouts match the supplied arguments.
+#[must_use]
+#[allow(unsafe_code, clippy::manual_is_multiple_of)]
+pub unsafe fn carrier_destroy_buffer(
+    carrier: *mut u8,
+    element_size: u64,
+    payload_offset: u64,
+    payload_variant: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if carrier.is_null() || depth == 0 {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = validate_element_layout(element_size, align_of::<Buffer>() as u64) {
+        return status;
+    }
+    let Some(payload_end) = payload_offset.checked_add(size_of::<Buffer>() as u64) else {
+        return BufferStatus::InvalidAlignment;
+    };
+    if payload_offset % align_of::<Buffer>() as u64 != 0 || payload_end > element_size {
+        return BufferStatus::InvalidAlignment;
+    }
+    if let Err(status) = validate_element_layout(leaf_element_size, leaf_alignment) {
+        return status;
+    }
+    // SAFETY: caller guarantees a live carrier with the lowered tag layout.
+    let tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
+    if tag == payload_variant {
+        // SAFETY: payload offset was validated against the carrier layout.
+        let nested = unsafe { carrier.add(payload_offset as usize).cast::<Buffer>() };
+        let status = if depth == 1 {
+            // SAFETY: selected payload is a live owning Buffer.
+            unsafe { buffer_destroy(nested, leaf_element_size, leaf_alignment) }
+        } else {
+            // SAFETY: selected payload is a nested descriptor chain.
+            unsafe {
+                buffer_destroy_nested_buffer_recursive(
+                    nested,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    depth - 1,
+                    leaf_element_size,
+                    leaf_alignment,
+                )
+            }
+        };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+    }
+    // SAFETY: carrier storage is caller-owned and exactly element_size bytes.
+    unsafe { ptr::write_bytes(carrier, 0, element_size as usize) };
+    BufferStatus::Ok
+}
+
+/// Releases a buffer whose `Result` carrier has two owning `Buffer` branches.
+/// The tag selects exactly one branch; the other descriptor is not touched.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive header. Both branch layouts must describe
+/// the initialized descriptor chains at the common carrier payload offset.
+#[must_use]
+#[allow(
+    unsafe_code,
+    clippy::too_many_arguments,
+    clippy::manual_is_multiple_of,
+    clippy::unnecessary_cast
+)]
+pub unsafe fn buffer_destroy_multi_carrier_buffer(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    payload_offset: u64,
+    first_variant: u64,
+    first_depth: u64,
+    first_leaf_element_size: u64,
+    first_leaf_alignment: u64,
+    second_variant: u64,
+    second_depth: u64,
+    second_leaf_element_size: u64,
+    second_leaf_alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null()
+        || first_depth == 0
+        || second_depth == 0
+        || first_variant > 1
+        || second_variant > 1
+        || first_variant == second_variant
+    {
+        return BufferStatus::InvalidSize;
+    }
+    if let Err(status) = validate_element_layout(element_size, alignment) {
+        return status;
+    }
+    let Some(payload_end) = payload_offset.checked_add(size_of::<Buffer>() as u64) else {
+        return BufferStatus::InvalidAlignment;
+    };
+    if payload_offset % align_of::<Buffer>() as u64 != 0 || payload_end > element_size {
+        return BufferStatus::InvalidAlignment;
+    }
+    if let Err(status) = validate_element_layout(first_leaf_element_size, first_leaf_alignment) {
+        return status;
+    }
+    if let Err(status) = validate_element_layout(second_leaf_element_size, second_leaf_alignment) {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive outer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    for index in 0..buffer.length {
+        let slot_offset = match (index as u64).checked_mul(element_size) {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        // SAFETY: descriptor validity and carrier layout checks keep this
+        // offset within the initialized carrier allocation.
+        let carrier = unsafe { buffer.pointer.cast::<u8>().add(slot_offset as usize) };
+        // SAFETY: the carrier tag is the first four bytes of the lowered enum.
+        let tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
+        let (variant, depth, leaf_size, leaf_alignment) = if tag == first_variant {
+            (
+                first_variant,
+                first_depth,
+                first_leaf_element_size,
+                first_leaf_alignment,
+            )
+        } else if tag == second_variant {
+            (
+                second_variant,
+                second_depth,
+                second_leaf_element_size,
+                second_leaf_alignment,
+            )
+        } else {
+            return BufferStatus::InvalidBuffer;
+        };
+        if tag == variant {
+            // SAFETY: payload_offset was validated against the carrier size
+            // and Buffer alignment above.
+            let nested = unsafe { carrier.add(payload_offset as usize).cast::<Buffer>() };
+            let status = if depth == 1 {
+                // SAFETY: selected carrier payload is a live owning Buffer.
+                unsafe { buffer_destroy(nested, leaf_size, leaf_alignment) }
+            } else {
+                // SAFETY: selected payload is a nested descriptor chain.
+                unsafe {
+                    buffer_destroy_nested_buffer_recursive(
+                        nested,
+                        size_of::<Buffer>() as u64,
+                        align_of::<Buffer>() as u64,
+                        depth - 1,
+                        leaf_size,
+                        leaf_alignment,
+                    )
+                }
+            };
+            if status != BufferStatus::Ok {
+                return status;
+            }
+        }
+    }
+    if buffer.capacity != 0 {
+        let layout = match buffer_layout(element_size, alignment, buffer.capacity) {
+            Ok(layout) => layout,
+            Err(status) => return status,
+        };
+        // SAFETY: caller guarantees pointer provenance and exact outer layout.
+        unsafe { dealloc(buffer.pointer.cast(), layout) };
+    }
+    *buffer = Buffer::EMPTY;
+    BufferStatus::Ok
+}
+
+/// Releases a standalone `Result` carrier with two owning Buffer branches.
+/// The caller-owned carrier storage is reset but not deallocated.
+///
+/// # Safety
+///
+/// `carrier` must point to initialized carrier storage whose descriptor and
+/// leaf layouts match the supplied arguments.
+#[must_use]
+#[allow(unsafe_code, clippy::too_many_arguments, clippy::manual_is_multiple_of)]
+pub unsafe fn carrier_destroy_multi_buffer(
+    carrier: *mut u8,
+    element_size: u64,
+    payload_offset: u64,
+    first_variant: u64,
+    first_depth: u64,
+    first_leaf_element_size: u64,
+    first_leaf_alignment: u64,
+    second_variant: u64,
+    second_depth: u64,
+    second_leaf_element_size: u64,
+    second_leaf_alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if carrier.is_null()
+        || first_depth == 0
+        || second_depth == 0
+        || first_variant > 1
+        || second_variant > 1
+        || first_variant == second_variant
+    {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = validate_element_layout(element_size, align_of::<Buffer>() as u64) {
+        return status;
+    }
+    let Some(payload_end) = payload_offset.checked_add(size_of::<Buffer>() as u64) else {
+        return BufferStatus::InvalidAlignment;
+    };
+    if payload_offset % align_of::<Buffer>() as u64 != 0 || payload_end > element_size {
+        return BufferStatus::InvalidAlignment;
+    }
+    if let Err(status) = validate_element_layout(first_leaf_element_size, first_leaf_alignment) {
+        return status;
+    }
+    if let Err(status) = validate_element_layout(second_leaf_element_size, second_leaf_alignment) {
+        return status;
+    }
+    // SAFETY: caller guarantees a live carrier with the lowered tag layout.
+    let tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
+    let (variant, depth, leaf_size, leaf_alignment) = if tag == first_variant {
+        (
+            first_variant,
+            first_depth,
+            first_leaf_element_size,
+            first_leaf_alignment,
+        )
+    } else if tag == second_variant {
+        (
+            second_variant,
+            second_depth,
+            second_leaf_element_size,
+            second_leaf_alignment,
+        )
+    } else {
+        return BufferStatus::InvalidBuffer;
+    };
+    if tag == variant {
+        // SAFETY: payload offset was validated against the carrier layout.
+        let nested = unsafe { carrier.add(payload_offset as usize).cast::<Buffer>() };
+        let status = if depth == 1 {
+            // SAFETY: selected payload is a live owning Buffer.
+            unsafe { buffer_destroy(nested, leaf_size, leaf_alignment) }
+        } else {
+            // SAFETY: selected payload is a nested descriptor chain.
+            unsafe {
+                buffer_destroy_nested_buffer_recursive(
+                    nested,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    depth - 1,
+                    leaf_size,
+                    leaf_alignment,
+                )
+            }
+        };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+    }
+    // SAFETY: carrier storage is caller-owned and exactly element_size bytes.
+    unsafe { ptr::write_bytes(carrier, 0, element_size as usize) };
+    BufferStatus::Ok
+}
+
+/// Releases a buffer whose named `@repr(C)` enum has multiple owning Buffer
+/// variants. The branch table maps tags to descriptor depth and leaf layout;
+/// tags not present in the table are copy-only variants.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive header. `branches` must point to a valid
+/// immutable table of `branch_count` descriptors for the duration of this
+/// call, and each selected payload must be initialized at `payload_offset`.
+#[must_use]
+#[allow(
+    unsafe_code,
+    clippy::too_many_arguments,
+    clippy::manual_is_multiple_of,
+    clippy::unnecessary_cast
+)]
+pub unsafe fn buffer_destroy_enum_carrier_buffer(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    payload_offset: u64,
+    branches: *const CarrierDropBranchAbi,
+    branch_count: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = unsafe { validate_enum_carrier_branches(branches, branch_count) } {
+        return status;
+    }
+    if let Err(status) = validate_element_layout(element_size, alignment) {
+        return status;
+    }
+    let Some(payload_end) = payload_offset.checked_add(size_of::<Buffer>() as u64) else {
+        return BufferStatus::InvalidAlignment;
+    };
+    if payload_offset % align_of::<Buffer>() as u64 != 0 || payload_end > element_size {
+        return BufferStatus::InvalidAlignment;
+    }
+    // SAFETY: caller guarantees a live exclusive outer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    for index in 0..buffer.length {
+        let slot_offset = match (index as u64).checked_mul(element_size) {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        // SAFETY: descriptor validity and carrier layout checks keep this
+        // offset within the initialized carrier allocation.
+        let carrier = unsafe { buffer.pointer.cast::<u8>().add(slot_offset as usize) };
+        // SAFETY: the carrier tag is the first four bytes of the lowered enum.
+        let tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
+        let Some(branch) = (unsafe { enum_carrier_branch_for_tag(branches, branch_count, tag) })
+        else {
+            continue;
+        };
+        // SAFETY: payload_offset was validated against the carrier size and
+        // the branch table validated the selected leaf layout.
+        let nested = unsafe { carrier.add(payload_offset as usize).cast::<Buffer>() };
+        let status = if branch.depth == 1 {
+            // SAFETY: selected carrier payload is a live owning Buffer.
+            unsafe { buffer_destroy(nested, branch.leaf_element_size, branch.leaf_alignment) }
+        } else {
+            // SAFETY: selected payload is a nested descriptor chain.
+            unsafe {
+                buffer_destroy_nested_buffer_recursive(
+                    nested,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    branch.depth - 1,
+                    branch.leaf_element_size,
+                    branch.leaf_alignment,
+                )
+            }
+        };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+    }
+    if buffer.capacity != 0 {
+        let layout = match buffer_layout(element_size, alignment, buffer.capacity) {
+            Ok(layout) => layout,
+            Err(status) => return status,
+        };
+        // SAFETY: caller guarantees pointer provenance and exact outer layout.
+        unsafe { dealloc(buffer.pointer.cast(), layout) };
+    }
+    *buffer = Buffer::EMPTY;
+    BufferStatus::Ok
+}
+
+/// Releases a standalone named enum carrier using a tag-to-layout branch
+/// table. Copy-only variants are left untouched before the carrier storage is
+/// reset.
+///
+/// # Safety
+///
+/// `carrier` must point to initialized storage of `element_size` bytes and
+/// `branches` must remain valid for the duration of this call.
+#[must_use]
+#[allow(unsafe_code, clippy::manual_is_multiple_of)]
+pub unsafe fn carrier_destroy_enum_buffer(
+    carrier: *mut u8,
+    element_size: u64,
+    payload_offset: u64,
+    branches: *const CarrierDropBranchAbi,
+    branch_count: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if carrier.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = unsafe { validate_enum_carrier_branches(branches, branch_count) } {
+        return status;
+    }
+    if let Err(status) = validate_element_layout(element_size, align_of::<Buffer>() as u64) {
+        return status;
+    }
+    let Some(payload_end) = payload_offset.checked_add(size_of::<Buffer>() as u64) else {
+        return BufferStatus::InvalidAlignment;
+    };
+    if payload_offset % align_of::<Buffer>() as u64 != 0 || payload_end > element_size {
+        return BufferStatus::InvalidAlignment;
+    }
+    // SAFETY: caller guarantees a live carrier with the lowered tag layout.
+    let tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
+    if let Some(branch) = unsafe { enum_carrier_branch_for_tag(branches, branch_count, tag) } {
+        // SAFETY: payload offset was validated against the carrier layout.
+        let nested = unsafe { carrier.add(payload_offset as usize).cast::<Buffer>() };
+        let status = if branch.depth == 1 {
+            // SAFETY: selected payload is a live owning Buffer.
+            unsafe { buffer_destroy(nested, branch.leaf_element_size, branch.leaf_alignment) }
+        } else {
+            // SAFETY: selected payload is a nested descriptor chain.
+            unsafe {
+                buffer_destroy_nested_buffer_recursive(
+                    nested,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    branch.depth - 1,
+                    branch.leaf_element_size,
+                    branch.leaf_alignment,
+                )
+            }
+        };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+    }
+    // SAFETY: carrier storage is caller-owned and exactly element_size bytes.
+    unsafe { ptr::write_bytes(carrier, 0, element_size as usize) };
+    BufferStatus::Ok
+}
+
+/// Releases every owning Buffer field selected by the tag of each named enum
+/// carrier element. Multiple table entries may share a variant and therefore
+/// describe a variant with more than one owning field.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive header. `fields` must point to a valid
+/// immutable table for the duration of this call, and each selected Buffer
+/// descriptor must be initialized at its declared offset.
+#[must_use]
+#[allow(unsafe_code, clippy::manual_is_multiple_of)]
+pub unsafe fn buffer_destroy_enum_carrier_fields(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = validate_element_layout(element_size, alignment) {
+        return status;
+    }
+    if let Err(status) = unsafe { validate_enum_carrier_fields(fields, field_count, element_size) }
+    {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive outer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    for index in 0..buffer.length {
+        let slot_offset = match index.checked_mul(element_size) {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        // SAFETY: descriptor validity and carrier layout checks keep this
+        // offset within the initialized carrier allocation.
+        let carrier = unsafe { buffer.pointer.cast::<u8>().add(slot_offset as usize) };
+        let tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
+        for field_index in 0..field_count {
+            // SAFETY: validation established the table bounds.
+            let field = unsafe { fields.add(field_index as usize).read_unaligned() };
+            if field.payload_variant != tag {
+                continue;
+            }
+            // SAFETY: field offset and descriptor layout were validated
+            // against the carrier element size.
+            let status = unsafe { destroy_record_field(carrier, field) };
+            if status != BufferStatus::Ok {
+                return status;
+            }
+        }
+    }
+    if buffer.capacity != 0 {
+        let layout = match buffer_layout(element_size, alignment, buffer.capacity) {
+            Ok(layout) => layout,
+            Err(status) => return status,
+        };
+        // SAFETY: caller guarantees pointer provenance and exact outer layout.
+        unsafe { dealloc(buffer.pointer.cast(), layout) };
+    }
+    *buffer = Buffer::EMPTY;
+    BufferStatus::Ok
+}
+
+/// Releases every owning Buffer field selected by a standalone named enum
+/// carrier tag.
+///
+/// # Safety
+///
+/// `carrier` must point to initialized storage of `element_size` bytes and
+/// `fields` must remain valid for the duration of this call.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn carrier_destroy_enum_fields(
+    carrier: *mut u8,
+    element_size: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if carrier.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = validate_element_layout(element_size, align_of::<Buffer>() as u64) {
+        return status;
+    }
+    if let Err(status) = unsafe { validate_enum_carrier_fields(fields, field_count, element_size) }
+    {
+        return status;
+    }
+    let tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
+    for field_index in 0..field_count {
+        // SAFETY: validation established the table bounds.
+        let field = unsafe { fields.add(field_index as usize).read_unaligned() };
+        if field.payload_variant != tag {
+            continue;
+        }
+        // SAFETY: field offset and descriptor layout were validated against
+        // the carrier storage size.
+        let status = unsafe { destroy_record_field(carrier, field) };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+    }
+    unsafe { ptr::write_bytes(carrier, 0, element_size as usize) };
+    BufferStatus::Ok
+}
+
+/// Releases every owning Buffer or OwnedString field of each record element in an owning
+/// buffer. The field table uses the same C ABI shape as enum field metadata,
+/// with `u64::MAX` marking unconditional fields and other variants selecting
+/// the active `Option`/`Result` carrier branch.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive header. The element layout and field
+/// table must describe initialized record storage and owning Buffer or
+/// OwnedString fields.
+#[must_use]
+#[allow(unsafe_code, clippy::manual_is_multiple_of)]
+pub unsafe fn buffer_destroy_record_fields(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = validate_element_layout(element_size, alignment) {
+        return status;
+    }
+    if let Err(status) = unsafe { validate_enum_carrier_fields(fields, field_count, element_size) }
+    {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive outer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    for index in 0..buffer.length {
+        let slot_offset = match index.checked_mul(element_size) {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        // SAFETY: descriptor validity and field validation keep this record
+        // pointer inside the initialized outer allocation.
+        let record = unsafe { buffer.pointer.cast::<u8>().add(slot_offset as usize) };
+        for field_index in 0..field_count {
+            // SAFETY: validation established the table bounds.
+            let field = unsafe { fields.add(field_index as usize).read_unaligned() };
+            let active = match unsafe { record_field_is_active(record, field) } {
+                Ok(active) => active,
+                Err(status) => return status,
+            };
+            if !active {
+                continue;
+            }
+            // SAFETY: field offset and descriptor layout were validated.
+            let status = unsafe { destroy_record_field(record, field) };
+            if status != BufferStatus::Ok {
+                return status;
+            }
+        }
+    }
+    if buffer.capacity != 0 {
+        let layout = match buffer_layout(element_size, alignment, buffer.capacity) {
+            Ok(layout) => layout,
+            Err(status) => return status,
+        };
+        // SAFETY: caller guarantees pointer provenance and exact outer layout.
+        unsafe { dealloc(buffer.pointer.cast(), layout) };
+    }
+    *buffer = Buffer::EMPTY;
+    BufferStatus::Ok
+}
+
+/// Releases every owning Buffer or OwnedString field of one standalone record value.
+///
+/// # Safety
+///
+/// `record` must point to initialized caller-owned record storage. The
+/// element size and field table must describe its owning Buffer or OwnedString fields.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn carrier_destroy_record_fields(
+    record: *mut u8,
+    element_size: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if record.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = validate_element_layout(element_size, align_of::<Buffer>() as u64) {
+        return status;
+    }
+    if let Err(status) = unsafe { validate_enum_carrier_fields(fields, field_count, element_size) }
+    {
+        return status;
+    }
+    for field_index in 0..field_count {
+        // SAFETY: validation established the table bounds.
+        let field = unsafe { fields.add(field_index as usize).read_unaligned() };
+        let active = match unsafe { record_field_is_active(record, field) } {
+            Ok(active) => active,
+            Err(status) => return status,
+        };
+        if !active {
+            continue;
+        }
+        // SAFETY: field offset and descriptor layout were validated.
+        let status = unsafe { destroy_record_field(record, field) };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+    }
+    // SAFETY: caller owns initialized record storage for the declared size.
+    unsafe { ptr::write_bytes(record, 0, element_size as usize) };
+    BufferStatus::Ok
+}
+
+/// Removes one record from an owning buffer, destroys its owning Buffer
+/// fields, and closes the gap by moving later record bytes left.  No record
+/// value is returned, so ownership never passes through a temporary result.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive header, `element_size`/`alignment` must
+/// match the record allocation, and `fields` must describe initialized owning
+/// Buffer descriptors inside each record.
+#[must_use]
+#[allow(unsafe_code, clippy::manual_is_multiple_of)]
+pub unsafe fn buffer_remove_drop_record_fields(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = validate_element_layout(element_size, alignment) {
+        return status;
+    }
+    if let Err(status) = unsafe { validate_enum_carrier_fields(fields, field_count, element_size) }
+    {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    if index >= buffer.length {
+        return BufferStatus::OutOfBounds;
+    }
+    let record_offset = match index.checked_mul(element_size) {
+        Some(offset) => offset,
+        None => return BufferStatus::SizeOverflow,
+    };
+    // SAFETY: the validated indexed offset lies inside initialized record
+    // storage and every field table entry was checked against element_size.
+    let record = unsafe { buffer.pointer.cast::<u8>().add(record_offset as usize) };
+    for field_index in 0..field_count {
+        // SAFETY: validation established the table bounds.
+        let field = unsafe { fields.add(field_index as usize).read_unaligned() };
+        let active = match unsafe { record_field_is_active(record, field) } {
+            Ok(active) => active,
+            Err(status) => return status,
+        };
+        if !active {
+            continue;
+        }
+        // SAFETY: the field offset identifies an initialized owning descriptor.
+        let status = unsafe { destroy_record_field(record, field) };
+        if status != BufferStatus::Ok {
+            return status;
+        }
+    }
+    let trailing_count = buffer.length - index - 1;
+    if trailing_count != 0 {
+        let move_bytes = match trailing_count.checked_mul(element_size) {
+            Some(bytes) => bytes,
+            None => return BufferStatus::SizeOverflow,
+        };
+        let source_offset = match index
+            .checked_add(1)
+            .and_then(|next| next.checked_mul(element_size))
+        {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        // SAFETY: source and destination are initialized record ranges in the
+        // same allocation; ptr::copy provides memmove semantics for overlap.
+        unsafe {
+            ptr::copy(
+                buffer.pointer.cast::<u8>().add(source_offset as usize),
+                buffer.pointer.cast::<u8>().add(record_offset as usize),
+                move_bytes as usize,
+            )
+        };
+    }
+    let tail_offset = match (buffer.length - 1).checked_mul(element_size) {
+        Some(offset) => offset,
+        None => return BufferStatus::SizeOverflow,
+    };
+    // SAFETY: the trailing slot is now the only stale copy of any moved
+    // record descriptors; clear it before publishing the shorter length.
+    unsafe {
+        ptr::write_bytes(
+            buffer.pointer.cast::<u8>().add(tail_offset as usize),
+            0,
+            element_size as usize,
+        )
+    };
+    buffer.length -= 1;
+    BufferStatus::Ok
+}
+
+/// Removes one nested owning Buffer element whose final leaf is a record with
+/// owning Buffer fields. The selected nested chain is destroyed before later
+/// outer descriptors are moved left, preserving exactly one owner per chain.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive outer header. `element_size`/`alignment`
+/// describe the nested Buffer descriptor layout, while the record layout and
+/// field table describe initialized owning fields at the final leaf.
+#[must_use]
+#[allow(unsafe_code, clippy::manual_is_multiple_of, clippy::too_many_arguments)]
+pub unsafe fn buffer_remove_drop_nested_record_fields(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    record_element_size: u64,
+    record_alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if depth == 0 {
+        return BufferStatus::InvalidSize;
+    }
+    if element_size != size_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    if let Err(status) = validate_element_layout(record_element_size, record_alignment) {
+        return status;
+    }
+    if let Err(status) =
+        unsafe { validate_enum_carrier_fields(fields, field_count, record_element_size) }
+    {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    if index >= buffer.length {
+        return BufferStatus::OutOfBounds;
+    }
+    // SAFETY: the outer layout makes the selected slot a valid Buffer
+    // descriptor and the nested destroy routine consumes its ownership.
+    let base = buffer.pointer.cast::<Buffer>();
+    let selected = unsafe { base.add(index as usize) };
+    let status = if depth == 1 {
+        unsafe {
+            buffer_destroy_record_fields(
+                selected,
+                record_element_size,
+                record_alignment,
+                fields,
+                field_count,
+            )
+        }
+    } else {
+        unsafe {
+            buffer_destroy_nested_record_fields(
+                selected,
+                element_size,
+                alignment,
+                depth - 1,
+                record_element_size,
+                record_alignment,
+                fields,
+                field_count,
+            )
+        }
+    };
+    if status != BufferStatus::Ok {
+        return status;
+    }
+    for current_index in index..(buffer.length - 1) {
+        let current = unsafe { base.add(current_index as usize) };
+        let next = unsafe { base.add((current_index + 1) as usize) };
+        // SAFETY: selected was reset to EMPTY and every later descriptor is
+        // moved byte-for-byte exactly once, so ownership is not duplicated.
+        let moved = unsafe { ptr::read(next) };
+        unsafe { ptr::write(current, moved) };
+        unsafe { ptr::write(next, Buffer::EMPTY) };
+    }
+    buffer.length -= 1;
+    BufferStatus::Ok
+}
+
+/// Removes one copy-safe element without returning it.  This is the generic
+/// byte-compaction path used when no owning field table is required.
+///
+/// # Safety
+///
+/// The descriptor and element layout must describe a live initialized buffer.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_remove_drop(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = validate_element_layout(element_size, alignment) {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    if index >= buffer.length {
+        return BufferStatus::OutOfBounds;
+    }
+    let trailing_count = buffer.length - index - 1;
+    if trailing_count != 0 {
+        let move_bytes = match trailing_count.checked_mul(element_size) {
+            Some(bytes) => bytes,
+            None => return BufferStatus::SizeOverflow,
+        };
+        let source_offset = match index
+            .checked_add(1)
+            .and_then(|next| next.checked_mul(element_size))
+        {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        let destination_offset = match index.checked_mul(element_size) {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        unsafe {
+            ptr::copy(
+                buffer.pointer.cast::<u8>().add(source_offset as usize),
+                buffer.pointer.cast::<u8>().add(destination_offset as usize),
+                move_bytes as usize,
+            )
+        };
+    }
+    let tail_offset = match (buffer.length - 1).checked_mul(element_size) {
+        Some(offset) => offset,
+        None => return BufferStatus::SizeOverflow,
+    };
+    unsafe {
+        ptr::write_bytes(
+            buffer.pointer.cast::<u8>().add(tail_offset as usize),
+            0,
+            element_size as usize,
+        )
+    };
+    buffer.length -= 1;
+    BufferStatus::Ok
+}
+
+/// Removes and destroys one `OwnedString` element, then move-compacts the
+/// remaining descriptors without duplicating their owned byte allocations.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive `Buffer<OwnedString>` header and the
+/// supplied element layout must match [`Utf8String`].
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_remove_drop_owned_string(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if element_size != size_of::<Utf8String>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Utf8String>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    if index >= buffer.length {
+        return BufferStatus::OutOfBounds;
+    }
+    // SAFETY: index is inside the initialized descriptor range.
+    let selected = unsafe { buffer.pointer.cast::<Utf8String>().add(index as usize) };
+    let status = unsafe { string_destroy(selected) };
+    if status != StringStatus::Ok {
+        return match status {
+            StringStatus::RuntimeNotInitialized => BufferStatus::RuntimeNotInitialized,
+            StringStatus::NullPointer => BufferStatus::NullPointer,
+            StringStatus::InvalidSize => BufferStatus::InvalidSize,
+            StringStatus::InvalidAlignment => BufferStatus::InvalidAlignment,
+            StringStatus::SizeOverflow => BufferStatus::SizeOverflow,
+            StringStatus::OutOfMemory => BufferStatus::OutOfMemory,
+            _ => BufferStatus::InvalidBuffer,
+        };
+    }
+    for current_index in index..(buffer.length - 1) {
+        // SAFETY: both descriptors are initialized and the move uses
+        // ptr::read/write so ownership is transferred exactly once.
+        let current = unsafe {
+            buffer
+                .pointer
+                .cast::<Utf8String>()
+                .add(current_index as usize)
+        };
+        let next = unsafe {
+            buffer
+                .pointer
+                .cast::<Utf8String>()
+                .add((current_index + 1) as usize)
+        };
+        let moved = unsafe { ptr::read(next) };
+        unsafe {
+            ptr::write(current, moved);
+            ptr::write(next, Utf8String::EMPTY);
+        }
+    }
+    buffer.length -= 1;
+    BufferStatus::Ok
+}
+
+/// Moves one owning `@repr(C)` record out of a generic buffer into caller-owned
+/// storage and closes the gap without duplicating descriptor ownership.
+///
+/// The output record is not dropped by this function; ownership of every
+/// nested Buffer field is transferred to `output`. The caller must provide a
+/// distinct, writable, correctly aligned record slot.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive Buffer descriptor, `output` must point to
+/// writable storage for one record, and the element layout must match both the
+/// initialized buffer elements and the output record.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_remove_move_into(
+    buffer: *mut Buffer,
+    index: u64,
+    output: *mut u8,
+    element_size: u64,
+    alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() || output.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = validate_element_layout(element_size, alignment) {
+        return status;
+    }
+    let alignment = match usize::try_from(alignment) {
+        Ok(value) => value,
+        Err(_) => return BufferStatus::InvalidAlignment,
+    };
+    if !(output as usize).is_multiple_of(alignment) {
+        return BufferStatus::InvalidAlignment;
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    if buffer.capacity > u64::MAX / element_size {
+        return BufferStatus::SizeOverflow;
+    }
+    if index >= buffer.length {
+        return BufferStatus::OutOfBounds;
+    }
+    let source_offset = match index.checked_mul(element_size) {
+        Some(offset) => offset,
+        None => return BufferStatus::SizeOverflow,
+    };
+    let source = unsafe { buffer.pointer.cast::<u8>().add(source_offset as usize) };
+    // `ptr::copy` keeps this boundary memory-safe even if a caller violates
+    // the distinct-output contract; correct ownership still requires a
+    // separate output slot.
+    unsafe { ptr::copy(source, output, element_size as usize) };
+    let trailing_count = buffer.length - index - 1;
+    if trailing_count != 0 {
+        let move_bytes = match trailing_count.checked_mul(element_size) {
+            Some(bytes) => bytes,
+            None => return BufferStatus::SizeOverflow,
+        };
+        let trailing_source_offset = match index
+            .checked_add(1)
+            .and_then(|next| next.checked_mul(element_size))
+        {
+            Some(offset) => offset,
+            None => return BufferStatus::SizeOverflow,
+        };
+        unsafe {
+            ptr::copy(
+                buffer
+                    .pointer
+                    .cast::<u8>()
+                    .add(trailing_source_offset as usize),
+                source,
+                move_bytes as usize,
+            )
+        };
+    }
+    let tail_offset = match (buffer.length - 1).checked_mul(element_size) {
+        Some(offset) => offset,
+        None => return BufferStatus::SizeOverflow,
+    };
+    unsafe {
+        ptr::write_bytes(
+            buffer.pointer.cast::<u8>().add(tail_offset as usize),
+            0,
+            element_size as usize,
+        )
+    };
+    buffer.length -= 1;
+    BufferStatus::Ok
+}
+
+/// Inserts one move-safe element from caller-owned value storage and closes
+/// the gap by shifting initialized elements to the right.
+///
+/// The source bytes are cleared only after the insertion succeeds, so a
+/// failed bounds, layout, allocation, or overflow check leaves the source
+/// value unchanged. This raw-pointer form avoids returning or passing a large
+/// owning aggregate through the platform C ABI.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive Buffer descriptor and `source` must point
+/// to one initialized, distinct, correctly aligned element whose ownership may
+/// be transferred. The element layout must match the initialized buffer.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_insert_move_from(
+    buffer: *mut Buffer,
+    index: u64,
+    source: *mut u8,
+    element_size: u64,
+    alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() || source.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if let Err(status) = validate_element_layout(element_size, alignment) {
+        return status;
+    }
+    let alignment = match usize::try_from(alignment) {
+        Ok(value) => value,
+        Err(_) => return BufferStatus::InvalidAlignment,
+    };
+    if !(source as usize).is_multiple_of(alignment) {
+        return BufferStatus::InvalidAlignment;
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    if index > buffer.length {
+        return BufferStatus::OutOfBounds;
+    }
+    if buffer.length == u64::MAX {
+        return BufferStatus::SizeOverflow;
+    }
+    let move_count = buffer.length - index;
+    let move_bytes = match move_count.checked_mul(element_size) {
+        Some(bytes) => bytes,
+        None => return BufferStatus::SizeOverflow,
+    };
+    // Reserve before touching either ownership-bearing value. A failed
+    // allocation therefore preserves both the source and destination.
+    let status =
+        unsafe { buffer_reserve(buffer, element_size, alignment as u64, buffer.length + 1) };
+    if status != BufferStatus::Ok {
+        return status;
+    }
+    let destination_offset = match index.checked_mul(element_size) {
+        Some(offset) => offset,
+        None => return BufferStatus::SizeOverflow,
+    };
+    let destination = unsafe { buffer.pointer.cast::<u8>().add(destination_offset as usize) };
+    if move_bytes != 0 {
+        // `ptr::copy` is overlap-safe for the right shift. The type checker
+        // enforces a distinct source place, while this operation remains
+        // memory-safe even if an external caller violates that contract.
+        unsafe {
+            ptr::copy(
+                destination,
+                destination.add(element_size as usize),
+                move_bytes as usize,
+            )
+        };
+    }
+    unsafe { ptr::copy(source, destination, element_size as usize) };
+    unsafe { ptr::write_bytes(source, 0, element_size as usize) };
+    buffer.length += 1;
+    BufferStatus::Ok
+}
+
+/// Moves the last initialized element out of an owning buffer into
+/// caller-owned storage and closes the gap without returning a large
+/// aggregate through the platform C ABI.
+///
+/// The output record is not dropped by this function; ownership of its
+/// initialized bytes is transferred to `output`. The element size/alignment
+/// describe both the buffer slot and the output slot, including tagged
+/// carriers and inline owning records.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive Buffer descriptor, `output` must point to
+/// writable storage for one element, and the element layout must match both
+/// the initialized buffer elements and the output value.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_pop_move_into(
+    buffer: *mut Buffer,
+    output: *mut u8,
+    element_size: u64,
+    alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    // SAFETY: the caller contract requires a live descriptor. The delegated
+    // move routine performs the authoritative structural validation.
+    let length = unsafe { (*buffer).length };
+    if length == 0 {
+        return BufferStatus::OutOfBounds;
+    }
+    // SAFETY: the descriptor and output pointer are forwarded unchanged to
+    // the already validated caller-owned move path.
+    unsafe { buffer_remove_move_into(buffer, length - 1, output, element_size, alignment) }
+}
+
+/// Moves the last initialized element out of an owning `Buffer<Buffer<U>>`.
+///
+/// The outer slot is reset to an empty descriptor before the outer length is
+/// decremented, transferring ownership of the nested allocation to the
+/// returned result without copying or dropping it.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive outer header from this runtime. The
+/// outer element layout must be the native `Buffer` descriptor layout, and
+/// `nested_element_size`/`nested_alignment` must match the nested allocation.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_pop(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    nested_element_size: u64,
+    nested_alignment: u64,
+) -> BufferResult {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferResult::failure(BufferStatus::RuntimeNotInitialized);
+    }
+    if buffer.is_null() {
+        return BufferResult::failure(BufferStatus::NullPointer);
+    }
+    if element_size != size_of::<Buffer>() as u64 {
+        return BufferResult::failure(BufferStatus::InvalidSize);
+    }
+    if alignment != align_of::<Buffer>() as u64 {
+        return BufferResult::failure(BufferStatus::InvalidAlignment);
+    }
+    if let Err(status) = validate_element_layout(nested_element_size, nested_alignment) {
+        return BufferResult::failure(status);
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return BufferResult::failure(status);
+    }
+    if buffer.length == 0 {
+        return BufferResult::failure(BufferStatus::OutOfBounds);
+    }
+    let index = buffer.length - 1;
+    // SAFETY: the outer layout check makes the final initialized slot a
+    // properly aligned Buffer descriptor within the allocation.
+    let nested = unsafe { buffer.pointer.cast::<Buffer>().add(index as usize) };
+    // SAFETY: the slot is initialized and ownership is transferred by move.
+    let value = unsafe { ptr::read(nested) };
+    // SAFETY: leave the consumed slot in a non-owning empty state so a later
+    // nested destroy cannot double-free the transferred allocation.
+    unsafe { ptr::write(nested, Buffer::EMPTY) };
+    buffer.length = index;
+    BufferResult::success(value)
+}
+
+/// Moves an initialized element out of an owning `Buffer<Buffer<U>>` at an
+/// arbitrary index and closes the gap by moving later descriptors left.
+///
+/// Every consumed slot is reset to an empty descriptor, so the outer drop
+/// glue retains exactly one owner for each remaining nested allocation.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive outer header from this runtime. The
+/// outer element layout must be the native `Buffer` descriptor layout, and
+/// `nested_element_size`/`nested_alignment` must match each nested allocation.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_remove_move(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    nested_element_size: u64,
+    nested_alignment: u64,
+) -> BufferResult {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferResult::failure(BufferStatus::RuntimeNotInitialized);
+    }
+    if buffer.is_null() {
+        return BufferResult::failure(BufferStatus::NullPointer);
+    }
+    if element_size != size_of::<Buffer>() as u64 {
+        return BufferResult::failure(BufferStatus::InvalidSize);
+    }
+    if alignment != align_of::<Buffer>() as u64 {
+        return BufferResult::failure(BufferStatus::InvalidAlignment);
+    }
+    if let Err(status) = validate_element_layout(nested_element_size, nested_alignment) {
+        return BufferResult::failure(status);
+    }
+    // SAFETY: caller guarantees a live exclusive Buffer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return BufferResult::failure(status);
+    }
+    if index >= buffer.length {
+        return BufferResult::failure(BufferStatus::OutOfBounds);
+    }
+    // SAFETY: the outer layout check makes the indexed slot aligned and
+    // initialized, and the caller guarantees ownership of every descriptor.
+    let base = buffer.pointer.cast::<Buffer>();
+    let removed = unsafe { ptr::read(base.add(index as usize)) };
+    for current_index in index..(buffer.length - 1) {
+        // SAFETY: both slots are within the initialized outer range.
+        let current = unsafe { base.add(current_index as usize) };
+        let next = unsafe { base.add((current_index + 1) as usize) };
+        let moved = unsafe { ptr::read(next) };
+        unsafe { ptr::write(current, moved) };
+        unsafe { ptr::write(next, Buffer::EMPTY) };
+    }
+    buffer.length -= 1;
+    BufferResult::success(removed)
 }
 
 /// Creates a checked non-owning subslice from a buffer header.
@@ -1950,6 +4537,424 @@ pub unsafe extern "C" fn jadren_rt_buffer_resize(buffer: *mut Buffer, new_length
     unsafe { buffer_resize(buffer, new_length) }.code()
 }
 
+/// Clears a copy-safe generic buffer across the C ABI.
+///
+/// # Safety
+///
+/// The descriptor must satisfy [`buffer_clear`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_clear(buffer: *mut Buffer) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller-owned header.
+    unsafe { buffer_clear(buffer) }.code()
+}
+
+/// Changes the logical length of an owning nested buffer across the C ABI.
+///
+/// # Safety
+///
+/// The descriptor, nested depth, and leaf layout must satisfy
+/// [`buffer_resize_move`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_resize_move_status(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller-owned header.
+    unsafe {
+        buffer_resize_move(
+            buffer,
+            new_length,
+            element_size,
+            alignment,
+            depth,
+            leaf_element_size,
+            leaf_alignment,
+        )
+    }
+    .code()
+}
+
+/// Clears an owning nested buffer across the C ABI.
+///
+/// # Safety
+///
+/// The descriptor, nested depth, and leaf layout must satisfy
+/// [`buffer_clear_move`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_clear_move_status(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller-owned header.
+    unsafe {
+        buffer_clear_move(
+            buffer,
+            element_size,
+            alignment,
+            depth,
+            leaf_element_size,
+            leaf_alignment,
+        )
+    }
+    .code()
+}
+
+/// Resizes an owning nested Buffer chain with an OwnedString leaf across the
+/// C ABI.
+///
+/// # Safety
+///
+/// `buffer` must point to a live exclusive descriptor, and all element,
+/// alignment, depth, and string-layout arguments must match its allocation.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_resize_move_nested_owned_string_status(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    string_element_size: u64,
+    string_alignment: u64,
+) -> i32 {
+    unsafe {
+        buffer_resize_move_nested_owned_string(
+            buffer,
+            new_length,
+            element_size,
+            alignment,
+            depth,
+            string_element_size,
+            string_alignment,
+        )
+    }
+    .code()
+}
+
+/// Boolean convenience wrapper for nested OwnedString resize.
+///
+/// # Safety
+///
+/// The arguments must satisfy the same live-descriptor and layout contract as
+/// [`jadren_rt_buffer_resize_move_nested_owned_string_status`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_resize_move_nested_owned_string(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    string_element_size: u64,
+    string_alignment: u64,
+) -> i32 {
+    let status = unsafe {
+        jadren_rt_buffer_resize_move_nested_owned_string_status(
+            buffer,
+            new_length,
+            element_size,
+            alignment,
+            depth,
+            string_element_size,
+            string_alignment,
+        )
+    };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
+/// Clears an owning nested Buffer chain with an OwnedString leaf across the
+/// C ABI.
+///
+/// # Safety
+///
+/// `buffer` must point to a live exclusive descriptor, and all element,
+/// alignment, depth, and string-layout arguments must match its allocation.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_clear_move_nested_owned_string_status(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    string_element_size: u64,
+    string_alignment: u64,
+) -> i32 {
+    unsafe {
+        buffer_clear_move_nested_owned_string(
+            buffer,
+            element_size,
+            alignment,
+            depth,
+            string_element_size,
+            string_alignment,
+        )
+    }
+    .code()
+}
+
+/// Boolean convenience wrapper for nested OwnedString clear.
+///
+/// # Safety
+///
+/// The arguments must satisfy the same live-descriptor and layout contract as
+/// [`jadren_rt_buffer_clear_move_nested_owned_string_status`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_clear_move_nested_owned_string(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    string_element_size: u64,
+    string_alignment: u64,
+) -> i32 {
+    let status = unsafe {
+        jadren_rt_buffer_clear_move_nested_owned_string_status(
+            buffer,
+            element_size,
+            alignment,
+            depth,
+            string_element_size,
+            string_alignment,
+        )
+    };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
+/// Resizes an owning `Buffer<OwnedString>` across the C ABI.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive buffer header containing valid owned
+/// string descriptors, and the supplied layout must match the allocation.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_resize_move_owned_string_status(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    unsafe { buffer_resize_move_owned_string(buffer, new_length, element_size, alignment) }.code()
+}
+
+/// Boolean convenience wrapper for
+/// [`jadren_rt_buffer_resize_move_owned_string_status`].
+///
+/// # Safety
+///
+/// The caller must uphold the same buffer and layout contract as the status
+/// function.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_resize_move_owned_string(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    let status = unsafe {
+        jadren_rt_buffer_resize_move_owned_string_status(
+            buffer,
+            new_length,
+            element_size,
+            alignment,
+        )
+    };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
+/// Clears an owning `Buffer<OwnedString>` across the C ABI.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive buffer header containing valid owned
+/// string descriptors, and the supplied layout must match the allocation.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_clear_move_owned_string_status(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    unsafe { buffer_clear_move_owned_string(buffer, element_size, alignment) }.code()
+}
+
+/// Boolean convenience wrapper for
+/// [`jadren_rt_buffer_clear_move_owned_string_status`].
+///
+/// # Safety
+///
+/// The caller must uphold the same buffer and layout contract as the status
+/// function.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_clear_move_owned_string(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    let status =
+        unsafe { jadren_rt_buffer_clear_move_owned_string_status(buffer, element_size, alignment) };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
+/// Resizes an owning nested Buffer whose final leaf is an owning-field record
+/// across the C ABI.
+///
+/// # Safety
+///
+/// The descriptor, nested record layouts and field table must describe a live
+/// caller-owned nested Buffer chain accepted by the runtime contract.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_resize_move_nested_record_fields_status(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    record_element_size: u64,
+    record_alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller-owned header
+    // and field-table contract.
+    unsafe {
+        buffer_resize_move_nested_record_fields(
+            buffer,
+            new_length,
+            element_size,
+            alignment,
+            depth,
+            record_element_size,
+            record_alignment,
+            fields,
+            field_count,
+        )
+    }
+    .code()
+}
+
+/// Boolean convenience wrapper for
+/// [`jadren_rt_buffer_resize_move_nested_record_fields_status`].
+///
+/// # Safety
+///
+/// Uses the same caller-owned descriptor, layout and field-table contract as
+/// the status wrapper.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_resize_move_nested_record_fields(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    record_element_size: u64,
+    record_alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary shares the status wrapper's documented
+    // caller-owned header and field-table contract.
+    let status = unsafe {
+        jadren_rt_buffer_resize_move_nested_record_fields_status(
+            buffer,
+            new_length,
+            element_size,
+            alignment,
+            depth,
+            record_element_size,
+            record_alignment,
+            fields,
+            field_count,
+        )
+    };
+    if status == BufferStatus::Ok.code() {
+        1
+    } else {
+        0
+    }
+}
+
+/// Status wrapper for direct owning record-buffer resize.
+///
+/// # Safety
+///
+/// The descriptor, record layout and field table must satisfy
+/// [`buffer_resize_move_record_fields`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_resize_move_record_fields_status(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller-owned header
+    // and field-table contract.
+    unsafe {
+        buffer_resize_move_record_fields(
+            buffer,
+            new_length,
+            element_size,
+            alignment,
+            fields,
+            field_count,
+        )
+    }
+    .code()
+}
+
+/// Boolean convenience wrapper for direct owning record-buffer resize.
+///
+/// # Safety
+///
+/// Uses the same caller-owned descriptor, layout and field-table contract as
+/// the status wrapper.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_resize_move_record_fields(
+    buffer: *mut Buffer,
+    new_length: u64,
+    element_size: u64,
+    alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    let status = unsafe {
+        jadren_rt_buffer_resize_move_record_fields_status(
+            buffer,
+            new_length,
+            element_size,
+            alignment,
+            fields,
+            field_count,
+        )
+    };
+    if status == BufferStatus::Ok.code() {
+        1
+    } else {
+        0
+    }
+}
+
 /// Destroys an owning buffer across the C ABI.
 ///
 /// # Safety
@@ -1964,6 +4969,806 @@ pub unsafe extern "C" fn jadren_rt_buffer_destroy(
 ) -> i32 {
     // SAFETY: this ABI boundary exposes the same documented caller contract.
     unsafe { buffer_destroy(buffer, element_size, alignment) }.code()
+}
+
+/// Destroys an owning `Buffer<OwnedString>` across the C ABI.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive buffer header containing valid owned
+/// string descriptors, and the supplied layout must match the allocation.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_destroy_owned_string(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe { buffer_destroy_owned_string(buffer, element_size, alignment) }.code()
+}
+
+/// Destroys an owning `Buffer<Buffer<U>>` across the C ABI.
+///
+/// # Safety
+///
+/// The descriptor and nested element layouts must satisfy
+/// [`buffer_destroy_nested_buffer`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_destroy_nested_buffer(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    nested_element_size: u64,
+    nested_alignment: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe {
+        buffer_destroy_nested_buffer(
+            buffer,
+            element_size,
+            alignment,
+            nested_element_size,
+            nested_alignment,
+        )
+    }
+    .code()
+}
+
+/// Destroys an owning recursively nested buffer across the C ABI.
+///
+/// # Safety
+///
+/// The descriptor, depth, and leaf layout must describe a live recursive
+/// buffer chain accepted by [`buffer_destroy_nested_buffer_recursive`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_destroy_nested_buffer_recursive(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe {
+        buffer_destroy_nested_buffer_recursive(
+            buffer,
+            element_size,
+            alignment,
+            depth,
+            leaf_element_size,
+            leaf_alignment,
+        )
+    }
+    .code()
+}
+
+/// Destroys an owning recursively nested Buffer chain with an OwnedString
+/// leaf across the C ABI.
+///
+/// # Safety
+///
+/// `buffer` must point to a live exclusive descriptor, and all element,
+/// alignment, depth, and string-layout arguments must match its allocation.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_destroy_nested_owned_string(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    string_element_size: u64,
+    string_alignment: u64,
+) -> i32 {
+    unsafe {
+        buffer_destroy_nested_owned_string(
+            buffer,
+            element_size,
+            alignment,
+            depth,
+            string_element_size,
+            string_alignment,
+        )
+    }
+    .code()
+}
+
+/// Destroys a nested Buffer whose final elements are owning record values
+/// across the C ABI.
+///
+/// # Safety
+///
+/// The descriptor, depth, record layout and field table must describe a live
+/// nested record buffer accepted by [`buffer_destroy_nested_record_fields`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_destroy_nested_record_fields(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    record_element_size: u64,
+    record_alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe {
+        buffer_destroy_nested_record_fields(
+            buffer,
+            element_size,
+            alignment,
+            depth,
+            record_element_size,
+            record_alignment,
+            fields,
+            field_count,
+        )
+    }
+    .code()
+}
+
+/// Destroys carrier elements that own a selected Buffer payload across C ABI.
+///
+/// # Safety
+///
+/// The descriptor, carrier layout, tag, and selected payload layout must
+/// describe initialized caller-owned storage.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_destroy_carrier_buffer(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    payload_offset: u64,
+    payload_variant: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe {
+        buffer_destroy_carrier_buffer(
+            buffer,
+            element_size,
+            alignment,
+            payload_offset,
+            payload_variant,
+            depth,
+            leaf_element_size,
+            leaf_alignment,
+        )
+    }
+    .code()
+}
+
+/// Destroys a standalone owning carrier Buffer payload across the C ABI.
+///
+/// # Safety
+///
+/// The carrier pointer and payload layout must describe initialized
+/// caller-owned storage.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_carrier_destroy_buffer(
+    carrier: *mut u8,
+    element_size: u64,
+    payload_offset: u64,
+    payload_variant: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe {
+        carrier_destroy_buffer(
+            carrier,
+            element_size,
+            payload_offset,
+            payload_variant,
+            depth,
+            leaf_element_size,
+            leaf_alignment,
+        )
+    }
+    .code()
+}
+
+/// Destroys a two-branch owning carrier inside a Buffer across the C ABI.
+///
+/// # Safety
+///
+/// The pointer and all layout arguments must describe a live caller-owned
+/// carrier buffer and its initialized branch descriptors.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_destroy_multi_carrier_buffer(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    payload_offset: u64,
+    first_variant: u64,
+    first_depth: u64,
+    first_leaf_element_size: u64,
+    first_leaf_alignment: u64,
+    second_variant: u64,
+    second_depth: u64,
+    second_leaf_element_size: u64,
+    second_leaf_alignment: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe {
+        buffer_destroy_multi_carrier_buffer(
+            buffer,
+            element_size,
+            alignment,
+            payload_offset,
+            first_variant,
+            first_depth,
+            first_leaf_element_size,
+            first_leaf_alignment,
+            second_variant,
+            second_depth,
+            second_leaf_element_size,
+            second_leaf_alignment,
+        )
+    }
+    .code()
+}
+
+/// Destroys a standalone two-branch owning carrier across the C ABI.
+///
+/// # Safety
+///
+/// The pointer and all layout arguments must describe initialized caller-owned
+/// carrier storage and its branch descriptors.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_carrier_destroy_multi_buffer(
+    carrier: *mut u8,
+    element_size: u64,
+    payload_offset: u64,
+    first_variant: u64,
+    first_depth: u64,
+    first_leaf_element_size: u64,
+    first_leaf_alignment: u64,
+    second_variant: u64,
+    second_depth: u64,
+    second_leaf_element_size: u64,
+    second_leaf_alignment: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe {
+        carrier_destroy_multi_buffer(
+            carrier,
+            element_size,
+            payload_offset,
+            first_variant,
+            first_depth,
+            first_leaf_element_size,
+            first_leaf_alignment,
+            second_variant,
+            second_depth,
+            second_leaf_element_size,
+            second_leaf_alignment,
+        )
+    }
+    .code()
+}
+
+/// Destroys a multi-branch named enum carrier inside a Buffer across C ABI.
+///
+/// # Safety
+///
+/// The pointer, branch table, and layout arguments must describe initialized
+/// caller-owned storage for the duration of this call.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_destroy_enum_carrier_buffer(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    payload_offset: u64,
+    branches: *const CarrierDropBranchAbi,
+    branch_count: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe {
+        buffer_destroy_enum_carrier_buffer(
+            buffer,
+            element_size,
+            alignment,
+            payload_offset,
+            branches,
+            branch_count,
+        )
+    }
+    .code()
+}
+
+/// Destroys a standalone multi-branch named enum carrier across C ABI.
+///
+/// # Safety
+///
+/// The pointer, branch table, and layout arguments must describe initialized
+/// caller-owned storage for the duration of this call.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_carrier_destroy_enum_buffer(
+    carrier: *mut u8,
+    element_size: u64,
+    payload_offset: u64,
+    branches: *const CarrierDropBranchAbi,
+    branch_count: u64,
+) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe {
+        carrier_destroy_enum_buffer(
+            carrier,
+            element_size,
+            payload_offset,
+            branches,
+            branch_count,
+        )
+    }
+    .code()
+}
+
+/// Destroys multi-field named enum carriers inside a Buffer across the C ABI.
+///
+/// # Safety
+///
+/// The pointer, field table, and layout arguments must describe initialized
+/// caller-owned storage for the duration of this call.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_destroy_enum_carrier_fields(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    unsafe {
+        buffer_destroy_enum_carrier_fields(buffer, element_size, alignment, fields, field_count)
+    }
+    .code()
+}
+
+/// Destroys a standalone multi-field named enum carrier across the C ABI.
+///
+/// # Safety
+///
+/// The pointer, field table, and layout arguments must describe initialized
+/// caller-owned storage for the duration of this call.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_carrier_destroy_enum_fields(
+    carrier: *mut u8,
+    element_size: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    unsafe { carrier_destroy_enum_fields(carrier, element_size, fields, field_count) }.code()
+}
+
+/// Destroys owning Buffer fields of record elements inside a Buffer across C
+/// ABI.
+///
+/// # Safety
+///
+/// The descriptor, element layout and field table must describe live
+/// caller-owned record storage.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_destroy_record_fields(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    unsafe { buffer_destroy_record_fields(buffer, element_size, alignment, fields, field_count) }
+        .code()
+}
+
+/// Destroys owning Buffer fields of one standalone record across C ABI.
+///
+/// # Safety
+///
+/// The record pointer, element size and field table must describe initialized
+/// caller-owned storage.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_carrier_destroy_record_fields(
+    record: *mut u8,
+    element_size: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    unsafe { carrier_destroy_record_fields(record, element_size, fields, field_count) }.code()
+}
+
+/// Removes one owning record from a Buffer, disposing its owning fields and
+/// compacting later elements leftward across the C ABI.
+///
+/// # Safety
+///
+/// `buffer`, `fields` and all layout values must describe initialized,
+/// caller-owned storage with valid owning-field descriptors.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_record_fields_status(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    unsafe {
+        buffer_remove_drop_record_fields(
+            buffer,
+            index,
+            element_size,
+            alignment,
+            fields,
+            field_count,
+        )
+    }
+    .code()
+}
+
+/// Boolean convenience wrapper for
+/// [`jadren_rt_buffer_remove_drop_record_fields_status`].
+///
+/// # Safety
+///
+/// The arguments must satisfy the safety contract of the status wrapper.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_record_fields(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    let status = unsafe {
+        jadren_rt_buffer_remove_drop_record_fields_status(
+            buffer,
+            index,
+            element_size,
+            alignment,
+            fields,
+            field_count,
+        )
+    };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
+/// Removes one nested owning record chain across the C ABI.
+///
+/// # Safety
+///
+/// `buffer`, `fields`, `depth` and all layout values must describe initialized,
+/// caller-owned nested storage with valid owning-field descriptors.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_nested_record_fields_status(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    record_element_size: u64,
+    record_alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    unsafe {
+        buffer_remove_drop_nested_record_fields(
+            buffer,
+            index,
+            element_size,
+            alignment,
+            depth,
+            record_element_size,
+            record_alignment,
+            fields,
+            field_count,
+        )
+    }
+    .code()
+}
+
+/// Boolean convenience wrapper for nested owning record removal.
+///
+/// # Safety
+///
+/// The arguments must satisfy the safety contract of the nested status wrapper.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_nested_record_fields(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    record_element_size: u64,
+    record_alignment: u64,
+    fields: *const CarrierDropFieldAbi,
+    field_count: u64,
+) -> i32 {
+    let status = unsafe {
+        jadren_rt_buffer_remove_drop_nested_record_fields_status(
+            buffer,
+            index,
+            element_size,
+            alignment,
+            depth,
+            record_element_size,
+            record_alignment,
+            fields,
+            field_count,
+        )
+    };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
+/// Removes one copy-safe element from a Buffer without returning it across
+/// the C ABI.
+///
+/// # Safety
+///
+/// `buffer` must point to a valid initialized Buffer and the element layout
+/// must match its initialized elements.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_status(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    unsafe { buffer_remove_drop(buffer, index, element_size, alignment) }.code()
+}
+
+/// Boolean convenience wrapper for [`jadren_rt_buffer_remove_drop_status`].
+///
+/// # Safety
+///
+/// The arguments must satisfy the safety contract of the status wrapper.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_drop(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    let status =
+        unsafe { jadren_rt_buffer_remove_drop_status(buffer, index, element_size, alignment) };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
+/// Removes and destroys one `OwnedString` element across the C ABI.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive buffer header containing valid owned
+/// string descriptors, and `index` and the supplied layout must be valid for
+/// that buffer.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_owned_string_status(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    unsafe { buffer_remove_drop_owned_string(buffer, index, element_size, alignment) }.code()
+}
+
+/// Boolean convenience wrapper for
+/// [`jadren_rt_buffer_remove_drop_owned_string_status`].
+///
+/// # Safety
+///
+/// The caller must uphold the same buffer, index and layout contract as the
+/// status function.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_owned_string(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    let status = unsafe {
+        jadren_rt_buffer_remove_drop_owned_string_status(buffer, index, element_size, alignment)
+    };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
+/// Moves one owning record into caller-owned output storage across the C ABI.
+///
+/// # Safety
+///
+/// `buffer` and `output` must be valid exclusive storage for the supplied
+/// element layout, and `index` must identify an initialized element.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_move_into_status(
+    buffer: *mut Buffer,
+    index: u64,
+    output: *mut u8,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    unsafe { buffer_remove_move_into(buffer, index, output, element_size, alignment) }.code()
+}
+
+/// Boolean convenience wrapper for
+/// [`jadren_rt_buffer_remove_move_into_status`].
+///
+/// # Safety
+///
+/// The caller must uphold the same buffer, output, index and layout contract
+/// as the status function.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_move_into(
+    buffer: *mut Buffer,
+    index: u64,
+    output: *mut u8,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    let status = unsafe {
+        jadren_rt_buffer_remove_move_into_status(buffer, index, output, element_size, alignment)
+    };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
+/// Moves one caller-owned value into a generic Buffer at an index across the
+/// C ABI without passing the aggregate by value.
+///
+/// # Safety
+///
+/// `buffer` and `source` must be valid exclusive storage for the supplied
+/// element layout, and `index` must be within the insertion range.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_insert_move_from_status(
+    buffer: *mut Buffer,
+    index: u64,
+    source: *mut u8,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    unsafe { buffer_insert_move_from(buffer, index, source, element_size, alignment) }.code()
+}
+
+/// Boolean convenience wrapper for
+/// [`jadren_rt_buffer_insert_move_from_status`].
+///
+/// # Safety
+///
+/// The caller must uphold the same buffer, source, index and layout contract
+/// as the status function.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_insert_move_from(
+    buffer: *mut Buffer,
+    index: u64,
+    source: *mut u8,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    let status = unsafe {
+        jadren_rt_buffer_insert_move_from_status(buffer, index, source, element_size, alignment)
+    };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
+/// Moves the last owning element into caller-owned output storage across the
+/// C ABI. The raw output pointer keeps the contract valid for arbitrary
+/// already-supported element layouts.
+///
+/// # Safety
+///
+/// `buffer` and `output` must be valid exclusive storage for the supplied
+/// element layout, and the buffer must contain at least one initialized item.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_pop_move_into_status(
+    buffer: *mut Buffer,
+    output: *mut u8,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    unsafe { buffer_pop_move_into(buffer, output, element_size, alignment) }.code()
+}
+
+/// Boolean convenience wrapper for
+/// [`jadren_rt_buffer_pop_move_into_status`].
+///
+/// # Safety
+///
+/// The caller must uphold the same buffer, output and layout contract as the
+/// status function.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_pop_move_into(
+    buffer: *mut Buffer,
+    output: *mut u8,
+    element_size: u64,
+    alignment: u64,
+) -> i32 {
+    let status =
+        unsafe { jadren_rt_buffer_pop_move_into_status(buffer, output, element_size, alignment) };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
+/// Moves the last initialized nested buffer across the C ABI.
+///
+/// # Safety
+///
+/// The descriptor and nested element layouts must describe a live owning
+/// nested buffer.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_pop(
+    buffer: *mut Buffer,
+    element_size: u64,
+    alignment: u64,
+    nested_element_size: u64,
+    nested_alignment: u64,
+) -> BufferResult {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe {
+        buffer_pop(
+            buffer,
+            element_size,
+            alignment,
+            nested_element_size,
+            nested_alignment,
+        )
+    }
+}
+
+/// Moves an arbitrary nested buffer element across the C ABI.
+///
+/// # Safety
+///
+/// The descriptor, index, and nested element layouts must describe a live
+/// owning nested buffer.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_move(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    nested_element_size: u64,
+    nested_alignment: u64,
+) -> BufferResult {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe {
+        buffer_remove_move(
+            buffer,
+            index,
+            element_size,
+            alignment,
+            nested_element_size,
+            nested_alignment,
+        )
+    }
 }
 
 /// Creates a checked non-owning slice from a buffer across the C ABI.
@@ -2076,6 +5881,22 @@ pub unsafe extern "C" fn jadren_rt_string_clear(string: *mut Utf8String) -> i32 
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jadren_rt_string_destroy(string: *mut Utf8String) -> i32 {
+    // SAFETY: this ABI boundary exposes the documented caller contract.
+    unsafe { string_destroy(string) }.code()
+}
+
+/// Destroys an `OwnedString` value emitted by the language lowering.
+///
+/// The language backend emits this symbol for automatic cleanup instead of
+/// relying on a host-side destructor. It intentionally shares the validated
+/// UTF-8 runtime header with the existing explicit string API.
+///
+/// # Safety
+///
+/// The descriptor must satisfy [`string_destroy`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_owned_string_destroy(string: *mut Utf8String) -> i32 {
     // SAFETY: this ABI boundary exposes the documented caller contract.
     unsafe { string_destroy(string) }.code()
 }
@@ -2239,11 +6060,24 @@ mod tests {
     use std::thread;
 
     use super::{
-        AbiVersion, AllocatorStatus, Buffer, BufferStatus, CallbackStatus, Float2, Float3, Float4,
-        Float8, LogLevel, Matrix4, PanicCode, Quaternion, RUNTIME_ABI_MAJOR, RUNTIME_ABI_MINOR,
-        RUNTIME_BUILD_ID, RUNTIME_STATE, RuntimeState, RuntimeStatus, STATE_UNINITIALIZED,
-        StringStatus, Utf8String, bounds_panic_info, buffer_create, buffer_destroy, buffer_reserve,
-        buffer_resize, buffer_slice, float2_add, float3_add, float3_dot, float4_add, float8_add,
+        AbiVersion, AllocatorStatus, Buffer, BufferStatus, CallbackStatus, CarrierDropBranchAbi,
+        CarrierDropFieldAbi, Float2, Float3, Float4, Float8, LogLevel, Matrix4, PanicCode,
+        Quaternion, RUNTIME_ABI_MAJOR, RUNTIME_ABI_MINOR, RUNTIME_BUILD_ID, RUNTIME_STATE,
+        RuntimeState, RuntimeStatus, STATE_UNINITIALIZED, StringStatus, Utf8String,
+        bounds_panic_info, buffer_clear_move_nested_owned_string, buffer_clear_move_owned_string,
+        buffer_create, buffer_destroy, buffer_destroy_carrier_buffer,
+        buffer_destroy_enum_carrier_buffer, buffer_destroy_enum_carrier_fields,
+        buffer_destroy_multi_carrier_buffer, buffer_destroy_nested_buffer,
+        buffer_destroy_nested_buffer_recursive, buffer_destroy_nested_owned_string,
+        buffer_destroy_nested_record_fields, buffer_destroy_owned_string,
+        buffer_destroy_record_fields, buffer_insert_move_from, buffer_pop, buffer_pop_move_into,
+        buffer_remove_drop_nested_record_fields, buffer_remove_drop_owned_string,
+        buffer_remove_drop_record_fields, buffer_remove_move, buffer_remove_move_into,
+        buffer_reserve, buffer_resize, buffer_resize_move, buffer_resize_move_nested_owned_string,
+        buffer_resize_move_nested_record_fields, buffer_resize_move_owned_string,
+        buffer_resize_move_record_fields, buffer_slice, carrier_destroy_buffer,
+        carrier_destroy_enum_buffer, carrier_destroy_enum_fields, carrier_destroy_multi_buffer,
+        carrier_destroy_record_fields, float2_add, float3_add, float3_dot, float4_add, float8_add,
         initialize, jadren_rt_abi_version, jadren_rt_build_id, jadren_rt_initialize,
         jadren_rt_is_initialized, jadren_rt_region_allocate, jadren_rt_region_create,
         jadren_rt_region_destroy, log, math_abs_f32, math_abs_f64, math_acos_f32, math_ceil_f32,
@@ -2265,6 +6099,35 @@ mod tests {
     static TEST_LAST_VALUE: AtomicI64 = AtomicI64::new(0);
     static TEST_LAST_CONTEXT: AtomicUsize = AtomicUsize::new(0);
     static TEST_FIRST_BYTE: AtomicU32 = AtomicU32::new(0);
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn record_field_activity_follows_tag_and_unconditional_sentinel() {
+        let mut record = [0u8; 16];
+        record[0] = 1;
+        let active = CarrierDropFieldAbi {
+            payload_variant: 1,
+            payload_offset: 8,
+            depth: 1,
+            leaf_element_size: 4,
+            leaf_alignment: 4,
+        };
+        let inactive = CarrierDropFieldAbi {
+            payload_variant: 0,
+            ..active
+        };
+        let unconditional = CarrierDropFieldAbi {
+            payload_variant: u64::MAX,
+            ..active
+        };
+        // SAFETY: each field points at an aligned payload inside `record` and
+        // the helper only reads the four-byte carrier tag preceding it.
+        unsafe {
+            assert!(super::record_field_is_active(record.as_ptr(), active).unwrap());
+            assert!(!super::record_field_is_active(record.as_ptr(), inactive).unwrap());
+            assert!(super::record_field_is_active(record.as_ptr(), unconditional).unwrap());
+        }
+    }
 
     #[allow(unsafe_code)]
     unsafe extern "C" fn test_log_callback(
@@ -2539,6 +6402,1665 @@ mod tests {
         assert_eq!(
             unsafe { buffer_resize(&mut malformed, 0) },
             BufferStatus::InvalidBuffer
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn nested_buffer_destroy_releases_initialized_inner_descriptors() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let inner_result = buffer_create(4, 4, 2);
+        assert_eq!(inner_result.status, BufferStatus::Ok.code());
+        let mut inner = inner_result.buffer;
+        assert_eq!(unsafe { buffer_resize(&mut inner, 1) }, BufferStatus::Ok);
+
+        let outer_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 1);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // SAFETY: the outer allocation has one aligned Buffer descriptor.
+        unsafe { outer.pointer.cast::<Buffer>().write(inner) };
+        outer.length = 1;
+        assert_eq!(
+            unsafe {
+                buffer_destroy_nested_buffer(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    4,
+                    4,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn owned_string_buffer_destroy_releases_initialized_string_descriptors() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first = unsafe { string_from_utf8(b"Jadren".as_ptr(), 6) };
+        let second = unsafe { string_from_utf8(b"UI".as_ptr(), 2) };
+        assert_eq!(first.status, StringStatus::Ok.code());
+        assert_eq!(second.status, StringStatus::Ok.code());
+
+        let outer_result = buffer_create(
+            size_of::<Utf8String>() as u64,
+            align_of::<Utf8String>() as u64,
+            2,
+        );
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // SAFETY: the outer allocation has two aligned initialized string
+        // descriptors, each transferred into the owning buffer.
+        unsafe {
+            let slots = outer.pointer.cast::<Utf8String>();
+            slots.write(first.string);
+            slots.add(1).write(second.string);
+        }
+        outer.length = 2;
+
+        assert_eq!(
+            unsafe {
+                buffer_destroy_owned_string(
+                    &mut outer,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn owned_string_buffer_resize_clear_and_remove_drop_preserve_ownership() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first = unsafe { string_from_utf8(b"first".as_ptr(), 5) };
+        let second = unsafe { string_from_utf8(b"second".as_ptr(), 6) };
+        assert_eq!(first.status, StringStatus::Ok.code());
+        assert_eq!(second.status, StringStatus::Ok.code());
+
+        let result = buffer_create(
+            size_of::<Utf8String>() as u64,
+            align_of::<Utf8String>() as u64,
+            0,
+        );
+        assert_eq!(result.status, BufferStatus::Ok.code());
+        let mut outer = result.buffer;
+        assert_eq!(
+            unsafe {
+                buffer_resize_move_owned_string(
+                    &mut outer,
+                    2,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        unsafe {
+            let slots = outer.pointer.cast::<Utf8String>();
+            slots.write(first.string);
+            slots.add(1).write(second.string);
+        }
+        assert_eq!(
+            unsafe {
+                buffer_resize_move_owned_string(
+                    &mut outer,
+                    1,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 1);
+        assert_eq!(
+            unsafe {
+                buffer_clear_move_owned_string(
+                    &mut outer,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 0);
+
+        let third = unsafe { string_from_utf8(b"third".as_ptr(), 5) };
+        let fourth = unsafe { string_from_utf8(b"fourth".as_ptr(), 6) };
+        assert_eq!(third.status, StringStatus::Ok.code());
+        assert_eq!(fourth.status, StringStatus::Ok.code());
+        unsafe {
+            let slots = outer.pointer.cast::<Utf8String>();
+            slots.write(third.string);
+            slots.add(1).write(fourth.string);
+        }
+        outer.length = 2;
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_owned_string(
+                    &mut outer,
+                    0,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 1);
+        assert_eq!(
+            unsafe {
+                buffer_destroy_owned_string(
+                    &mut outer,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn recursive_nested_buffer_destroy_releases_multiple_descriptor_levels() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let leaf_result = buffer_create(4, 4, 1);
+        assert_eq!(leaf_result.status, BufferStatus::Ok.code());
+        let mut leaf = leaf_result.buffer;
+        assert_eq!(unsafe { buffer_resize(&mut leaf, 1) }, BufferStatus::Ok);
+
+        let middle_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 1);
+        assert_eq!(middle_result.status, BufferStatus::Ok.code());
+        let mut middle = middle_result.buffer;
+        // SAFETY: the middle allocation has one aligned Buffer descriptor.
+        unsafe { middle.pointer.cast::<Buffer>().write(leaf) };
+        middle.length = 1;
+
+        let outer_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 1);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // SAFETY: the outer allocation has one aligned Buffer descriptor.
+        unsafe { outer.pointer.cast::<Buffer>().write(middle) };
+        outer.length = 1;
+
+        assert_eq!(
+            unsafe {
+                buffer_destroy_nested_buffer_recursive(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    2,
+                    4,
+                    4,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn nested_owned_string_resize_clear_and_destroy_releases_leaf_payloads() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let string_result = unsafe { string_from_utf8(b"nested".as_ptr(), 6) };
+        assert_eq!(string_result.status, StringStatus::Ok.code());
+
+        let inner_result = buffer_create(
+            size_of::<Utf8String>() as u64,
+            align_of::<Utf8String>() as u64,
+            0,
+        );
+        assert_eq!(inner_result.status, BufferStatus::Ok.code());
+        let mut inner = inner_result.buffer;
+        assert_eq!(
+            unsafe {
+                buffer_resize_move_owned_string(
+                    &mut inner,
+                    1,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        // SAFETY: the resized inner allocation owns one initialized string
+        // descriptor and receives the result's owned payload exactly once.
+        unsafe {
+            inner
+                .pointer
+                .cast::<Utf8String>()
+                .write(string_result.string)
+        };
+
+        let outer_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 0);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        assert_eq!(
+            unsafe {
+                buffer_resize_move_nested_owned_string(
+                    &mut outer,
+                    1,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        // SAFETY: the outer slot is an aligned Buffer descriptor transferred
+        // from the inner owner; the nested cleanup now owns it.
+        unsafe { outer.pointer.cast::<Buffer>().write(inner) };
+
+        assert_eq!(
+            unsafe {
+                buffer_clear_move_nested_owned_string(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 0);
+        assert_eq!(
+            unsafe {
+                buffer_destroy_nested_owned_string(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn carrier_buffer_destroy_releases_only_selected_option_payloads() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let leaf_result = buffer_create(4, 4, 1);
+        assert_eq!(leaf_result.status, BufferStatus::Ok.code());
+        let mut leaf = leaf_result.buffer;
+        assert_eq!(unsafe { buffer_resize(&mut leaf, 1) }, BufferStatus::Ok);
+
+        let outer_result = buffer_create(32, 8, 2);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // SAFETY: each slot is a 32-byte Option<Buffer<Int32>> carrier with
+        // tag at offset zero and the Buffer descriptor at offset eight.
+        unsafe {
+            let bytes = outer.pointer.cast::<u8>();
+            bytes.cast::<u32>().write(1);
+            bytes.add(8).cast::<Buffer>().write(leaf);
+            bytes.add(32).cast::<u32>().write(0);
+        }
+        outer.length = 2;
+        assert_eq!(
+            unsafe { buffer_destroy_carrier_buffer(&mut outer, 32, 8, 8, 1, 1, 4, 4) },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn standalone_carrier_destroy_releases_selected_payload() {
+        #[repr(C, align(8))]
+        struct CarrierBytes([u8; 32]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let leaf_result = buffer_create(4, 4, 1);
+        assert_eq!(leaf_result.status, BufferStatus::Ok.code());
+        let mut leaf = leaf_result.buffer;
+        assert_eq!(unsafe { buffer_resize(&mut leaf, 1) }, BufferStatus::Ok);
+
+        let mut carrier = CarrierBytes([0; 32]);
+        // SAFETY: carrier is 8-byte aligned and models a named enum whose
+        // owning payload is variant two.
+        unsafe {
+            carrier.0.as_mut_ptr().cast::<u32>().write(2);
+            carrier.0.as_mut_ptr().add(8).cast::<Buffer>().write(leaf);
+        }
+        assert_eq!(
+            unsafe { carrier_destroy_buffer(carrier.0.as_mut_ptr(), 32, 8, 2, 1, 4, 4) },
+            BufferStatus::Ok
+        );
+        assert!(carrier.0.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn multi_carrier_buffer_destroy_selects_each_result_branch() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first_result = buffer_create(4, 4, 1);
+        assert_eq!(first_result.status, BufferStatus::Ok.code());
+        let mut first = first_result.buffer;
+        assert_eq!(unsafe { buffer_resize(&mut first, 1) }, BufferStatus::Ok);
+
+        let second_leaf_result = buffer_create(4, 4, 1);
+        assert_eq!(second_leaf_result.status, BufferStatus::Ok.code());
+        let mut second_leaf = second_leaf_result.buffer;
+        assert_eq!(
+            unsafe { buffer_resize(&mut second_leaf, 1) },
+            BufferStatus::Ok
+        );
+        let second_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 1);
+        assert_eq!(second_result.status, BufferStatus::Ok.code());
+        let mut second = second_result.buffer;
+        // SAFETY: the nested branch allocation has one aligned descriptor.
+        unsafe { second.pointer.cast::<Buffer>().write(second_leaf) };
+        second.length = 1;
+
+        let outer_result = buffer_create(32, 8, 2);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // SAFETY: each slot models Result<Buffer<Int32>, Buffer<Buffer<Int32>>>.
+        unsafe {
+            let bytes = outer.pointer.cast::<u8>();
+            bytes.cast::<u32>().write(0);
+            bytes.add(8).cast::<Buffer>().write(first);
+            bytes.add(32).cast::<u32>().write(1);
+            bytes.add(40).cast::<Buffer>().write(second);
+        }
+        outer.length = 2;
+        assert_eq!(
+            unsafe {
+                buffer_destroy_multi_carrier_buffer(&mut outer, 32, 8, 8, 0, 1, 4, 4, 1, 2, 4, 4)
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn standalone_multi_carrier_destroy_selects_result_branch() {
+        #[repr(C, align(8))]
+        struct CarrierBytes([u8; 32]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let leaf_result = buffer_create(4, 4, 1);
+        assert_eq!(leaf_result.status, BufferStatus::Ok.code());
+        let mut leaf = leaf_result.buffer;
+        assert_eq!(unsafe { buffer_resize(&mut leaf, 1) }, BufferStatus::Ok);
+
+        let mut carrier = CarrierBytes([0; 32]);
+        // SAFETY: carrier is 8-byte aligned and models Result<Buffer<Int32>,
+        // Buffer<Int32>> with the Error/tag-0 branch selected.
+        unsafe {
+            carrier.0.as_mut_ptr().cast::<u32>().write(0);
+            carrier.0.as_mut_ptr().add(8).cast::<Buffer>().write(leaf);
+        }
+        assert_eq!(
+            unsafe {
+                carrier_destroy_multi_buffer(carrier.0.as_mut_ptr(), 32, 8, 0, 1, 4, 4, 1, 1, 4, 4)
+            },
+            BufferStatus::Ok
+        );
+        assert!(carrier.0.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn enum_carrier_branch_table_selects_multiple_named_variants() {
+        #[repr(C, align(8))]
+        struct CarrierBytes([u8; 32]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let make_leaf = || {
+            let result = buffer_create(4, 4, 1);
+            assert_eq!(result.status, BufferStatus::Ok.code());
+            let mut buffer = result.buffer;
+            assert_eq!(unsafe { buffer_resize(&mut buffer, 1) }, BufferStatus::Ok);
+            buffer
+        };
+        let first = make_leaf();
+        let second = make_leaf();
+        let third = make_leaf();
+        let outer_result = buffer_create(32, 8, 4);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // SAFETY: slots model Event { Idle, First(Buffer<Int32>),
+        // Second(Buffer<Int32>), Third(Buffer<Int32>) } with a shared payload
+        // offset of eight bytes. The first slot is copy-only and has no
+        // descriptor.
+        unsafe {
+            let bytes = outer.pointer.cast::<u8>();
+            bytes.cast::<u32>().write(0);
+            bytes.add(32).cast::<u32>().write(1);
+            bytes.add(40).cast::<Buffer>().write(first);
+            bytes.add(64).cast::<u32>().write(2);
+            bytes.add(72).cast::<Buffer>().write(second);
+            bytes.add(96).cast::<u32>().write(3);
+            bytes.add(104).cast::<Buffer>().write(third);
+        }
+        outer.length = 4;
+        let branches = [
+            CarrierDropBranchAbi {
+                payload_variant: 1,
+                depth: 1,
+                leaf_element_size: 4,
+                leaf_alignment: 4,
+            },
+            CarrierDropBranchAbi {
+                payload_variant: 2,
+                depth: 1,
+                leaf_element_size: 4,
+                leaf_alignment: 4,
+            },
+            CarrierDropBranchAbi {
+                payload_variant: 3,
+                depth: 1,
+                leaf_element_size: 4,
+                leaf_alignment: 4,
+            },
+        ];
+        assert_eq!(
+            unsafe {
+                buffer_destroy_enum_carrier_buffer(
+                    &mut outer,
+                    32,
+                    8,
+                    8,
+                    branches.as_ptr(),
+                    branches.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer, Buffer::EMPTY);
+
+        let standalone_leaf = make_leaf();
+        let mut carrier = CarrierBytes([0; 32]);
+        // SAFETY: the carrier selects owning variant three and stores a live
+        // descriptor at the common payload offset.
+        unsafe {
+            carrier.0.as_mut_ptr().cast::<u32>().write(3);
+            carrier
+                .0
+                .as_mut_ptr()
+                .add(8)
+                .cast::<Buffer>()
+                .write(standalone_leaf);
+        }
+        assert_eq!(
+            unsafe {
+                carrier_destroy_enum_buffer(
+                    carrier.0.as_mut_ptr(),
+                    32,
+                    8,
+                    branches.as_ptr(),
+                    branches.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert!(carrier.0.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn enum_carrier_field_table_drops_multiple_fields_and_offsets() {
+        #[repr(C, align(8))]
+        struct CarrierBytes([u8; 40]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let make_leaf = || {
+            let result = buffer_create(4, 4, 1);
+            assert_eq!(result.status, BufferStatus::Ok.code());
+            let mut buffer = result.buffer;
+            assert_eq!(unsafe { buffer_resize(&mut buffer, 1) }, BufferStatus::Ok);
+            buffer
+        };
+        let first = make_leaf();
+        let nested_leaf = make_leaf();
+        let nested_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 1);
+        assert_eq!(nested_result.status, BufferStatus::Ok.code());
+        let mut nested = nested_result.buffer;
+        unsafe { nested.pointer.cast::<Buffer>().write(nested_leaf) };
+        nested.length = 1;
+
+        let outer_result = buffer_create(40, 8, 2);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // Event { Pair(Buffer<Int32>, Int32),
+        //         Nested(Int32, Buffer<Buffer<Int32>>) }.
+        // The selected Buffer fields therefore sit at different offsets.
+        unsafe {
+            let bytes = outer.pointer.cast::<u8>();
+            bytes.cast::<u32>().write(1);
+            bytes.add(8).cast::<Buffer>().write(first);
+            bytes.add(40).cast::<u32>().write(2);
+            bytes.add(56).cast::<Buffer>().write(nested);
+        }
+        outer.length = 2;
+        let fields = [
+            CarrierDropFieldAbi {
+                payload_variant: 1,
+                payload_offset: 8,
+                depth: 1,
+                leaf_element_size: 4,
+                leaf_alignment: 4,
+            },
+            CarrierDropFieldAbi {
+                payload_variant: 2,
+                payload_offset: 16,
+                depth: 2,
+                leaf_element_size: 4,
+                leaf_alignment: 4,
+            },
+        ];
+        assert_eq!(
+            unsafe {
+                buffer_destroy_enum_carrier_fields(
+                    &mut outer,
+                    40,
+                    8,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer, Buffer::EMPTY);
+
+        let standalone_leaf = make_leaf();
+        let mut carrier = CarrierBytes([0; 40]);
+        unsafe {
+            carrier.0.as_mut_ptr().cast::<u32>().write(1);
+            carrier
+                .0
+                .as_mut_ptr()
+                .add(8)
+                .cast::<Buffer>()
+                .write(standalone_leaf);
+        }
+        assert_eq!(
+            unsafe {
+                carrier_destroy_enum_fields(
+                    carrier.0.as_mut_ptr(),
+                    40,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert!(carrier.0.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn record_field_table_drops_direct_and_nested_buffer_fields() {
+        #[repr(C, align(8))]
+        struct RecordBytes([u8; 64]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let make_leaf = || {
+            let result = buffer_create(4, 4, 1);
+            assert_eq!(result.status, BufferStatus::Ok.code());
+            let mut buffer = result.buffer;
+            assert_eq!(unsafe { buffer_resize(&mut buffer, 1) }, BufferStatus::Ok);
+            buffer
+        };
+        let direct = make_leaf();
+        let nested_leaf = make_leaf();
+        let nested_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 1);
+        assert_eq!(nested_result.status, BufferStatus::Ok.code());
+        let mut nested = nested_result.buffer;
+        unsafe { nested.pointer.cast::<Buffer>().write(nested_leaf) };
+        nested.length = 1;
+
+        let outer_result = buffer_create(64, 8, 2);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // One record with two owning fields at distinct offsets, modelling a
+        // direct Buffer<Int32> followed by Buffer<Buffer<Int32>>.
+        unsafe {
+            outer.pointer.cast::<u8>().cast::<Buffer>().write(direct);
+            outer
+                .pointer
+                .cast::<u8>()
+                .add(32)
+                .cast::<Buffer>()
+                .write(nested);
+        }
+        outer.length = 1;
+        let fields = [
+            CarrierDropFieldAbi {
+                payload_variant: u64::MAX,
+                payload_offset: 0,
+                depth: 1,
+                leaf_element_size: 4,
+                leaf_alignment: 4,
+            },
+            CarrierDropFieldAbi {
+                payload_variant: u64::MAX,
+                payload_offset: 32,
+                depth: 2,
+                leaf_element_size: 4,
+                leaf_alignment: 4,
+            },
+        ];
+        assert_eq!(
+            unsafe {
+                buffer_destroy_record_fields(
+                    &mut outer,
+                    64,
+                    8,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer, Buffer::EMPTY);
+
+        let standalone_direct = make_leaf();
+        let mut record = RecordBytes([0; 64]);
+        unsafe {
+            record
+                .0
+                .as_mut_ptr()
+                .cast::<Buffer>()
+                .write(standalone_direct);
+        }
+        assert_eq!(
+            unsafe {
+                carrier_destroy_record_fields(
+                    record.0.as_mut_ptr(),
+                    64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert!(record.0.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn nested_record_field_table_drops_buffer_record_chain() {
+        #[repr(C, align(8))]
+        struct RecordBytes([u8; 32]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let leaf_result = buffer_create(4, 4, 1);
+        assert_eq!(leaf_result.status, BufferStatus::Ok.code());
+        let mut leaf = leaf_result.buffer;
+        assert_eq!(unsafe { buffer_resize(&mut leaf, 1) }, BufferStatus::Ok);
+
+        let inner_result = buffer_create(size_of::<RecordBytes>() as u64, 8, 1);
+        assert_eq!(inner_result.status, BufferStatus::Ok.code());
+        let mut inner = inner_result.buffer;
+        unsafe {
+            let record = inner.pointer.cast::<u8>();
+            record.add(8).cast::<Buffer>().write(leaf);
+        }
+        inner.length = 1;
+
+        let outer_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 1);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        unsafe { outer.pointer.cast::<Buffer>().write(inner) };
+        outer.length = 1;
+
+        let fields = [CarrierDropFieldAbi {
+            payload_variant: u64::MAX,
+            payload_offset: 8,
+            depth: 1,
+            leaf_element_size: 4,
+            leaf_alignment: 4,
+        }];
+        assert_eq!(
+            unsafe {
+                buffer_destroy_nested_record_fields(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn nested_record_buffer_resize_move_zeroes_growth_and_drops_shrink() {
+        #[repr(C, align(8))]
+        struct RecordBytes([u8; 32]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let leaf_result = buffer_create(4, 4, 1);
+        assert_eq!(leaf_result.status, BufferStatus::Ok.code());
+        let mut leaf = leaf_result.buffer;
+        assert_eq!(unsafe { buffer_resize(&mut leaf, 1) }, BufferStatus::Ok);
+
+        let inner_result = buffer_create(size_of::<RecordBytes>() as u64, 8, 1);
+        assert_eq!(inner_result.status, BufferStatus::Ok.code());
+        let mut inner = inner_result.buffer;
+        unsafe {
+            let record = inner.pointer.cast::<u8>();
+            record.cast::<u32>().write(7);
+            record.add(8).cast::<Buffer>().write(leaf);
+        }
+        inner.length = 1;
+
+        let outer_result = buffer_create(size_of::<Buffer>() as u64, 8, 0);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        let fields = [CarrierDropFieldAbi {
+            payload_variant: u64::MAX,
+            payload_offset: 8,
+            depth: 1,
+            leaf_element_size: 4,
+            leaf_alignment: 4,
+        }];
+
+        assert_eq!(
+            unsafe {
+                buffer_resize_move_nested_record_fields(
+                    &mut outer,
+                    1,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        unsafe { outer.pointer.cast::<Buffer>().write(inner) };
+        assert_eq!(
+            unsafe {
+                buffer_resize_move_nested_record_fields(
+                    &mut outer,
+                    2,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        unsafe {
+            assert_eq!(*outer.pointer.cast::<Buffer>().add(1), Buffer::EMPTY);
+        }
+        assert_eq!(
+            unsafe {
+                buffer_resize_move_nested_record_fields(
+                    &mut outer,
+                    0,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 0);
+        assert_eq!(
+            unsafe {
+                buffer_destroy(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn direct_record_buffer_resize_move_zeroes_growth_and_drops_shrink() {
+        #[repr(C, align(8))]
+        struct RecordBytes([u8; 32]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let leaf_result = buffer_create(4, 4, 1);
+        assert_eq!(leaf_result.status, BufferStatus::Ok.code());
+        let mut leaf = leaf_result.buffer;
+        assert_eq!(unsafe { buffer_resize(&mut leaf, 1) }, BufferStatus::Ok);
+
+        let record_result = buffer_create(size_of::<RecordBytes>() as u64, 8, 0);
+        assert_eq!(record_result.status, BufferStatus::Ok.code());
+        let mut records = record_result.buffer;
+        let fields = [CarrierDropFieldAbi {
+            payload_variant: u64::MAX,
+            payload_offset: 8,
+            depth: 1,
+            leaf_element_size: 4,
+            leaf_alignment: 4,
+        }];
+
+        assert_eq!(
+            unsafe {
+                buffer_resize_move_record_fields(
+                    &mut records,
+                    1,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        unsafe {
+            records
+                .pointer
+                .cast::<u8>()
+                .add(8)
+                .cast::<Buffer>()
+                .write(leaf);
+        }
+        assert_eq!(
+            unsafe {
+                buffer_resize_move_record_fields(
+                    &mut records,
+                    2,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        unsafe {
+            assert_eq!(
+                records
+                    .pointer
+                    .cast::<u8>()
+                    .add(size_of::<RecordBytes>() + 8)
+                    .cast::<Buffer>()
+                    .read(),
+                Buffer::EMPTY
+            );
+        }
+        assert_eq!(
+            unsafe {
+                buffer_resize_move_record_fields(
+                    &mut records,
+                    0,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(records.length, 0);
+        assert_eq!(
+            unsafe {
+                buffer_destroy(
+                    &mut records,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn buffer_remove_drop_record_fields_destroys_removed_owner_and_compacts() {
+        #[repr(C, align(8))]
+        struct RecordBytes([u8; 32]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first_result = buffer_create(4, 4, 1);
+        let second_result = buffer_create(4, 4, 1);
+        assert_eq!(first_result.status, BufferStatus::Ok.code());
+        assert_eq!(second_result.status, BufferStatus::Ok.code());
+        let mut first = first_result.buffer;
+        let mut second = second_result.buffer;
+        assert_eq!(unsafe { buffer_resize(&mut first, 1) }, BufferStatus::Ok);
+        assert_eq!(unsafe { buffer_resize(&mut second, 1) }, BufferStatus::Ok);
+
+        let outer_result = buffer_create(size_of::<RecordBytes>() as u64, 8, 2);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        unsafe {
+            let first_record = outer.pointer.cast::<u8>();
+            first_record.cast::<u32>().write(11);
+            first_record.add(8).cast::<Buffer>().write(first);
+            let second_record = first_record.add(size_of::<RecordBytes>());
+            second_record.cast::<u32>().write(22);
+            second_record.add(8).cast::<Buffer>().write(second);
+        }
+        outer.length = 2;
+        let fields = [CarrierDropFieldAbi {
+            payload_variant: u64::MAX,
+            payload_offset: 8,
+            depth: 1,
+            leaf_element_size: 4,
+            leaf_alignment: 4,
+        }];
+
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_record_fields(
+                    &mut outer,
+                    0,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 1);
+        unsafe {
+            assert_eq!(outer.pointer.cast::<u32>().read(), 22);
+        }
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_record_fields(
+                    &mut outer,
+                    1,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::OutOfBounds
+        );
+        assert_eq!(
+            unsafe {
+                buffer_destroy_record_fields(
+                    &mut outer,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn buffer_remove_drop_nested_record_fields_destroys_chain_and_compacts() {
+        #[repr(C, align(8))]
+        struct RecordBytes([u8; 32]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let make_inner = |id: u32| {
+            let leaf_result = buffer_create(4, 4, 1);
+            assert_eq!(leaf_result.status, BufferStatus::Ok.code());
+            let mut leaf = leaf_result.buffer;
+            assert_eq!(unsafe { buffer_resize(&mut leaf, 1) }, BufferStatus::Ok);
+            let inner_result = buffer_create(size_of::<RecordBytes>() as u64, 8, 1);
+            assert_eq!(inner_result.status, BufferStatus::Ok.code());
+            let mut inner = inner_result.buffer;
+            unsafe {
+                let record = inner.pointer.cast::<u8>();
+                record.cast::<u32>().write(id);
+                record.add(8).cast::<Buffer>().write(leaf);
+            }
+            inner.length = 1;
+            inner
+        };
+
+        let first = make_inner(11);
+        let second = make_inner(22);
+        let outer_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 2);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        unsafe {
+            outer.pointer.cast::<Buffer>().write(first);
+            outer.pointer.cast::<Buffer>().add(1).write(second);
+        }
+        outer.length = 2;
+
+        let fields = [CarrierDropFieldAbi {
+            payload_variant: u64::MAX,
+            payload_offset: 8,
+            depth: 1,
+            leaf_element_size: 4,
+            leaf_alignment: 4,
+        }];
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_nested_record_fields(
+                    &mut outer,
+                    0,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 1);
+        unsafe {
+            let remaining = outer.pointer.cast::<Buffer>().read();
+            assert_eq!(remaining.pointer.cast::<u8>().cast::<u32>().read(), 22);
+            outer.pointer.cast::<Buffer>().write(remaining);
+        }
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_nested_record_fields(
+                    &mut outer,
+                    0,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 0);
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_nested_record_fields(
+                    &mut outer,
+                    0,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::OutOfBounds
+        );
+        assert_eq!(
+            unsafe {
+                buffer_destroy(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn nested_buffer_pop_moves_last_descriptor_and_reports_empty() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let inner_result = buffer_create(4, 4, 1);
+        assert_eq!(inner_result.status, BufferStatus::Ok.code());
+        let mut inner = inner_result.buffer;
+        assert_eq!(unsafe { buffer_resize(&mut inner, 1) }, BufferStatus::Ok);
+
+        let outer_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 1);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // SAFETY: the outer allocation has one aligned Buffer descriptor.
+        unsafe { outer.pointer.cast::<Buffer>().write(inner) };
+        outer.length = 1;
+
+        let popped = unsafe {
+            buffer_pop(
+                &mut outer,
+                size_of::<Buffer>() as u64,
+                align_of::<Buffer>() as u64,
+                4,
+                4,
+            )
+        };
+        assert_eq!(popped.status, BufferStatus::Ok.code());
+        assert_eq!(outer.length, 0);
+        let mut popped = popped.buffer;
+        assert_eq!(
+            unsafe { buffer_destroy(&mut popped, 4, 4) },
+            BufferStatus::Ok
+        );
+        assert_eq!(
+            unsafe {
+                buffer_pop(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    4,
+                    4,
+                )
+            }
+            .status,
+            BufferStatus::OutOfBounds.code()
+        );
+        assert_eq!(
+            unsafe {
+                buffer_destroy_nested_buffer(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    4,
+                    4,
+                )
+            },
+            BufferStatus::Ok
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn nested_buffer_resize_move_zeroes_growth_and_drops_shrink() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let inner_result = buffer_create(4, 4, 1);
+        assert_eq!(inner_result.status, BufferStatus::Ok.code());
+        let mut inner = inner_result.buffer;
+        assert_eq!(unsafe { buffer_resize(&mut inner, 1) }, BufferStatus::Ok);
+
+        let mut outer =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 0).buffer;
+        // SAFETY: resize_move reserves and initializes three aligned slots.
+        outer.pointer = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                buffer_resize_move(
+                    &mut outer,
+                    1,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    4,
+                    4,
+                )
+            },
+            BufferStatus::Ok
+        );
+        // SAFETY: the first slot is initialized by the caller-owned move.
+        unsafe { outer.pointer.cast::<Buffer>().write(inner) };
+        assert_eq!(
+            unsafe {
+                buffer_resize_move(
+                    &mut outer,
+                    3,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    4,
+                    4,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 3);
+        // SAFETY: growth zeroes newly exposed native Buffer descriptors.
+        unsafe {
+            let slots = outer.pointer.cast::<Buffer>();
+            assert_eq!(*slots.add(1), Buffer::EMPTY);
+            assert_eq!(*slots.add(2), Buffer::EMPTY);
+        }
+        assert_eq!(
+            unsafe {
+                buffer_resize_move(
+                    &mut outer,
+                    0,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    4,
+                    4,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 0);
+        assert_eq!(
+            unsafe {
+                buffer_destroy(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+
+        let leaf = buffer_create(4, 4, 1).buffer;
+        let mut middle =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 1).buffer;
+        let mut recursive_outer =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 1).buffer;
+        // SAFETY: each allocation has one native Buffer descriptor slot.
+        unsafe {
+            middle.pointer.cast::<Buffer>().write(leaf);
+            middle.length = 1;
+            recursive_outer.pointer.cast::<Buffer>().write(middle);
+            recursive_outer.length = 1;
+            assert_eq!(
+                buffer_resize_move(
+                    &mut recursive_outer,
+                    0,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    2,
+                    4,
+                    4,
+                ),
+                BufferStatus::Ok
+            );
+        }
+        assert_eq!(recursive_outer.length, 0);
+        assert_eq!(
+            unsafe {
+                buffer_destroy(
+                    &mut recursive_outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn nested_buffer_remove_move_closes_gap_and_preserves_owners() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first = buffer_create(4, 4, 1).buffer;
+        let second = buffer_create(4, 4, 1).buffer;
+        let third = buffer_create(4, 4, 1).buffer;
+        let first_pointer = first.pointer;
+        let second_pointer = second.pointer;
+        let third_pointer = third.pointer;
+        let outer_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 3);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // SAFETY: the outer allocation has three aligned Buffer descriptors.
+        unsafe {
+            let slots = outer.pointer.cast::<Buffer>();
+            slots.write(first);
+            slots.add(1).write(second);
+            slots.add(2).write(third);
+        }
+        outer.length = 3;
+        let removed = unsafe {
+            buffer_remove_move(
+                &mut outer,
+                1,
+                size_of::<Buffer>() as u64,
+                align_of::<Buffer>() as u64,
+                4,
+                4,
+            )
+        };
+        assert_eq!(removed.status, BufferStatus::Ok.code());
+        assert_eq!(outer.length, 2);
+        assert_eq!(removed.buffer.pointer, second_pointer);
+        // SAFETY: the remaining initialized slots are valid Buffer descriptors.
+        unsafe {
+            let slots = outer.pointer.cast::<Buffer>();
+            assert_eq!((*slots).pointer, first_pointer);
+            assert_eq!((*slots.add(1)).pointer, third_pointer);
+        }
+        let mut removed = removed.buffer;
+        assert_eq!(
+            unsafe { buffer_destroy(&mut removed, 4, 4) },
+            BufferStatus::Ok
+        );
+        assert_eq!(
+            unsafe {
+                buffer_destroy_nested_buffer(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    4,
+                    4,
+                )
+            },
+            BufferStatus::Ok
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn nested_buffer_pop_move_into_transfers_last_owner_without_aggregate_return() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first = buffer_create(4, 4, 1).buffer;
+        let second = buffer_create(4, 4, 1).buffer;
+        let first_pointer = first.pointer;
+        let second_pointer = second.pointer;
+        let outer_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 2);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // SAFETY: the outer allocation has two initialized Buffer slots.
+        unsafe {
+            let slots = outer.pointer.cast::<Buffer>();
+            slots.write(first);
+            slots.add(1).write(second);
+        }
+        outer.length = 2;
+
+        let mut output_slot = std::mem::MaybeUninit::<Buffer>::uninit();
+        let status = unsafe {
+            buffer_pop_move_into(
+                &mut outer,
+                output_slot.as_mut_ptr().cast::<u8>(),
+                size_of::<Buffer>() as u64,
+                align_of::<Buffer>() as u64,
+            )
+        };
+        assert_eq!(status, BufferStatus::Ok);
+        assert_eq!(outer.length, 1);
+        // SAFETY: a successful move initialized the output descriptor.
+        let mut output = unsafe { output_slot.assume_init() };
+        assert_eq!(output.pointer, second_pointer);
+        // SAFETY: the remaining slot and output are the sole owners.
+        unsafe {
+            let slots = outer.pointer.cast::<Buffer>();
+            assert_eq!((*slots).pointer, first_pointer);
+            assert_eq!(buffer_destroy(&mut *slots, 4, 4), BufferStatus::Ok);
+        }
+        assert_eq!(
+            unsafe { buffer_destroy(&mut output, 4, 4) },
+            BufferStatus::Ok
+        );
+        assert_eq!(
+            unsafe {
+                buffer_destroy(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn owning_record_remove_move_into_transfers_record_and_closes_gap() {
+        #[repr(C)]
+        struct OwningEntry {
+            values: Buffer,
+            id: u32,
+            _padding: u32,
+        }
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first = buffer_create(4, 4, 1).buffer;
+        let second = buffer_create(4, 4, 1).buffer;
+        let third = buffer_create(4, 4, 1).buffer;
+        let first_pointer = first.pointer;
+        let second_pointer = second.pointer;
+        let third_pointer = third.pointer;
+        let outer_result = buffer_create(
+            size_of::<OwningEntry>() as u64,
+            align_of::<OwningEntry>() as u64,
+            3,
+        );
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // SAFETY: the outer allocation has three aligned OwningEntry slots.
+        unsafe {
+            let slots = outer.pointer.cast::<OwningEntry>();
+            slots.write(OwningEntry {
+                values: first,
+                id: 1,
+                _padding: 0,
+            });
+            slots.add(1).write(OwningEntry {
+                values: second,
+                id: 2,
+                _padding: 0,
+            });
+            slots.add(2).write(OwningEntry {
+                values: third,
+                id: 3,
+                _padding: 0,
+            });
+        }
+        outer.length = 3;
+
+        let mut output_slot = std::mem::MaybeUninit::<OwningEntry>::uninit();
+        let status = unsafe {
+            buffer_remove_move_into(
+                &mut outer,
+                1,
+                output_slot.as_mut_ptr().cast::<u8>(),
+                size_of::<OwningEntry>() as u64,
+                align_of::<OwningEntry>() as u64,
+            )
+        };
+        assert_eq!(status, BufferStatus::Ok);
+        assert_eq!(outer.length, 2);
+        // SAFETY: a successful move initialized the caller-owned output slot.
+        let mut output = unsafe { output_slot.assume_init() };
+        // SAFETY: the two remaining initialized slots retain their descriptors.
+        unsafe {
+            let slots = outer.pointer.cast::<OwningEntry>();
+            assert_eq!((*slots).id, 1);
+            assert_eq!((*slots).values.pointer, first_pointer);
+            assert_eq!((*slots.add(1)).id, 3);
+            assert_eq!((*slots.add(1)).values.pointer, third_pointer);
+        }
+        assert_eq!(output.id, 2);
+        assert_eq!(output.values.pointer, second_pointer);
+
+        // SAFETY: each descriptor is still the sole owner of its allocation.
+        assert_eq!(
+            unsafe { buffer_destroy(&mut output.values, 4, 4) },
+            BufferStatus::Ok
+        );
+        unsafe {
+            let slots = outer.pointer.cast::<OwningEntry>();
+            assert_eq!(buffer_destroy(&mut (*slots).values, 4, 4), BufferStatus::Ok);
+            assert_eq!(
+                buffer_destroy(&mut (*slots.add(1)).values, 4, 4),
+                BufferStatus::Ok
+            );
+        }
+        assert_eq!(
+            unsafe {
+                buffer_destroy(
+                    &mut outer,
+                    size_of::<OwningEntry>() as u64,
+                    align_of::<OwningEntry>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn owning_record_insert_move_from_transfers_source_and_shifts_records() {
+        #[repr(C)]
+        struct OwningEntry {
+            values: Buffer,
+            id: u32,
+            _padding: u32,
+        }
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first = buffer_create(4, 4, 1).buffer;
+        let source_values = buffer_create(4, 4, 1).buffer;
+        let first_pointer = first.pointer;
+        let source_pointer = source_values.pointer;
+        let outer_result = buffer_create(
+            size_of::<OwningEntry>() as u64,
+            align_of::<OwningEntry>() as u64,
+            1,
+        );
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        // SAFETY: the allocation contains one aligned initialized record slot.
+        unsafe {
+            outer.pointer.cast::<OwningEntry>().write(OwningEntry {
+                values: first,
+                id: 1,
+                _padding: 0,
+            });
+        }
+        outer.length = 1;
+        let mut source = OwningEntry {
+            values: source_values,
+            id: 99,
+            _padding: 0,
+        };
+        let status = unsafe {
+            buffer_insert_move_from(
+                &mut outer,
+                0,
+                (&mut source as *mut OwningEntry).cast::<u8>(),
+                size_of::<OwningEntry>() as u64,
+                align_of::<OwningEntry>() as u64,
+            )
+        };
+        assert_eq!(status, BufferStatus::Ok);
+        assert_eq!(outer.length, 2);
+        assert!(source.values.pointer.is_null());
+        assert_eq!(source.values.length, 0);
+        assert_eq!(source.values.capacity, 0);
+        assert_eq!(source.id, 0);
+        // SAFETY: successful insertion initialized both record slots.
+        unsafe {
+            let slots = outer.pointer.cast::<OwningEntry>();
+            assert_eq!((*slots).id, 99);
+            assert_eq!((*slots).values.pointer, source_pointer);
+            assert_eq!((*slots.add(1)).id, 1);
+            assert_eq!((*slots.add(1)).values.pointer, first_pointer);
+            assert_eq!(buffer_destroy(&mut (*slots).values, 4, 4), BufferStatus::Ok);
+            assert_eq!(
+                buffer_destroy(&mut (*slots.add(1)).values, 4, 4),
+                BufferStatus::Ok
+            );
+        }
+        assert_eq!(
+            unsafe {
+                buffer_destroy(
+                    &mut outer,
+                    size_of::<OwningEntry>() as u64,
+                    align_of::<OwningEntry>() as u64,
+                )
+            },
+            BufferStatus::Ok
         );
     }
 
@@ -3192,6 +8714,11 @@ mod tests {
         assert!(!first.pointer.is_null());
         assert_eq!(first.pointer.addr() % 64, 0);
         let bytes = first.pointer.cast::<u8>();
+        for index in 0..64 {
+            // Region-backed Buffer storage is deterministic before the first
+            // Jadren assignment.
+            assert_eq!(unsafe { bytes.add(index).read() }, 0);
+        }
         for index in 0..64 {
             // SAFETY: this block owns 64 writable bytes until region destroy.
             unsafe { bytes.add(index).write((index ^ 0x5a) as u8) };

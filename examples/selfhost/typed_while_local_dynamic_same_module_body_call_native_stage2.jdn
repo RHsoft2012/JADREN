@@ -1,0 +1,25 @@
+module examples.selfhost.typed_while_local_dynamic_same_module_body_call_native_stage2
+
+// JADREN_STAGE2_DYNAMIC_TYPED_CALL
+// JADREN_STAGE2_DYNAMIC_MUTABLE_BODY_LET
+// JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS
+// This fixture additionally calls nested from the body of helper. Both
+// definitions are materialized from this module without a C helper object.
+fn local_value() -> Int32 {
+    var counter: Int32 = 0;
+    while counter < 4 {
+        var step: Int32 = helper(counter + 1, nested(counter, 2));
+        step = helper(step, 1);
+        counter = counter + step;
+        if counter < 4 { continue; }
+    }
+    return counter;
+}
+
+fn helper(left: Int32, right: Int32) -> Int32 {
+    return nested(left, right) + 1;
+}
+
+fn nested(left: Int32, right: Int32) -> Int32 {
+    return left * right;
+}

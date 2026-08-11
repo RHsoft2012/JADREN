@@ -1,0 +1,36 @@
+module examples.stdlib_buffer_carriers
+
+// Option and Result are inline tagged values.  Their payloads stay copy-safe,
+// so a generic Buffer can grow, insert and remove them without hidden
+// ownership or destructor work.
+fn main() -> Int32 {
+    let carriers: Result<Buffer<Option<Result<Int32, Int32>>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match carriers {
+        Ok(values) => {
+            let first: Option<Result<Int32, Int32>> = Some(Ok(7))
+            let second: Option<Result<Int32, Int32>> = Some(Error(-9))
+            let empty: Option<Result<Int32, Int32>> = None
+            if !buffer_append(values, first) { result_code = 1 }
+            if !buffer_append(values, second) { result_code = 2 }
+            if !buffer_append(values, empty) { result_code = 3 }
+            match values[0] {
+                Some(Ok(value)) => { if value != 7 { result_code = 4 } }
+                _ => { result_code = 5 }
+            }
+            match values[1] {
+                Some(Error(value)) => { if value != -9 { result_code = 6 } }
+                _ => { result_code = 7 }
+            }
+            if !buffer_insert(values, 1usize, first) { result_code = 9 }
+            if !buffer_remove(values, 0usize) { result_code = 10 }
+            match values[2] {
+                None => {}
+                Some(_) => { result_code = 8 }
+            }
+            if buffer_length(values) != 3usize { result_code = 11 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

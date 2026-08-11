@@ -1,0 +1,27 @@
+module examples.tcp_client;
+
+// Native hostname-resolving client for examples/tcp-server.jdn.
+// The server is intentionally local; this fixture proves the DNS route and
+// the same caller-owned bounded send/receive contract.
+fn main() -> Int32 {
+    let socket: UIntSize = net_tcp_connect_dns("localhost", 38123u16)
+    if (socket as Int32) == 0 { return 10 }
+    let timeout_configured: Bool = net_socket_set_timeout(socket, 2000u32)
+    if !timeout_configured {
+        net_socket_close(socket)
+        return 11
+    }
+
+    var request: [UInt8; 8] = [112u8, 105u8, 110u8, 103u8, 49u8, 50u8, 51u8, 52u8]
+    let sent: UIntSize = net_tcp_send(socket, request)
+    if (sent as Int32) != 8 { net_socket_close(socket); return 12 }
+
+    var response: [UInt8; 62] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let received: UIntSize = net_tcp_receive(socket, response)
+    net_socket_close(socket)
+    if (received as Int32) != 62 { return 13 }
+    if response[0] != 72u8 { return 14 }
+    if response[57] != 65u8 { return 15 }
+    if response[60] != 106u8 { return 16 }
+    return 0
+}

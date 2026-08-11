@@ -1,0 +1,52 @@
+module examples.app_table_transaction_all
+
+// Bounded atomic transaction over all four app_table stores.
+fn main() -> Int32 {
+    app_table_clear(0)
+    app_table_clear(1)
+    if !app_table_set_column_name(0, 0, "tasks") { return 1 }
+    if !app_table_set_column_name(1, 0, "summary") { return 2 }
+    if !app_table_set_schema_version(0, 7) { return 3 }
+    if !app_table_set_schema_version(1, 11) { return 4 }
+    if !app_table_append_row(0) { return 5 }
+    if !app_table_append_row(1) { return 6 }
+    if !app_table_set_cell(0, 0, 0, "before") { return 7 }
+    if !app_table_set_cell(1, 0, 0, "before-summary") { return 8 }
+
+    if !app_table_tx_begin_all() { return 9 }
+    if app_table_tx_begin(0) { return 10 }
+    if app_table_tx_commit() { return 11 }
+    if !app_table_set_column_name(0, 0, "changed_tasks") { return 12 }
+    if !app_table_set_column_name(1, 0, "changed_summary") { return 13 }
+    if !app_table_set_schema_version(0, 8) { return 14 }
+    if !app_table_set_schema_version(1, 12) { return 15 }
+    if !app_table_append_row(1) { return 16 }
+    if !app_table_tx_rollback_all() { return 17 }
+    if app_table_tx_rollback_all() { return 18 }
+    if app_table_row_count(0) != 1 { return 19 }
+    if app_table_row_count(1) != 1 { return 20 }
+    if app_table_schema_version(0) != 7 { return 21 }
+    if app_table_schema_version(1) != 11 { return 22 }
+    if app_table_find_column(0, "tasks") != 0 { return 23 }
+    if app_table_find_column(1, "summary") != 0 { return 24 }
+
+    var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if app_table_read_cell(0, 0, 0, output) != 6usize { return 25 }
+    if output[0] != 98u8 { return 26 }
+
+    if !app_table_tx_begin_all() { return 27 }
+    if !app_table_set_column_name(0, 0, "committed_tasks") { return 28 }
+    if !app_table_set_column_name(1, 0, "committed_summary") { return 29 }
+    if !app_table_set_schema_version(0, 9) { return 30 }
+    if !app_table_set_schema_version(1, 13) { return 31 }
+    if !app_table_tx_commit_all() { return 32 }
+    if app_table_tx_commit_all() { return 33 }
+    if app_table_schema_version(0) != 9 { return 34 }
+    if app_table_schema_version(1) != 13 { return 35 }
+    if app_table_find_column(0, "committed_tasks") != 0 { return 36 }
+    if app_table_find_column(1, "committed_summary") != 0 { return 37 }
+    return 0
+}

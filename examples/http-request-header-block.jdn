@@ -1,0 +1,34 @@
+module examples.http_request_header_block
+
+// Serialize several validated request headers without partial output.
+fn main() -> Int32 {
+    var body: [UInt8; 2] = [79u8, 75u8]
+    var output: [UInt8; 192] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let written: UIntSize = http_request_write_header_block(
+        "GET",
+        "/health",
+        "localhost",
+        "Authorization: Bearer secret-42\r\nX-Trace: ready",
+        body,
+        output
+    )
+    if written == 0usize { return 1 }
+    if output[0] != 71u8 { return 2 }
+
+    var auth: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if http_request_header(output, "Authorization", auth) != 16usize { return 3 }
+    if auth[0] != 66u8 { return 4 }
+    if auth[15] != 50u8 { return 5 }
+
+    var trace: [UInt8; 5] = [0u8, 0u8, 0u8, 0u8, 0u8]
+    if http_request_header(output, "X-Trace", trace) != 5usize { return 6 }
+    if trace[0] != 114u8 { return 7 }
+
+    // Reserved framing headers and malformed trailing CRLF are rejected before output.
+    output[0] = 77u8
+    if http_request_write_header_block("GET", "/health", "localhost", "Content-Length: 99", body, output) != 0usize { return 8 }
+    if output[0] != 77u8 { return 9 }
+    if http_request_write_header_block("GET", "/health", "localhost", "X-Trace: ready\r\n", body, output) != 0usize { return 10 }
+    if output[0] != 77u8 { return 11 }
+    return 0
+}

@@ -1,0 +1,12 @@
+module examples.selfhost.typed_while_local_stage2
+
+// Companion source for the bounded self-host while CFG.
+// A mutable Int32 stack local is checked, incremented, and returned.
+
+fn main() -> Int32 {
+    var counter: Int32 = 0
+    while counter < 3 {
+        counter = counter + 1
+    }
+    return counter
+}

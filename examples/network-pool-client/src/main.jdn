@@ -1,0 +1,629 @@
+module examples.network_pool_client
+import jadren.network.http.response_body_prefix
+import jadren.network.http.response_status_prefix
+import jadren.network.http.write_request_prefix
+import jadren.network.pool.pool_acquire
+import jadren.network.pool.pool_active_count
+import jadren.network.pool.pool_get
+import jadren.network.pool.pool_release
+import jadren.network.tcp.close_socket
+import jadren.network.tcp.connect
+import jadren.network.tcp.receive
+import jadren.network.tcp.send_prefix
+import jadren.network.tcp.set_timeout
+fn main() -> Int32 {
+    var handles:[UIntSize;
+    2] =[0usize,
+    0usize]
+    var body:[UInt8;
+    1] =[0u8]
+    var request:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    let request_length = write_request_prefix("GET",
+    "/hello",
+    "localhost",
+    body,
+    0usize,
+    request)
+    if request_length == 0usize {
+        return 10
+    }
+    let socket_one = connect("127.0.0.1",
+    38160u16)
+    if socket_one == 0usize {
+        return 11
+    }
+    let socket_two = connect("127.0.0.1",
+    38160u16)
+    if socket_two == 0usize {
+        close_socket(socket_one)
+        return 12
+    }
+    if ! set_timeout(socket_one,
+    3000u32) {
+        close_socket(socket_two)
+        close_socket(socket_one)
+        return 13
+    }
+    if ! set_timeout(socket_two,
+    3000u32) {
+        close_socket(socket_two)
+        close_socket(socket_one)
+        return 14
+    }
+    let slot_one = pool_acquire(handles,
+    socket_one)
+    if slot_one == 0usize {
+        close_socket(socket_two)
+        close_socket(socket_one)
+        return 15
+    }
+    let slot_two = pool_acquire(handles,
+    socket_two)
+    if slot_two == 0usize {
+        let released = pool_release(handles,
+        slot_one)
+        close_socket(released)
+        close_socket(socket_two)
+        return 16
+    }
+    let active_before = pool_active_count(handles)
+    if active_before != 2usize {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 17
+    }
+    let pooled_one = pool_get(handles,
+    slot_one)
+    let pooled_two = pool_get(handles,
+    slot_two)
+    if pooled_one == 0usize {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 18
+    }
+    if pooled_two == 0usize {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 19
+    }
+    let sent_one = send_prefix(pooled_one,
+    request,
+    request_length)
+    let sent_two = send_prefix(pooled_two,
+    request,
+    request_length)
+    if sent_one != request_length {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 20
+    }
+    if sent_two != request_length {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 21
+    }
+    var response_one:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var response_two:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    let received_one = receive(pooled_one,
+    response_one)
+    let received_two = receive(pooled_two,
+    response_two)
+    if received_one == 0usize {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 22
+    }
+    if received_two == 0usize {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 23
+    }
+    if response_status_prefix(response_one,
+    received_one) != 200u16 {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 24
+    }
+    if response_status_prefix(response_two,
+    received_two) != 200u16 {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 25
+    }
+    var body_one:[UInt8;
+    8] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var body_two:[UInt8;
+    8] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    let body_length_one = response_body_prefix(response_one,
+    received_one,
+    body_one)
+    let body_length_two = response_body_prefix(response_two,
+    received_two,
+    body_two)
+    if body_length_one != 2usize {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 26
+    }
+    if body_length_two != 2usize {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 27
+    }
+    if body_one[0] != 79u8 {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 28
+    }
+    if body_two[0] != 79u8 {
+        let released_two = pool_release(handles,
+        slot_two)
+        let released_one = pool_release(handles,
+        slot_one)
+        close_socket(released_two)
+        close_socket(released_one)
+        return 29
+    }
+    let released_two = pool_release(handles,
+    slot_two)
+    let released_one = pool_release(handles,
+    slot_one)
+    close_socket(released_two)
+    close_socket(released_one)
+    let active_after = pool_active_count(handles)
+    if active_after != 0usize {
+        return 30
+    }
+    if file_write_text("target/jadren/network-pool.ok",
+    "active_before=2\nactive_after=0\nresponses=2\n") == 0usize {
+        return 31
+    }
+    print("network pool client handled two explicit pooled connections")
+    return 0
+}

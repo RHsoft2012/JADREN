@@ -1,0 +1,14 @@
+module examples.selfhost.typed_while_local_mutable_body_let_stage2
+
+// Companion source for a mutable iteration-local let.
+// `step` is reset to 1, incremented, and then applied to the counter.
+
+fn main() -> Int32 {
+    var counter: Int32 = 0
+    while counter < 3 {
+        var step: Int32 = 1
+        step = step + 1
+        counter = counter + step
+    }
+    return counter
+}

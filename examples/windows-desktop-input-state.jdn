@@ -1,0 +1,44 @@
+module examples.windows_desktop_input_state
+
+// A text input can persist its value in the bounded app_state store. Binding
+// writes the declared value, native edits update the key, and refresh is used
+// after app_state_load or another programmatic state change.
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    ui_text_input("Draft", 10, 0, 0, 300, 36,
+                  0x111827u32, 0xFFFFFFu32, 8)
+    ui_input_bind_app_state(10, "note")
+
+    var state_output: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    let initial: UIntSize = app_state_read_text("note", state_output)
+    if initial != 5usize { return 1 }
+    if state_output[0] != 68u8 { return 2 }
+
+    let loaded: Bool = app_state_set_text("note", "Loaded")
+    if !loaded { return 3 }
+    ui_input_refresh_app_state(10)
+    if ui_input_length(10) != 6usize { return 4 }
+
+    var input_output: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    let input_read: UIntSize = ui_input_read(10, input_output)
+    if input_read != 6usize { return 5 }
+    if input_output[0] != 76u8 { return 6 }
+
+    ui_set_input_text(10, "Done")
+    let saved: UIntSize = app_state_read_text("note", state_output)
+    if saved != 4usize { return 7 }
+    if state_output[0] != 68u8 { return 8 }
+    return 0
+}

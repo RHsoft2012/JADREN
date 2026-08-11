@@ -1,0 +1,17 @@
+module examples.selfhost.typed_while_local_dynamic_multi_body_let_native_stage2
+
+// JADREN_STAGE2_DYNAMIC_MULTI_BODY_LET
+// Two iteration-local bindings are declared in source order; the second one
+// reads the first and the loop assignment reads the second.
+fn local_value() -> Int32 {
+    var counter: Int32 = 0;
+    while counter < 4 {
+        let delta: Int32 = counter + 1;
+        let bonus: Int32 = delta + 1;
+        counter = (counter + ((0 + 0) + (0 + bonus)));
+        if counter < 2 { continue; }
+        counter = counter + 1;
+        if counter < 4 { break; }
+    }
+    return counter;
+}

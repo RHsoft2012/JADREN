@@ -1,0 +1,7 @@
+module examples.selfhost.typed_statement_two_locals_subtract
+
+fn local_value() -> Int32 {
+    let first: Int32 = 50;
+    let next: Int32 = first - 8;
+    return next;
+}

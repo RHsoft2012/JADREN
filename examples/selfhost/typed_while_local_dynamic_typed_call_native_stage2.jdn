@@ -1,0 +1,29 @@
+module examples.selfhost.typed_while_local_dynamic_typed_call_native_stage2
+
+// JADREN_STAGE2_DYNAMIC_TYPED_CALL
+// JADREN_STAGE2_DYNAMIC_MUTABLE_BODY_LET
+// The dynamic while hand-off admits a typed Int32 call with a bounded
+// arithmetic argument and one nested typed call in a mutable body-local
+// initializer, then calls the same helper from a mutable assignment. The host
+// supplies the signatures and argument side table while Stage-2 keeps the
+// path.
+fn local_value() -> Int32 {
+    var counter: Int32 = 0;
+    while counter < 4 {
+        var step: Int32 = helper(counter + 1, nested(counter, 2));
+        step = helper(step, 1);
+        counter = counter + step;
+        if counter < 4 { continue; }
+    }
+    return counter;
+}
+
+// The bounded dynamic capture lowers the call as a caller-owned import. The
+// native gate supplies this C ABI implementation as a separate object.
+fn helper(left: Int32, right: Int32) -> Int32 {
+    return left + right;
+}
+
+fn nested(left: Int32, right: Int32) -> Int32 {
+    return left * right;
+}

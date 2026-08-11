@@ -1,0 +1,12 @@
+module examples.selfhost.typed_while_local_three_statements_native_stage2
+
+// Native producer -> JST2WH31 -> Rust Stage-2 ordered three-statement body.
+fn local_value() -> Int32 {
+    var counter: Int32 = 0;
+    while counter < 5 {
+        counter = counter + 1;
+        counter = counter + 1;
+        counter = counter + 1;
+    }
+    return counter;
+}

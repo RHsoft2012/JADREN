@@ -1,0 +1,38 @@
+module examples.app_table_sort_callback
+
+// Comparator returns a signed result over the typed priority column.
+fn compare_priority(table_id: Int32, left_row: Int32, right_row: Int32) -> Int32 {
+    let left: Int64 = app_table_read_int(table_id, left_row, 0)
+    let right: Int64 = app_table_read_int(table_id, right_row, 0)
+    if left < right {
+        return -1
+    }
+    if left > right {
+        return 1
+    }
+    return 0
+}
+
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !app_table_set_column_type(0, 0, 1) {
+        return 1
+    }
+    if !app_table_append_row(0) { return 2 }
+    if !app_table_append_row(0) { return 3 }
+    if !app_table_append_row(0) { return 4 }
+    if !app_table_append_row(0) { return 5 }
+    if !app_table_set_int(0, 0, 0, 3 as Int64) { return 6 }
+    if !app_table_set_int(0, 1, 0, 1 as Int64) { return 7 }
+    if !app_table_set_int(0, 2, 0, 2 as Int64) { return 8 }
+    if !app_table_set_int(0, 3, 0, 2 as Int64) { return 9 }
+
+    if !app_table_sort_callback(0, compare_priority) {
+        return 10
+    }
+    if app_table_read_int(0, 0, 0) != 1 as Int64 { return 11 }
+    if app_table_read_int(0, 1, 0) != 2 as Int64 { return 12 }
+    if app_table_read_int(0, 2, 0) != 2 as Int64 { return 13 }
+    if app_table_read_int(0, 3, 0) != 3 as Int64 { return 14 }
+    return 0
+}

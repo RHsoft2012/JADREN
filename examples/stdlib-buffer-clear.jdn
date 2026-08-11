@@ -1,0 +1,24 @@
+// Copy-safe Buffer<T> can be cleared without releasing its allocation.
+// A later append reuses the reserved storage and starts at logical index 0.
+module stdlib_buffer_clear
+
+fn main() -> Int32 {
+    let created: Result<Buffer<Int32>, Int32> = buffer_create(2usize)
+    var result_code: Int32 = 0
+    match created {
+        Error(status) => { result_code = status }
+        Ok(values) => {
+            if !buffer_append(values, 7) { result_code = 1 }
+            if !buffer_append(values, 11) { result_code = 2 }
+            if buffer_length(values) != 2usize { result_code = 3 }
+            if !buffer_clear(values) { result_code = 4 }
+            if buffer_length(values) != 0usize { result_code = 5 }
+            if !buffer_append(values, 42) { result_code = 6 }
+            if buffer_length(values) != 1usize { result_code = 7 }
+            let clear_status: Int32 = buffer_clear_status(values)
+            if clear_status != 0 { result_code = 8 }
+            if buffer_length(values) != 0usize { result_code = 9 }
+        }
+    }
+    return result_code
+}

@@ -1,0 +1,10 @@
+[package]
+name = "unity-api-project"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+jadren-unity = { path = "../../stdlib/unity" }
+
+[targets]
+library = true

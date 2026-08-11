@@ -1,0 +1,11 @@
+module examples.http_request_chunked_frame_prefix
+
+// A reactor can append received fragments into this buffer and ask for the
+// first complete chunked frame. A pipelined suffix is not consumed.
+fn main() -> Int32 {
+    var request: [UInt8; 112] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 117u8, 112u8, 108u8, 111u8, 97u8, 100u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 84u8, 114u8, 97u8, 110u8, 115u8, 102u8, 101u8, 114u8, 45u8, 69u8, 110u8, 99u8, 111u8, 100u8, 105u8, 110u8, 103u8, 58u8, 32u8, 99u8, 104u8, 117u8, 110u8, 107u8, 101u8, 100u8, 13u8, 10u8, 13u8, 10u8, 52u8, 13u8, 10u8, 74u8, 68u8, 78u8, 33u8, 13u8, 10u8, 54u8, 13u8, 10u8, 99u8, 104u8, 117u8, 110u8, 107u8, 33u8, 13u8, 10u8, 48u8, 13u8, 10u8, 88u8, 45u8, 84u8, 114u8, 97u8, 105u8, 108u8, 101u8, 114u8, 58u8, 32u8, 121u8, 101u8, 115u8, 13u8, 10u8, 13u8, 10u8, 88u8]
+    if http_request_chunked_frame_length_prefix(request, 90usize) != 0usize { return 1 }
+    let frame: UIntSize = http_request_chunked_frame_length_prefix(request, 112usize)
+    if frame != 111usize { return 2 }
+    return 0
+}

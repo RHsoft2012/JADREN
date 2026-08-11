@@ -1,0 +1,33 @@
+module app_list_query.main
+
+// Bounded list query example.
+// Sorting uses stable UTF-8 byte order; find starts at a caller-selected index.
+fn main() -> Int32 {
+    app_list_clear(0)
+
+    let first: Bool = app_list_push_text(0, "Beta")
+    let second: Bool = app_list_push_text(0, "Alpha")
+    let third: Bool = app_list_push_text(0, "Beta")
+    let sorted: Bool = app_list_sort_text(0, false)
+    let alpha: Int32 = app_list_find_text(0, "Alpha", 0)
+    let first_beta: Int32 = app_list_find_text(0, "Beta", 0)
+    let second_beta: Int32 = app_list_find_text(0, "Beta", first_beta + 1)
+    let missing: Int32 = app_list_find_text(0, "Missing", 0)
+
+    if !first { return 1 }
+    if !second { return 2 }
+    if !third { return 3 }
+    if !sorted { return 4 }
+    if alpha != 0 { return 5 }
+    if first_beta != 1 { return 6 }
+    if second_beta != 2 { return 7 }
+    if missing != -1 { return 8 }
+
+    let descending: Bool = app_list_sort_text(0, true)
+    let descending_beta: Int32 = app_list_find_text(0, "Beta", 0)
+    if !descending { return 9 }
+    if descending_beta != 0 { return 10 }
+
+    app_list_clear(0)
+    return 0
+}

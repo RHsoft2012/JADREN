@@ -1,0 +1,38 @@
+module windows_desktop_portable_top_bar.main
+
+// The top bar is a retained horizontal scope. Its background is declared in
+// Jadren, while the native backend owns the actual window controls and paint.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 1 {
+        ui_set_status("Top bar action received.")
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    let root: Int32 = ui_app_begin("Jadren Portable Top Bar", 760, 480, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+
+    let top_bar: Int32 = ui_app_top_bar(root, 700, 54, 0x1F2937u32, 0, 8, 12, 0, 1)
+    if top_bar == 0 { return 2 }
+    let logo: Int32 = ui_app_label(top_bar, "JADREN", 100, 38, 0xFFFFFFu32, 0x1F2937u32, 0, 0)
+    let file: Int32 = ui_app_button(top_bar, "File", 1, 90, 38, 0xFFFFFFu32, 0x374151u32, 8, 0)
+    let edit: Int32 = ui_app_button(top_bar, "Edit", 2, 90, 38, 0xFFFFFFu32, 0x374151u32, 8, 0)
+    if logo == 0 { return 3 }
+    if file == 0 { return 3 }
+    if edit == 0 { return 3 }
+    if !ui_app_end(top_bar) { return 4 }
+
+    let panel: Int32 = ui_app_panel(root, 700, 260, 0xFFFFFFu32, 12, 16, 10, 0, 1)
+    if panel == 0 { return 5 }
+    let heading: Int32 = ui_app_label(panel, "Top bar and content remain one retained tree.", 640, 36,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let status: Int32 = ui_app_status(panel, "Ready. Resize the window and click File or Edit.", 640, 42,
+        0x111827u32, 0xDCFCE7u32, 8, 1)
+    if heading == 0 { return 6 }
+    if status == 0 { return 6 }
+    if !ui_app_end(panel) { return 7 }
+    if !ui_app_end(root) { return 8 }
+    return ui_app_run()
+}

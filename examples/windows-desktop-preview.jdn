@@ -1,0 +1,72 @@
+module windows_desktop_preview.main
+
+// Windows-only direct Jadren UI preview. No FFI declarations are needed.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 1 {
+        let active: Int32 = ui_state_get(0)
+        if active == 0 {
+            ui_state_set(0, 1)
+            ui_set_status("Stav: rezim je zapnuty.")
+            ui_set_button_text(1, "Vypnut rezim")
+            ui_set_button_enabled(2, 1)
+        } else {
+            ui_state_set(0, 0)
+            ui_set_status("Stav: rezim je vypnuty.")
+            ui_set_button_text(1, "Zapnut rezim")
+            ui_set_button_enabled(2, 0)
+        }
+    }
+    if event_id == 2 {
+        ui_set_status("Stav: druha akcia prebehla.")
+        ui_set_button_text(2, "Hotovo")
+        ui_set_button_enabled(2, 0)
+    }
+    return 0
+}
+
+fn main() -> Int32 {
+    let window_background: UInt32 = 0x1E1E1Eu32
+    let top_bar: UInt32 = 0x252526u32
+    let panel: UInt32 = 0x2D2D30u32
+    let primary: UInt32 = 0x168EF5u32
+    let text: UInt32 = 0xF3F4F6u32
+    let muted: UInt32 = 0xB8BEC9u32
+
+    ui_window("Jadren Desktop Lab", 1000, 640, window_background)
+    ui_top_bar(54, top_bar)
+    ui_text("J", 14, 11, 30, 30, text, primary, 8)
+    ui_text("Jadren Desktop Lab", 54, 18, 190, 22, text, top_bar, 0)
+    ui_menu_item("Subor", "Stav: menu Subor je vybrane.", 258, 12, 58, 30, text, top_bar, 6)
+    ui_menu_item("Upravit", "Stav: menu Upravit je vybrane.", 322, 12, 70, 30, text, top_bar, 6)
+    ui_menu_item("Zobrazenie", "Stav: menu Zobrazenie je vybrane.", 398, 12, 94, 30, text, top_bar, 6)
+    ui_menu_item("Pomoc", "Stav: menu Pomoc je vybrane.", 498, 12, 62, 30, text, top_bar, 6)
+    ui_icon_button("search", "Stav: hladanie je pripravene.", 64, 12, 32, 30, text, top_bar, 6)
+    ui_icon_button("settings", "Stav: nastavenia panelu su pripravene.", 18, 12, 32, 30, text, top_bar, 6)
+
+    // Root column: x/y, width/height, padding, gap, align (0=start) and stretch.
+    // With stretch=1 it grows with the window width.
+    ui_column(28, 82, 944, 470, 20, 16, 0, 1)
+
+    // A panel is an inner column with its own background, radius and padding.
+    ui_panel(944, 190, panel, 16, 16, 8, 0, 1)
+    ui_layout_label("Jadren UI - responzivny column, panel a row", 1, 28, text, panel, 0, 1)
+    ui_layout_label("Padding, gap, align aj stretch nastavuje Jadren kod; ziadne Win32 suradnice vnutornych prvkov.", 1, 42, muted, panel, 0, 1)
+    ui_layout_status("Stav: prejdi kurzorom cez tlacidlo alebo zapni rezim.", 1, 52, text, 0x123F2Au32, 16, 1)
+    ui_layout_end()
+
+    // A row keeps buttons on one line. Their fixed widths and the row gap are
+    // explicit, while the parent column controls their responsive position.
+    ui_row(944, 52, 0, 14, 1, 1)
+    ui_layout_event_button("Zapnut rezim", 1, 210, 48, text, primary, 16, 0)
+    ui_layout_event_button("Vykonat akciu", 2, 210, 48, text, 0x3A8D5Du32, 16, 0)
+    ui_set_button_enabled(2, 0)
+    ui_layout_end()
+
+    ui_panel(944, 110, 0x252526u32, 16, 16, 8, 0, 1)
+    ui_layout_label("Stretch pri zmene sirky roztiahne panely, nie text ani tlacidla.", 1, 28, text, 0x252526u32, 0, 1)
+    ui_layout_label("Align 0/1/2 znamena start, center a end pre nestretch prvky.", 1, 32, muted, 0x252526u32, 0, 1)
+    ui_layout_end()
+    ui_layout_end()
+    return ui_run()
+}

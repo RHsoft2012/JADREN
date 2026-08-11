@@ -1,0 +1,48 @@
+module examples.stdlib_buffer_owning_enum_fields
+
+// A named @repr(C) enum can place multiple owning Buffer fields in one
+// variant. The compiler emits one drop-table entry per field, including the
+// target layout offset inside the selected payload struct.
+@repr(C) enum Event {
+    Idle,
+    Pair(Buffer<Int32>, Int32),
+    Nested(Int32, Buffer<Buffer<Int32>>),
+    Done
+}
+
+fn main() -> Int32 {
+    let events_created: Result<Buffer<Event>, Int32> = buffer_create(0usize)
+    let payload_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let leaf_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let nested_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match events_created {
+        Ok(events) => {
+            match payload_created {
+                Ok(payload) => {
+                    if !buffer_append(payload, 42) { result_code = 1 }
+                    if !buffer_append(events, Event.Pair(payload, 7)) { result_code = 2 }
+                    match leaf_created {
+                        Ok(leaf) => {
+                            if !buffer_append(leaf, 9) { result_code = 3 }
+                            match nested_created {
+                                Ok(nested) => {
+                                    if !buffer_append(nested, leaf) { result_code = 4 }
+                                    if !buffer_append(events, Event.Nested(11, nested)) { result_code = 5 }
+                                    if !buffer_append(events, Event.Idle) { result_code = 6 }
+                                    if buffer_length(events) != 3usize { result_code = 7 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

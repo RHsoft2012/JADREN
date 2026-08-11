@@ -1,0 +1,32 @@
+module process_args.main
+
+// process_arg_count includes the executable path at index 0.  The remaining
+// values are the arguments supplied to the generated native executable.
+fn main() -> Int32 {
+    let count: UIntSize = process_arg_count()
+    var count_text: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let count_length: UIntSize = format_uint(count as UInt64, count_text)
+
+    file_delete("target/process-args-report.txt")
+    file_append("target/process-args-report.txt", count_text, count_length)
+    file_append_text("target/process-args-report.txt", ":")
+
+    var first_argument: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let first_length: UIntSize = process_arg_read(1usize, first_argument)
+    file_append("target/process-args-report.txt", first_argument, first_length)
+    file_append_text("target/process-args-report.txt", "\n")
+
+    if count < 2usize {
+        return 1
+    }
+    if first_length == 0usize {
+        return 1
+    }
+    return 0
+}

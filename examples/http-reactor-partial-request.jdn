@@ -1,0 +1,102 @@
+module examples.http_reactor_partial_request;
+
+// Bounded partial-request composition: the reactor receives two fragments
+// into a temporary caller-owned chunk, then http_request_append accumulates
+// them into one request buffer before parsing and routing.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38140u16)
+    if (listener as Int32) == 0 { return 10 }
+    let reactor: UIntSize = net_reactor_open(4u32, 8u32)
+    if (reactor as Int32) == 0 { net_socket_close(listener); return 11 }
+
+    let accept_operation: UIntSize = net_reactor_submit_accept(reactor, listener, 10usize)
+    if (accept_operation as Int32) == 0 {
+        net_reactor_close(reactor); net_socket_close(listener); return 12
+    }
+    let accepted_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if accepted_events == 0u32 {
+        net_reactor_close(reactor); net_socket_close(listener); return 13
+    }
+    let client: UIntSize = net_reactor_event_socket(reactor, 0u32)
+    if (client as Int32) == 0 {
+        net_reactor_close(reactor); net_socket_close(listener); return 14
+    }
+
+    var request: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var chunk: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var response: [UInt8; 144] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+
+    var body: [UInt8; 2] = [79u8, 75u8]
+
+    // The first network fragment is exactly 16 bytes.
+    let first_receive: UIntSize = net_reactor_submit_receive_buffer(
+        reactor, client, chunk, 20usize)
+    if (first_receive as Int32) == 0 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 15
+    }
+    let first_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if first_events == 0u32 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 16
+    }
+    let first_bytes: UIntSize = net_reactor_event_bytes(reactor, 0u32)
+    if (first_bytes as Int32) != 16 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 17
+    }
+    let first_length: UIntSize = http_request_append(request, 0usize, chunk, first_bytes)
+    if (first_length as Int32) != 16 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 18
+    }
+
+    // The second fragment contains the remaining 24 bytes of the request.
+    let second_receive: UIntSize = net_reactor_submit_receive_buffer(
+        reactor, client, chunk, 30usize)
+    if (second_receive as Int32) == 0 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 19
+    }
+    let second_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if second_events == 0u32 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 20
+    }
+    let second_bytes: UIntSize = net_reactor_event_bytes(reactor, 0u32)
+    if (second_bytes as Int32) != 24 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 21
+    }
+    let request_length: UIntSize = http_request_append(
+        request, first_length, chunk, second_bytes)
+    if (request_length as Int32) != 40 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 22
+    }
+    if !http_request_is_complete_prefix(request, request_length) {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 23
+    }
+    if !http_route_match_prefix(request, request_length, "GET", "/hello") {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 24
+    }
+
+    let response_length: UIntSize = http_response_write_ex(
+        200u16, "text/plain", body, false, response)
+    if response_length == 0usize {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 25
+    }
+    let send_operation: UIntSize = net_reactor_submit_send_buffer_prefix(
+        reactor, client, response, response_length, 30usize)
+    if (send_operation as Int32) == 0 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 26
+    }
+    let sent_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if sent_events == 0u32 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 27
+    }
+    let sent_bytes: UIntSize = net_reactor_event_bytes(reactor, 0u32)
+    if (sent_bytes as Int32) != (response_length as Int32) {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 28
+    }
+
+    let client_closed: Bool = net_socket_close(client)
+    let reactor_closed: Bool = net_reactor_close(reactor)
+    let listener_closed: Bool = net_socket_close(listener)
+    if !client_closed { return 29 }
+    if !reactor_closed { return 30 }
+    if !listener_closed { return 31 }
+    return 0
+}

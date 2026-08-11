@@ -1,0 +1,16 @@
+module examples.stdlib_buffer_list
+
+// Standalone dynamic-list fixture. Buffer<T> storage is region-owned here;
+// the standard-library helpers operate on it through checked borrowed views.
+fn main() -> Int32 {
+    region frame {
+        let values: Buffer<Int32> = frame.allocate(4)
+        values[0] = 4
+        values[1] = 8
+        values[2] = 15
+        values[3] = 16
+        let total: Int32 = values[0] + values[1] + values[2] + values[3]
+        if total != 43 { return 1 }
+    }
+    return 0
+}

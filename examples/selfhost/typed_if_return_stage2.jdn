@@ -1,0 +1,9 @@
+module examples.selfhost.typed_if_return_stage2
+
+// Companion source for the bounded Stage-2 if/else CFG hand-off.
+// Both branches return directly; the condition is lowered to a JIR Bool and
+// the main compiler can also build this ordinary Jadren program.
+
+fn main() -> Int32 {
+    return if 2 > 1 { 10 } else { 20 }
+}

@@ -1,0 +1,40 @@
+module examples.http_session_tls_pipelined
+
+// Linux/OpenSSL fixture for TLS-backed HTTP/1.1 pipelining. The session keeps
+// the second plaintext request after processing the first keep-alive frame.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38147u16)
+    if (listener as Int32) == 0 { return 10 }
+    let session: UIntSize = http_session_open_tls(
+        listener,
+        1u32,
+        1024u32,
+        1024u32,
+        "target/jadren-tls-smoke/server-cert.pem",
+        "target/jadren-tls-smoke/server-key.pem"
+    )
+    if (session as Int32) == 0 { net_socket_close(listener); return 11 }
+
+    http_router_clear()
+    var body: [UInt8; 2] = [79u8, 75u8]
+    let added: Bool = http_router_add("GET", "/hello", 200u16, "text/plain", body)
+    if !added { http_session_close(session); return 12 }
+
+    var attempts: UInt32 = 0u32
+    var seen_keep_alive: Bool = false
+    var seen_close: Bool = false
+    while attempts < 32u32 {
+        let state: UInt32 = http_session_step(session, 2000u32)
+        if state == 1u32 { seen_keep_alive = true }
+        if state == 2u32 {
+            seen_close = true
+            break
+        }
+        attempts += 1u32
+    }
+    let closed: Bool = http_session_close(session)
+    if !seen_keep_alive { return 13 }
+    if !seen_close { return 14 }
+    if !closed { return 15 }
+    return 0
+}

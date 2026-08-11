@@ -79,9 +79,12 @@ pub const STAGE2_JIR_RECORD_TERMINATOR: u8 = 5;
 /// Stage-2 metadata record binding one immutable source local to an existing
 /// SSA value. The record is additive; legacy streams never contain it.
 pub const STAGE2_JIR_RECORD_LOCAL_BINDING_METADATA: u8 = 6;
-/// Stage-2 record containing one bounded direct call to a preceding function.
+/// Stage-2 record containing one bounded direct call to a statically resolved
+/// non-recursive function in the same module.
 /// The record is additive and is accepted only under the reviewed internal
-/// one-literal call contract.
+/// bounded call contract: no arguments, a literal, the caller parameter, one
+/// already-defined binary value made from two literals, or one binary value
+/// made from a caller parameter and one literal.
 pub const STAGE2_JIR_RECORD_DIRECT_CALL: u8 = 7;
 /// Current additive stage-2 record protocol. Legacy records remain accepted
 /// because their kind-specific contracts are unchanged.
@@ -128,9 +131,13 @@ pub const STAGE2_JIR_STATUS_COMPLETE: u64 = 7;
 /// `6=immutable local-binding metadata`, or `7=bounded direct call`. For kind `6`, `source_start..end`
 /// is the declaration identifier span, `operand_a..b` is the use span and
 /// `value_index` names the already-emitted SSA value.
-/// For kind `7`, `operand_a` is the preceding callee function index,
-/// `operand_b` is the already-defined one-literal argument SSA value and
-/// `source_start..end` is the complete call expression span.
+/// For kind `7`, `operand_a` is the same-module callee function index,
+/// `operand_b` is the already-defined argument SSA value and
+/// `source_start..end` is the complete call expression span. The current
+/// internal admission permits zero arguments, one literal, one caller parameter, one binary
+/// value whose two operands are dense literal constants, or one binary value
+/// whose operands are one caller parameter and one dense literal. For a
+/// zero-argument call, `operand_b` is the required zero sentinel.
 /// Dense identities and operands are represented as platform-neutral `u64`
 /// indices for the currently supported 64-bit hosts. A function may carry at
 /// most two explicit Int32 parameters plus a bounded sequence of constant and
@@ -168,6 +175,24 @@ pub struct Stage2JirSummary {
     pub status_flags: u64,
 }
 
+/// C-compatible summary returned by the bounded self-hosting frontend stage.
+///
+/// The layout is shared by native loaders so the generated Jadren producer can
+/// be called directly without a language-specific bridge. The producer never
+/// owns any of the caller-provided buffers.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrontendStage2Summary {
+    pub source_bytes: u64,
+    pub tokens_emitted: u64,
+    pub ast_items_emitted: u64,
+    pub function_headers_emitted: u64,
+    pub statements_emitted: u64,
+    pub calls_emitted: u64,
+    pub syntax_errors: u64,
+    pub status_flags: u64,
+}
+
 /// C-compatible summary returned by the fused bounded Stage-2 frontend-to-JIR
 /// hand-off. The 64-byte layout keeps frontend validity/completeness and JIR
 /// emission completeness explicit without changing the existing summaries.
@@ -182,6 +207,26 @@ pub struct Stage2PipelineSummary {
     pub records_emitted: u64,
     pub functions_lowered: u64,
     pub status_flags: u64,
+}
+
+/// C-compatible summary returned by the bounded typed straight-line statement
+/// producer.  The hand-off is intentionally separate from the Stage2 JIR
+/// record stream: a producer first emits typed statement/AST metadata, then a
+/// second producer entry validates that metadata before reusing the existing
+/// JIR lowering.  Status bit 0 means the source and metadata were validated,
+/// bit 1 means the exact bounded shape is supported, and bit 2 means all
+/// caller-owned output buffers were large enough.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypedStatementStage2Summary {
+    pub source_bytes: u64,
+    pub statements_required: u64,
+    pub statements_emitted: u64,
+    pub ast_nodes_required: u64,
+    pub ast_nodes_emitted: u64,
+    pub errors: u64,
+    pub status_flags: u64,
+    pub reserved: u64,
 }
 
 /// C-compatible typed metadata for one builtin literal expression.
@@ -207,6 +252,42 @@ pub struct TypedExpressionHeader {
     pub depth: u64,
 }
 
+/// C-compatible caller-owned expression argument entry. `call_node` points to
+/// a call in the post-order AST, `ordinal` is zero-based, and `node` points to
+/// the argument expression node. The source span is repeated so a consumer
+/// can validate the stream without reparsing punctuation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExpressionAstArgumentHeader {
+    pub call_node: u64,
+    pub ordinal: u64,
+    pub node: u64,
+    pub start: u64,
+    pub end: u64,
+}
+
+/// C-compatible post-order syntax node with the builtin type inferred by a
+/// caller-owned semantic pass. The child indices point to earlier entries in
+/// the same slice; `aux` preserves the syntax AST call argument count and
+/// `syntax_kind` follows the self-hosting expression AST
+/// contract (`1=identifier`, `2=integer`, `3=group`, `4=index`, `5=call`,
+/// `6=unary`, `7=binary`, `8=index-store`). `flags` is `1` for a resolved
+/// node and `2` for an unresolved/invalid node.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypedExpressionAstNodeHeader {
+    pub syntax_kind: u8,
+    pub type_kind: u8,
+    pub flags: u8,
+    pub reserved: u8,
+    pub left: u64,
+    pub right: u64,
+    /// Call argument count copied from the syntax AST `aux` field.
+    pub aux: u64,
+    pub start: u64,
+    pub end: u64,
+}
+
 /// C-compatible caller-owned binding used by the bounded typed-name hand-off.
 /// `name_start..name_end` points into the same source byte buffer passed to the
 /// hand-off. Bindings are matched by exact ASCII bytes; no scope, shadowing,
@@ -220,6 +301,135 @@ pub struct TypedNameBindingHeader {
     pub name_end: u64,
     /// Builtin type category selected by the caller.
     pub type_kind: u8,
+}
+
+/// C-compatible caller-owned fixed-array binding for the bounded typed
+/// indexing hand-off. The identifier span names a parameter represented as a
+/// JIR inline array; `length` is part of the caller-owned proof used for the
+/// emitted `BoundsCheck`. This intentionally does not claim Slice/Buffer or
+/// user-defined element support yet.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypedArrayBindingHeader {
+    /// Inclusive source start offset of the array identifier.
+    pub name_start: u64,
+    /// Exclusive source end offset of the array identifier.
+    pub name_end: u64,
+    /// Fixed number of inline elements.
+    pub length: u64,
+    /// Builtin element type category selected by the caller.
+    pub element_type_kind: u8,
+    /// Reserved bytes for a future array capability extension.
+    pub reserved: [u8; 7],
+}
+
+/// C-compatible caller-owned dynamic sequence binding for the bounded typed
+/// indexing hand-off. The identifier span names a parameter represented as a
+/// runtime descriptor: `Slice<T>` has `{pointer,length}` and `Buffer<T>` has
+/// `{pointer,length,capacity}` in the lowered JIR. The descriptor's length is
+/// read at runtime and is always checked before an indexed load or store.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypedSequenceBindingHeader {
+    /// Inclusive source start offset of the sequence identifier.
+    pub name_start: u64,
+    /// Exclusive source end offset of the sequence identifier.
+    pub name_end: u64,
+    /// Builtin element type category selected by the caller.
+    pub element_type_kind: u8,
+    /// [`TYPED_SEQUENCE_KIND_SLICE`] or [`TYPED_SEQUENCE_KIND_BUFFER`].
+    pub sequence_kind: u8,
+    /// Capability extensions. `reserved[0]` is the access mode:
+    /// [`TYPED_SEQUENCE_ACCESS_READ`] (the legacy/default value) permits
+    /// indexed reads, while [`TYPED_SEQUENCE_ACCESS_WRITE`] also permits the
+    /// bounded indexed-store syntax in the Stage2 lowering.
+    pub reserved: [u8; 6],
+}
+
+/// C-compatible statement hand-off for the first bounded local-mutation
+/// lowering. Statements are ordered in source order and refer to expression
+/// roots in the shared post-order typed AST. `let` and `assign` use
+/// `target_start..target_end` for the local name; `return`, `break` and
+/// `continue` leave that span empty. Loop-control statements are currently
+/// admitted only as the final statement of a bounded Stage-2 `while` body;
+/// unconditional controls have a zero expression node, while conditional
+/// `break` uses a Bool expression node. This keeps the loop-control extension
+/// explicit without claiming general CFG lowering.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypedStatementHeader {
+    /// [`TYPED_STATEMENT_KIND_LET`], [`TYPED_STATEMENT_KIND_ASSIGN`],
+    /// [`TYPED_STATEMENT_KIND_RETURN`], [`TYPED_STATEMENT_KIND_BREAK`] or
+    /// [`TYPED_STATEMENT_KIND_CONTINUE`].
+    pub kind: u8,
+    /// `1` marks a mutable local declaration; assignment statements require
+    /// the previously declared local to carry this flag. `2` marks a
+    /// conditional `break`; its expression node must resolve to `Bool`.
+    pub flags: u8,
+    /// Builtin type selected for the statement value.
+    pub type_kind: u8,
+    /// Reserved bytes; must be zero in the current contract.
+    pub reserved: u8,
+    /// Inclusive target-name span for `let`/`assign`.
+    pub target_start: u64,
+    /// Exclusive target-name span for `let`/`assign`.
+    pub target_end: u64,
+    /// Root node index in the shared post-order typed expression AST.
+    pub expression_node: u64,
+    /// Inclusive complete statement span.
+    pub start: u64,
+    /// Exclusive complete statement span.
+    pub end: u64,
+}
+
+/// C-compatible header for a bounded `if ... else ...` expression that
+/// returns directly from both branches. The three node fields refer to roots
+/// in the shared post-order typed expression AST. This additive contract does
+/// not claim general CFG construction, loops, phi values or mutable locals
+/// crossing branch edges.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypedIfReturnHeader {
+    /// Condition expression root; it must lower to `Bool`.
+    pub condition_node: u64,
+    /// Then branch expression root; it must lower to the selected return type.
+    pub then_node: u64,
+    /// Else branch expression root; it must lower to the selected return type.
+    pub else_node: u64,
+    /// Inclusive complete source span of the `if` expression.
+    pub start: u64,
+    /// Exclusive complete source span of the `if` expression.
+    pub end: u64,
+    /// [`TYPED_CONTROL_FLOW_KIND_IF_RETURN`].
+    pub kind: u8,
+    /// Selected homogeneous builtin result type; [`TYPE_KIND_INTEGER`] and
+    /// [`TYPE_KIND_FLOAT`] are admitted by the bounded control-flow slice.
+    pub type_kind: u8,
+    /// Reserved bytes; must be zero in the current contract.
+    pub reserved: [u8; 6],
+}
+
+/// C-compatible header for the first bounded `while` hand-off. The loop
+/// condition is a caller-owned typed expression root; the body statement is
+/// supplied separately and must assign the merged Int32 local. The lowering
+/// uses explicit stack storage, so the back edge does not depend on an SSA
+/// phi representation yet.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypedWhileHeader {
+    /// Root node index for the Bool loop condition.
+    pub condition_node: u64,
+    /// Inclusive complete source span of the `while` expression.
+    pub start: u64,
+    /// Exclusive complete source span of the `while` expression.
+    pub end: u64,
+    /// [`TYPED_CONTROL_FLOW_KIND_WHILE`].
+    pub kind: u8,
+    /// Selected builtin loop-local type; only [`TYPE_KIND_INTEGER`] is
+    /// admitted by the initial bounded contract.
+    pub type_kind: u8,
+    /// Reserved bytes; must be zero in the current contract.
+    pub reserved: [u8; 6],
 }
 
 /// C-compatible caller-owned function signature entry for the bounded typed
@@ -376,6 +586,11 @@ pub const TYPED_EXPRESSION_KIND_SCOPED_NAME: u8 = 6;
 pub const TYPED_EXPRESSION_KIND_REGION_NAME: u8 = 7;
 /// Typed-expression category for a caller-bound function call.
 pub const TYPED_EXPRESSION_KIND_CALL: u8 = 8;
+/// Typed expression AST syntax kind for a bounded indexed store. `left`
+/// points to a syntax-kind-4 index node and `right` points to the value to
+/// store. The lowered expression evaluates to the stored value so the
+/// existing scalar result ABI remains unchanged.
+pub const TYPED_EXPRESSION_SYNTAX_INDEX_STORE: u8 = 8;
 /// Builtin type category for `true` and `false`.
 pub const TYPE_KIND_BOOL: u8 = 1;
 /// Builtin type category for decimal integer literals.
@@ -386,6 +601,44 @@ pub const TYPE_KIND_FLOAT: u8 = 3;
 pub const TYPE_KIND_STRING: u8 = 4;
 /// Builtin type category for quoted character literals.
 pub const TYPE_KIND_CHAR: u8 = 5;
+
+/// Dynamic sequence descriptor containing only a pointer and runtime length.
+pub const TYPED_SEQUENCE_KIND_SLICE: u8 = 1;
+/// Owning dynamic sequence descriptor containing pointer, length and capacity.
+pub const TYPED_SEQUENCE_KIND_BUFFER: u8 = 2;
+
+/// Read-only dynamic sequence capability. Zero keeps the legacy sequence
+/// binding layout/source contract backward compatible.
+pub const TYPED_SEQUENCE_ACCESS_READ: u8 = 0;
+/// Caller-owned dynamic sequence capability that permits bounded indexed
+/// stores in addition to indexed reads.
+pub const TYPED_SEQUENCE_ACCESS_WRITE: u8 = 1;
+
+/// Straight-line local declaration statement (`let name: Int32 = expr;`).
+pub const TYPED_STATEMENT_KIND_LET: u8 = 1;
+/// Straight-line assignment statement (`name = expr;`).
+pub const TYPED_STATEMENT_KIND_ASSIGN: u8 = 2;
+/// Straight-line return statement (`return expr;`).
+pub const TYPED_STATEMENT_KIND_RETURN: u8 = 3;
+/// Terminates the current bounded Stage-2 `while` body and jumps to its exit.
+pub const TYPED_STATEMENT_KIND_BREAK: u8 = 4;
+/// Skips the remainder of the current bounded Stage-2 `while` body and jumps
+/// back to its header.
+pub const TYPED_STATEMENT_KIND_CONTINUE: u8 = 5;
+/// A `let` statement creates a mutable local that later assignments may
+/// update. Without this flag the declaration is immutable and assignment is
+/// rejected by the Stage-2 statement hand-off.
+pub const TYPED_STATEMENT_FLAG_MUTABLE: u8 = 1;
+/// Conditional loop-control flag for `if <Bool> { break }` in a bounded while
+/// body. It is intentionally separate from the mutable-local flag.
+pub const TYPED_STATEMENT_FLAG_CONDITIONAL: u8 = 2;
+
+/// Bounded control-flow form where both `if` branches return an `Int32`.
+pub const TYPED_CONTROL_FLOW_KIND_IF_RETURN: u8 = 1;
+/// Bounded control-flow form where both `if` branches merge one `Int32` value.
+pub const TYPED_CONTROL_FLOW_KIND_IF_VALUE: u8 = 2;
+/// Bounded control-flow form where one Int32 local is updated in a while body.
+pub const TYPED_CONTROL_FLOW_KIND_WHILE: u8 = 3;
 
 /// Function type for byte classification.
 pub type ClassifyByteFn = extern "C" fn(byte: u8) -> u8;
@@ -643,12 +896,14 @@ mod tests {
     use std::mem::{align_of, size_of};
 
     use super::{
-        API_SCHEMA, API_VERSION, ApiError, DiagnosticValue, ExpressionPrecedenceHeader,
-        FrontendApiRegistry, FrontendApiSlot, FrontendApiV1, FrontendTokenInfoApiV1,
-        Stage2JirRecord, Stage2JirSummary, Stage2PipelineSummary, TOKEN_INFO_API_VERSION,
-        TokenCounts, TokenInfo, TokenSpan, TypedCallBindingHeader, TypedCallCandidateHeader,
-        TypedExpressionHeader, TypedNameBindingHeader, TypedRegionNameBindingHeader,
-        TypedScopedNameBindingHeader,
+        API_SCHEMA, API_VERSION, ApiError, DiagnosticValue, ExpressionAstArgumentHeader,
+        ExpressionPrecedenceHeader, FrontendApiRegistry, FrontendApiSlot, FrontendApiV1,
+        FrontendStage2Summary, FrontendTokenInfoApiV1, Stage2JirRecord, Stage2JirSummary,
+        Stage2PipelineSummary, TOKEN_INFO_API_VERSION, TokenCounts, TokenInfo, TokenSpan,
+        TypedArrayBindingHeader, TypedCallBindingHeader, TypedCallCandidateHeader,
+        TypedExpressionAstNodeHeader, TypedExpressionHeader, TypedIfReturnHeader,
+        TypedNameBindingHeader, TypedRegionNameBindingHeader, TypedScopedNameBindingHeader,
+        TypedSequenceBindingHeader, TypedStatementHeader, TypedStatementStage2Summary,
     };
 
     extern "C" fn classify(_: u8) -> u8 {
@@ -681,8 +936,20 @@ mod tests {
         assert_eq!(align_of::<TokenCounts>(), 8);
         assert_eq!(size_of::<TypedExpressionHeader>(), 32);
         assert_eq!(align_of::<TypedExpressionHeader>(), 8);
+        assert_eq!(size_of::<ExpressionAstArgumentHeader>(), 40);
+        assert_eq!(align_of::<ExpressionAstArgumentHeader>(), 8);
+        assert_eq!(size_of::<TypedExpressionAstNodeHeader>(), 48);
+        assert_eq!(align_of::<TypedExpressionAstNodeHeader>(), 8);
         assert_eq!(size_of::<TypedNameBindingHeader>(), 24);
         assert_eq!(align_of::<TypedNameBindingHeader>(), 8);
+        assert_eq!(size_of::<TypedArrayBindingHeader>(), 32);
+        assert_eq!(align_of::<TypedArrayBindingHeader>(), 8);
+        assert_eq!(size_of::<TypedSequenceBindingHeader>(), 24);
+        assert_eq!(align_of::<TypedSequenceBindingHeader>(), 8);
+        assert_eq!(size_of::<TypedStatementHeader>(), 48);
+        assert_eq!(align_of::<TypedStatementHeader>(), 8);
+        assert_eq!(size_of::<TypedIfReturnHeader>(), 48);
+        assert_eq!(align_of::<TypedIfReturnHeader>(), 8);
         assert_eq!(size_of::<TypedCallBindingHeader>(), 32);
         assert_eq!(align_of::<TypedCallBindingHeader>(), 8);
         assert_eq!(size_of::<TypedCallCandidateHeader>(), 40);
@@ -699,6 +966,10 @@ mod tests {
         assert_eq!(align_of::<Stage2JirSummary>(), 8);
         assert_eq!(size_of::<Stage2PipelineSummary>(), 64);
         assert_eq!(align_of::<Stage2PipelineSummary>(), 8);
+        assert_eq!(size_of::<FrontendStage2Summary>(), 64);
+        assert_eq!(align_of::<FrontendStage2Summary>(), 8);
+        assert_eq!(size_of::<TypedStatementStage2Summary>(), 64);
+        assert_eq!(align_of::<TypedStatementStage2Summary>(), 8);
     }
 
     #[test]

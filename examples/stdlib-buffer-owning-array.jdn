@@ -1,0 +1,45 @@
+module examples.stdlib_buffer_owning_array
+
+// An inline array can own several Buffer descriptors as one generic element.
+// The compiler flattens the fixed offsets into the existing field-table ABI;
+// no per-array metadata or manual cleanup is needed in Jadren source.
+fn main() -> Int32 {
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let arrays_created: Result<Buffer<[Buffer<Int32>; 2]>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match first_created {
+        Ok(first) => {
+            match second_created {
+                Ok(second) => {
+                    match arrays_created {
+                        Ok(arrays) => {
+                            if !buffer_append(first, 11) { result_code = 1 }
+                            if !buffer_append(second, 22) { result_code = 2 }
+                            let item: [Buffer<Int32>; 2] = [first, second]
+                            if !buffer_append(arrays, item) { result_code = 3 }
+
+                            let grown: Int32 = buffer_resize_move_status(arrays, 2usize)
+                            if grown != 0 { result_code = 4 }
+                            if buffer_length(arrays) != 2usize { result_code = 5 }
+
+                            let removed: Int32 = buffer_remove_drop_status(arrays, 0usize)
+                            if removed != 0 { result_code = 6 }
+                            if buffer_length(arrays) != 1usize { result_code = 7 }
+
+                            let cleared: Bool = buffer_clear_move(arrays)
+                            if !cleared { result_code = 8 }
+                            if buffer_length(arrays) != 0usize { result_code = 9 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

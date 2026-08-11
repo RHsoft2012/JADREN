@@ -1,0 +1,31 @@
+module examples.app_state_transaction
+
+// Bounded process-local transaction for grouped form/state changes.
+// Begin snapshots the current state; commit keeps changes; rollback restores it.
+fn main() -> Int32 {
+    app_state_clear()
+    let seed: Bool = app_state_set_text("draft", "before")
+    if !seed { return 1 }
+
+    let begun: Bool = app_state_tx_begin()
+    if !begun { return 2 }
+    app_state_set_text("draft", "during")
+    if app_state_tx_begin() { return 3 }
+    let rolled: Bool = app_state_tx_rollback()
+    if !rolled { return 4 }
+
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let restored: UIntSize = app_state_read_text("draft", output)
+    if restored != 6usize { return 5 }
+    if output[0] != 98u8 { return 6 }
+
+    if !app_state_tx_begin() { return 7 }
+    app_state_set_text("draft", "committed")
+    if !app_state_tx_commit() { return 8 }
+    let committed: UIntSize = app_state_read_text("draft", output)
+    if committed != 9usize { return 9 }
+    if output[0] != 99u8 { return 10 }
+    if app_state_tx_commit() { return 11 }
+    return 0
+}

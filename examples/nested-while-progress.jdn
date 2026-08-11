@@ -1,0 +1,14 @@
+module examples.nested_while_progress
+
+fn main() -> Int32 {
+    var outer: Int32 = 0
+    while outer < 6 {
+        outer = outer + 1
+        var inner: Int32 = 0
+        while inner < 2 {
+            inner = inner + 1
+        }
+        outer = outer + inner
+    }
+    return outer
+}

@@ -1,0 +1,29 @@
+module examples.app_data_journal_durable
+
+// A journal append is protected by a separate lock and flushed before the
+// lock is released. Recovery still remains explicit and caller-driven.
+fn main() -> Int32 {
+    app_state_clear()
+    if !app_state_set_text("mode", "durable") { return 1 }
+    if !app_data_journal_append_durable(
+        "target/app-data-journal-durable.journal",
+        "target/app-data-journal-durable.scratch",
+        "target/app-data-journal-durable.lock"
+    ) { return 2 }
+
+    if !app_state_set_text("mode", "changed") { return 3 }
+    if !app_data_journal_recover(
+        "target/app-data-journal-durable.journal",
+        "target/app-data-journal-durable.scratch"
+    ) { return 4 }
+    var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = app_state_read_text("mode", output)
+    if length != 7usize { return 5 }
+    if output[0] != 100u8 { return 6 }
+    if output[6] != 101u8 { return 7 }
+
+    file_delete("target/app-data-journal-durable.journal")
+    file_delete("target/app-data-journal-durable.scratch")
+    file_delete("target/app-data-journal-durable.lock")
+    return 0
+}

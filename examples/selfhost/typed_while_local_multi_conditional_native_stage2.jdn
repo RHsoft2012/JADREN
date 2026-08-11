@@ -1,0 +1,12 @@
+module examples.selfhost.typed_while_local_multi_conditional_native_stage2
+
+// Native producer -> JST2WHM1 -> Rust Stage-2 with two ordered conditional controls.
+fn local_value() -> Int32 {
+    var counter: Int32 = 0;
+    while counter < 5 {
+        counter = counter + 1;
+        if counter < 2 { continue; }
+        if counter < 4 { break; }
+    }
+    return counter;
+}

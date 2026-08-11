@@ -1,0 +1,55 @@
+module examples.stdlib_buffer_nested_remove_move
+
+// buffer_remove_move transfers one nested descriptor and closes the gap by
+// moving later descriptors left. The removed allocation remains caller-owned.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let third_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            match third_created {
+                                Ok(third) => {
+                                    if !buffer_append(first, 1) { result_code = 1 }
+                                    if !buffer_append(second, 2) { result_code = 2 }
+                                    if !buffer_append(third, 3) { result_code = 3 }
+                                    if !buffer_append(outer, first) { result_code = 4 }
+                                    if !buffer_append(outer, second) { result_code = 5 }
+                                    if !buffer_append(outer, third) { result_code = 6 }
+                                    let removed: Result<Buffer<Int32>, Int32> = buffer_remove_move(outer, 1usize)
+                                    match removed {
+                                        Ok(value) => {
+                                            if buffer_length(value) != 1usize { result_code = 7 }
+                                            if value[0] != 2 { result_code = 8 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                    if buffer_length(outer) != 2usize { result_code = 9 }
+                                    if outer[0][0] != 1 { result_code = 10 }
+                                    if outer[1][0] != 3 { result_code = 11 }
+                                    let bad: Result<Buffer<Int32>, Int32> = buffer_remove_move(outer, 99usize)
+                                    match bad {
+                                        Ok(value) => { result_code = 12 }
+                                        Error(status) => { if status != -20 { result_code = 13 } }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

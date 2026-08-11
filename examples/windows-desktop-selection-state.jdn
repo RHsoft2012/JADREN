@@ -1,0 +1,67 @@
+module examples.windows_desktop_selection_state
+
+// List and table selection are explicit Int64 app_state bindings.  The
+// selected index is -1 when no item/row is selected; ui_refresh_bindings()
+// is the deterministic boundary after loading or mutating the model.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    app_list_clear(0)
+    if !app_list_push_text(0, "First") { return 1 }
+    if !app_list_push_text(0, "Second") { return 2 }
+
+    app_table_clear(0)
+    if !app_table_append_row(0) { return 3 }
+    if !app_table_set_cell(0, 0, 0, "First") { return 4 }
+    if !app_table_append_row(0) { return 5 }
+    if !app_table_set_cell(0, 1, 0, "Second") { return 6 }
+
+    let root: Int32 = ui_app_begin("Selection state", 560, 420, 0xF6F8FCu32)
+    if root == 0 { return 7 }
+    let panel: Int32 = ui_app_panel(root, 520, 360, 0xFFFFFFu32, 12, 10, 8, 0, 1)
+    if panel == 0 { return 8 }
+
+    let list: Int32 = ui_app_list(panel, 30, 240, 110,
+                                  0x111827u32, 0xFFFFFFu32, 8, 1)
+    if list == 0 { return 9 }
+    if !ui_app_list_bind_app(list, 0) { return 10 }
+
+    let table: Int32 = ui_app_table(panel, 40, 240, 110,
+                                    0x111827u32, 0xFFFFFFu32, 8, 1)
+    if table == 0 { return 11 }
+    if !ui_app_table_column(table, 0, "Name", 200) { return 12 }
+    if !ui_app_table_bind_app(table, 0, 1) { return 13 }
+
+    if !ui_app_list_set_index(list, 1) { return 14 }
+    if !ui_app_table_set_selected_row(table, 1) { return 15 }
+    if !app_state_set_int("list_choice", 1 as Int64) { return 16 }
+    if !app_state_set_int("table_choice", 1 as Int64) { return 17 }
+    // Retained controls can bind directly by node id; the runtime routes to
+    // the same event-based storage without repeating 30/40.
+    let list_bound: Bool = ui_app_bind_app_state(list, "list_choice")
+    let table_bound: Bool = ui_app_bind_app_state(table, "table_choice")
+    if !list_bound { return 16 }
+    if !table_bound { return 17 }
+    if app_state_get_int("list_choice") != 1 as Int64 { return 18 }
+    if app_state_get_int("table_choice") != 1 as Int64 { return 19 }
+
+    if !app_state_set_int("list_choice", 0 as Int64) { return 20 }
+    if !app_state_set_int("table_choice", -1 as Int64) { return 21 }
+    ui_app_refresh_app_state(list)
+    ui_app_refresh_app_state(table)
+    if ui_app_list_index(list) != 0 { return 22 }
+    if ui_app_table_selected_row(table) != -1 { return 23 }
+
+    if !ui_app_list_set_index(list, 1) { return 24 }
+    if !ui_app_table_set_selected_row(table, 1) { return 25 }
+    if app_state_get_int("list_choice") != 1 as Int64 { return 26 }
+    if app_state_get_int("table_choice") != 1 as Int64 { return 27 }
+
+    if !ui_app_end(panel) { return 28 }
+    if !ui_app_end(root) { return 29 }
+    return 0
+}

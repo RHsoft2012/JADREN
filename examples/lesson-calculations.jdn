@@ -1,0 +1,22 @@
+module lessons.calculations
+
+// Prvá kalkulačná lekcia: funkcia dostane dva Int32 a vráti nový Int32.
+fn add(a: Int32, b: Int32) -> Int32 {
+    return a + b
+}
+
+fn percentage_discount(price: Int32, percent: Int32) -> Int32 {
+    return price - (price * percent / 100)
+}
+
+fn main() -> Int32 {
+    let subtotal: Int32 = add(12, 8)
+    let total: Int32 = percentage_discount(subtotal, 10)
+
+    // Kontroly z príkladu robia z lekcie aj spustiteľný smoke test.
+    if subtotal != 20 { return 1 }
+    if total != 18 { return 2 }
+
+    print("Calculation complete.")
+    return 0
+}

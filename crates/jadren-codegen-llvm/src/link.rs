@@ -17,17 +17,28 @@ pub enum WindowsSubsystem {
 pub struct WindowsLinkOptions {
     pub entry_symbol: String,
     pub subsystem: WindowsSubsystem,
+    /// Optional CodeView program database emitted alongside a debug executable.
+    ///
+    /// This is deliberately opt-in: release links retain their reproducible
+    /// artifact contract and do not carry developer-machine source metadata.
+    pub debug_database: Option<PathBuf>,
 }
 
 /// Deterministic Clang/lld inputs for a Linux x86-64 executable.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LinuxLinkOptions {
     pub disable_pie: bool,
+    /// Additional system libraries required by a generated runtime (for example
+    /// OpenSSL's `ssl`/`crypto` pair for the native TLS adapter).
+    pub system_libraries: Vec<String>,
 }
 
 impl Default for LinuxLinkOptions {
     fn default() -> Self {
-        Self { disable_pie: true }
+        Self {
+            disable_pie: true,
+            system_libraries: Vec::new(),
+        }
     }
 }
 
@@ -36,6 +47,7 @@ impl Default for WindowsLinkOptions {
         Self {
             entry_symbol: "jadren_entry".to_owned(),
             subsystem: WindowsSubsystem::Console,
+            debug_database: None,
         }
     }
 }
@@ -154,8 +166,18 @@ pub fn link_windows_executable(
     command.arg(format!("/entry:{}", options.entry_symbol));
     command.arg(format!("/subsystem:{subsystem}"));
     command.arg(format!("/out:{}", output.display()));
+    if let Some(database) = &options.debug_database {
+        command.arg("/debug");
+        command.arg(format!("/pdb:{}", database.display()));
+    }
     command.args(objects);
-    run_link_tool(command, output)
+    run_link_tool(command, output)?;
+    if let Some(database) = &options.debug_database
+        && !database.is_file()
+    {
+        return Err(LinkError::MissingOutput(database.display().to_string()));
+    }
+    Ok(())
 }
 
 /// Links x86-64 ELF objects into a Linux GNU executable through pinned Clang/lld.
@@ -172,6 +194,9 @@ pub fn link_linux_executable(
         command.arg("-no-pie");
     }
     command.args(objects);
+    for library in &options.system_libraries {
+        command.arg(format!("-l{library}"));
+    }
     command.arg("-o").arg(output);
     run_link_tool(command, output)
 }
@@ -392,6 +417,88 @@ mod tests {
             functions: vec![Function {
                 id: FunctionId::new(0),
                 name: "jadren_entry".to_owned(),
+                linkage: Linkage::Export,
+                parameters: Vec::new(),
+                result: TypeId::new(0),
+                blocks: vec![Block {
+                    id: BlockId::new(0),
+                    parameters: Vec::new(),
+                    instructions: vec![Instruction {
+                        result: Some(TypedValue {
+                            value: ValueId::new(0),
+                            ty: TypeId::new(0),
+                        }),
+                        kind: InstructionKind::Constant(Constant::Integer { value: 42 }),
+                        span: None,
+                    }],
+                    terminator: Terminator::Return {
+                        value: Some(ValueId::new(0)),
+                    },
+                    span: None,
+                }],
+                span: None,
+            }],
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use std::fs;
+    use std::process::Command;
+
+    use inkwell::context::Context;
+    use jadren_jir::{
+        Block, BlockId, Constant, Function, FunctionId, Instruction, InstructionKind, Linkage,
+        Module, Terminator, Type, TypeId, TypedValue, ValueId,
+    };
+
+    use super::{LinuxLinkOptions, link_linux_executable};
+    use crate::{ObjectOptions, TypeLoweringConfig, lower_to_object, write_object};
+
+    #[test]
+    fn links_linux_console_entry_and_runs() {
+        let context = Context::create();
+        let object = lower_to_object(
+            &context,
+            &main_module(),
+            "linux_entry_object",
+            &TypeLoweringConfig::x86_64_linux_gnu(),
+            &ObjectOptions::default(),
+        )
+        .expect("entry ELF object");
+        let directory =
+            std::env::temp_dir().join(format!("jadren-linux-link-{}", std::process::id()));
+        fs::create_dir_all(&directory).expect("create link test directory");
+        let object_path = directory.join("entry.o");
+        let executable_path = directory.join("entry");
+        write_object(&object_path, &object).expect("write entry object");
+        link_linux_executable(
+            &executable_path,
+            std::slice::from_ref(&object_path),
+            &LinuxLinkOptions::default(),
+        )
+        .expect("link Linux executable");
+        let status = Command::new(&executable_path)
+            .status()
+            .expect("run Linux executable");
+        assert_eq!(status.code(), Some(42));
+        assert_eq!(
+            fs::read(&executable_path).expect("read executable")[0..4],
+            *b"\x7FELF"
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    fn main_module() -> Module {
+        Module {
+            types: vec![Type::Integer {
+                signed: true,
+                bits: 32,
+            }],
+            functions: vec![Function {
+                id: FunctionId::new(0),
+                name: "main".to_owned(),
                 linkage: Linkage::Export,
                 parameters: Vec::new(),
                 result: TypeId::new(0),

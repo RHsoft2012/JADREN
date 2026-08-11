@@ -1,0 +1,18 @@
+module examples.selfhost.typed_if_float_stage2
+
+// Float64 branch values now use the same homogeneous scalar contract as
+// straight-line locals. The process entry remains Int32 for the Windows exit ABI.
+fn choose(flag: Bool) -> Float64 {
+    if flag {
+        return 10.0f64
+    }
+    return 20.0f64
+}
+
+fn main() -> Int32 {
+    let value: Float64 = choose(true)
+    if value == 10.0f64 {
+        return 0
+    }
+    return 1
+}

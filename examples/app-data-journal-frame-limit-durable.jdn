@@ -1,0 +1,48 @@
+module examples.app_data_journal_frame_limit_durable
+
+// Apply an explicit frame-count threshold to journal growth. The runtime
+// counts complete valid frames, then compacts only when the threshold is exceeded.
+fn main() -> Int32 {
+    file_delete("target/jadren/app-data-journal-frame-limit-durable.journal")
+    file_delete("target/jadren/app-data-journal-frame-limit-durable.scratch")
+    file_delete("target/jadren/app-data-journal-frame-limit-durable.tmp")
+    file_delete("target/jadren/app-data-journal-frame-limit-durable.lock")
+
+    if !app_state_set_int("counter", 1i64) { return 1 }
+    if !app_data_journal_append_durable(
+        "target/jadren/app-data-journal-frame-limit-durable.journal",
+        "target/jadren/app-data-journal-frame-limit-durable.scratch",
+        "target/jadren/app-data-journal-frame-limit-durable.lock"
+    ) { return 2 }
+    if !app_state_set_int("counter", 2i64) { return 3 }
+    if !app_data_journal_append_durable(
+        "target/jadren/app-data-journal-frame-limit-durable.journal",
+        "target/jadren/app-data-journal-frame-limit-durable.scratch",
+        "target/jadren/app-data-journal-frame-limit-durable.lock"
+    ) { return 4 }
+
+    let before: UIntSize = file_size("target/jadren/app-data-journal-frame-limit-durable.journal")
+    if before <= 1usize { return 5 }
+    if !app_data_journal_compact_if_frames_over_durable(
+        "target/jadren/app-data-journal-frame-limit-durable.journal",
+        "target/jadren/app-data-journal-frame-limit-durable.scratch",
+        "target/jadren/app-data-journal-frame-limit-durable.tmp",
+        "target/jadren/app-data-journal-frame-limit-durable.lock",
+        1usize
+    ) { return 6 }
+    let after: UIntSize = file_size("target/jadren/app-data-journal-frame-limit-durable.journal")
+    if after >= before { return 7 }
+
+    app_state_clear()
+    if !app_data_journal_recover(
+        "target/jadren/app-data-journal-frame-limit-durable.journal",
+        "target/jadren/app-data-journal-frame-limit-durable.scratch"
+    ) { return 8 }
+    if app_state_get_int("counter") != 2i64 { return 9 }
+
+    file_delete("target/jadren/app-data-journal-frame-limit-durable.journal")
+    file_delete("target/jadren/app-data-journal-frame-limit-durable.scratch")
+    file_delete("target/jadren/app-data-journal-frame-limit-durable.tmp")
+    file_delete("target/jadren/app-data-journal-frame-limit-durable.lock")
+    return 0
+}

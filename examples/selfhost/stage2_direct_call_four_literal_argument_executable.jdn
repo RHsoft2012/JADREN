@@ -1,0 +1,21 @@
+module stage2_direct_call_four_literal_argument_executable.main
+
+fn main() -> Int32 {
+    return first(40);
+}
+
+fn first(value: Int32) -> Int32 {
+    return 42;
+}
+
+fn second() -> Int32 {
+    return first(1);
+}
+
+fn third() -> Int32 {
+    return first(2);
+}
+
+fn fourth() -> Int32 {
+    return first(3);
+}

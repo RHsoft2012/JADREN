@@ -1,0 +1,5 @@
+fn local_value() -> Int32 {
+    let next: Int32 = 1;
+    next = next + 2;
+    return next;
+}

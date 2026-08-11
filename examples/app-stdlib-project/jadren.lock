@@ -1,0 +1,13 @@
+version = 1
+manifest_fingerprint = "3484efc64cbbd7bf"
+
+[package]
+name = "app-stdlib-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"
+

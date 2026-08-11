@@ -1,0 +1,22 @@
+module examples.stdlib_buffer_generic_u8
+
+fn main() -> Int32 {
+    // Generic Buffer<T> derives the UInt8 element layout from the result type.
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(1usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            if !buffer_reserve(values, 5usize) { result_code = 1 }
+            if !buffer_append(values, 7u8) { result_code = 2 }
+            if !buffer_append(values, 11u8) { result_code = 3 }
+            if !buffer_insert(values, 1usize, 9u8) { result_code = 4 }
+            if buffer_length(values) != 3usize { result_code = 5 }
+            if values[0] + values[1] + values[2] != 27u8 { result_code = 6 }
+            if !buffer_remove(values, 0usize) { result_code = 7 }
+            if buffer_length(values) != 2usize { result_code = 8 }
+            if values[0] + values[1] != 20u8 { result_code = 9 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

@@ -1,0 +1,11 @@
+module examples.selfhost.typed_while_local_conditional_continue_native_stage2
+
+// Native producer -> JST2WHQ1 -> Rust Stage-2 conditional continue hand-off.
+fn local_value() -> Int32 {
+    var counter: Int32 = 0;
+    while counter < 4 {
+        counter = counter + 1;
+        if counter < 3 { continue; }
+    }
+    return counter;
+}

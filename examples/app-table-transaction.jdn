@@ -1,0 +1,22 @@
+module examples.app_table_transaction
+
+// Bounded process-local transaction for grouped table edits.
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !app_table_tx_begin(0) { return 1 }
+    if app_table_tx_begin(1) { return 2 }
+    if !app_table_set_column_type(0, 0, 1) { return 3 }
+    if !app_table_append_row(0) { return 4 }
+    if !app_table_set_int(0, 0, 0, 42 as Int64) { return 5 }
+    if !app_table_tx_rollback() { return 6 }
+    if app_table_row_count(0) != 0 { return 7 }
+    if app_table_column_type(0, 0) != 0 { return 8 }
+    if app_table_tx_commit() { return 9 }
+    if app_table_tx_rollback() { return 10 }
+
+    if !app_table_tx_begin(0) { return 11 }
+    if !app_table_append_row(0) { return 12 }
+    if !app_table_tx_commit() { return 13 }
+    if app_table_row_count(0) != 1 { return 14 }
+    return 0
+}

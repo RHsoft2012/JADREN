@@ -1,0 +1,94 @@
+module examples.unity_command_stream;
+
+/// Fixed 52-byte command record shared by Jadren and the Unity host.
+///
+/// The numeric handles are owned by Unity. Jadren only computes the next
+/// frame's command data and never receives a GameObject or Transform.
+@repr(C)
+pub struct UnityCommandRecord {
+    pub kind: UInt8,
+    pub active: UInt8,
+    pub reserved: UInt16,
+    pub entity_id: UInt32,
+    pub prefab_id: UInt32,
+    pub position_x: Float32,
+    pub position_y: Float32,
+    pub position_z: Float32,
+    pub rotation_x: Float32,
+    pub rotation_y: Float32,
+    pub rotation_z: Float32,
+    pub rotation_w: Float32,
+    pub scale_x: Float32,
+    pub scale_y: Float32,
+    pub scale_z: Float32,
+}
+
+/// Emits a deterministic frame for the Unity command host.
+///
+/// `capacity` is passed explicitly because the bounded producer contract does
+/// not infer a second allocation or grow the caller-owned output. The Unity
+/// bridge passes the pinned command-buffer capacity and adopts the returned
+/// count only after the native call completes.
+@export(name: "jadren_unity_emit_demo_commands", abi: "C")
+@noalloc
+pub fn emit_demo_commands(
+    output: write Slice<UnityCommandRecord>,
+    capacity: UIntSize,
+) -> UIntSize {
+    if capacity < 3usize {
+        return 0usize
+    }
+
+    output[0] = UnityCommandRecord {
+        kind: 1u8,
+        active: 1u8,
+        reserved: 0u16,
+        entity_id: 42u32,
+        prefab_id: 7u32,
+        position_x: 1.0f32,
+        position_y: 2.0f32,
+        position_z: 3.0f32,
+        rotation_x: 0.0f32,
+        rotation_y: 0.0f32,
+        rotation_z: 0.0f32,
+        rotation_w: 1.0f32,
+        scale_x: 1.0f32,
+        scale_y: 1.0f32,
+        scale_z: 1.0f32,
+    }
+    output[1] = UnityCommandRecord {
+        kind: 3u8,
+        active: 1u8,
+        reserved: 0u16,
+        entity_id: 42u32,
+        prefab_id: 0u32,
+        position_x: 4.0f32,
+        position_y: 5.0f32,
+        position_z: 6.0f32,
+        rotation_x: 0.0f32,
+        rotation_y: 0.0f32,
+        rotation_z: 0.0f32,
+        rotation_w: 1.0f32,
+        scale_x: 2.0f32,
+        scale_y: 2.0f32,
+        scale_z: 2.0f32,
+    }
+    output[2] = UnityCommandRecord {
+        kind: 4u8,
+        active: 0u8,
+        reserved: 0u16,
+        entity_id: 42u32,
+        prefab_id: 0u32,
+        position_x: 0.0f32,
+        position_y: 0.0f32,
+        position_z: 0.0f32,
+        rotation_x: 0.0f32,
+        rotation_y: 0.0f32,
+        rotation_z: 0.0f32,
+        rotation_w: 1.0f32,
+        scale_x: 1.0f32,
+        scale_y: 1.0f32,
+        scale_z: 1.0f32,
+    }
+    return 3usize
+}

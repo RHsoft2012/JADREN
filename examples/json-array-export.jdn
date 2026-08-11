@@ -1,0 +1,46 @@
+module examples.json_array_export;
+
+// Bounded JSON array serializers for primitive values.
+// They write brackets and commas; the caller owns any outer object/array.
+fn main() -> Int32 {
+    file_delete("target/jadren/jadren-array.json")
+
+    var too_small: [UInt8; 2] = [0u8, 0u8]
+    var integers: [Int64; 3] = [-1 as Int64, 2 as Int64, 30 as Int64]
+    let rejected: UIntSize = json_array_int(integers, too_small)
+    if (rejected as Int32) != 0 { return 10 }
+
+    var output: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let integer_length: UIntSize = json_array_int(integers, output)
+    if (integer_length as Int32) != 9 { return 11 }
+    file_append("target/jadren/jadren-array.json", output, integer_length)
+    var loaded: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let loaded_length: UIntSize = file_read("target/jadren/jadren-array.json", loaded)
+    if (loaded_length as Int32) != 9 { return 12 }
+    if loaded[0] != 91u8 { return 13 }
+    if loaded[8] != 93u8 { return 13 }
+    file_delete("target/jadren/jadren-array.json")
+
+    var unsigned: [UInt64; 2] = [7u64, 8u64]
+    let unsigned_length: UIntSize = json_array_uint(unsigned, output)
+    if (unsigned_length as Int32) != 5 { return 14 }
+    if output[0] != 91u8 { return 15 }
+    if output[4] != 93u8 { return 15 }
+
+    var decimals: [Float64; 2] = [1.5f64, 2.0f64]
+    let float_length: UIntSize = json_array_float(decimals, output)
+    if (float_length as Int32) != 19 { return 16 }
+    if output[0] != 91u8 { return 17 }
+    if output[18] != 93u8 { return 17 }
+
+    var invalid_decimals: [Float64; 2] = [1.0f64 / 0.0f64, 2.0f64]
+    let rejected_float: UIntSize = json_array_float(invalid_decimals, output)
+    if (rejected_float as Int32) != 0 { return 18 }
+
+    var flags: [Bool; 3] = [true, false, true]
+    let bool_length: UIntSize = json_array_bool(flags, output)
+    if (bool_length as Int32) != 17 { return 19 }
+    if output[0] != 91u8 { return 20 }
+    if output[16] != 93u8 { return 20 }
+    return 0
+}

@@ -1,0 +1,86 @@
+module examples.stdlib_buffer_nested_record_resize_move
+
+// Resize a Buffer<Buffer<Entry>> where Entry owns a nested Buffer field.
+// The compiler emits a caller-owned field table so shrinking the outer list
+// releases the Entry fields before the nested descriptor itself.
+@repr(C)
+struct Entry {
+    id: Int32,
+    values: Buffer<Int32>
+}
+
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Entry>>, Int32> = buffer_create(0usize)
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match entries_created {
+                Ok(entries) => {
+                    match values_created {
+                        Ok(values) => {
+                            if !buffer_append(values, 7) { result_code = 1 }
+                            let item: Entry = Entry { id: 42, values: values }
+                            if !buffer_append(entries, item) { result_code = 2 }
+                            if !buffer_append(outer, entries) { result_code = 3 }
+
+                            let grown: Int32 = buffer_resize_move_status(outer, 2usize)
+                            if grown != 0 { result_code = 4 }
+                            if buffer_length(outer) != 2usize { result_code = 5 }
+
+                            let shrunk: Int32 = buffer_resize_move_status(outer, 1usize)
+                            if shrunk != 0 { result_code = 7 }
+                            if buffer_length(outer) != 1usize { result_code = 8 }
+
+                            let emptied: Bool = buffer_resize_move(outer, 0usize)
+                            if !emptied { result_code = 9 }
+                            if buffer_length(outer) != 0usize { result_code = 10 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    // The same field table is reused after walking two nested descriptor
+    // levels, proving that recursive cleanup does not stop at one edge.
+    let recursive_outer: Result<Buffer<Buffer<Buffer<Entry>>>, Int32> = buffer_create(0usize)
+    let recursive_middle: Result<Buffer<Buffer<Entry>>, Int32> = buffer_create(0usize)
+    let recursive_entries: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let recursive_values: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    match recursive_outer {
+        Ok(outer) => {
+            match recursive_middle {
+                Ok(middle) => {
+                    match recursive_entries {
+                        Ok(entries) => {
+                            match recursive_values {
+                                Ok(values) => {
+                                    if !buffer_append(values, 33) { result_code = 12 }
+                                    let item: Entry = Entry { id: 99, values: values }
+                                    if !buffer_append(entries, item) { result_code = 13 }
+                                    if !buffer_append(middle, entries) { result_code = 14 }
+                                    if !buffer_append(outer, middle) { result_code = 15 }
+                                    let status: Int32 = buffer_resize_move_status(outer, 0usize)
+                                    if status != 0 { result_code = 16 }
+                                    if buffer_length(outer) != 0usize { result_code = 17 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

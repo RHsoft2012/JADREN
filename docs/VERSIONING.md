@@ -8,10 +8,10 @@ are ABI-compatible.
 
 | Artifact | Current value | Meaning |
 | --- | --- | --- |
-| Compiler/public installer | `0.1.0-preview.4` | unsigned evaluation preview |
+| Compiler/public installer | `0.1.3-preview.11` | unsigned evaluation preview |
 | Language edition | `0.1-draft` | syntax and standard APIs may still change |
-| Unity package | `com.jadren.animation` `0.1.0` | experimental Unity integration |
-| VS Code extension | `jadren-vscode` `0.1.0` | syntax, LSP diagnostics and navigation |
+| Unity package | `com.jadren.animation` `0.1.3` | experimental Unity integration |
+| VS Code extension | `jadren-vscode` `0.1.3` | syntax, LSP diagnostics and navigation |
 
 Preview patch releases may change diagnostics, generated artifacts, package
 contracts or editor behaviour. Projects should pin the compiler, Unity package
@@ -23,7 +23,7 @@ benchmark reports.
 - `0.x` does not promise stable source or ABI compatibility.
 - A language-edition change requires a migration note and updated examples.
 - Runtime ABI changes require a new ABI minor and regenerated native plugins.
-- Unity package changes must update the package changelog and sample fixture.
+- Unity package changes must update the package changelog and public examples.
 - A release is not called stable until Windows/Linux gates, documentation,
   security review and the declared platform evidence are complete.
 

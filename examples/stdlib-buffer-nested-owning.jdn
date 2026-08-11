@@ -1,0 +1,34 @@
+module examples.stdlib_buffer_nested_owning
+
+// A nested owning buffer moves each inner descriptor into the outer storage.
+// The outer drop glue releases every initialized inner allocation first.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let inner_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match inner_created {
+                Ok(inner) => {
+                    if !buffer_append(inner, 40) { result_code = 1 }
+                    if !buffer_append(inner, 2) { result_code = 2 }
+                    if !buffer_append(outer, inner) { result_code = 3 }
+                    if outer[0][0] + outer[0][1] != 42 { result_code = 4 }
+                    match second_created {
+                        Ok(second) => {
+                            if !buffer_append(second, 7) { result_code = 5 }
+                            if !buffer_insert(outer, 0usize, second) { result_code = 6 }
+                            if buffer_length(outer) != 2usize { result_code = 7 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

@@ -1,0 +1,15 @@
+module examples.nested_while_outer_break
+
+fn main() -> Int32 {
+    var outer: Int32 = 0
+    while outer < 4 {
+        outer = outer + 1
+        var inner: Int32 = 0
+        while inner < 2 {
+            inner = inner + 1
+        }
+        outer = outer + inner
+        break
+    }
+    return outer
+}

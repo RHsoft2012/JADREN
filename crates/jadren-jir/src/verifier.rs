@@ -935,6 +935,1116 @@ fn verify_instruction(
                 errors,
             );
         }
+        InstructionKind::OwnedStringDrop { value } => {
+            forbid_result(instruction, function, block, errors);
+            use_value(
+                *value,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+        }
+        InstructionKind::BufferDrop { value, element } => {
+            forbid_result(instruction, function, block, errors);
+            use_value(
+                *value,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer_drop element type is missing",
+                ));
+            }
+        }
+        InstructionKind::OwnedStringBufferDrop { value, element } => {
+            forbid_result(instruction, function, block, errors);
+            use_value(
+                *value,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "owned_string_buffer_drop element type is missing",
+                ));
+            }
+        }
+        InstructionKind::NestedBufferDrop {
+            value,
+            element,
+            nested_element,
+        } => {
+            forbid_result(instruction, function, block, errors);
+            use_value(
+                *value,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "nested_buffer_drop element type is missing",
+                ));
+            }
+            if type_kind(module, *nested_element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "nested_buffer_drop nested element type is missing",
+                ));
+            }
+        }
+        InstructionKind::RecursiveBufferDrop {
+            value,
+            element,
+            leaf_element,
+            depth,
+        } => {
+            forbid_result(instruction, function, block, errors);
+            use_value(
+                *value,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            if *depth < 2 {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "recursive_buffer_drop depth must be at least two",
+                ));
+            }
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "recursive_buffer_drop element type is missing",
+                ));
+            }
+            if type_kind(module, *leaf_element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "recursive_buffer_drop leaf element type is missing",
+                ));
+            }
+        }
+        InstructionKind::RecursiveOwnedStringBufferDrop {
+            value,
+            element,
+            string_element,
+            depth,
+        } => {
+            forbid_result(instruction, function, block, errors);
+            use_value(
+                *value,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            if *depth == 0 {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "recursive owned string buffer drop depth must be nonzero",
+                ));
+            }
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "recursive owned string buffer drop element type is missing",
+                ));
+            }
+            if type_kind(module, *string_element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "recursive owned string buffer drop string element type is missing",
+                ));
+            }
+        }
+        InstructionKind::RecursiveRecordBufferFieldsDrop {
+            value,
+            element,
+            record_element,
+            fields,
+            depth,
+        } => {
+            forbid_result(instruction, function, block, errors);
+            use_value(
+                *value,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            if *depth == 0 {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "recursive record buffer drop depth must be nonzero",
+                ));
+            }
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "recursive record buffer drop element type is missing",
+                ));
+            }
+            if type_kind(module, *record_element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "recursive record buffer drop record element type is missing",
+                ));
+            }
+            if fields.is_empty() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "recursive record buffer drop requires at least one owning field",
+                ));
+            }
+            let mut offsets = BTreeSet::new();
+            for field in fields {
+                if field.depth == 0 {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "recursive record buffer field drop depth must be nonzero",
+                    ));
+                }
+                if !offsets.insert((field.payload_variant, field.payload_offset)) {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "recursive record buffer field drop offsets must be unique",
+                    ));
+                }
+                if type_kind(module, field.leaf_element).is_none() {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "recursive record buffer field drop leaf element type is missing",
+                    ));
+                }
+            }
+        }
+        InstructionKind::BufferResizeMoveRecordFields {
+            descriptor,
+            new_length,
+            element,
+            record_element,
+            fields,
+            depth: _,
+            status_result,
+        } => {
+            let Some(result) = require_result(instruction, function, block, errors) else {
+                return;
+            };
+            use_value(
+                *descriptor,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            use_value(
+                *new_length,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            let expected_result = if *status_result {
+                matches!(
+                    type_kind(module, result.ty),
+                    Some(Type::Integer {
+                        signed: true,
+                        bits: 32
+                    })
+                )
+            } else {
+                matches!(type_kind(module, result.ty), Some(Type::Bool))
+            };
+            if !expected_result {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer resize move record result type does not match status contract",
+                ));
+            }
+            // `depth == 0` denotes a direct `Buffer<@repr(C) Record>`;
+            // positive values retain the nested Buffer<...Record> contract.
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer resize move record element type is missing",
+                ));
+            }
+            if type_kind(module, *record_element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer resize move record leaf type is missing",
+                ));
+            }
+            if fields.is_empty() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer resize move record requires at least one owning field",
+                ));
+            }
+            let mut offsets = BTreeSet::new();
+            for field in fields {
+                if field.depth == 0 {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "buffer resize move record field depth must be nonzero",
+                    ));
+                }
+                if !offsets.insert((field.payload_variant, field.payload_offset)) {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "buffer resize move record field offsets must be unique",
+                    ));
+                }
+                if type_kind(module, field.leaf_element).is_none() {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "buffer resize move record field leaf type is missing",
+                    ));
+                }
+            }
+        }
+        InstructionKind::BufferResizeMoveOwnedString {
+            descriptor,
+            new_length,
+            element,
+            status_result,
+        } => {
+            let Some(result) = require_result(instruction, function, block, errors) else {
+                return;
+            };
+            use_value(
+                *descriptor,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            use_value(
+                *new_length,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            let expected_result = if *status_result {
+                matches!(
+                    type_kind(module, result.ty),
+                    Some(Type::Integer {
+                        signed: true,
+                        bits: 32
+                    })
+                )
+            } else {
+                matches!(type_kind(module, result.ty), Some(Type::Bool))
+            };
+            if !expected_result {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "owned string resize move result type does not match status contract",
+                ));
+            }
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "owned string resize move element type is missing",
+                ));
+            }
+        }
+        InstructionKind::BufferResizeMoveNestedOwnedString {
+            descriptor,
+            new_length,
+            element,
+            string_element,
+            depth,
+            status_result,
+        } => {
+            let Some(result) = require_result(instruction, function, block, errors) else {
+                return;
+            };
+            use_value(
+                *descriptor,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            use_value(
+                *new_length,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            let expected_result = if *status_result {
+                matches!(
+                    type_kind(module, result.ty),
+                    Some(Type::Integer {
+                        signed: true,
+                        bits: 32
+                    })
+                )
+            } else {
+                matches!(type_kind(module, result.ty), Some(Type::Bool))
+            };
+            if !expected_result {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "nested owned string resize move result type does not match status contract",
+                ));
+            }
+            if *depth == 0 {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "nested owned string resize move depth must be nonzero",
+                ));
+            }
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "nested owned string resize move element type is missing",
+                ));
+            }
+            if type_kind(module, *string_element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "nested owned string resize move string element type is missing",
+                ));
+            }
+        }
+        InstructionKind::BufferRemoveDropRecordFields {
+            descriptor,
+            index,
+            element,
+            fields,
+            status_result,
+        } => {
+            let Some(result) = require_result(instruction, function, block, errors) else {
+                return;
+            };
+            use_value(
+                *descriptor,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            use_value(
+                *index,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            let expected_result = if *status_result {
+                matches!(
+                    type_kind(module, result.ty),
+                    Some(Type::Integer {
+                        signed: true,
+                        bits: 32
+                    })
+                )
+            } else {
+                matches!(type_kind(module, result.ty), Some(Type::Bool))
+            };
+            if !expected_result {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop record result type does not match status contract",
+                ));
+            }
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop record element type is missing",
+                ));
+            }
+            if fields.is_empty() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop record requires at least one owning field",
+                ));
+            }
+            let mut offsets = BTreeSet::new();
+            for field in fields {
+                if field.depth == 0 {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "buffer remove drop record field depth must be nonzero",
+                    ));
+                }
+                if !offsets.insert((field.payload_variant, field.payload_offset)) {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "buffer remove drop record field offsets must be unique",
+                    ));
+                }
+                if type_kind(module, field.leaf_element).is_none() {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "buffer remove drop record field leaf type is missing",
+                    ));
+                }
+            }
+        }
+        InstructionKind::BufferRemoveDropOwnedString {
+            descriptor,
+            index,
+            element,
+            status_result,
+        } => {
+            let Some(result) = require_result(instruction, function, block, errors) else {
+                return;
+            };
+            use_value(
+                *descriptor,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            use_value(
+                *index,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            let expected_result = if *status_result {
+                matches!(
+                    type_kind(module, result.ty),
+                    Some(Type::Integer {
+                        signed: true,
+                        bits: 32
+                    })
+                )
+            } else {
+                matches!(type_kind(module, result.ty), Some(Type::Bool))
+            };
+            if !expected_result {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "owned string remove drop result type does not match status contract",
+                ));
+            }
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "owned string remove drop element type is missing",
+                ));
+            }
+        }
+        InstructionKind::BufferRemoveDropNestedRecordFields {
+            descriptor,
+            index,
+            element,
+            record_element,
+            fields,
+            depth,
+            status_result,
+        } => {
+            let Some(result) = require_result(instruction, function, block, errors) else {
+                return;
+            };
+            use_value(
+                *descriptor,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            use_value(
+                *index,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            let expected_result = if *status_result {
+                matches!(
+                    type_kind(module, result.ty),
+                    Some(Type::Integer {
+                        signed: true,
+                        bits: 32
+                    })
+                )
+            } else {
+                matches!(type_kind(module, result.ty), Some(Type::Bool))
+            };
+            if !expected_result {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop nested record result type does not match status contract",
+                ));
+            }
+            if type_kind(module, *element).is_none() || type_kind(module, *record_element).is_none()
+            {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop nested record element type is missing",
+                ));
+            }
+            if *depth == 0 {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop nested record depth must be nonzero",
+                ));
+            }
+            if fields.is_empty() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop nested record requires at least one owning field",
+                ));
+            }
+            let mut offsets = BTreeSet::new();
+            for field in fields {
+                if field.depth == 0 {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "buffer remove drop nested record field depth must be nonzero",
+                    ));
+                }
+                if !offsets.insert((field.payload_variant, field.payload_offset)) {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "buffer remove drop nested record field offsets must be unique",
+                    ));
+                }
+                if type_kind(module, field.leaf_element).is_none() {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "buffer remove drop nested record field leaf type is missing",
+                    ));
+                }
+            }
+        }
+        InstructionKind::EnumCarrierBufferDrop {
+            value,
+            element,
+            payload_offset: _,
+            branches,
+        }
+        | InstructionKind::EnumOwningCarrierDrop {
+            value,
+            element,
+            payload_offset: _,
+            branches,
+        } => {
+            forbid_result(instruction, function, block, errors);
+            use_value(
+                *value,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            if branches.len() < 2 {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "enum carrier drop requires at least two owning branches",
+                ));
+            }
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "enum carrier drop element type is missing",
+                ));
+            }
+            let mut variants = BTreeSet::new();
+            for branch in branches {
+                if branch.depth == 0 {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "enum carrier drop branch depth must be nonzero",
+                    ));
+                }
+                if !variants.insert(branch.payload_variant) {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "enum carrier drop branch variants must be unique",
+                    ));
+                }
+                if type_kind(module, branch.leaf_element).is_none() {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "enum carrier drop branch leaf element type is missing",
+                    ));
+                }
+            }
+        }
+        InstructionKind::EnumCarrierFieldsDrop {
+            value,
+            element,
+            fields,
+        }
+        | InstructionKind::EnumOwningFieldsDrop {
+            value,
+            element,
+            fields,
+        } => {
+            forbid_result(instruction, function, block, errors);
+            use_value(
+                *value,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            if fields.is_empty() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "enum carrier field drop requires at least one owning field",
+                ));
+            }
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "enum carrier field drop element type is missing",
+                ));
+            }
+            let mut fields_seen = BTreeSet::new();
+            for field in fields {
+                if field.depth == 0 {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "enum carrier field drop depth must be nonzero",
+                    ));
+                }
+                if !fields_seen.insert((field.payload_variant, field.payload_offset)) {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "enum carrier field drop offsets must be unique per variant",
+                    ));
+                }
+                if type_kind(module, field.leaf_element).is_none() {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "enum carrier field drop leaf element type is missing",
+                    ));
+                }
+            }
+        }
+        InstructionKind::RecordBufferFieldsDrop {
+            value,
+            element,
+            fields,
+        }
+        | InstructionKind::RecordOwningFieldsDrop {
+            value,
+            element,
+            fields,
+        } => {
+            forbid_result(instruction, function, block, errors);
+            use_value(
+                *value,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            if fields.is_empty() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "record field drop requires at least one owning field",
+                ));
+            }
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "record field drop element type is missing",
+                ));
+            }
+            let mut offsets = BTreeSet::new();
+            for field in fields {
+                if field.depth == 0 {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "record field drop depth must be nonzero",
+                    ));
+                }
+                if !offsets.insert((field.payload_variant, field.payload_offset)) {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "record field drop offsets must be unique",
+                    ));
+                }
+                if type_kind(module, field.leaf_element).is_none() {
+                    errors.push(instruction_error(
+                        function,
+                        block,
+                        instruction,
+                        "record field drop leaf element type is missing",
+                    ));
+                }
+            }
+        }
+        InstructionKind::CarrierBufferDrop {
+            value,
+            element,
+            leaf_element,
+            payload_variant,
+            depth,
+            alternate_leaf_element,
+            alternate_payload_variant,
+            alternate_depth,
+            ..
+        } => {
+            forbid_result(instruction, function, block, errors);
+            use_value(
+                *value,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            if *depth == 0 {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "carrier_buffer_drop depth must be nonzero",
+                ));
+            }
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "carrier_buffer_drop element type is missing",
+                ));
+            }
+            if type_kind(module, *leaf_element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "carrier_buffer_drop leaf element type is missing",
+                ));
+            }
+            match (
+                alternate_leaf_element,
+                alternate_payload_variant,
+                alternate_depth,
+            ) {
+                (None, None, None) => {}
+                (Some(leaf), Some(variant), Some(depth)) => {
+                    if *depth == 0 {
+                        errors.push(instruction_error(
+                            function,
+                            block,
+                            instruction,
+                            "carrier_buffer_drop alternate depth must be nonzero",
+                        ));
+                    }
+                    if *variant == *payload_variant {
+                        errors.push(instruction_error(
+                            function,
+                            block,
+                            instruction,
+                            "carrier_buffer_drop alternate variant must differ",
+                        ));
+                    }
+                    if type_kind(module, *leaf).is_none() {
+                        errors.push(instruction_error(
+                            function,
+                            block,
+                            instruction,
+                            "carrier_buffer_drop alternate leaf element type is missing",
+                        ));
+                    }
+                }
+                _ => errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "carrier_buffer_drop alternate payload fields must be all present or absent",
+                )),
+            }
+        }
+        InstructionKind::OwningCarrierDrop {
+            value,
+            element,
+            leaf_element,
+            payload_variant,
+            depth,
+            alternate_leaf_element,
+            alternate_payload_variant,
+            alternate_depth,
+            ..
+        } => {
+            forbid_result(instruction, function, block, errors);
+            use_value(
+                *value,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            if *depth == 0 {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "owning_carrier_drop depth must be nonzero",
+                ));
+            }
+            if type_kind(module, *element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "owning_carrier_drop element type is missing",
+                ));
+            }
+            if type_kind(module, *leaf_element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "owning_carrier_drop leaf element type is missing",
+                ));
+            }
+            match (
+                alternate_leaf_element,
+                alternate_payload_variant,
+                alternate_depth,
+            ) {
+                (None, None, None) => {}
+                (Some(leaf), Some(variant), Some(depth)) => {
+                    if *depth == 0 {
+                        errors.push(instruction_error(
+                            function,
+                            block,
+                            instruction,
+                            "owning_carrier_drop alternate depth must be nonzero",
+                        ));
+                    }
+                    if *variant == *payload_variant {
+                        errors.push(instruction_error(
+                            function,
+                            block,
+                            instruction,
+                            "owning_carrier_drop alternate variant must differ",
+                        ));
+                    }
+                    if type_kind(module, *leaf).is_none() {
+                        errors.push(instruction_error(
+                            function,
+                            block,
+                            instruction,
+                            "owning_carrier_drop alternate leaf element type is missing",
+                        ));
+                    }
+                }
+                _ => errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "owning_carrier_drop alternate payload fields must be all present or absent",
+                )),
+            }
+        }
         InstructionKind::RegionAlloc { region, ty, count } => {
             let Some(result) = require_result(instruction, function, block, errors) else {
                 return;

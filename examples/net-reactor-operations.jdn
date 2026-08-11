@@ -1,0 +1,73 @@
+module examples.net_reactor_operations;
+
+// One-shot operation vertical slice. A bounded accept completion is followed
+// by connect, receive readiness and send readiness. Buffers remain local to
+// Jadren and are passed only after the corresponding operation event arrives.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38130u16)
+    if (listener as Int32) == 0 { return 10 }
+    let reactor: UIntSize = net_reactor_open(4u32, 8u32)
+    if (reactor as Int32) == 0 { net_socket_close(listener); return 11 }
+    let accept_operation: UIntSize = net_reactor_submit_accept(reactor, listener, 10usize)
+    if (accept_operation as Int32) == 0 {
+        net_reactor_close(reactor); net_socket_close(listener); return 12
+    }
+    let accepted_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if accepted_events == 0u32 { net_reactor_close(reactor); net_socket_close(listener); return 13 }
+    let accepted_operation: UIntSize = net_reactor_event_operation(reactor, 0u32)
+    let client: UIntSize = net_reactor_event_socket(reactor, 0u32)
+    let accepted_flags: UInt32 = net_reactor_event_flags(reactor, 0u32)
+    if (accepted_operation as Int32) == 0 { net_reactor_close(reactor); net_socket_close(listener); return 14 }
+    if (client as Int32) == 0 { net_reactor_close(reactor); net_socket_close(listener); return 14 }
+    if accepted_flags == 0u32 { net_reactor_close(reactor); net_socket_close(listener); return 14 }
+
+    let connect_operation: UIntSize = net_reactor_submit_connect(
+        reactor, "127.0.0.1", 38130u16, 15usize)
+    if (connect_operation as Int32) == 0 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 15
+    }
+    let connected_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if connected_events == 0u32 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 16
+    }
+    let connected_operation: UIntSize = net_reactor_event_operation(reactor, 0u32)
+    let connected_socket: UIntSize = net_reactor_event_socket(reactor, 0u32)
+    if (connected_operation as Int32) == 0 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 16 }
+    if (connected_socket as Int32) == 0 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 16 }
+    let connected_closed: Bool = net_socket_close(connected_socket)
+    if !connected_closed { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 16 }
+
+    let receive_operation: UIntSize = net_reactor_submit_receive(reactor, client, 20usize)
+    if (receive_operation as Int32) == 0 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 17 }
+    let received_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if received_events == 0u32 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 18 }
+    var request: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    let received: UIntSize = net_tcp_receive(client, request)
+    if (received as Int32) != 4 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 19 }
+    if request[0] != 112u8 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 19 }
+    if request[3] != 103u8 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 19 }
+
+    let send_operation: UIntSize = net_reactor_submit_send(reactor, client, 30usize)
+    if (send_operation as Int32) == 0 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 20 }
+    let send_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if send_events == 0u32 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 21 }
+    var response: [UInt8; 2] = [79u8, 75u8]
+    let sent: UIntSize = net_tcp_send(client, response)
+
+    let cancelled_operation: UIntSize = net_reactor_submit_receive(reactor, client, 40usize)
+    if (cancelled_operation as Int32) == 0 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 22 }
+    let cancelled: Bool = net_reactor_cancel(reactor, cancelled_operation)
+    let cancelled_events: UInt32 = net_reactor_poll(reactor, 1000u32)
+    let cancelled_flags: UInt32 = if cancelled_events == 0u32 { 0u32 } else { net_reactor_event_flags(reactor, 0u32) }
+    let client_closed: Bool = net_socket_close(client)
+    let reactor_closed: Bool = net_reactor_close(reactor)
+    let listener_closed: Bool = net_socket_close(listener)
+    if (sent as Int32) != 2 { return 24 }
+    if !cancelled { return 24 }
+    if cancelled_events == 0u32 { return 24 }
+    if cancelled_flags != 32u32 { return 24 }
+    if !client_closed { return 24 }
+    if !reactor_closed { return 24 }
+    if !listener_closed { return 24 }
+    return 0
+}

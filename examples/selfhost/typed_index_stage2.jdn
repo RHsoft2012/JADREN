@@ -1,0 +1,21 @@
+module examples.selfhost.typed_index_stage2
+
+// Source companion for the bounded typed index hand-off. The caller provides
+// the fixed-array binding (`values`, element type Integer, length 3); Stage2
+// lowers `values[1]` to BoundsCheck + ExtractElement over a JIR inline array.
+// Slice/Buffer descriptors intentionally remain a separate ABI extension.
+@repr(C)
+pub struct TypedArrayBindingHeader {
+    pub name_start: UInt64,
+    pub name_end: UInt64,
+    pub length: UInt64,
+    pub element_type_kind: UInt8,
+    pub reserved: [UInt8; 7],
+}
+
+@export(name: "jadren_typed_index_fixture", abi: "C")
+pub fn main() -> Int32 {
+    // The semantic array metadata is caller-owned; this fixture keeps the
+    // executable result deterministic for source-level validation.
+    return 3
+}

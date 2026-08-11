@@ -1,0 +1,196 @@
+module linux_desktop_x11_retained.main
+
+// This program exercises the first native POSIX retained backend.  The same
+// ui_app_* source contract is used by the Win32 backend; Linux maps it to X11.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 1 {
+        ui_set_status("X11 button clicked.")
+    }
+    if event_id == 21 {
+        ui_set_status("Open selected from the File menu.")
+    }
+    if event_id == 22 {
+        ui_set_status("Save selected from the File menu.")
+    }
+    if event_id == 2 {
+        let length: UIntSize = ui_input_length(2)
+        var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+        let copied: UIntSize = ui_input_read(2, output)
+        if length > 0usize {
+            if copied > 0usize { ui_set_status("Text input changed.") }
+        }
+    }
+    if event_id == 3 { ui_set_status("Selection changed.") }
+    if event_id == 4 { ui_set_status("List item selected.") }
+    if event_id == 5 { ui_set_status("Table row selected.") }
+    return event_id
+}
+
+fn main() -> Int32 {
+    // app_list is the application model; the retained list projects it only
+    // after an explicit bind/refresh, so no hidden reactive graph is needed.
+    app_list_clear(0)
+    if !app_list_push_text(0, "Bound task one") { return 1 }
+    if !app_list_push_text(0, "Bound task two") { return 2 }
+    app_table_clear(0)
+    app_table_clear(1)
+    if !app_table_append_row(0) { return 3 }
+    if !app_table_set_cell(0, 0, 0, "Bound task one") { return 4 }
+    if !app_table_set_cell(0, 0, 1, "Open") { return 5 }
+    if !app_table_append_row(0) { return 6 }
+    if !app_table_set_cell(0, 1, 0, "Bound task two") { return 7 }
+    if !app_table_set_cell(0, 1, 1, "Done") { return 8 }
+
+    let root: Int32 = ui_app_begin("Jadren Linux X11", 760, 640, 0xF6F8FCu32)
+    if root == 0 { return 9 }
+
+    let top_bar: Int32 = ui_app_top_bar(root, 700, 54, 0x1F2937u32, 0, 8, 12, 0, 1)
+    if top_bar == 0 { return 10 }
+    let title: Int32 = ui_app_label(top_bar, "JADREN X11", 120, 38,
+        0xFFFFFFu32, 0x1F2937u32, 0, 0)
+    let file: Int32 = ui_app_menu(top_bar, "File", 96, 38,
+        0xFFFFFFu32, 0x374151u32, 8, 0)
+    if title == 0 { return 11 }
+    if file == 0 { return 11 }
+    let open_item: Bool = ui_app_menu_item(file, "Open", 21)
+    let save_item: Bool = ui_app_menu_item(file, "Save", 22)
+    if !open_item { return 12 }
+    if !save_item { return 12 }
+    if !ui_app_end(top_bar) { return 13 }
+
+    let panel: Int32 = ui_app_panel(root, 700, 520, 0xFFFFFFu32, 12, 16, 10, 0, 1)
+    if panel == 0 { return 14 }
+    let heading: Int32 = ui_app_label(panel, "Native POSIX retained UI", 640, 36,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let status: Int32 = ui_app_status(panel, "Click the button or open File.", 640, 42,
+        0x111827u32, 0xDCFCE7u32, 8, 1)
+    let checkbox: Int32 = ui_app_checkbox(panel, "Enabled", 6, 640, 28,
+        0x111827u32, 0xFFFFFFu32, 8, 1, 0)
+    let input: Int32 = ui_app_text_input(panel, "Type here", 2, 640, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if !app_state_set_text("note", "Persisted") { return 37 }
+    if !ui_app_bind_app_state(input, "note") { return 59 }
+    ui_app_refresh_app_state(input)
+    if ui_input_length(2) != 9usize { return 38 }
+    ui_state_bind_text(2, 6)
+    if !ui_state_text_set(6, "Seed") { return 39 }
+    if ui_state_text_length(6) != 4usize { return 40 }
+    if ui_input_length(2) != 4usize { return 41 }
+    let choice: Int32 = ui_app_select(panel, 3, 640, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let first_option: Bool = ui_app_select_option(choice, "First option")
+    let second_option: Bool = ui_app_select_option(choice, "Second option")
+    let initial_choice: Bool = ui_app_select_set_index(choice, 0)
+    let items: Int32 = ui_app_list(panel, 4, 640, 90,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let first_item: Bool = ui_app_list_item(items, "First task")
+    let second_item: Bool = ui_app_list_item(items, "Second task")
+    let third_item: Bool = ui_app_list_item(items, "Third task")
+    let item_count: Int32 = ui_app_list_count(items)
+    let initial_item: Bool = ui_app_list_set_index(items, 0)
+    let table: Int32 = ui_app_table(panel, 5, 640, 100,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let first_column: Bool = ui_app_table_column(table, 0, "Task", 340)
+    let second_column: Bool = ui_app_table_column(table, 1, "Status", 220)
+    let local_cell: Bool = ui_app_table_cell(table, 0, 0, "Local task")
+    let local_status: Bool = ui_app_table_cell(table, 0, 1, "Draft")
+    let button: Int32 = ui_app_button(panel, "Click me", 1, 180, 42,
+        0xFFFFFFu32, 0x168EF5u32, 8, 0)
+    if heading == 0 { return 15 }
+    if status == 0 { return 15 }
+    if checkbox == 0 { return 15 }
+    if input == 0 { return 15 }
+    if choice == 0 { return 15 }
+    if !first_option { return 15 }
+    if !second_option { return 15 }
+    if !initial_choice { return 15 }
+    if items == 0 { return 15 }
+    if !first_item { return 15 }
+    if !second_item { return 15 }
+    if !third_item { return 15 }
+    if item_count != 3 { return 15 }
+    if !initial_item { return 15 }
+    if !ui_app_list_bind_app(items, 0) { return 16 }
+    if ui_app_list_count(items) != 2 { return 17 }
+    if !ui_app_list_set_index(items, 1) { return 18 }
+    if ui_app_list_index(items) != 1 { return 19 }
+    app_list_set_text(0, 1, "Updated task")
+    if !ui_app_list_refresh(items) { return 20 }
+    var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if ui_app_list_read_item(items, 1, output) != 12usize { return 21 }
+    if table == 0 { return 22 }
+    if !first_column { return 23 }
+    if !second_column { return 24 }
+    if !local_cell { return 25 }
+    if !local_status { return 26 }
+    if ui_app_table_row_count(table) != 1 { return 27 }
+    if !ui_app_table_bind_app(table, 0, 2) { return 28 }
+    if ui_app_table_row_count(table) != 2 { return 29 }
+    let sorted: Bool = ui_app_table_sort_text(table, 0, false)
+    if !sorted { return 54 }
+    let filtered: Bool = ui_app_table_filter_text(table, 1, 1, "Open")
+    if !filtered { return 55 }
+    if app_table_row_count(1) != 1 { return 56 }
+    let contains: Bool = ui_app_table_filter_text_ex(table, 1, 1, "pen", 1)
+    if !contains { return 57 }
+    if app_table_row_count(1) != 1 { return 58 }
+    if !ui_app_table_set_selected_row(table, 1) { return 30 }
+    if ui_app_table_selected_row(table) != 1 { return 31 }
+    app_table_set_cell(0, 1, 1, "Updated")
+    if !ui_app_table_refresh(table) { return 32 }
+    var table_output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8]
+    if ui_app_table_read_cell(table, 1, 1, table_output) != 7usize { return 33 }
+    // Retained node ids are enough for app_state binding; event ids remain
+    // an implementation detail of the native backend.
+    if !ui_app_bind_app_state(checkbox, "enabled") { return 60 }
+    if !ui_app_bind_app_state(choice, "choice") { return 61 }
+    if !ui_app_bind_app_state(items, "list_choice") { return 62 }
+    if !ui_app_bind_app_state(table, "table_choice") { return 63 }
+    if !app_state_set_bool("enabled", true) { return 64 }
+    if !app_state_set_int("choice", 1 as Int64) { return 65 }
+    if !app_state_set_int("list_choice", 1 as Int64) { return 66 }
+    if !app_state_set_int("table_choice", 0 as Int64) { return 67 }
+    ui_app_refresh_app_state(checkbox)
+    ui_app_refresh_app_state(choice)
+    ui_app_refresh_app_state(items)
+    ui_app_refresh_app_state(table)
+    if ui_checked(6) != 1 { return 68 }
+    if ui_select_index(3) != 1 { return 69 }
+    if ui_app_list_index(items) != 1 { return 70 }
+    if ui_app_table_selected_row(table) != 0 { return 71 }
+    if ui_app_bind_app_state(button, "unsupported") { return 72 }
+    ui_state_bind(3, 0, 1)
+    ui_state_bind(4, 1, 1)
+    ui_state_bind(5, 2, 1)
+    ui_state_bind(4, 3, 3)
+    ui_state_bind(5, 4, 3)
+    ui_state_bind(6, 5, 0)
+    ui_state_set(0, 0)
+    ui_state_set(1, 1)
+    ui_state_set(2, 1)
+    ui_state_set(5, 1)
+    if ui_state_get(0) != 0 { return 42 }
+    if ui_state_get(1) != 1 { return 43 }
+    if ui_state_get(2) != 1 { return 44 }
+    if ui_state_get(3) != 2 { return 45 }
+    if ui_state_get(4) != 2 { return 46 }
+    if ui_checked(6) != 1 { return 47 }
+    ui_set_checked(6, 0)
+    if ui_state_get(5) != 0 { return 48 }
+    ui_state_set(5, 1)
+    if ui_state_get(5) != 1 { return 49 }
+    if ui_app_list_index(items) != 1 { return 52 }
+    if ui_app_table_selected_row(table) != 1 { return 50 }
+    if button == 0 { return 51 }
+    if !ui_app_end(panel) { return 35 }
+    if !ui_app_end(root) { return 36 }
+    return ui_app_run()
+}

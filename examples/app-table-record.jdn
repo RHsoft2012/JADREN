@@ -1,0 +1,87 @@
+module examples.app_table_record
+
+// Named bounded typed-record schema. Row storage remains the compatible
+// eight-cell JSON array; names and kinds live in the separate full schema.
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !app_table_set_column_type(0, 0, 1) { return 1 }
+    if !app_table_set_column_type(0, 1, 0) { return 2 }
+    if !app_table_set_column_name(0, 0, "task_id") { return 3 }
+    if !app_table_set_column_name(0, 1, "title") { return 4 }
+    if app_table_set_column_name(0, 2, "task_id") { return 5 }
+    if app_table_find_column(0, "task_id") != 0 { return 6 }
+    if app_table_find_column(0, "missing") != -1 { return 7 }
+
+    var name: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if app_table_read_column_name(0, 0, name) != 7usize { return 8 }
+    if name[0] != 116u8 { return 9 }
+    if !app_table_append_row(0) { return 10 }
+    if !app_table_set_int(0, 0, 0, 42 as Int64) { return 11 }
+    if !app_table_set_cell(0, 0, 1, "Focus") { return 12 }
+    if !app_table_set_named_int(0, 0, "task_id", 42 as Int64) { return 31 }
+    if app_table_read_named_int(0, 0, "task_id") != 42 as Int64 { return 32 }
+    if !app_table_set_named_cell(0, 0, "title", "Focus") { return 33 }
+    var title: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if app_table_read_named_cell(0, 0, "title", title) != 5usize { return 34 }
+    if title[0] != 70u8 { return 35 }
+
+    // Full schemas carry a non-negative application-managed version.
+    if app_table_schema_version(0) != 0 { return 36 }
+    if !app_table_set_schema_version(0, 1) { return 37 }
+    if app_table_schema_version(0) != 1 { return 38 }
+    if !app_table_save_schema_full(0, "target/jadren/app-table-record-schema.json") { return 13 }
+    if !app_table_save_schema_full_atomic(
+        0,
+        "target/jadren/app-table-record-schema.tmp",
+        "target/jadren/app-table-record-schema.json"
+    ) { return 14 }
+    if file_exists("target/jadren/app-table-record-schema.tmp") { return 15 }
+
+    // A guarded load rejects a schema from the wrong file version atomically.
+    if !app_table_set_schema_version(0, 2) { return 39 }
+    if app_table_load_schema_full_if_version(0, "target/jadren/app-table-record-schema.json", 2) { return 40 }
+    if app_table_schema_version(0) != 2 { return 41 }
+    if !app_table_load_schema_full_if_version(0, "target/jadren/app-table-record-schema.json", 1) { return 42 }
+    if app_table_schema_version(0) != 1 { return 43 }
+
+    // Full-schema load restores both the name and the typed kind.
+    if !app_table_set_column_name(0, 0, "changed") { return 16 }
+    if !app_table_set_column_type(0, 0, 0) { return 17 }
+    if !app_table_load_schema_full(0, "target/jadren/app-table-record-schema.json") { return 18 }
+    if app_table_find_column(0, "task_id") != 0 { return 19 }
+    if app_table_column_type(0, 0) != 1 { return 20 }
+
+    // A malformed full schema is rejected without changing the live schema.
+    let invalid_written: UIntSize = file_write_text(
+        "target/jadren/app-table-record-schema-invalid.json",
+        "{\"columns\":[{\"name\":\"broken\",\"kind\":9}]}"
+    )
+    if invalid_written == 0usize { return 21 }
+    if app_table_load_schema_full(0, "target/jadren/app-table-record-schema-invalid.json") { return 22 }
+    if app_table_find_column(0, "task_id") != 0 { return 23 }
+    if app_table_column_type(0, 0) != 1 { return 24 }
+
+    // Legacy unversioned full schemas remain readable and are treated as version 0.
+    let legacy_written: UIntSize = file_write_text(
+        "target/jadren/app-table-record-schema-legacy.json",
+        "{\"columns\":[{\"name\":\"task_id\",\"kind\":1},{\"name\":\"title\",\"kind\":0},{\"name\":\"\",\"kind\":0},{\"name\":\"\",\"kind\":0},{\"name\":\"\",\"kind\":0},{\"name\":\"\",\"kind\":0},{\"name\":\"\",\"kind\":0},{\"name\":\"\",\"kind\":0}]}"
+    )
+    if legacy_written == 0usize { return 44 }
+    if !app_table_load_schema_full(0, "target/jadren/app-table-record-schema-legacy.json") { return 45 }
+    if app_table_schema_version(0) != 0 { return 46 }
+    if app_table_find_column(0, "task_id") != 0 { return 47 }
+    if !app_table_load_schema_full_if_version(0, "target/jadren/app-table-record-schema.json", 1) { return 48 }
+    if app_table_schema_version(0) != 1 { return 49 }
+
+    // Filtering carries named schema metadata with the rows.
+    if !app_table_set_column_name(1, 0, "other") { return 25 }
+    if !app_table_filter_text(0, 1, 1, "Focus") { return 26 }
+    if app_table_find_column(1, "task_id") != 0 { return 27 }
+    if app_table_row_count(1) != 1 { return 28 }
+
+    if !file_delete("target/jadren/app-table-record-schema.json") { return 29 }
+    if !file_delete("target/jadren/app-table-record-schema-invalid.json") { return 30 }
+    if !file_delete("target/jadren/app-table-record-schema-legacy.json") { return 50 }
+    return 0
+}

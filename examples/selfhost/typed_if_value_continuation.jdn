@@ -1,0 +1,4 @@
+fn local_value() -> Int32 {
+    let value: Int32 = if 2 > 1 { 10 } else { 20 };
+    return value + 1;
+}

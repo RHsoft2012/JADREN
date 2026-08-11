@@ -1,0 +1,51 @@
+module examples.http_router
+
+// Fixed-size native HTTP route table. The program owns the request and
+// response buffers; the runtime owns only 16 bounded route entries.
+fn main() -> Int32 {
+    http_router_clear()
+
+    var body: [UInt8; 2] = [79u8, 75u8]
+    let added: Bool = http_router_add("GET", "/hello", 200u16, "text/plain", body)
+    if !added { return 1 }
+    if http_router_count() != 1usize { return 2 }
+
+    var request: [UInt8; 40] = [71u8, 69u8, 84u8, 32u8, 47u8, 104u8, 101u8, 108u8, 108u8, 111u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 13u8, 10u8]
+    var response: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let written: UIntSize = http_router_respond(request, response)
+    if written == 0usize { return 3 }
+    if response[9] != 50u8 { return 4 }
+
+    let replaced: Bool = http_router_add("GET", "/hello", 201u16, "text/plain", body)
+    if !replaced { return 5 }
+    if http_router_count() != 1usize { return 6 }
+
+    let removed: Bool = http_router_remove("GET", "/hello")
+    if !removed { return 7 }
+    if http_router_count() != 0usize { return 8 }
+    if http_router_remove("GET", "/hello") { return 9 }
+
+    let prefix_added: Bool = http_router_add_prefix("GET", "/mis", 200u16, "text/plain", body)
+    if !prefix_added { return 10 }
+    let exact_added: Bool = http_router_add("GET", "/missing", 201u16, "text/plain", body)
+    if !exact_added { return 11 }
+
+    var missing: [UInt8; 42] = [71u8, 69u8, 84u8, 32u8, 47u8, 109u8, 105u8, 115u8, 115u8, 105u8, 110u8, 103u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 13u8, 10u8]
+    let exact_response: UIntSize = http_router_respond(missing, response)
+    if exact_response == 0usize { return 12 }
+    if response[9] != 50u8 { return 13 }
+    if response[10] != 48u8 { return 14 }
+    if response[11] != 49u8 { return 15 }
+    if !http_router_remove("GET", "/missing") { return 16 }
+    if http_router_count() != 1usize { print("prefix count wrong"); return 17 }
+    let prefix_response: UIntSize = http_router_respond(missing, response)
+    if prefix_response == 0usize { return 18 }
+    if response[9] != 50u8 { return 19 }
+    if response[10] != 48u8 { return 20 }
+    if response[11] != 48u8 { return 21 }
+    if !http_router_remove_prefix("GET", "/mis") { return 22 }
+    if http_router_count() != 0usize { return 23 }
+
+    print("http router ok")
+    return 0
+}

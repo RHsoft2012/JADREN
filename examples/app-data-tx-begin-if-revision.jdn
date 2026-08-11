@@ -1,0 +1,20 @@
+module examples.app_data_tx_begin_if_revision
+
+fn main() -> Int32 {
+    app_state_clear()
+    app_list_clear(0)
+    app_table_clear(0)
+
+    let initial: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(initial) { return 1 }
+    if !app_data_tx_commit() { return 2 }
+
+    if !app_state_set_text("mode", "focus") { return 3 }
+    let current: UInt64 = app_data_revision()
+    if app_data_tx_begin_if_revision(initial) { return 4 }
+    if !app_data_tx_begin_if_revision(current) { return 5 }
+    if !app_state_set_text("mode", "inside") { return 6 }
+    if !app_data_tx_rollback() { return 7 }
+    if app_data_revision() != current { return 8 }
+    return 0
+}

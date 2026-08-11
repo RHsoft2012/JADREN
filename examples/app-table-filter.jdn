@@ -1,0 +1,37 @@
+module examples.app_table_filter
+
+// Exact-match filter copies rows into a separate bounded destination table.
+fn main() -> Int32 {
+    app_table_clear(0)
+    app_table_clear(1)
+
+    app_table_append_row(0)
+    app_table_set_cell(0, 0, 0, "Alpha")
+    app_table_set_cell(0, 0, 1, "Open")
+    app_table_append_row(0)
+    app_table_set_cell(0, 1, 0, "Beta")
+    app_table_set_cell(0, 1, 1, "Done")
+    app_table_append_row(0)
+    app_table_set_cell(0, 2, 0, "Gamma")
+    app_table_set_cell(0, 2, 1, "Open")
+
+    let filtered: Bool = app_table_filter_text(0, 1, 1, "Open")
+    if !filtered { return 1 }
+    if app_table_row_count(0) != 3 { return 2 }
+    if app_table_row_count(1) != 2 { return 3 }
+
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let first_length: UIntSize = app_table_read_cell(1, 0, 0, output)
+    if first_length != 5usize { return 4 }
+    if output[0] != 65u8 { return 5 }
+    let second_length: UIntSize = app_table_read_cell(1, 1, 0, output)
+    if second_length != 5usize { return 6 }
+    if output[0] != 71u8 { return 7 }
+
+    let rejected: Bool = app_table_filter_text(0, 0, 1, "Open")
+    if rejected { return 8 }
+    if app_table_row_count(1) != 2 { return 9 }
+    app_table_clear(0)
+    app_table_clear(1)
+    return 0
+}

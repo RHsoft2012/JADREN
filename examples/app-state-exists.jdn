@@ -1,0 +1,19 @@
+module examples.app_state_exists
+
+// Existence is separate from a getter default: zero and false are valid values.
+fn main() -> Int32 {
+    app_state_clear()
+    if app_state_exists("zero") { return 1 }
+    if !app_state_set_int("zero", 0 as Int64) { return 2 }
+    if !app_state_set_bool("off", false) { return 3 }
+    if !app_state_set_text("empty", "") { return 4 }
+    if !app_state_exists("zero") { return 5 }
+    if !app_state_exists("off") { return 6 }
+    if !app_state_exists("empty") { return 7 }
+    if app_state_exists("missing") { return 8 }
+    if app_state_get_int("zero") != 0 as Int64 { return 9 }
+    if app_state_get_bool("off") { return 10 }
+    if !app_state_remove("zero") { return 11 }
+    if app_state_exists("zero") { return 12 }
+    return 0
+}

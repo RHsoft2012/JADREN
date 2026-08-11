@@ -1,0 +1,13 @@
+module examples.selfhost.typed_while_local_dynamic_native_stage2
+
+// Native producer -> JST2WHD1 -> caller-owned dynamic assignment list.
+fn local_value() -> Int32 {
+    var counter: Int32 = 0;
+    while counter < 4 {
+        counter = counter + 1;
+        counter = counter + 1;
+        counter = counter + 1;
+        counter = counter + 1;
+    }
+    return counter;
+}

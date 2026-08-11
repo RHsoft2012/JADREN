@@ -1,0 +1,38 @@
+module examples.http_request_parser;
+
+// Bounded HTTP/1.1 request parser. It reads only caller-owned bytes and allocates nothing.
+fn main() -> Int32 {
+    var request: [UInt8; 77] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 115u8, 97u8, 118u8, 101u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 52u8, 13u8, 10u8, 88u8, 45u8, 84u8, 114u8, 97u8, 99u8, 101u8, 58u8, 32u8, 97u8, 98u8, 99u8, 13u8, 10u8, 13u8, 10u8, 65u8, 104u8, 111u8, 106u8]
+    if !http_request_is_complete(request) { return 10 }
+
+    var method: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    if http_request_method(request, method) != 4usize { return 11 }
+    if method[0] != 80u8 { return 12 }
+    if method[3] != 84u8 { return 12 }
+
+    var target: [UInt8; 5] = [0u8, 0u8, 0u8, 0u8, 0u8]
+    if http_request_target(request, target) != 5usize { return 13 }
+    if target[0] != 47u8 { return 14 }
+    if target[4] != 101u8 { return 14 }
+
+    var header: [UInt8; 3] = [0u8, 0u8, 0u8]
+    if http_request_header(request, "x-trace", header) != 3usize { return 15 }
+    if header[0] != 97u8 { return 16 }
+    if header[2] != 99u8 { return 16 }
+
+    var body: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    if http_request_body(request, body) != 4usize { return 17 }
+    if body[0] != 65u8 { return 18 }
+    if body[3] != 106u8 { return 18 }
+
+    var too_small: [UInt8; 3] = [0u8, 0u8, 0u8]
+    if http_request_target(request, too_small) != 0usize { return 19 }
+
+    var incomplete: [UInt8; 39] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 52u8, 13u8, 10u8, 13u8, 10u8, 65u8]
+    if http_request_is_complete(incomplete) { return 20 }
+    var chunked: [UInt8; 46] = [71u8, 69u8, 84u8, 32u8, 47u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 84u8, 114u8, 97u8, 110u8, 115u8, 102u8, 101u8, 114u8, 45u8, 69u8, 110u8, 99u8, 111u8, 100u8, 105u8, 110u8, 103u8, 58u8, 32u8, 99u8, 104u8, 117u8, 110u8, 107u8, 101u8, 100u8, 13u8, 10u8, 13u8, 10u8]
+    if http_request_is_complete(chunked) { return 21 }
+    var duplicate: [UInt8; 58] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 49u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 49u8, 13u8, 10u8, 13u8, 10u8, 65u8]
+    if http_request_is_complete(duplicate) { return 22 }
+    return 0
+}

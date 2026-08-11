@@ -1,0 +1,39 @@
+module examples.app_data_journal_recover_compact
+
+// Recover the newest complete checkpoint and replace an append-only journal
+// with one canonical frame. The temporary path is caller-owned and distinct.
+fn main() -> Int32 {
+    file_delete("target/jadren/app-data-journal-compact.journal")
+    file_delete("target/jadren/app-data-journal-compact.scratch")
+    file_delete("target/jadren/app-data-journal-compact.tmp")
+
+    if !app_state_set_int("counter", 1i64) { return 1 }
+    if !app_data_journal_append(
+        "target/jadren/app-data-journal-compact.journal",
+        "target/jadren/app-data-journal-compact.scratch",
+    ) { return 2 }
+    if !app_state_set_int("counter", 2i64) { return 3 }
+    if !app_data_journal_append(
+        "target/jadren/app-data-journal-compact.journal",
+        "target/jadren/app-data-journal-compact.scratch",
+    ) { return 4 }
+
+    // A previous interrupted compaction may have left stale bytes here.
+    file_append_text("target/jadren/app-data-journal-compact.tmp", "stale")
+    let before: UIntSize = file_size("target/jadren/app-data-journal-compact.journal")
+    if !app_data_journal_recover_compact(
+        "target/jadren/app-data-journal-compact.journal",
+        "target/jadren/app-data-journal-compact.scratch",
+        "target/jadren/app-data-journal-compact.tmp",
+    ) { return 5 }
+    let after: UIntSize = file_size("target/jadren/app-data-journal-compact.journal")
+    if after >= before { return 6 }
+
+    app_state_clear()
+    if !app_data_journal_recover(
+        "target/jadren/app-data-journal-compact.journal",
+        "target/jadren/app-data-journal-compact.scratch",
+    ) { return 7 }
+    if app_state_get_int("counter") != 2i64 { return 8 }
+    return 0
+}

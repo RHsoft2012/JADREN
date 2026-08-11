@@ -1,0 +1,40 @@
+module examples.escaping_export;
+
+// Bounded CSV/JSON export: runtime writes directly into caller-owned arrays.
+fn main() -> Int32 {
+    file_delete("target/jadren/jadren-escaping.csv")
+    file_delete("target/jadren/jadren-escaping.json")
+
+    var small: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    let rejected_csv: UIntSize = csv_escape("a,b", small)
+    let rejected_json: UIntSize = json_escape("a\"b", small)
+    if (rejected_csv as Int32) != 0 { return 8 }
+    if (rejected_json as Int32) != 0 { return 9 }
+    if small[0] != 0u8 { return 10 }
+
+    var csv: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let csv_length: UIntSize = csv_escape("Ada, \"The\"\n", csv)
+    if (csv_length as Int32) != 15 { return 11 }
+    file_append("target/jadren/jadren-escaping.csv", csv, csv_length)
+
+    var json: [UInt8; 33] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let json_length: UIntSize = json_escape("Ada, \"The\"\n", json)
+    if (json_length as Int32) != 16 { return 12 }
+    file_append("target/jadren/jadren-escaping.json", json, json_length)
+
+    var csv_check: [UInt8; 33] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var json_check: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let csv_loaded: UIntSize = file_read("target/jadren/jadren-escaping.csv", csv_check)
+    let json_loaded: UIntSize = file_read("target/jadren/jadren-escaping.json", json_check)
+    if (csv_loaded as Int32) != 15 { return 13 }
+    if (json_loaded as Int32) != 16 { return 14 }
+    if csv_check[0] != 34u8 { return 15 }
+    if csv_check[6] != 34u8 { return 16 }
+    if csv_check[7] != 34u8 { return 17 }
+    if json_check[6] != 92u8 { return 18 }
+    if json_check[7] != 34u8 { return 19 }
+    if json_check[14] != 110u8 { return 20 }
+    file_delete("target/jadren/jadren-escaping.csv")
+    file_delete("target/jadren/jadren-escaping.json")
+    return 0
+}

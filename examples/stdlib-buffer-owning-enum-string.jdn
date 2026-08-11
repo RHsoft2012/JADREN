@@ -1,0 +1,41 @@
+module examples.stdlib_buffer_owning_enum_string
+
+// A named @repr(C) enum may own direct OwnedString fields. The field table
+// selects the active variant and uses the string sentinel instead of treating
+// the descriptor as a nested Buffer.
+@repr(C) enum Event {
+    Idle,
+    Text(OwnedString),
+    Pair(OwnedString, Int32),
+    Done
+}
+
+fn main() -> Int32 {
+    let events_created: Result<Buffer<Event>, Int32> = buffer_create(0usize)
+    let text_created: Result<OwnedString, Int32> = string_owned_from("Text")
+    let pair_created: Result<OwnedString, Int32> = string_owned_from("Pair")
+    var result_code: Int32 = 0
+
+    match events_created {
+        Ok(events) => {
+            if !buffer_append(events, Event.Idle) { result_code = 1 }
+            match text_created {
+                Ok(text) => {
+                    if !buffer_append(events, Event.Text(text)) { result_code = 2 }
+                }
+                Error(status) => { result_code = status }
+            }
+            match pair_created {
+                Ok(pair) => {
+                    if !buffer_append(events, Event.Pair(pair, 7)) { result_code = 3 }
+                }
+                Error(status) => { result_code = status }
+            }
+            if !buffer_append(events, Event.Done) { result_code = 4 }
+            if buffer_length(events) != 4usize { result_code = 5 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

@@ -1,0 +1,51 @@
+module examples.stdlib_buffer_multi_owning_carriers
+
+// A Result may own a Buffer chain on both branches. Its tag selects exactly
+// one descriptor chain, so generic append and scope cleanup remain move-safe.
+fn main() -> Int32 {
+    let created: Result<Buffer<Result<Buffer<Int32>, Buffer<Buffer<Int32>>>>, Int32> = buffer_create(0usize)
+    let left_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let right_leaf_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let right_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match created {
+        Ok(values) => {
+            match left_created {
+                Ok(left) => {
+                    if !buffer_append(left, 11) { result_code = 1 }
+                    match right_leaf_created {
+                        Ok(right_leaf) => {
+                            if !buffer_append(right_leaf, 22) { result_code = 2 }
+                            match right_created {
+                                Ok(right) => {
+                                    if !buffer_append(right, right_leaf) { result_code = 3 }
+                                    let ok_state: Result<Buffer<Int32>, Buffer<Buffer<Int32>>> = Ok(left)
+                                    if !buffer_append(values, ok_state) { result_code = 4 }
+                                    let error_state: Result<Buffer<Int32>, Buffer<Buffer<Int32>>> = Error(right)
+                                    if !buffer_append(values, error_state) { result_code = 5 }
+                                    if buffer_length(values) != 2usize { result_code = 6 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    // Standalone carrier cleanup uses the same tag-selected contract.
+    let standalone_left: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    match standalone_left {
+        Ok(left) => {
+            let standalone: Result<Buffer<Int32>, Buffer<Buffer<Int32>>> = Ok(left)
+            if false { result_code = 7 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

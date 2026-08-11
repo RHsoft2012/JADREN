@@ -1,0 +1,33 @@
+module app_stdlib_project.fs_probe
+
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.dir_delete
+import jadren.app.fs.dir_exists
+import jadren.app.fs.dir_list_ex
+import jadren.app.fs.write_text
+
+pub fn run_fs_probe() -> Bool {
+    delete("target/jadren/app-stdlib-project-directory/entry.txt")
+    dir_delete("target/jadren/app-stdlib-project-directory")
+    if !dir_create("target/jadren/app-stdlib-project-directory") { return false }
+    if !dir_exists("target/jadren/app-stdlib-project-directory") { return false }
+    if write_text("target/jadren/app-stdlib-project-directory/entry.txt", "data") != 4usize { return false }
+
+    var names: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var kinds: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    if dir_list_ex("target/jadren/app-stdlib-project-directory", names, kinds) != 1usize { return false }
+    if names[0] != 101u8 { return false }
+    if kinds[0] != 1u8 { return false }
+
+    if !delete("target/jadren/app-stdlib-project-directory/entry.txt") { return false }
+    if !dir_delete("target/jadren/app-stdlib-project-directory") { return false }
+    return !dir_exists("target/jadren/app-stdlib-project-directory")
+}

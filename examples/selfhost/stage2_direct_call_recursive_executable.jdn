@@ -1,0 +1,7 @@
+fn recurse(value: Int32) -> Int32 {
+    return recurse(value - 1);
+}
+
+fn main() -> Int32 {
+    return 42;
+}

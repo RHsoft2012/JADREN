@@ -1,0 +1,67 @@
+module examples.stdlib_buffer_owning_carriers
+
+// Option/Result carriers may own exactly one Buffer payload. The selected tag
+// is dropped recursively; copy-safe variants such as None and Error(false)
+// carry no hidden ownership.
+fn main() -> Int32 {
+    let option_created: Result<Buffer<Option<Buffer<Int32>>>, Int32> = buffer_create(0usize)
+    let result_created: Result<Buffer<Result<Buffer<Int32>, Bool>>, Int32> = buffer_create(0usize)
+    let option_inner_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let option_inline_inner_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let result_inner_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let standalone_inner_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match option_created {
+        Ok(options) => {
+            match option_inner_created {
+                Ok(inner) => {
+                    if !buffer_append(inner, 11) { result_code = 1 }
+                    let some_state: Option<Buffer<Int32>> = Some(inner)
+                    if !buffer_append(options, some_state) { result_code = 2 }
+                    let none_state: Option<Buffer<Int32>> = None
+                    if !buffer_append(options, none_state) { result_code = 3 }
+                    if buffer_length(options) != 2usize { result_code = 4 }
+                }
+                Error(status) => { result_code = status }
+            }
+            match option_inline_inner_created {
+                Ok(inline_inner) => {
+                    if !buffer_append(inline_inner, 33) { result_code = 9 }
+                    // The inline carrier is materialized into a temporary
+                    // owning slot, then mapped to the rollback-safe move ABI.
+                    if !buffer_append(options, Some(inline_inner)) { result_code = 10 }
+                    if buffer_length(options) != 3usize { result_code = 11 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    match result_created {
+        Ok(results) => {
+            match result_inner_created {
+                Ok(inner) => {
+                    if !buffer_append(inner, 22) { result_code = 5 }
+                    let ok_state: Result<Buffer<Int32>, Bool> = Ok(inner)
+                    if !buffer_append(results, ok_state) { result_code = 6 }
+                    let error_state: Result<Buffer<Int32>, Bool> = Error(false)
+                    if !buffer_append(results, error_state) { result_code = 7 }
+                    if buffer_length(results) != 2usize { result_code = 8 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    match standalone_inner_created {
+        Ok(inner) => {
+            let standalone: Option<Buffer<Int32>> = Some(inner)
+            if false { result_code = 12 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

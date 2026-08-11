@@ -1,0 +1,58 @@
+module examples.app_data_journal_retain_durable
+
+// Retain the last two complete journal frames instead of collapsing to one.
+fn main() -> Int32 {
+    file_delete("target/jadren/app-data-journal-retain-durable.journal")
+    file_delete("target/jadren/app-data-journal-retain-durable.scratch")
+    file_delete("target/jadren/app-data-journal-retain-durable.tmp")
+    file_delete("target/jadren/app-data-journal-retain-durable.lock")
+
+    if !app_state_set_int("counter", 1i64) { return 1 }
+    if !app_data_journal_append_durable(
+        "target/jadren/app-data-journal-retain-durable.journal",
+        "target/jadren/app-data-journal-retain-durable.scratch",
+        "target/jadren/app-data-journal-retain-durable.lock"
+    ) { return 2 }
+    if !app_state_set_int("counter", 2i64) { return 3 }
+    if !app_data_journal_append_durable(
+        "target/jadren/app-data-journal-retain-durable.journal",
+        "target/jadren/app-data-journal-retain-durable.scratch",
+        "target/jadren/app-data-journal-retain-durable.lock"
+    ) { return 4 }
+    if !app_state_set_int("counter", 3i64) { return 5 }
+    if !app_data_journal_append_durable(
+        "target/jadren/app-data-journal-retain-durable.journal",
+        "target/jadren/app-data-journal-retain-durable.scratch",
+        "target/jadren/app-data-journal-retain-durable.lock"
+    ) { return 6 }
+    // A torn marker must not count as a fourth valid frame.
+    if file_append_text(
+        "target/jadren/app-data-journal-retain-durable.journal",
+        "JADREN-APP-JOURNAL-0.2\n"
+    ) == 0usize { return 7 }
+
+    let before: UIntSize = file_size("target/jadren/app-data-journal-retain-durable.journal")
+    if before <= 1usize { return 8 }
+    if !app_data_journal_retain_last_durable(
+        "target/jadren/app-data-journal-retain-durable.journal",
+        "target/jadren/app-data-journal-retain-durable.scratch",
+        "target/jadren/app-data-journal-retain-durable.tmp",
+        "target/jadren/app-data-journal-retain-durable.lock",
+        2usize
+    ) { return 9 }
+    let after: UIntSize = file_size("target/jadren/app-data-journal-retain-durable.journal")
+    if after >= before { return 10 }
+
+    app_state_clear()
+    if !app_data_journal_recover(
+        "target/jadren/app-data-journal-retain-durable.journal",
+        "target/jadren/app-data-journal-retain-durable.scratch"
+    ) { return 11 }
+    if app_state_get_int("counter") != 3i64 { return 12 }
+
+    file_delete("target/jadren/app-data-journal-retain-durable.journal")
+    file_delete("target/jadren/app-data-journal-retain-durable.scratch")
+    file_delete("target/jadren/app-data-journal-retain-durable.tmp")
+    file_delete("target/jadren/app-data-journal-retain-durable.lock")
+    return 0
+}

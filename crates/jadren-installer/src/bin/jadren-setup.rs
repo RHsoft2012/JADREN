@@ -19,9 +19,7 @@ fn quote_powershell(path: &Path) -> String {
 }
 
 fn default_install_root() -> Result<PathBuf, Box<dyn Error>> {
-    let program_files = env::var_os("PROGRAMFILES")
-        .ok_or("PROGRAMFILES is not set; pass --install-root explicitly")?;
-    Ok(PathBuf::from(program_files).join("Jadren"))
+    Ok(PathBuf::from(r"C:\Jadren"))
 }
 
 fn release_label() -> &'static str {
@@ -60,6 +58,22 @@ fn path_is_under_program_files(path: &Path) -> bool {
     let path = path.to_string_lossy().to_ascii_lowercase();
     let root = root.to_string_lossy().to_ascii_lowercase();
     path == root || path.starts_with(&(root + "\\"))
+}
+
+#[cfg(windows)]
+fn jadren_process_is_running() -> bool {
+    let Ok(output) = Command::new("tasklist")
+        .args(["/FI", "IMAGENAME eq jadren.exe", "/FO", "CSV", "/NH"])
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.trim_start().starts_with("\"jadren.exe\""))
 }
 
 #[cfg(windows)]
@@ -134,7 +148,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "--no-path" => update_path = false,
             "--help" | "-h" => {
                 println!(
-                    "Jadren preview installer\nUsage: Jadren-Setup-<version>.exe [--install-root PATH] [--no-path]\nDefault install root: %PROGRAMFILES%\\Jadren"
+                    "Jadren preview installer\nUsage: Jadren-Setup-<version>.exe [--install-root PATH] [--no-path]\nDefault install root: C:\\Jadren"
                 );
                 return Ok(());
             }
@@ -142,6 +156,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     let install_root = install_root.unwrap_or(default_install_root()?);
+
+    #[cfg(windows)]
+    if install_root.join("bin").join("jadren.exe").is_file() && jadren_process_is_running() {
+        return Err(
+            "Jadren is currently running (often VS Code LSP). Close VS Code/Jadren processes and run the installer again."
+                .into(),
+        );
+    }
 
     #[cfg(windows)]
     if path_is_under_program_files(&install_root) && !is_elevated()? {
@@ -170,7 +192,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .status()?;
     let _ = fs::remove_file(&archive_path);
     if !status.success() {
-        return Err(format!("Expand-Archive failed with status {status}").into());
+        return Err(format!(
+            "Could not update {}. Close programs using the Jadren installation (especially VS Code/Jadren LSP) and retry. Expand-Archive failed with status {status}",
+            install_root.display()
+        )
+        .into());
     }
 
     let path_status = if update_path {

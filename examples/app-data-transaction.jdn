@@ -1,0 +1,49 @@
+module examples.app_data_transaction
+
+// One bounded snapshot coordinates state, text lists and typed tables.
+fn main() -> Int32 {
+    app_state_clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    if !app_state_set_text("mode", "before") { return 1 }
+    if !app_list_push_text(0, "before") { return 2 }
+    if !app_table_set_column_name(0, 0, "before_table") { return 3 }
+    if !app_table_set_schema_version(0, 1) { return 4 }
+    if !app_table_append_row(0) { return 5 }
+    if !app_table_set_cell(0, 0, 0, "before") { return 6 }
+
+    if !app_data_tx_begin() { return 7 }
+    if app_state_tx_begin() { return 8 }
+    if app_table_tx_begin_all() { return 9 }
+    if !app_state_set_text("mode", "during") { return 10 }
+    if !app_list_set_text(0, 0, "during") { return 11 }
+    if !app_table_set_column_name(0, 0, "during_table") { return 12 }
+    if !app_table_set_schema_version(0, 2) { return 13 }
+    if !app_table_append_row(0) { return 14 }
+    if !app_data_tx_rollback() { return 15 }
+    if app_data_tx_rollback() { return 16 }
+
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if app_state_read_text("mode", output) != 6usize { return 17 }
+    if output[0] != 98u8 { return 18 }
+    if app_list_count(0) != 1 { return 19 }
+    if app_list_read_text(0, 0, output) != 6usize { return 20 }
+    if output[0] != 98u8 { return 21 }
+    if app_table_row_count(0) != 1 { return 22 }
+    if app_table_find_column(0, "before_table") != 0 { return 23 }
+    if app_table_schema_version(0) != 1 { return 24 }
+
+    if !app_data_tx_begin() { return 25 }
+    if !app_state_set_text("mode", "committed") { return 26 }
+    if !app_list_set_text(0, 0, "committed") { return 27 }
+    if !app_table_set_column_name(0, 0, "committed_table") { return 28 }
+    if !app_table_set_schema_version(0, 3) { return 29 }
+    if !app_data_tx_commit() { return 30 }
+    if app_data_tx_commit() { return 31 }
+    if app_state_read_text("mode", output) != 9usize { return 32 }
+    if app_list_read_text(0, 0, output) != 9usize { return 33 }
+    if app_table_find_column(0, "committed_table") != 0 { return 34 }
+    if app_table_schema_version(0) != 3 { return 35 }
+    return 0
+}

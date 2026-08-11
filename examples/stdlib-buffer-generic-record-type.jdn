@@ -1,0 +1,30 @@
+module examples.stdlib_buffer_generic_record_type
+
+@repr(C)
+struct Box<T> {
+    value: T
+}
+
+@repr(C)
+struct Frame<T> {
+    first: Box<T>,
+    samples: [T; 2]
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<Frame<Int64>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            let item: Frame<Int64> = Frame {
+                first: Box { value: 42 as Int64 },
+                samples: [7 as Int64, 9 as Int64]
+            }
+            if !buffer_append(values, item) { result_code = 1 }
+            if values[0].first.value != 42 as Int64 { result_code = 2 }
+            if values[0].samples[1] != 9 as Int64 { result_code = 3 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

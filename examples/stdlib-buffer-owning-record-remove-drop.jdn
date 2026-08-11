@@ -1,0 +1,51 @@
+module examples.stdlib_buffer_owning_record_remove_drop
+
+// `buffer_remove` is copy-only for owning records. The explicit drop variant
+// destroys the removed record's Buffer fields and compacts the remaining rows.
+@repr(C)
+struct Entry {
+    values: Buffer<Int32>,
+    id: Int32
+}
+
+fn main() -> Int32 {
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let first_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match entries_created {
+        Ok(entries) => {
+            match first_values_created {
+                Ok(first_values) => {
+                    match second_values_created {
+                        Ok(second_values) => {
+                            if !buffer_append(first_values, 11) { result_code = 1 }
+                            if !buffer_append(second_values, 22) { result_code = 2 }
+                            let first: Entry = Entry { values: first_values, id: 11 }
+                            let second: Entry = Entry { values: second_values, id: 22 }
+                            if !buffer_append(entries, first) { result_code = 3 }
+                            if !buffer_append(entries, second) { result_code = 4 }
+                            if buffer_length(entries) != 2usize { result_code = 5 }
+
+                            let removed: Bool = buffer_remove_drop(entries, 0usize)
+                            if !removed { result_code = 6 }
+                            if buffer_length(entries) != 1usize { result_code = 7 }
+
+                            let remaining_status: Int32 = buffer_remove_drop_status(entries, 0usize)
+                            if remaining_status != 0 { result_code = 8 }
+                            if buffer_length(entries) != 0usize { result_code = 9 }
+
+                            let invalid_status: Int32 = buffer_remove_drop_status(entries, 0usize)
+                            if invalid_status != -20 { result_code = 10 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

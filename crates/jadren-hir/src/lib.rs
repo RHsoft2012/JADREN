@@ -772,6 +772,17 @@ impl Lowerer<'_> {
                             name: expression_path(expression).unwrap_or_else(|| field.text.clone()),
                             symbol: Some(symbol),
                         }
+                    } else if self.typed_expression_optional(base).is_none()
+                        && expression_path(expression).is_some()
+                    {
+                        // Enum/core constructors such as `State.Idle` are
+                        // type-checked as one value expression. Their
+                        // qualifier is not a runtime field, so do not lower
+                        // the unresolved qualifier as a child HIR value.
+                        HirExpressionKind::Name {
+                            name: expression_path(expression).unwrap_or_else(|| field.text.clone()),
+                            symbol: None,
+                        }
                     } else {
                         HirExpressionKind::Field {
                             base: Box::new(self.lower_expression(base)),
@@ -1388,6 +1399,36 @@ mod tests {
         indexed_ids.sort_unstable();
         assert_eq!(walked_ids, indexed_ids);
         assert!(module_contains_try(&lowered.module));
+    }
+
+    #[test]
+    fn lowers_qualified_repr_c_enum_constructor_without_runtime_qualifier() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "test.jdn",
+                "module test; @repr(C) enum State { Idle, Running } fn main() -> State { return State.Idle }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolution = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolution);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+
+        let lowered = lower_hir(source, &parsed.file, &resolution, &checked);
+        assert!(lowered.diagnostics.is_empty(), "{:?}", lowered.diagnostics);
+        assert!(verify_hir(&lowered.module, &checked.types).is_empty());
+        let value = match &lowered.module.functions[0].body.statements[0] {
+            HirStatement::Return {
+                value: Some(value), ..
+            } => value,
+            statement => panic!("expected enum return, got {statement:?}"),
+        };
+        assert!(
+            matches!(value.kind, HirExpressionKind::Name { ref name, symbol: None } if name == "State.Idle")
+        );
     }
 
     #[test]

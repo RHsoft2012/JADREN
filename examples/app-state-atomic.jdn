@@ -1,0 +1,28 @@
+module examples.app_state_atomic
+
+// Crash-safe state save: complete JSON is written to a temporary path first.
+fn main() -> Int32 {
+    app_state_clear()
+    let set_name: Bool = app_state_set_text("name", "Atomic")
+    let set_count: Bool = app_state_set_int("count", 7 as Int64)
+    if !set_name { return 1 }
+    if !set_count { return 2 }
+
+    let saved: Bool = app_state_save_atomic(
+        "target/jadren/app-state.tmp",
+        "target/jadren/app-state-atomic.json"
+    )
+    if !saved { return 3 }
+    if !file_exists("target/jadren/app-state-atomic.json") { return 4 }
+    if file_exists("target/jadren/app-state.tmp") { return 5 }
+
+    app_state_clear()
+    let loaded: Bool = app_state_load("target/jadren/app-state-atomic.json")
+    if !loaded { return 6 }
+    if app_state_get_int("count") != 7 as Int64 { return 7 }
+    if app_state_get_bool("missing") { return 8 }
+
+    let removed: Bool = file_delete("target/jadren/app-state-atomic.json")
+    if !removed { return 9 }
+    return 0
+}

@@ -1,0 +1,44 @@
+module examples.app_table_runtime
+
+// Bounded application table, independent from the Windows UI table widget.
+// Four tables are available; each has 64 rows, 8 text columns and 256-byte cells.
+fn main() -> Int32 {
+    app_table_clear(0)
+    let first_row: Bool = app_table_append_row(0)
+    let second_row: Bool = app_table_append_row(0)
+    let first_name: Bool = app_table_set_cell(0, 0, 0, "Plan UI")
+    let first_time: Bool = app_table_set_cell(0, 0, 1, "08:30")
+    var bytes_name: [UInt8; 8] = [80u8, 108u8, 97u8, 110u8, 32u8, 66u8, 121u8, 116u8]
+    let bytes_written: Bool = app_table_set_cell_bytes_ex(0, 0, 0, bytes_name, 8usize)
+    let second_name: Bool = app_table_set_cell(0, 1, 0, "Review")
+    let second_time: Bool = app_table_set_cell(0, 1, 1, "09:15")
+    var query: [UInt8; 4] = [80u8, 108u8, 97u8, 110u8]
+    let filtered: Bool = app_table_filter_text_ex_bytes(0, 1, 0, query, 4usize, 1)
+    let filtered_rows: Int32 = app_table_row_count(1)
+    let rows: Int32 = app_table_row_count(0)
+    var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let copied: UIntSize = app_table_read_cell(0, 1, 1, output)
+    if output[0] != 48u8 { return 9 }
+    let removed: Bool = app_table_remove_row(0, 0)
+    let remaining: Int32 = app_table_row_count(0)
+    let moved: UIntSize = app_table_read_cell(0, 0, 0, output)
+    app_table_clear(0)
+    let cleared: Int32 = app_table_row_count(0)
+    if !first_row { return 1 }
+    if !second_row { return 2 }
+    if !first_name { return 3 }
+    if !first_time { return 4 }
+    if !bytes_written { return 15 }
+    if !second_name { return 5 }
+    if !second_time { return 6 }
+    if rows != 2 { return 7 }
+    if !filtered { return 16 }
+    if filtered_rows != 1 { return 17 }
+    if copied != 5usize { return 8 }
+    if !removed { return 10 }
+    if remaining != 1 { return 11 }
+    if moved != 6usize { return 12 }
+    if output[0] != 82u8 { return 13 }
+    if cleared != 0 { return 14 }
+    return 0
+}

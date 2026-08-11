@@ -1,0 +1,36 @@
+module app_table_query.main
+
+// Bounded text-table query example.
+// Rows are sorted by UTF-8 byte order and searched by exact text from a start row.
+fn main() -> Int32 {
+    app_table_clear(0)
+
+    app_table_append_row(0)
+    app_table_set_cell(0, 0, 0, "Beta")
+    app_table_set_cell(0, 0, 1, "B")
+
+    app_table_append_row(0)
+    app_table_set_cell(0, 1, 0, "Alpha")
+    app_table_set_cell(0, 1, 1, "A")
+
+    app_table_append_row(0)
+    app_table_set_cell(0, 2, 0, "Gamma")
+    app_table_set_cell(0, 2, 1, "G")
+
+    let ascending: Bool = app_table_sort_text(0, 0, false)
+    let alpha_row: Int32 = app_table_find_text(0, 0, "Alpha", 0)
+    let missing_row: Int32 = app_table_find_text(0, 0, "Missing", 0)
+    if !ascending { return 1 }
+    if alpha_row != 0 { return 1 }
+    if missing_row != -1 { return 1 }
+
+    let descending: Bool = app_table_sort_text(0, 0, true)
+    let gamma_row: Int32 = app_table_find_text(0, 0, "Gamma", 0)
+    let beta_after_gamma: Int32 = app_table_find_text(0, 0, "Beta", gamma_row + 1)
+    if !descending { return 2 }
+    if gamma_row != 0 { return 2 }
+    if beta_after_gamma != 1 { return 2 }
+
+    app_table_clear(0)
+    return 0
+}

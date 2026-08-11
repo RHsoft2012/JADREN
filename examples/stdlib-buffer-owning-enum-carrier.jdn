@@ -1,0 +1,56 @@
+module examples.stdlib_buffer_owning_enum_carrier
+
+// A named @repr(C) enum may contain multiple owning Buffer payload variants
+// among ordinary copy-safe variants. The tag selects the descriptor layout.
+@repr(C) enum Event {
+    Idle,
+    Ready(Buffer<Int32>),
+    Nested(Buffer<Buffer<Int32>>),
+    Done
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<Event>, Int32> = buffer_create(0usize)
+    let payload_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let nested_leaf_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let nested_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match created {
+        Ok(events) => {
+            match payload_created {
+                Ok(payload) => {
+                    if !buffer_append(payload, 42) { result_code = 1 }
+                    if !buffer_append(events, Event.Idle) { result_code = 2 }
+                    if !buffer_append(events, Event.Ready(payload)) { result_code = 3 }
+                    match nested_leaf_created {
+                        Ok(nested_leaf) => {
+                            if !buffer_append(nested_leaf, 7) { result_code = 4 }
+                            match nested_created {
+                                Ok(nested) => {
+                                    if !buffer_append(nested, nested_leaf) { result_code = 5 }
+                                    if !buffer_append(events, Event.Nested(nested)) { result_code = 6 }
+                                    if !buffer_append(events, Event.Done) { result_code = 7 }
+                                    if buffer_length(events) != 4usize { result_code = 8 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                    let standalone_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+                    match standalone_created {
+                        Ok(standalone_payload) => {
+                            let standalone: Event = Event.Ready(standalone_payload)
+                            if false { result_code = 9 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

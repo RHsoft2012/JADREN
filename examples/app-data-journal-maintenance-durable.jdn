@@ -1,0 +1,305 @@
+module examples.app_data_journal_maintenance_durable
+
+// Combine byte and frame limits into one caller-driven maintenance boundary.
+// The runtime never creates a worker; the application may call this from its
+// own scheduler tick.
+fn main() -> Int32 {
+    file_delete("target/jadren/app-data-journal-maintenance-durable.journal")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.scratch")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.tmp")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.lock")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.index")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.index.tmp")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.csv")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.csv.tmp")
+
+    if !app_state_set_int("counter", 1i64) { return 1 }
+    if !app_data_journal_append_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.scratch",
+        "target/jadren/app-data-journal-maintenance-durable.lock"
+    ) { return 2 }
+    if !app_state_set_int("counter", 2i64) { return 3 }
+    if !app_data_journal_append_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.scratch",
+        "target/jadren/app-data-journal-maintenance-durable.lock"
+    ) { return 4 }
+
+    var before_stats: [UIntSize; 2] = [0usize, 0usize]
+    if !app_data_journal_stats_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        before_stats
+    ) { return 5 }
+    if before_stats[0] != 2usize { return 6 }
+    if before_stats[1] <= 1usize { return 7 }
+    var span: [UIntSize; 3] = [0usize, 0usize, 0usize]
+    if !app_data_journal_frame_span_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        0usize,
+        span
+    ) { return 30 }
+    if span[0] != 0usize { return 31 }
+    if span[1] <= span[2] { return 32 }
+    if span[2] == 0usize { return 33 }
+    var plan: [UIntSize; 3] = [777usize, 777usize, 777usize]
+    if !app_data_journal_maintenance_plan_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        before_stats[1] - 1usize,
+        8usize,
+        plan
+    ) { return 8 }
+    if plan[0] != 1usize { return 9 }
+    if plan[1] != before_stats[0] { return 10 }
+    if plan[2] != before_stats[1] { return 11 }
+    if !app_data_journal_compact_if_needed_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.scratch",
+        "target/jadren/app-data-journal-maintenance-durable.tmp",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        before_stats[1] - 1usize,
+        1usize
+    ) { return 12 }
+
+    var after_stats: [UIntSize; 2] = [0usize, 0usize]
+    if !app_data_journal_stats_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        after_stats
+    ) { return 13 }
+    if after_stats[0] != 1usize { return 14 }
+    if after_stats[1] >= before_stats[1] { return 15 }
+
+    if !app_data_journal_build_index_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.index.tmp",
+        "target/jadren/app-data-journal-maintenance-durable.lock"
+    ) { return 34 }
+    var indexed_span: [UIntSize; 3] = [777usize, 777usize, 777usize]
+    if !app_data_journal_index_lookup_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        0usize,
+        indexed_span
+    ) { return 35 }
+    if indexed_span[0] != 0usize { return 36 }
+    if indexed_span[1] <= indexed_span[2] { return 37 }
+    if indexed_span[2] == 0usize { return 38 }
+    var page: [UIntSize; 6] = [0usize, 0usize, 0usize, 0usize, 0usize, 0usize]
+    let page_count: UIntSize = app_data_journal_index_range_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        0usize,
+        2usize,
+        page,
+    )
+    if page_count != 1usize { return 57 }
+    if page[0] != indexed_span[0] { return 58 }
+    if page[1] != indexed_span[1] { return 59 }
+    if page[2] != indexed_span[2] { return 60 }
+    var short_page: [UIntSize; 2] = [777usize, 777usize]
+    if app_data_journal_index_range_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        0usize,
+        2usize,
+        short_page,
+    ) != 0usize { return 61 }
+    if short_page[0] != 777usize { return 62 }
+    if short_page[1] != 777usize { return 64 }
+    if app_data_journal_index_range_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        1usize,
+        1usize,
+        page,
+    ) != 0usize { return 63 }
+
+    // Read the same indexed page as contiguous payload bytes. Metadata adds
+    // the payload output offset so a virtualized caller can slice the page
+    // without another lock/read round-trip.
+    var page_payload: [UInt8; 1024] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var page_metadata: [UIntSize; 4] = [777usize, 777usize, 777usize, 777usize]
+    let payload_page_count: UIntSize = app_data_journal_index_read_page_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        0usize,
+        1usize,
+        page_payload,
+        page_metadata,
+    )
+    if payload_page_count != 1usize { return 65 }
+    if page_metadata[0] != indexed_span[0] { return 66 }
+    if page_metadata[1] != indexed_span[1] { return 67 }
+    if page_metadata[2] != indexed_span[2] { return 68 }
+    if page_metadata[3] != 0usize { return 69 }
+    let exact_payload_length: UIntSize = app_data_journal_frame_length_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        0usize,
+    )
+    var exact_payload: [UInt8; 1024] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var exact_length: [UIntSize; 1] = [0usize]
+    if !app_data_journal_read_frame_exact_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        0usize,
+        exact_payload,
+        exact_length,
+    ) { return 70 }
+    if exact_payload_length != exact_length[0] { return 71 }
+    if exact_length[0] == 0usize { return 72 }
+    if page_payload[0usize] != exact_payload[0usize] { return 72 }
+    if page_payload[exact_length[0] - 1usize] != exact_payload[exact_length[0] - 1usize] { return 76 }
+    if page_payload[exact_length[0] / 2usize] != exact_payload[exact_length[0] / 2usize] { return 77 }
+    var short_page_payload: [UInt8; 1] = [77u8]
+    var short_page_metadata: [UIntSize; 4] = [777usize, 777usize, 777usize, 777usize]
+    if app_data_journal_index_read_page_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        0usize,
+        1usize,
+        short_page_payload,
+        short_page_metadata,
+    ) != 0usize { return 73 }
+    if short_page_payload[0] != 77u8 { return 74 }
+    if short_page_metadata[0] != 777usize { return 75 }
+
+    // Export the validated index as caller-owned numeric CSV.
+    var csv: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let csv_length: UIntSize = app_data_journal_index_export_csv_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        csv,
+    )
+    if csv_length == 0usize { return 44 }
+    if csv[0] != 102u8 { return 45 }
+    var short_csv: [UInt8; 1] = [77u8]
+    if app_data_journal_index_export_csv_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        short_csv,
+    ) != 0usize { return 46 }
+    if short_csv[0] != 77u8 { return 47 }
+    if !app_data_journal_index_export_csv_file_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        "target/jadren/app-data-journal-maintenance-durable.csv",
+        "target/jadren/app-data-journal-maintenance-durable.csv.tmp",
+    ) { return 50 }
+    if file_size("target/jadren/app-data-journal-maintenance-durable.csv") <= 45usize { return 51 }
+    var csv_file_text: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var csv_file_length: [UIntSize; 1] = [0usize]
+    if !file_read_text_exact(
+        "target/jadren/app-data-journal-maintenance-durable.csv",
+        csv_file_text,
+        csv_file_length,
+    ) { return 52 }
+    if csv_file_text[0] != 102u8 { return 53 }
+    if csv_file_length[0] <= 45usize { return 56 }
+
+    // At both limits the second call is a no-op and still succeeds.
+    if !app_data_journal_compact_if_needed_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.scratch",
+        "target/jadren/app-data-journal-maintenance-durable.tmp",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        after_stats[1],
+        after_stats[0]
+    ) { return 16 }
+    if file_size("target/jadren/app-data-journal-maintenance-durable.journal") != after_stats[1] { return 17 }
+
+    // A finite retry boundary can be used by a scheduler after transient lock
+    // contention; this no-op case succeeds on its first of two allowed tries.
+    if !app_data_journal_maintenance_retry_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.scratch",
+        "target/jadren/app-data-journal-maintenance-durable.tmp",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        after_stats[1],
+        after_stats[0],
+        2usize,
+        0usize
+    ) { return 18 }
+
+    app_state_clear()
+    if !app_data_journal_recover(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.scratch"
+    ) { return 19 }
+    if app_state_get_int("counter") != 2i64 { return 20 }
+
+    // A changed journal invalidates the persistent index and leaves output untouched.
+    var torn_tail: [UInt8; 1] = [88u8]
+    if file_write_at(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        after_stats[1],
+        torn_tail,
+    ) != 1usize { return 39 }
+    var stale_span: [UIntSize; 3] = [777usize, 777usize, 777usize]
+    if app_data_journal_index_lookup_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        0usize,
+        stale_span,
+    ) { return 40 }
+    if stale_span[0] != 777usize { return 41 }
+    if stale_span[1] != 777usize { return 42 }
+    if stale_span[2] != 777usize { return 43 }
+    var stale_csv: [UInt8; 64] = [77u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if app_data_journal_index_export_csv_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        stale_csv,
+    ) != 0usize { return 48 }
+    if stale_csv[0] != 77u8 { return 49 }
+    var stale_payload_page: [UInt8; 4] = [77u8, 77u8, 77u8, 77u8]
+    var stale_payload_metadata: [UIntSize; 4] = [777usize, 777usize, 777usize, 777usize]
+    if app_data_journal_index_read_page_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        0usize,
+        1usize,
+        stale_payload_page,
+        stale_payload_metadata,
+    ) != 0usize { return 78 }
+    if stale_payload_page[0] != 77u8 { return 79 }
+    if stale_payload_metadata[0] != 777usize { return 80 }
+    let csv_file_size: UIntSize = file_size(
+        "target/jadren/app-data-journal-maintenance-durable.csv",
+    )
+    if app_data_journal_index_export_csv_file_durable(
+        "target/jadren/app-data-journal-maintenance-durable.journal",
+        "target/jadren/app-data-journal-maintenance-durable.index",
+        "target/jadren/app-data-journal-maintenance-durable.lock",
+        "target/jadren/app-data-journal-maintenance-durable.csv",
+        "target/jadren/app-data-journal-maintenance-durable.csv.tmp",
+    ) { return 54 }
+    if file_size("target/jadren/app-data-journal-maintenance-durable.csv") != csv_file_size { return 55 }
+
+    file_delete("target/jadren/app-data-journal-maintenance-durable.journal")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.scratch")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.tmp")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.lock")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.index")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.index.tmp")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.csv")
+    file_delete("target/jadren/app-data-journal-maintenance-durable.csv.tmp")
+    return 0
+}

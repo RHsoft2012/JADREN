@@ -1,0 +1,55 @@
+module examples.stdlib_buffer_owning_string_carriers
+
+// Probe for tag-selected ownership in generic buffers.  The active variant
+// of Option/Result owns an OwnedString descriptor; inactive payloads must stay
+// untouched during append, resize, clear and drop.
+fn main() -> Int32 {
+    let options_created: Result<Buffer<Option<OwnedString>>, Int32> = buffer_create(0usize)
+    let results_created: Result<Buffer<Result<OwnedString, Int32>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 1
+
+    match options_created {
+        Ok(options) => {
+            let first: Result<OwnedString, Int32> = string_owned_from("Option")
+            match first {
+                Ok(value) => {
+                    if !buffer_append(options, Some(value)) { result_code = 2 }
+                }
+                Error(status) => { result_code = status }
+            }
+            let resize_status: Int32 = buffer_resize_move_status(options, 2usize)
+            if resize_status != 0 { result_code = resize_status }
+            let clear_status: Int32 = buffer_clear_move_status(options)
+            if clear_status != 0 { result_code = clear_status }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    match results_created {
+        Ok(results) => {
+            let first: Result<OwnedString, Int32> = string_owned_from("Result")
+            match first {
+                Ok(value) => {
+                    if !buffer_append(results, Ok(value)) { result_code = 3 }
+                }
+                Error(status) => { result_code = status }
+            }
+            let error_value: Result<OwnedString, Int32> = string_owned_from("Error")
+            match error_value {
+                Ok(value) => {
+                    if !buffer_append(results, Error(-7)) { result_code = 4 }
+                    if string_owned_clear(value) != 0 { result_code = 5 }
+                }
+                Error(status) => { result_code = status }
+            }
+            let resize_status: Int32 = buffer_resize_move_status(results, 1usize)
+            if resize_status != 0 { result_code = resize_status }
+            let clear_status: Int32 = buffer_clear_move_status(results)
+            if clear_status != 0 { result_code = clear_status }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    if result_code == 1 { result_code = 0 }
+    return result_code
+}

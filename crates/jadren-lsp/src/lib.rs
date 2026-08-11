@@ -70,6 +70,7 @@ pub struct DocumentSymbol {
     /// Full declaration range.
     pub range: Range,
     /// Identifier selection range.
+    #[serde(rename = "selectionRange")]
     pub selection_range: Range,
     /// Optional nested symbols.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -91,6 +92,7 @@ pub struct TextEdit {
     /// Replaced range.
     pub range: Range,
     /// Replacement identifier text.
+    #[serde(rename = "newText")]
     pub new_text: String,
 }
 
@@ -136,6 +138,7 @@ pub struct CodeAction {
     /// Workspace edit applied by the client.
     pub edit: WorkspaceEdit,
     /// Prefer this action when the editor supports ranking.
+    #[serde(rename = "isPreferred")]
     pub is_preferred: bool,
 }
 
@@ -156,6 +159,7 @@ pub struct InlayHint {
     /// LSP hint kind: 1 type, 2 parameter.
     pub kind: u8,
     /// Keep the label visually attached to the identifier.
+    #[serde(rename = "paddingLeft")]
     pub padding_left: bool,
 }
 
@@ -3028,6 +3032,7 @@ fn format_type_at(store: &TypeStore, id: TypeId, depth: usize) -> String {
         TypeKind::Bool => "Bool".to_owned(),
         TypeKind::Char => "Char".to_owned(),
         TypeKind::String => "String".to_owned(),
+        TypeKind::OwnedString => "OwnedString".to_owned(),
         TypeKind::Unit => "Unit".to_owned(),
         TypeKind::Never => "Never".to_owned(),
         TypeKind::Integer { signedness, width } => {
@@ -4517,7 +4522,27 @@ mod tests {
     #[test]
     fn transport_handles_initialize_open_symbols_and_shutdown() {
         let input = [
-            frame(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})),
+            frame(json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "method":"initialize",
+                "params":{
+                    "processId":1234,
+                    "rootUri":"file:///D:/JADREN-PROGRAMS/WINDOWS-DESKTOP-LAB",
+                    "capabilities":{
+                        "workspace":{"configuration":true},
+                        "textDocument":{
+                            "completion":{"completionItem":{"snippetSupport":true}},
+                            "synchronization":{"dynamicRegistration":true}
+                        }
+                    },
+                    "workspaceFolders":[{
+                        "uri":"file:///D:/JADREN-PROGRAMS/WINDOWS-DESKTOP-LAB",
+                        "name":"WINDOWS-DESKTOP-LAB"
+                    }]
+                }
+            })),
+            frame(json!({"jsonrpc":"2.0","method":"initialized","params":{}})),
             frame(json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///tmp/a.jdn","version":1,"text":"fn main() {}"}}})),
             frame(json!({"jsonrpc":"2.0","id":2,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"file:///tmp/a.jdn"}}})),
             frame(json!({"jsonrpc":"2.0","id":3,"method":"shutdown"})),

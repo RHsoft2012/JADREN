@@ -1,0 +1,9 @@
+module examples.selfhost.typed_if_value_stage2
+
+// Companion source for the Stage-2 block-parameter merge.
+// The if expression produces one Int32 value through a join block.
+
+fn main() -> Int32 {
+    let value: Int32 = if 2 > 1 { 10 } else { 20 }
+    return value
+}

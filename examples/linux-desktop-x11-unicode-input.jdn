@@ -1,0 +1,47 @@
+module linux_desktop_x11_unicode_input.main
+
+// X11 retained text input uses optional XIM for UTF-8 and keeps an ASCII
+// fallback when an input method is unavailable.  The callback writes the
+// exact caller-owned UTF-8 prefix returned by the native input node.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 2 {
+        var input: [UInt8; 64] = [
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+        ]
+        var length: [UIntSize; 1] = [0usize]
+        if ui_input_read_exact(1, input, length) {
+            file_append("target/jadren/x11-unicode-input.txt", input, length[0])
+            ui_set_status("UTF-8 input saved.")
+        }
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    let root: Int32 = ui_app_begin("Jadren X11 Unicode Input", 640, 260,
+        0xF6F8FCu32)
+    if root == 0 { return 1 }
+    let panel: Int32 = ui_app_panel(root, 600, 210, 0xFFFFFFu32, 12,
+        16, 10, 0, 1)
+    if panel == 0 { return 2 }
+    let heading: Int32 = ui_app_label(panel, "Native UTF-8 / XIM input", 560,
+        32, 0x111827u32, 0xFFFFFFu32, 8, 1)
+    let input: Int32 = ui_app_text_input(panel, "", 1, 560, 40,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let save: Int32 = ui_app_button(panel, "Save input", 2, 180, 40,
+        0xFFFFFFu32, 0x168EF5u32, 8, 0)
+    if heading == 0 { return 3 }
+    if input == 0 { return 3 }
+    if save == 0 { return 3 }
+    if !ui_app_end(panel) { return 4 }
+    if !ui_app_end(root) { return 5 }
+    return ui_app_run()
+}

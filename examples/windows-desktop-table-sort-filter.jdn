@@ -1,0 +1,101 @@
+module windows_desktop_table_sort_filter.main
+
+// Sort and filter are model operations exposed through the native table view.
+// The source table remains the source of truth; the second table is a filtered
+// projection.  Both retained ui_app_* calls and the legacy event-id wrappers
+// are intentionally shown so an existing Windows program can migrate without
+// an Electron or other GUI bridge.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 40 {
+        ui_table_sort_text(30, 0, false)
+        ui_set_status("Source table sorted A-Z.")
+    }
+    if event_id == 41 {
+        ui_table_sort_text(30, 0, true)
+        ui_set_status("Source table sorted Z-A.")
+    }
+    if event_id == 42 {
+        ui_table_filter_text(30, 1, 1, "Open")
+        ui_set_status("Exact filter copied Open rows.")
+    }
+    if event_id == 43 {
+        ui_table_filter_text_ex(30, 1, 1, "pen", 1)
+        ui_set_status("Contains filter copied rows containing pen.")
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_table_clear(0)
+    app_table_clear(1)
+    if !app_table_append_row(0) { return 1 }
+    if !app_table_append_row(0) { return 2 }
+    if !app_table_append_row(0) { return 3 }
+    if !app_table_set_cell(0, 0, 0, "Beta") { return 4 }
+    if !app_table_set_cell(0, 0, 1, "Open") { return 5 }
+    if !app_table_set_cell(0, 1, 0, "Alpha") { return 6 }
+    if !app_table_set_cell(0, 1, 1, "Done") { return 7 }
+    if !app_table_set_cell(0, 2, 0, "Gamma") { return 8 }
+    if !app_table_set_cell(0, 2, 1, "Open") { return 9 }
+
+    let root: Int32 = ui_app_begin("Jadren Table Sort and Filter", 900, 620, 0xF6F8FCu32)
+    if root == 0 { return 10 }
+    let panel: Int32 = ui_app_panel(root, 820, 520, 0xFFFFFFu32, 16, 16, 10, 0, 1)
+    if panel == 0 { return 11 }
+    let heading: Int32 = ui_app_label(panel,
+        "Native table sorting and filtering",
+        760, 34, 0x111827u32, 0xFFFFFFu32, 8, 1)
+    if heading == 0 { return 12 }
+    let status: Int32 = ui_app_status(panel,
+        "The model is sorted and filtered by Jadren APIs.",
+        760, 42, 0x111827u32, 0xDCFCE7u32, 8, 1)
+    if status == 0 { return 13 }
+
+    let tables: Int32 = ui_app_row(panel, 760, 220, 0, 12, 0, 1)
+    if tables == 0 { return 14 }
+    let source: Int32 = ui_app_table(tables, 30, 360, 190,
+        0x111827u32, 0xFFFFFFu32, 8, 0)
+    if source == 0 { return 15 }
+    if !ui_app_table_column(source, 0, "Task", 200) { return 16 }
+    if !ui_app_table_column(source, 1, "Status", 120) { return 17 }
+    if !ui_app_table_bind_app(source, 0, 2) { return 18 }
+
+    let filtered: Int32 = ui_app_table(tables, 31, 360, 190,
+        0x111827u32, 0xFFFFFFu32, 8, 0)
+    if filtered == 0 { return 19 }
+    if !ui_app_table_column(filtered, 0, "Filtered task", 200) { return 20 }
+    if !ui_app_table_column(filtered, 1, "Status", 120) { return 21 }
+    if !ui_app_table_bind_app(filtered, 1, 2) { return 22 }
+    if !ui_app_end(tables) { return 23 }
+
+    // Exercise the retained API before the window is shown.  The destination
+    // table receives two Open rows and every bound view is refreshed.
+    let sorted: Bool = ui_app_table_sort_text(source, 0, false)
+    if !sorted { return 24 }
+    let exact: Bool = ui_app_table_filter_text(source, 1, 1, "Open")
+    if !exact { return 25 }
+    if ui_app_table_row_count(filtered) != 2 { return 26 }
+    let contains: Bool = ui_app_table_filter_text_ex(source, 1, 1, "pen", 1)
+    if !contains { return 27 }
+    if ui_app_table_row_count(filtered) != 2 { return 28 }
+
+    let actions: Int32 = ui_app_row(panel, 760, 52, 0, 8, 0, 1)
+    if actions == 0 { return 29 }
+    let ascending: Int32 = ui_app_button(actions, "Sort A-Z", 40, 150, 42,
+        0xFFFFFFu32, 0x168EF5u32, 10, 0)
+    let descending: Int32 = ui_app_button(actions, "Sort Z-A", 41, 150, 42,
+        0xFFFFFFu32, 0x0B6FC8u32, 10, 0)
+    let exact_filter: Int32 = ui_app_button(actions, "Filter Open", 42, 150, 42,
+        0xFFFFFFu32, 0x18C964u32, 10, 0)
+    let contains_filter: Int32 = ui_app_button(actions, "Contains pen", 43, 160, 42,
+        0xFFFFFFu32, 0x8B5CF6u32, 10, 0)
+    if ascending == 0 { return 30 }
+    if descending == 0 { return 31 }
+    if exact_filter == 0 { return 32 }
+    if contains_filter == 0 { return 33 }
+    if !ui_app_end(actions) { return 34 }
+    if !ui_app_end(panel) { return 35 }
+    if !ui_app_end(root) { return 36 }
+    return ui_app_run()
+}

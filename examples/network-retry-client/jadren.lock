@@ -1,0 +1,13 @@
+version = 1
+manifest_fingerprint = "32740dea9ef1fad2"
+
+[package]
+name = "network-retry-client"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"
+

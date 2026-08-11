@@ -1,0 +1,19 @@
+module examples.selfhost.typed_statement_float_stage2
+
+// The scalar Stage-2 slice keeps Float64 locals in one native stack slot.
+// The executable returns Int32 only so the normal process-exit ABI stays
+// explicit; the computed Float64 value is still checked before returning.
+fn compute() -> Float64 {
+    let first: Float64 = 1.5f64
+    var value: Float64 = first + 2.5f64
+    value = value * 2.0f64
+    return value
+}
+
+fn main() -> Int32 {
+    let value: Float64 = compute()
+    if value == 8.0f64 {
+        return 0
+    }
+    return 1
+}

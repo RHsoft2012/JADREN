@@ -102,27 +102,18 @@ route (`JadrenAnimationGpuCrowdAnimator`) requires a baked source prefab,
 supported compute/crowd shaders and a camera. It is an opt-in experimental
 route, not a general Animator, IK or production skinning replacement.
 
-## Automated Unity verification
+## Unity verification
 
-The package ships separate EditMode and PlayMode test assemblies. In a local
-development project, add `com.jadren.animation` to the project manifest's
-`testables` array so Unity includes the package tests. Run the repository
-runner from the Jadren workspace and keep separate result files:
+The package ships separate EditMode and PlayMode test assemblies. Add
+`com.jadren.animation` to the Unity Test Runner's package test list, then run
+the tests from **Window → General → Test Runner**. Start with EditMode checks,
+continue with the fixed-timestep PlayMode check and finally test the scene in
+the Game view.
 
-```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-unity-animation-editmode.ps1 `
-  -ProjectRoot <UnityProject> -TestPlatform editmode -RunUnity -RequirePass
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-unity-animation-editmode.ps1 `
-  -ProjectRoot <UnityProject> -TestPlatform playmode `
-  -TestFilter Jadren.Animation.PlayMode.Tests -RunUnity -RequirePass
-```
-
-The PlayMode fixture verifies the fixed-timestep Rigidbody/pose ownership
-boundary only. A passing test run does not prove display refresh, GPU
-throughput, physical-device parity or a public performance result. The runner
-accepts only `editmode` or `playmode` and records the selected platform in its
-contract report, preventing an EditMode report from being mistaken for a
-runtime test.
+The PlayMode test verifies the fixed-timestep Rigidbody and pose ownership
+boundary. A passing test run does not prove display refresh, GPU throughput,
+physical-device parity or a public performance result. Keep the tested Unity
+version, package version and target platform in the report for reproducibility.
 
 ## Rigidbody and fixed-timestep integration
 
@@ -309,13 +300,11 @@ overrides, pose checksum readiness and p50/p95 CPU time for
 than only changing a state label. Phase
 completion and controller-state-name completion are reported separately. The
 report uses `manual-player-step` cadence, so it must not be read as
-display-refresh, GPU, physical-device or public speedup evidence. Validate the JSON with
-`scripts/check-unity-animation-robot-cadence.ps1`; use
-`-RequirePoseChanges` when a strict phase-pose change gate is required. If the authored controller
-uses different state names, configure `JADREN_ROBOT_IDLE_STATE`,
-`JADREN_ROBOT_WALK_STATE`, `JADREN_ROBOT_RUN_STATE` and
-`JADREN_ROBOT_JUMP_STATE`; these aliases only describe the mapping and never
-rename or mutate the Unity controller.
+display-refresh, GPU, physical-device or public speedup evidence. Run the
+benchmark from the Unity Editor menu and keep the result with the project
+version and hardware details. If the authored controller uses different state
+names, select the matching names in the benchmark window; these aliases only
+describe the mapping and never rename or mutate the Unity controller.
 
 ## Performance expectations
 

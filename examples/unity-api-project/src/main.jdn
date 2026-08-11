@@ -1,0 +1,1010 @@
+module unity_api.main
+
+import jadren.unity.scene.UnityCommandRecord
+import jadren.unity.scene.UnityTransform
+import jadren.unity.scene.UnitySceneNode
+import jadren.unity.scene.unity_transform
+import jadren.unity.scene.unity_transform_identity
+import jadren.unity.scene.unity_scene_node
+import jadren.unity.scene.unity_scene_emit_node
+import jadren.unity.scene.unity_scene_spawn
+import jadren.unity.scene.unity_scene_spawn_with_transform
+import jadren.unity.scene.unity_scene_create_primitive
+import jadren.unity.scene.unity_scene_create_primitive_with_transform
+import jadren.unity.scene.unity_scene_add_component
+import jadren.unity.scene.unity_scene_transform
+import jadren.unity.scene.unity_scene_set_transform_value
+import jadren.unity.scene.unity_scene_set_active
+import jadren.unity.scene.unity_scene_destroy
+import jadren.unity.scene.unity_scene_set_parent
+import jadren.unity.editor.UnityEditorPlanCommandRecord
+import jadren.unity.editor.unity_editor_plan_copy_asset_path
+import jadren.unity.editor.unity_editor_plan_copy_text_at
+import jadren.unity.editor.unity_editor_plan_create_primitive
+import jadren.unity.editor.unity_editor_plan_instantiate_prefab
+import jadren.unity.editor.unity_editor_plan_set_transform
+import jadren.unity.editor.unity_editor_plan_set_active
+import jadren.unity.editor.unity_editor_plan_set_parent
+import jadren.unity.editor.unity_editor_plan_create_ui_canvas
+import jadren.unity.editor.unity_editor_plan_create_ui_panel
+import jadren.unity.editor.unity_editor_plan_create_ui_text
+import jadren.unity.editor.unity_editor_plan_create_ui_button
+import jadren.unity.editor.unity_editor_plan_create_ui_toggle
+import jadren.unity.editor.unity_editor_plan_create_ui_slider
+import jadren.unity.editor.unity_editor_plan_create_ui_input_field
+import jadren.unity.editor.unity_editor_plan_set_ui_text
+import jadren.unity.editor.unity_editor_plan_set_ui_color
+import jadren.unity.editor.unity_editor_plan_set_ui_interactable
+import jadren.unity.editor.unity_editor_plan_add_component
+import jadren.unity.editor.unity_editor_plan_set_component_float
+import jadren.unity.editor.unity_editor_plan_set_component_bool
+import jadren.unity.editor.unity_editor_plan_save_prefab_asset
+import jadren.unity.editor.unity_editor_plan_create_ui_event_router
+import jadren.unity.editor.unity_editor_plan_attach_ui_event_source
+import jadren.unity.editor.unity_editor_plan_attach_ui_text_event_source
+import jadren.unity.component_props.UnityComponentFloatCommandRecord
+import jadren.unity.component_props.unity_component_set_float
+import jadren.unity.component_props.UnityComponentBoolCommandRecord
+import jadren.unity.component_props.unity_component_set_bool
+import jadren.unity.visual.UnityRendererColorCommandRecord
+import jadren.unity.visual.unity_renderer_set_color
+import jadren.unity.ui.UnityUiCommandRecord
+import jadren.unity.ui.UnityColor
+import jadren.unity.ui.UnityUiStyle
+import jadren.unity.ui.UnityUiTextValue
+import jadren.unity.ui.UnityTextRange
+import jadren.unity.ui.UnityUiListItemValue
+import jadren.unity.ui.UnityUiTableCellValue
+import jadren.unity.ui.unity_color
+import jadren.unity.ui.unity_color_white
+import jadren.unity.ui.unity_ui_style
+import jadren.unity.ui.unity_text_range
+import jadren.unity.ui.unity_ui_text_value
+import jadren.unity.ui.unity_ui_write_text_value
+import jadren.unity.ui.unity_ui_list_item_value
+import jadren.unity.ui.unity_ui_table_cell_value
+import jadren.unity.ui.unity_ui_write_list_item_value
+import jadren.unity.ui.unity_ui_write_table_cell_value
+import jadren.unity.ui.UnityUiTextCommandRecord
+import jadren.unity.ui.UnityUiListCommandRecord
+import jadren.unity.ui.UnityUiTableCommandRecord
+import jadren.unity.ui.unity_ui_set_color
+import jadren.unity.ui.unity_ui_set_color_value
+import jadren.unity.ui.unity_ui_set_active
+import jadren.unity.ui.unity_ui_set_interactable
+import jadren.unity.ui.unity_ui_apply_style
+import jadren.unity.ui.unity_ui_set_text
+import jadren.unity.ui.unity_ui_list_clear
+import jadren.unity.ui.unity_ui_list_set_item
+import jadren.unity.ui.unity_ui_table_clear
+import jadren.unity.ui.unity_ui_table_set_cell
+import jadren.unity.events.UnityUiEventRecord
+import jadren.unity.events.unity_ui_event_count_clicks
+import jadren.unity.events.unity_ui_event_count_kind
+import jadren.unity.events.unity_ui_event_count_target
+import jadren.unity.events.unity_ui_event_latest_value
+import jadren.unity.state.unity_ui_reduce_toggle
+import jadren.unity.state.unity_ui_reduce_value_color
+import jadren.unity.state.unity_ui_reduce_value_component_float
+import jadren.unity.state.unity_ui_reduce_value_component_bool
+import jadren.unity.state.unity_ui_reduce_text
+
+@export(name: "jadren_unity_api_emit_scene", abi: "C")
+@noalloc
+pub fn emit_scene(output: write Slice<UnityCommandRecord>, capacity: UIntSize) -> UIntSize {
+    if capacity < 4usize {
+        return 0usize
+    }
+    if !unity_scene_spawn(output, capacity, 0usize, 42u32, 7u32,
+                          1.0f32, 2.0f32, 3.0f32,
+                          0.0f32, 0.0f32, 0.0f32, 1.0f32,
+                          1.0f32, 1.0f32, 1.0f32) {
+        return 0usize
+    }
+    if !unity_scene_transform(output, capacity, 1usize, 42u32,
+                              4.0f32, 5.0f32, 6.0f32,
+                              0.0f32, 0.0f32, 0.0f32, 1.0f32,
+                              2.0f32, 2.0f32, 2.0f32) {
+        return 0usize
+    }
+    if !unity_scene_set_active(output, capacity, 2usize, 42u32, false) {
+        return 0usize
+    }
+    if !unity_scene_destroy(output, capacity, 3usize, 42u32) {
+        return 0usize
+    }
+    return 4usize
+}
+
+@export(name: "jadren_unity_api_emit_parenting", abi: "C")
+@noalloc
+pub fn emit_parenting(output: write Slice<UnityCommandRecord>, capacity: UIntSize) -> UIntSize {
+    if capacity < 3usize {
+        return 0usize
+    }
+    if !unity_scene_spawn(output, capacity, 0usize, 100u32, 7u32,
+                          0.0f32, 0.0f32, 0.0f32,
+                          0.0f32, 0.0f32, 0.0f32, 1.0f32,
+                          1.0f32, 1.0f32, 1.0f32) {
+        return 0usize
+    }
+    if !unity_scene_spawn(output, capacity, 1usize, 101u32, 7u32,
+                          1.0f32, 0.0f32, 0.0f32,
+                          0.0f32, 0.0f32, 0.0f32, 1.0f32,
+                          1.0f32, 1.0f32, 1.0f32) {
+        return 0usize
+    }
+    if !unity_scene_set_parent(output, capacity, 2usize, 101u32, 100u32) {
+        return 0usize
+    }
+    return 3usize
+}
+
+@export(name: "jadren_unity_api_emit_primitive", abi: "C")
+@noalloc
+pub fn emit_primitive(output: write Slice<UnityCommandRecord>, capacity: UIntSize) -> UIntSize {
+    if capacity < 1usize {
+        return 0usize
+    }
+    // Primitive id 3 is Unity's Cube. The entity handle stays explicit and
+    // is owned by the Unity host just like a prefab-spawned entity.
+    if !unity_scene_create_primitive(
+        output,
+        capacity,
+        0usize,
+        99u32,
+        3u32,
+        0.0f32,
+        0.0f32,
+        0.0f32,
+        0.0f32,
+        0.0f32,
+        0.0f32,
+        1.0f32,
+        1.0f32,
+        1.0f32,
+        1.0f32,
+    ) {
+        return 0usize
+    }
+    return 1usize
+}
+
+@export(name: "jadren_unity_api_emit_component", abi: "C")
+@noalloc
+pub fn emit_component(output: write Slice<UnityCommandRecord>, capacity: UIntSize) -> UIntSize {
+    if capacity < 1usize {
+        return 0usize
+    }
+    // Component id 12 is resolved by the Unity host smoke to Rigidbody.
+    if !unity_scene_add_component(output, capacity, 0usize, 99u32, 12u32) {
+        return 0usize
+    }
+    return 1usize
+}
+
+@export(name: "jadren_unity_api_emit_component_float", abi: "C")
+@noalloc
+pub fn emit_component_float(
+    output: write Slice<UnityComponentFloatCommandRecord>,
+    capacity: UIntSize,
+) -> UIntSize {
+    if capacity < 1usize {
+        return 0usize
+    }
+    // Component 12 is Rigidbody; property 1 is its mass in the Unity host.
+    if !unity_component_set_float(
+        output,
+        capacity,
+        0usize,
+        99u32,
+        12u32,
+        1u32,
+        3.5f32,
+    ) {
+        return 0usize
+    }
+    return 1usize
+}
+
+@export(name: "jadren_unity_api_emit_component_bool", abi: "C")
+@noalloc
+pub fn emit_component_bool(
+    output: write Slice<UnityComponentBoolCommandRecord>,
+    capacity: UIntSize,
+) -> UIntSize {
+    if capacity < 1usize {
+        return 0usize
+    }
+    // Component 12 is Rigidbody; property 2 is useGravity in the Unity host.
+    if !unity_component_set_bool(
+        output,
+        capacity,
+        0usize,
+        99u32,
+        12u32,
+        2u32,
+        false,
+    ) {
+        return 0usize
+    }
+    return 1usize
+}
+
+@export(name: "jadren_unity_api_emit_renderer_color", abi: "C")
+@noalloc
+pub fn emit_renderer_color(
+    output: write Slice<UnityRendererColorCommandRecord>,
+    capacity: UIntSize,
+) -> UIntSize {
+    if capacity < 1usize {
+        return 0usize
+    }
+    if !unity_renderer_set_color(
+        output,
+        capacity,
+        0usize,
+        99u32,
+        0.2f32,
+        0.4f32,
+        0.8f32,
+        1.0f32,
+    ) {
+        return 0usize
+    }
+    return 1usize
+}
+
+@export(name: "jadren_unity_api_emit_ui", abi: "C")
+@noalloc
+pub fn emit_ui(output: write Slice<UnityUiCommandRecord>, capacity: UIntSize) -> UIntSize {
+    if capacity < 3usize {
+        return 0usize
+    }
+    if !unity_ui_set_color(output, capacity, 0usize, 21u32,
+                           0.1f32, 0.6f32, 1.0f32, 1.0f32) {
+        return 0usize
+    }
+    if !unity_ui_set_active(output, capacity, 1usize, 21u32, false) {
+        return 0usize
+    }
+    if !unity_ui_set_interactable(output, capacity, 2usize, 21u32, false) {
+        return 0usize
+    }
+    return 3usize
+}
+
+@export(name: "jadren_unity_api_emit_ui_text", abi: "C")
+@noalloc
+pub fn emit_ui_text(
+    output: write Slice<UnityUiTextCommandRecord>,
+    text_output: write Slice<UInt8>,
+    command_capacity: UIntSize,
+    text_capacity: UIntSize,
+) -> UIntSize {
+    if command_capacity < 1usize {
+        return 0usize
+    }
+    if text_capacity < 9usize {
+        return 0usize
+    }
+
+    // UTF-8 bytes for "Jadren UI". The caller-owned pool remains separate
+    // from the fixed 32-byte command records.
+    text_output[0] = 74u8
+    text_output[1] = 97u8
+    text_output[2] = 100u8
+    text_output[3] = 114u8
+    text_output[4] = 101u8
+    text_output[5] = 110u8
+    text_output[6] = 32u8
+    text_output[7] = 85u8
+    text_output[8] = 73u8
+
+    if !unity_ui_set_text(
+        output,
+        text_output,
+        command_capacity,
+        text_capacity,
+        0usize,
+        21u32,
+        0u32,
+        9u32,
+    ) {
+        return 0usize
+    }
+    return 1usize
+}
+
+@export(name: "jadren_unity_api_emit_ui_list", abi: "C")
+@noalloc
+pub fn emit_ui_list(
+    output: write Slice<UnityUiListCommandRecord>,
+    text_output: write Slice<UInt8>,
+    command_capacity: UIntSize,
+    text_capacity: UIntSize,
+) -> UIntSize {
+    if command_capacity < 4usize {
+        return 0usize
+    }
+    if text_capacity < 14usize {
+        return 0usize
+    }
+
+    // Caller-owned UTF-8 bytes for three rows: Alpha, Beta, Gamma.
+    text_output[0] = 65u8
+    text_output[1] = 108u8
+    text_output[2] = 112u8
+    text_output[3] = 104u8
+    text_output[4] = 97u8
+    text_output[5] = 66u8
+    text_output[6] = 101u8
+    text_output[7] = 116u8
+    text_output[8] = 97u8
+    text_output[9] = 71u8
+    text_output[10] = 97u8
+    text_output[11] = 109u8
+    text_output[12] = 109u8
+    text_output[13] = 97u8
+
+    if !unity_ui_list_clear(output, command_capacity, 0usize, 77u32) {
+        return 0usize
+    }
+    if !unity_ui_list_set_item(
+        output,
+        text_output,
+        command_capacity,
+        text_capacity,
+        1usize,
+        77u32,
+        101u32,
+        0u32,
+        0u32,
+        5u32,
+    ) {
+        return 0usize
+    }
+    if !unity_ui_list_set_item(
+        output,
+        text_output,
+        command_capacity,
+        text_capacity,
+        2usize,
+        77u32,
+        102u32,
+        1u32,
+        5u32,
+        4u32,
+    ) {
+        return 0usize
+    }
+    if !unity_ui_list_set_item(
+        output,
+        text_output,
+        command_capacity,
+        text_capacity,
+        3usize,
+        77u32,
+        103u32,
+        2u32,
+        9u32,
+        5u32,
+    ) {
+        return 0usize
+    }
+    return 4usize
+}
+
+@export(name: "jadren_unity_api_emit_ui_table", abi: "C")
+@noalloc
+pub fn emit_ui_table(
+    output: write Slice<UnityUiTableCommandRecord>,
+    text_output: write Slice<UInt8>,
+    command_capacity: UIntSize,
+    text_capacity: UIntSize,
+) -> UIntSize {
+    if command_capacity < 7usize {
+        return 0usize
+    }
+    if text_capacity < 22usize {
+        return 0usize
+    }
+
+    // Caller-owned UTF-8 bytes: Name, Value, Alpha, 42, Beta, 99.
+    text_output[0] = 78u8
+    text_output[1] = 97u8
+    text_output[2] = 109u8
+    text_output[3] = 101u8
+    text_output[4] = 86u8
+    text_output[5] = 97u8
+    text_output[6] = 108u8
+    text_output[7] = 117u8
+    text_output[8] = 101u8
+    text_output[9] = 65u8
+    text_output[10] = 108u8
+    text_output[11] = 112u8
+    text_output[12] = 104u8
+    text_output[13] = 97u8
+    text_output[14] = 52u8
+    text_output[15] = 50u8
+    text_output[16] = 66u8
+    text_output[17] = 101u8
+    text_output[18] = 116u8
+    text_output[19] = 97u8
+    text_output[20] = 57u8
+    text_output[21] = 57u8
+
+    if !unity_ui_table_clear(output, command_capacity, 0usize, 88u32) {
+        return 0usize
+    }
+    if !unity_ui_table_set_cell(output, text_output, command_capacity, text_capacity,
+        1usize, 88u32, 1000u32, 10u32, 0u32, 0u32, 0u32, 4u32) {
+        return 0usize
+    }
+    if !unity_ui_table_set_cell(output, text_output, command_capacity, text_capacity,
+        2usize, 88u32, 1000u32, 11u32, 0u32, 1u32, 4u32, 5u32) {
+        return 0usize
+    }
+    if !unity_ui_table_set_cell(output, text_output, command_capacity, text_capacity,
+        3usize, 88u32, 1001u32, 10u32, 1u32, 0u32, 9u32, 5u32) {
+        return 0usize
+    }
+    if !unity_ui_table_set_cell(output, text_output, command_capacity, text_capacity,
+        4usize, 88u32, 1001u32, 11u32, 1u32, 1u32, 14u32, 2u32) {
+        return 0usize
+    }
+    if !unity_ui_table_set_cell(output, text_output, command_capacity, text_capacity,
+        5usize, 88u32, 1002u32, 10u32, 2u32, 0u32, 16u32, 4u32) {
+        return 0usize
+    }
+    if !unity_ui_table_set_cell(output, text_output, command_capacity, text_capacity,
+        6usize, 88u32, 1002u32, 11u32, 2u32, 1u32, 20u32, 2u32) {
+        return 0usize
+    }
+    return 7usize
+}
+
+@export(name: "jadren_unity_api_count_clicks", abi: "C")
+@noalloc
+pub fn count_clicks(events: read Slice<UnityUiEventRecord>) -> UIntSize {
+    return unity_ui_event_count_clicks(events)
+}
+
+@export(name: "jadren_unity_api_count_value_changes", abi: "C")
+@noalloc
+pub fn count_value_changes(events: read Slice<UnityUiEventRecord>) -> UIntSize {
+    return unity_ui_event_count_kind(events, 8u8)
+}
+
+@export(name: "jadren_unity_api_count_target_clicks", abi: "C")
+@noalloc
+pub fn count_target_clicks(
+    events: read Slice<UnityUiEventRecord>,
+    target_id: UInt32,
+) -> UIntSize {
+    return unity_ui_event_count_target(events, 3u8, target_id)
+}
+
+@export(name: "jadren_unity_api_latest_target_value", abi: "C")
+@noalloc
+pub fn latest_target_value(
+    events: read Slice<UnityUiEventRecord>,
+    target_id: UInt32,
+    fallback: Float32,
+) -> Float32 {
+    return unity_ui_event_latest_value(events, target_id, fallback)
+}
+
+@export(name: "jadren_unity_api_reduce_toggle", abi: "C")
+@noalloc
+pub fn reduce_toggle(
+    events: read Slice<UnityUiEventRecord>,
+    state: write Slice<UInt8>,
+    state_capacity: UIntSize,
+    output: write Slice<UnityUiCommandRecord>,
+    command_capacity: UIntSize,
+    source_target_id: UInt32,
+    output_target_id: UInt32,
+) -> UIntSize {
+    return unity_ui_reduce_toggle(
+        events,
+        state,
+        state_capacity,
+        output,
+        command_capacity,
+        source_target_id,
+        output_target_id,
+    )
+}
+
+@export(name: "jadren_unity_api_reduce_value_color", abi: "C")
+@noalloc
+pub fn reduce_value_color(
+    events: read Slice<UnityUiEventRecord>,
+    state: write Slice<Float32>,
+    state_capacity: UIntSize,
+    output: write Slice<UnityUiCommandRecord>,
+    command_capacity: UIntSize,
+    source_target_id: UInt32,
+    output_target_id: UInt32,
+    low_red: Float32,
+    low_green: Float32,
+    low_blue: Float32,
+    high_red: Float32,
+    high_green: Float32,
+    high_blue: Float32,
+) -> UIntSize {
+    return unity_ui_reduce_value_color(
+        events,
+        state,
+        state_capacity,
+        output,
+        command_capacity,
+        source_target_id,
+        output_target_id,
+        low_red,
+        low_green,
+        low_blue,
+        high_red,
+        high_green,
+        high_blue,
+    )
+}
+
+@export(name: "jadren_unity_api_reduce_value_component_float", abi: "C")
+@noalloc
+pub fn reduce_value_component_float(
+    events: read Slice<UnityUiEventRecord>,
+    state: write Slice<Float32>,
+    state_capacity: UIntSize,
+    output: write Slice<UnityComponentFloatCommandRecord>,
+    command_capacity: UIntSize,
+    source_target_id: UInt32,
+    entity_id: UInt32,
+    component_id: UInt32,
+    property_id: UInt32,
+    low_value: Float32,
+    high_value: Float32,
+) -> UIntSize {
+    return unity_ui_reduce_value_component_float(
+        events,
+        state,
+        state_capacity,
+        output,
+        command_capacity,
+        source_target_id,
+        entity_id,
+        component_id,
+        property_id,
+        low_value,
+        high_value,
+    )
+}
+
+@export(name: "jadren_unity_api_reduce_value_component_bool", abi: "C")
+@noalloc
+pub fn reduce_value_component_bool(
+    events: read Slice<UnityUiEventRecord>,
+    state: write Slice<UInt8>,
+    state_capacity: UIntSize,
+    output: write Slice<UnityComponentBoolCommandRecord>,
+    command_capacity: UIntSize,
+    source_target_id: UInt32,
+    entity_id: UInt32,
+    component_id: UInt32,
+    property_id: UInt32,
+    threshold: Float32,
+) -> UIntSize {
+    return unity_ui_reduce_value_component_bool(
+        events,
+        state,
+        state_capacity,
+        output,
+        command_capacity,
+        source_target_id,
+        entity_id,
+        component_id,
+        property_id,
+        threshold,
+    )
+}
+
+@export(name: "jadren_unity_api_reduce_text", abi: "C")
+@noalloc
+pub fn reduce_text(
+    events: read Slice<UnityUiEventRecord>,
+    text_input: read Slice<UInt8>,
+    input_length: UIntSize,
+    output: write Slice<UnityUiTextCommandRecord>,
+    text_output: write Slice<UInt8>,
+    command_capacity: UIntSize,
+    text_capacity: UIntSize,
+    source_target_id: UInt32,
+    output_target_id: UInt32,
+) -> UIntSize {
+    return unity_ui_reduce_text(
+        events,
+        text_input,
+        input_length,
+        output,
+        text_output,
+        command_capacity,
+        text_capacity,
+        source_target_id,
+        output_target_id,
+    )
+}
+
+/// Demonstrates the source-level transform value objects. The exported C ABI
+/// remains the same 52-byte scene record as the low-level helpers.
+@export(name: "jadren_unity_api_emit_declarative_scene", abi: "C")
+@noalloc
+pub fn emit_declarative_scene(
+    output: write Slice<UnityCommandRecord>,
+    capacity: UIntSize,
+) -> UIntSize {
+    if capacity < 2usize { return 0usize }
+    let spawn_transform: UnityTransform = unity_transform(
+        1.0f32, 2.0f32, 3.0f32,
+        0.0f32, 0.0f32, 0.0f32, 1.0f32,
+        1.0f32, 1.0f32, 1.0f32,
+    )
+    if !unity_scene_spawn_with_transform(
+        output, capacity, 0usize, 501u32, 7u32, spawn_transform) {
+        return 0usize
+    }
+    let moved: UnityTransform = unity_transform_identity()
+    if !unity_scene_set_transform_value(output, capacity, 1usize, 501u32, moved) {
+        return 0usize
+    }
+    return 2usize
+}
+
+/// Demonstrates a typed UI color value lowered to the existing UI record.
+@export(name: "jadren_unity_api_emit_declarative_ui", abi: "C")
+@noalloc
+pub fn emit_declarative_ui(
+    output: write Slice<UnityUiCommandRecord>,
+    capacity: UIntSize,
+) -> UIntSize {
+    if capacity < 2usize { return 0usize }
+    let accent: UnityColor = unity_color(0.1f32, 0.6f32, 1.0f32, 1.0f32)
+    if !unity_ui_set_color_value(output, capacity, 0usize, 301u32, accent) {
+        return 0usize
+    }
+    let white: UnityColor = unity_color_white()
+    if !unity_ui_set_color_value(output, capacity, 1usize, 302u32, white) {
+        return 0usize
+    }
+    return 2usize
+}
+
+/// Demonstrates one declarative scene node lowered to three bounded records:
+/// spawn, parent and inactive state.
+@export(name: "jadren_unity_api_emit_declarative_node", abi: "C")
+@noalloc
+pub fn emit_declarative_node(
+    output: write Slice<UnityCommandRecord>,
+    capacity: UIntSize,
+) -> UIntSize {
+    let transform: UnityTransform = unity_transform_identity()
+    let node: UnitySceneNode = unity_scene_node(
+        601u32, 8u32, 600u32, transform, false,
+    )
+    return unity_scene_emit_node(output, capacity, 0usize, node)
+}
+
+/// Demonstrates one declarative UI style lowered to color, active and
+/// interactable records for one registered target.
+@export(name: "jadren_unity_api_emit_declarative_style", abi: "C")
+@noalloc
+pub fn emit_declarative_style(
+    output: write Slice<UnityUiCommandRecord>,
+    capacity: UIntSize,
+) -> UIntSize {
+    let color: UnityColor = unity_color(0.2f32, 0.4f32, 0.8f32, 1.0f32)
+    let style: UnityUiStyle = unity_ui_style(303u32, color, false, false)
+    return unity_ui_apply_style(output, capacity, 0usize, style)
+}
+
+/// Demonstrates a typed target/text range lowered to the existing text record
+/// and caller-owned UTF-8 pool.
+@export(name: "jadren_unity_api_emit_declarative_text", abi: "C")
+pub fn emit_declarative_text(
+    output: write Slice<UnityUiTextCommandRecord>,
+    text_output: write Slice<UInt8>,
+    command_capacity: UIntSize,
+    text_capacity: UIntSize,
+) -> UIntSize {
+    if command_capacity < 1usize {
+        return 0usize
+    }
+    if text_capacity < 9usize {
+        return 0usize
+    }
+    text_output[0] = 74u8
+    text_output[1] = 97u8
+    text_output[2] = 100u8
+    text_output[3] = 114u8
+    text_output[4] = 101u8
+    text_output[5] = 110u8
+    text_output[6] = 32u8
+    text_output[7] = 85u8
+    text_output[8] = 73u8
+    // The public constructors are available to application code; the export
+    // keeps the smoke path explicitly noalloc by constructing the same value
+    // objects inline before lowering the typed range.
+    let text: UnityTextRange = UnityTextRange { offset: 0u32, length: 9u32 }
+    let value: UnityUiTextValue = UnityUiTextValue {
+        target_id: 304u32, text_offset: text.offset, text_length: text.length,
+    }
+    if !unity_ui_write_text_value(
+        output, text_output, command_capacity, text_capacity, 0usize, value,
+    ) {
+        return 0usize
+    }
+    return 1usize
+}
+
+/// Demonstrates a typed list item lowered to one bounded list record.
+@export(name: "jadren_unity_api_emit_declarative_list_item", abi: "C")
+pub fn emit_declarative_list_item(
+    output: write Slice<UnityUiListCommandRecord>,
+    text_output: write Slice<UInt8>,
+    command_capacity: UIntSize,
+    text_capacity: UIntSize,
+) -> UIntSize {
+    if command_capacity < 1usize {
+        return 0usize
+    }
+    if text_capacity < 4usize {
+        return 0usize
+    }
+    text_output[0] = 66u8
+    text_output[1] = 101u8
+    text_output[2] = 116u8
+    text_output[3] = 97u8
+    let text: UnityTextRange = unity_text_range(0u32, 4u32)
+    let item: UnityUiListItemValue = unity_ui_list_item_value(77u32, 102u32, 1u32, text)
+    if !unity_ui_write_list_item_value(
+        output, text_output, command_capacity, text_capacity, 0usize, item,
+    ) {
+        return 0usize
+    }
+    return 1usize
+}
+
+/// Demonstrates a typed table cell lowered to one bounded table record.
+@export(name: "jadren_unity_api_emit_declarative_table_cell", abi: "C")
+pub fn emit_declarative_table_cell(
+    output: write Slice<UnityUiTableCommandRecord>,
+    text_output: write Slice<UInt8>,
+    command_capacity: UIntSize,
+    text_capacity: UIntSize,
+) -> UIntSize {
+    if command_capacity < 1usize {
+        return 0usize
+    }
+    if text_capacity < 2usize {
+        return 0usize
+    }
+    text_output[0] = 52u8
+    text_output[1] = 50u8
+    let text: UnityTextRange = unity_text_range(0u32, 2u32)
+    let cell: UnityUiTableCellValue = unity_ui_table_cell_value(
+        88u32, 1001u32, 11u32, 1u32, 1u32, text,
+    )
+    if !unity_ui_write_table_cell_value(
+        output, text_output, command_capacity, text_capacity, 0usize, cell,
+    ) {
+        return 0usize
+    }
+    return 1usize
+}
+
+/// Demonstrates the natural Jadren Editor plan stream. The command buffer is
+/// bounded and the prefab path is kept in a separate caller-owned UTF-8 pool;
+/// Unity validates the path/handles and applies the plan only through the
+/// explicit Editor tooling/Undo boundary.
+@export(name: "jadren_unity_api_emit_editor_plan", abi: "C")
+pub fn emit_editor_plan(
+    output: write Slice<UnityEditorPlanCommandRecord>,
+    asset_output: write Slice<UInt8>,
+    command_capacity: UIntSize,
+    asset_capacity: UIntSize,
+) -> UIntSize {
+    if command_capacity < 18usize {
+        return 0usize
+    }
+    if asset_capacity < 85usize {
+        return 0usize
+    }
+    // The path remains caller-owned; the host checks it is a project-relative
+    // prefab before loading it. The bounded copy helper keeps the freestanding
+    // Unity DLL free of a hidden string runtime dependency.
+    let asset_input: [UInt8; 27] = [
+        65u8, 115u8, 115u8, 101u8, 116u8, 115u8, 47u8,
+        80u8, 114u8, 101u8, 102u8, 97u8, 98u8, 115u8, 47u8,
+        80u8, 97u8, 110u8, 101u8, 108u8, 46u8, 112u8, 114u8,
+        101u8, 102u8, 97u8, 98u8,
+    ]
+    let asset_length: UIntSize = unity_editor_plan_copy_asset_path(
+        asset_input, 27usize, asset_output, asset_capacity,
+    )
+    if asset_length == 0usize {
+        return 0usize
+    }
+
+    let create_transform: UnityTransform = unity_transform_identity()
+    if !unity_editor_plan_create_primitive(
+        output, command_capacity, 0usize, 900u32, 3u32, 0u32,
+        create_transform, true,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_add_component(
+        output, command_capacity, 1usize, 900u32, 1u32,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_set_component_float(
+        output, command_capacity, 2usize, 900u32, 1u32, 1u32, 3.5f32,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_set_component_bool(
+        output, command_capacity, 3usize, 900u32, 1u32, 1u32, false,
+    ) {
+        return 0usize
+    }
+    let moved_transform: UnityTransform = unity_transform(
+        0.0f32, 1.0f32, 0.0f32,
+        0.0f32, 0.0f32, 0.0f32, 1.0f32,
+        1.0f32, 1.0f32, 1.0f32,
+    )
+    if !unity_editor_plan_set_transform(
+        output, command_capacity, 4usize, 900u32, moved_transform,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_set_active(
+        output, command_capacity, 5usize, 900u32, false,
+    ) {
+        return 0usize
+    }
+    let prefab_transform: UnityTransform = unity_transform_identity()
+    if !unity_editor_plan_instantiate_prefab(
+        output, command_capacity, 6usize, 901u32, 0u32, 0u32,
+        asset_length as UInt32, prefab_transform, true,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_set_parent(
+        output, command_capacity, 7usize, 901u32, 900u32,
+    ) {
+        return 0usize
+    }
+    let title_input: [UInt8; 12] = [
+        65u8, 73u8, 32u8, 65u8, 115u8, 115u8, 105u8,
+        115u8, 116u8, 101u8, 110u8, 116u8,
+    ]
+    let button_input: [UInt8; 6] = [83u8, 112u8, 117u8, 115u8, 116u8, 105u8]
+    let title_length: UIntSize = unity_editor_plan_copy_text_at(
+        title_input, 12usize, asset_output, asset_capacity, 27usize,
+    )
+    let button_length: UIntSize = unity_editor_plan_copy_text_at(
+        button_input, 6usize, asset_output, asset_capacity, 39usize,
+    )
+    if title_length == 0usize {
+        return 0usize
+    }
+    if button_length == 0usize {
+        return 0usize
+    }
+    if !unity_editor_plan_create_ui_canvas(
+        output, command_capacity, 8usize, 910u32, 0u32, true,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_create_ui_event_router(
+        output, command_capacity, 9usize, 914u32, 910u32, true,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_create_ui_panel(
+        output, command_capacity, 10usize, 911u32, 910u32,
+        0.0f32, 0.0f32, 800.0f32, 500.0f32,
+        0.08f32, 0.10f32, 0.15f32, 1.0f32, true,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_create_ui_text(
+        output, command_capacity, 11usize, 912u32, 911u32,
+        27u32, title_length as UInt32, 28u32,
+        0.0f32, 120.0f32, 700.0f32, 80.0f32,
+        1.0f32, 1.0f32, 1.0f32, 1.0f32, true,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_create_ui_button(
+        output, command_capacity, 12usize, 913u32, 911u32,
+        39u32, button_length as UInt32, 20u32,
+        0.0f32, -80.0f32, 240.0f32, 60.0f32,
+        0.10f32, 0.55f32, 0.95f32, 1.0f32, true,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_set_ui_color(
+        output, command_capacity, 13usize, 913u32,
+        0.10f32, 0.75f32, 0.40f32, 1.0f32,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_set_ui_interactable(
+        output, command_capacity, 14usize, 913u32, true,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_set_ui_text(
+        output, command_capacity, 15usize, 912u32,
+        27u32, title_length as UInt32,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_attach_ui_event_source(
+        output, command_capacity, 16usize, 913u32, 914u32,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_create_ui_toggle(
+        output, command_capacity, 17usize, 915u32, 911u32,
+        39u32, button_length as UInt32, 18u32,
+        280.0f32, -80.0f32, 240.0f32, 60.0f32,
+        0.10f32, 0.75f32, 0.40f32, 1.0f32, true, true,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_create_ui_slider(
+        output, command_capacity, 18usize, 916u32, 911u32, 0.35f32,
+        0.0f32, -150.0f32, 240.0f32, 24.0f32,
+        0.10f32, 0.55f32, 0.95f32, 1.0f32, true,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_create_ui_input_field(
+        output, command_capacity, 19usize, 917u32, 911u32,
+        39u32, button_length as UInt32, 16u32,
+        280.0f32, -150.0f32, 240.0f32, 48.0f32,
+        1.0f32, 1.0f32, 1.0f32, 1.0f32, true,
+    ) {
+        return 0usize
+    }
+    if !unity_editor_plan_attach_ui_text_event_source(
+        output, command_capacity, 20usize, 917u32, 914u32,
+    ) {
+        return 0usize
+    }
+    let saved_prefab_path: [UInt8; 40] = [
+        65u8, 115u8, 115u8, 101u8, 116u8, 115u8, 47u8,
+        74u8, 97u8, 100u8, 114u8, 101u8, 110u8, 71u8, 101u8,
+        110u8, 101u8, 114u8, 97u8, 116u8, 101u8, 100u8, 47u8,
+        78u8, 97u8, 116u8, 105u8, 118u8, 101u8, 80u8, 108u8,
+        97u8, 110u8, 46u8, 112u8, 114u8, 101u8, 102u8, 97u8,
+        98u8,
+    ]
+    if unity_editor_plan_copy_text_at(
+        saved_prefab_path, 40usize, asset_output, asset_capacity, 45usize,
+    ) != 40usize {
+        return 0usize
+    }
+    if !unity_editor_plan_save_prefab_asset(
+        output, command_capacity, 21usize, 900u32, 45u32, 40u32,
+    ) {
+        return 0usize
+    }
+    return 22usize
+}
+
+fn main() -> Int32 {
+    return 0
+}

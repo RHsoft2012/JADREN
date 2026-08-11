@@ -1,0 +1,30 @@
+module examples.time_utc_offset_parts
+
+// time_utc_offset_parts applies an explicit fixed offset in minutes before
+// writing [year, month, day, hour, minute, second]. It never reads the host
+// timezone or applies an implicit daylight-saving rule.
+fn main() -> Int32 {
+    var parts: [Int32; 6] = [0, 0, 0, 0, 0, 0]
+    if !time_utc_offset_parts(0 as Int64, 60, parts) {
+        return 1
+    }
+    if parts[0] != 1970 { return 2 }
+    if parts[1] != 1 { return 3 }
+    if parts[2] != 1 { return 4 }
+    if parts[3] != 1 { return 5 }
+    if parts[4] != 0 { return 6 }
+    if parts[5] != 0 { return 7 }
+
+    if !time_utc_offset_parts(0 as Int64, -60, parts) {
+        return 8
+    }
+    if parts[0] != 1969 { return 9 }
+    if parts[1] != 12 { return 10 }
+    if parts[2] != 31 { return 11 }
+    if parts[3] != 23 { return 12 }
+    if parts[4] != 0 { return 13 }
+    if parts[5] != 0 { return 14 }
+
+    print("utc offset parts ok")
+    return 0
+}

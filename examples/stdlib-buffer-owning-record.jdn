@@ -1,0 +1,43 @@
+module examples.stdlib_buffer_owning_record
+
+// A C-layout record can own a Buffer field. Generic append moves the record,
+// while the generated field table destroys the nested descriptor on cleanup.
+@repr(C)
+struct Entry {
+    values: Buffer<Int32>,
+    id: Int32
+}
+
+fn main() -> Int32 {
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match entries_created {
+        Ok(entries) => {
+            match values_created {
+                Ok(values) => {
+                    if !buffer_append(values, 7) { result_code = 1 }
+                    let item: Entry = Entry { values: values, id: 42 }
+                    if !buffer_append(entries, item) { result_code = 2 }
+                    if buffer_length(entries) != 1usize { result_code = 3 }
+                    match second_values_created {
+                        Ok(second_values) => {
+                            if !buffer_append(second_values, 9) { result_code = 4 }
+                            let second: Entry = Entry { values: second_values, id: 7 }
+                            // Legacy syntax is automatically lowered to the
+                            // rollback-safe caller-owned move ABI.
+                            if !buffer_insert(entries, 0usize, second) { result_code = 5 }
+                            if buffer_length(entries) != 2usize { result_code = 6 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

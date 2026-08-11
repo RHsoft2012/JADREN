@@ -1,0 +1,56 @@
+module examples.file_persistence;
+
+// Lokálne dáta sú explicitné: Jadren odovzdá caller-owned bytes do natívneho
+// file runtime. Runtime nič neserializuje potajomky a číta iba do daného poľa.
+fn main() -> Int32 {
+    // Cesta je relatívna k pracovnému priečinku procesu.
+    file_delete("target/jadren/jadren-file-persistence.bin")
+    file_delete("target/jadren/jadren-file-persistence.tmp")
+
+    var payload: [UInt8; 12] = [74u8, 97u8, 100u8, 114u8, 101u8, 110u8, 32u8, 100u8, 97u8, 116u8, 97u8, 33u8]
+    let written: UIntSize = file_write("target/jadren/jadren-file-persistence.tmp", payload)
+    let replaced: Bool = file_replace_atomic("target/jadren/jadren-file-persistence.tmp", "target/jadren/jadren-file-persistence.bin")
+    let exists: Bool = file_exists("target/jadren/jadren-file-persistence.bin")
+    let size: UIntSize = file_size("target/jadren/jadren-file-persistence.bin")
+
+    var output: [UInt8; 12] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let loaded: UIntSize = file_read("target/jadren/jadren-file-persistence.bin", output)
+    if !replaced {
+        file_delete("target/jadren/jadren-file-persistence.bin")
+        file_delete("target/jadren/jadren-file-persistence.tmp")
+        return 10
+    }
+    if (written as Int32) != 12 {
+        file_delete("target/jadren/jadren-file-persistence.bin")
+        file_delete("target/jadren/jadren-file-persistence.tmp")
+        return 11
+    }
+    if (loaded as Int32) != 12 {
+        file_delete("target/jadren/jadren-file-persistence.bin")
+        file_delete("target/jadren/jadren-file-persistence.tmp")
+        return 12
+    }
+    if !exists {
+        file_delete("target/jadren/jadren-file-persistence.bin")
+        file_delete("target/jadren/jadren-file-persistence.tmp")
+        return 13
+    }
+    if (size as Int32) != 12 {
+        file_delete("target/jadren/jadren-file-persistence.bin")
+        file_delete("target/jadren/jadren-file-persistence.tmp")
+        return 14
+    }
+    if output[0] != 74u8 {
+        file_delete("target/jadren/jadren-file-persistence.bin")
+        file_delete("target/jadren/jadren-file-persistence.tmp")
+        return 15
+    }
+    if output[11] != 33u8 {
+        file_delete("target/jadren/jadren-file-persistence.bin")
+        file_delete("target/jadren/jadren-file-persistence.tmp")
+        return 16
+    }
+    file_delete("target/jadren/jadren-file-persistence.bin")
+    file_delete("target/jadren/jadren-file-persistence.tmp")
+    return 0
+}

@@ -1,0 +1,75 @@
+module examples.form_input_parse
+
+// Bounded parser smoke for form inputs. The APIs read only the explicit valid
+// prefix and publish an output element only after complete validation.
+fn main() -> Int32 {
+    var signed_text: [UInt8; 4] = [45u8, 52u8, 50u8, 0u8]
+    var signed_value: [Int64; 1] = [0 as Int64]
+    if !parse_int(signed_text, 3usize, signed_value) { return 1 }
+    if signed_value[0] != -42 as Int64 { return 2 }
+
+    var overflow_int: [UInt8; 19] = [
+        57u8, 50u8, 50u8, 51u8, 51u8, 55u8, 50u8, 48u8, 51u8, 54u8,
+        56u8, 53u8, 52u8, 55u8, 55u8, 53u8, 56u8, 48u8, 56u8
+    ]
+    signed_value[0] = 66 as Int64
+    if parse_int(overflow_int, 19usize, signed_value) { return 23 }
+    if signed_value[0] != 66 as Int64 { return 24 }
+
+    var minimum_text: [UInt8; 20] = [
+        45u8, 57u8, 50u8, 50u8, 51u8, 51u8, 55u8, 50u8, 48u8, 51u8,
+        54u8, 56u8, 53u8, 52u8, 55u8, 55u8, 53u8, 56u8, 48u8, 56u8
+    ]
+    if !parse_int(minimum_text, 20usize, signed_value) { return 3 }
+    var formatted_minimum: [UInt8; 20] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    if format_int(signed_value[0], formatted_minimum) != 20usize { return 4 }
+    if formatted_minimum[0] != 45u8 { return 21 }
+    if formatted_minimum[19] != 56u8 { return 22 }
+
+    var prefix_text: [UInt8; 3] = [49u8, 50u8, 120u8]
+    if !parse_int(prefix_text, 2usize, signed_value) { return 5 }
+    if signed_value[0] != 12 as Int64 { return 6 }
+    signed_value[0] = 77 as Int64
+    if parse_int(prefix_text, 3usize, signed_value) { return 7 }
+    if signed_value[0] != 77 as Int64 { return 8 }
+    if parse_int(prefix_text, 4usize, signed_value) { return 9 }
+    if signed_value[0] != 77 as Int64 { return 10 }
+
+    var unsigned_text: [UInt8; 20] = [
+        49u8, 56u8, 52u8, 52u8, 54u8, 55u8, 52u8, 52u8, 48u8, 55u8,
+        51u8, 55u8, 48u8, 57u8, 53u8, 53u8, 49u8, 54u8, 49u8, 53u8
+    ]
+    var unsigned_value: [UInt64; 1] = [0u64]
+    if !parse_uint(unsigned_text, 20usize, unsigned_value) { return 11 }
+    if unsigned_value[0] != 18446744073709551615u64 { return 12 }
+    var overflow_uint: [UInt8; 20] = [
+        49u8, 56u8, 52u8, 52u8, 54u8, 55u8, 52u8, 52u8, 48u8, 55u8,
+        51u8, 55u8, 48u8, 57u8, 53u8, 53u8, 49u8, 54u8, 49u8, 54u8
+    ]
+    unsigned_value[0] = 33u64
+    if parse_uint(overflow_uint, 20usize, unsigned_value) { return 25 }
+    if unsigned_value[0] != 33u64 { return 26 }
+
+    var float_text: [UInt8; 7] = [45u8, 49u8, 46u8, 50u8, 53u8, 101u8, 50u8]
+    var float_value: [Float64; 1] = [0.0f64]
+    if !parse_float(float_text, 7usize, float_value) { return 13 }
+    if float_value[0] != -125.0f64 { return 14 }
+    var invalid_float: [UInt8; 5] = [49u8, 101u8, 57u8, 57u8, 57u8]
+    float_value[0] = 7.5f64
+    if parse_float(invalid_float, 5usize, float_value) { return 15 }
+    if float_value[0] != 7.5f64 { return 16 }
+
+    var false_text: [UInt8; 5] = [102u8, 97u8, 108u8, 115u8, 101u8]
+    var bool_value: [Bool; 1] = [true]
+    if !parse_bool(false_text, 5usize, bool_value) { return 17 }
+    if bool_value[0] { return 18 }
+    var invalid_bool: [UInt8; 4] = [84u8, 82u8, 85u8, 69u8]
+    bool_value[0] = true
+    if parse_bool(invalid_bool, 4usize, bool_value) { return 19 }
+    if !bool_value[0] { return 20 }
+
+    return 0
+}

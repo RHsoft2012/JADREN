@@ -1,0 +1,31 @@
+module examples.net_reactor;
+
+// Bounded readiness example. The listener is registered for readable events,
+// then polled with a short deadline. A zero result is a valid timeout and does
+// not change ownership: the caller still closes the listener explicitly.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38129u16)
+    if (listener as Int32) == 0 { return 10 }
+
+    let reactor: UIntSize = net_reactor_open(4u32, 4u32)
+    if (reactor as Int32) == 0 {
+        net_socket_close(listener)
+        return 11
+    }
+    let watched: Bool = net_reactor_watch(reactor, listener, 1u32, 7usize)
+    if !watched {
+        net_reactor_close(reactor)
+        net_socket_close(listener)
+        return 12
+    }
+
+    let count: UInt32 = net_reactor_poll(reactor, 20u32)
+    let cancelled: Bool = net_reactor_unwatch(reactor, listener)
+    let closed: Bool = net_reactor_close(reactor)
+    let socket_closed: Bool = net_socket_close(listener)
+    if !cancelled { return 13 }
+    if !closed { return 13 }
+    if !socket_closed { return 13 }
+    if count != 0u32 { return 14 }
+    return 0
+}

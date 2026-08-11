@@ -1,0 +1,55 @@
+module examples.windows_desktop_state_controls
+
+// Checkbox/switch and dropdown can use the same bounded app_state store as a
+// text input. Binding writes the current control value; refresh is explicit
+// after a model load or another programmatic state change.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    let root: Int32 = ui_app_begin("State controls", 480, 300, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+    let panel: Int32 = ui_app_panel(root, 420, 220, 0xFFFFFFu32, 12, 8, 8, 0, 1)
+    if panel == 0 { return 2 }
+    let checkbox: Int32 = ui_app_checkbox(panel, "Enabled", 10, 220, 36,
+                                           0x111827u32, 0x168EF5u32, 8, 0, 0)
+    let select: Int32 = ui_app_select(panel, 20, 220, 36,
+                                      0x111827u32, 0xFFFFFFu32, 8, 0)
+    if checkbox == 0 { return 3 }
+    if select == 0 { return 4 }
+    ui_app_select_option(select, "First")
+    ui_app_select_option(select, "Second")
+    ui_app_select_set_index(select, 1)
+    ui_set_checked(10, 1)
+
+    // Retained bindings treat an already existing app_state value as the
+    // source of truth. Seed the model before binding so the native controls
+    // are refreshed deterministically on every backend.
+    if !app_state_set_bool("enabled", true) { return 5 }
+    if !app_state_set_int("choice", 1 as Int64) { return 6 }
+
+    let enabled_bound: Bool = ui_app_bind_app_state(checkbox, "enabled")
+    let choice_bound: Bool = ui_app_bind_app_state(select, "choice")
+    if !enabled_bound { return 5 }
+    if !choice_bound { return 6 }
+    if !app_state_get_bool("enabled") { return 7 }
+    if app_state_get_int("choice") != 1 as Int64 { return 8 }
+
+    if !app_state_set_bool("enabled", false) { return 9 }
+    if !app_state_set_int("choice", 0 as Int64) { return 10 }
+    ui_app_refresh_app_state(checkbox)
+    ui_app_refresh_app_state(select)
+    if ui_checked(10) != 0 { return 11 }
+    if ui_select_index(20) != 0 { return 12 }
+
+    ui_set_checked(10, 1)
+    ui_select_set_index(20, 1)
+    if !app_state_get_bool("enabled") { return 13 }
+    if app_state_get_int("choice") != 1 as Int64 { return 14 }
+    if !ui_app_end(panel) { return 15 }
+    if !ui_app_end(root) { return 16 }
+    return 0
+}

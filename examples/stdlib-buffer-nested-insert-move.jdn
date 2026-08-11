@@ -1,0 +1,51 @@
+module examples.stdlib_buffer_nested_insert_move
+
+// buffer_insert_move transfers an owning nested descriptor into an exact
+// position and shifts later descriptors without copying ownership.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let inserted_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let last_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let probe_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match inserted_created {
+                        Ok(inserted) => {
+                            match last_created {
+                                Ok(last) => {
+                                    if !buffer_append(first, 1) { result_code = 1 }
+                                    if !buffer_append(inserted, 2) { result_code = 2 }
+                                    if !buffer_append(last, 3) { result_code = 3 }
+                                    if !buffer_append(outer, first) { result_code = 4 }
+                                    if !buffer_append(outer, last) { result_code = 5 }
+                                    match probe_created {
+                                        Ok(probe) => {
+                                            let bad: Int32 = buffer_insert_move_status(outer, 99usize, probe)
+                                            if bad != -20 { result_code = 6 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                    if !buffer_insert_move(outer, 1usize, inserted) { result_code = 6 }
+                                    if buffer_length(outer) != 3usize { result_code = 7 }
+                                    if outer[0][0] != 1 { result_code = 8 }
+                                    if outer[1][0] != 2 { result_code = 9 }
+                                    if outer[2][0] != 3 { result_code = 10 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

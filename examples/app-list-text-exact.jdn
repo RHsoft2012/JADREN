@@ -1,0 +1,27 @@
+module examples.app_list_text_exact
+
+// Exact list reads distinguish a valid empty item from a missing item or a
+// short output buffer while keeping all outputs caller-owned.
+fn main() -> Int32 {
+    app_list_clear(0)
+    if !app_list_push_text(0, "Focus") { return 1 }
+    if !app_list_push_text(0, "") { return 2 }
+
+    var output: [UInt8; 8] = [90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8]
+    var length: [UIntSize; 1] = [99usize]
+    if !app_list_read_text_exact(0, 1, output, length) { return 3 }
+    if length[0] != 0usize { return 4 }
+    if output[0] != 90u8 { return 5 }
+
+    length[0] = 99usize
+    if !app_list_read_text_exact(0, 0, output, length) { return 6 }
+    if length[0] != 5usize { return 7 }
+    if output[0] != 70u8 { return 8 }
+
+    length[0] = 77usize
+    if app_list_read_text_exact(0, 9, output, length) { return 9 }
+    if length[0] != 77usize { return 10 }
+
+    app_list_clear(0)
+    return 0
+}

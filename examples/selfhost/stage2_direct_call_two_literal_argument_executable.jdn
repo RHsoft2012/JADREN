@@ -1,0 +1,11 @@
+fn main() -> Int32 {
+    return first(40);
+}
+
+fn first(value: Int32) -> Int32 {
+    return 42;
+}
+
+fn second() -> Int32 {
+    return first(1);
+}

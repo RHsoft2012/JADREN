@@ -1,0 +1,105 @@
+module examples.settings_form
+
+// A practical retained settings form. The controls are bound directly to
+// app_state while one model-wide transaction is open. Save atomically commits
+// the transaction; Cancel or validation failure rolls every control back.
+fn refresh_form() {
+    ui_input_refresh_app_state(10)
+    ui_checkbox_refresh_app_state(20)
+    ui_select_refresh_app_state(30)
+}
+
+fn load_or_seed() -> Bool {
+    if app_data_load("target/jadren/settings-form.data") {
+        return true
+    }
+    app_state_clear()
+    if !app_state_set_text("name", "Jadren developer") { return false }
+    if !app_state_set_bool("notifications", true) { return false }
+    if !app_state_set_int("theme", 0 as Int64) { return false }
+    return app_data_save_atomic(
+        "target/jadren/settings-form.tmp",
+        "target/jadren/settings-form.data"
+    )
+}
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 40 {
+        let name_length: UIntSize = ui_input_length(10)
+        if name_length == 0usize {
+            app_data_tx_rollback()
+            refresh_form()
+            app_data_tx_begin()
+            ui_set_status("Name is required. Changes were rolled back.")
+        } else if app_data_tx_save_atomic(
+            "target/jadren/settings-form.tmp",
+            "target/jadren/settings-form.data"
+        ) {
+            app_data_tx_begin()
+            ui_set_status("Settings saved atomically.")
+        } else {
+            refresh_form()
+            app_data_tx_begin()
+            ui_set_status("Save failed. Changes were rolled back.")
+        }
+    }
+    if event_id == 41 {
+        if !app_data_tx_rollback() {
+            ui_set_status("Rollback failed.")
+        } else {
+            refresh_form()
+            if !app_data_tx_begin() {
+                ui_set_status("Transaction restart failed.")
+            } else {
+                ui_set_status("Changes cancelled and restored.")
+            }
+        }
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    if !load_or_seed() { return 1 }
+    if !app_data_tx_begin() { return 2 }
+
+    let root: Int32 = ui_app_begin("Jadren Settings Form", 720, 480, 0xF6F8FCu32)
+    if root == 0 { return 3 }
+    let panel: Int32 = ui_app_panel(root, 640, 380, 0xFFFFFFu32, 18, 18, 12, 0, 1)
+    if panel == 0 { return 4 }
+    if ui_app_label(panel, "Transactional settings", 600, 36,
+                    0x111827u32, 0xFFFFFFu32, 8, 1) == 0 { return 5 }
+    if ui_app_label(panel,
+                    "Edit values, then Save or Cancel. Every control is bound to app_state.",
+                    600, 30, 0x475569u32, 0xFFFFFFu32, 8, 1) == 0 { return 6 }
+
+    let name: Int32 = ui_app_text_input(panel, "Display name", 10, 600, 40,
+                                        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if name == 0 { return 7 }
+    if !ui_app_bind_app_state(name, "name") { return 8 }
+    let notifications: Int32 = ui_app_checkbox(panel, "Notifications enabled", 20,
+        600, 38, 0x111827u32, 0x18C964u32, 8, 0, 0)
+    if notifications == 0 { return 9 }
+    if !ui_app_bind_app_state(notifications, "notifications") { return 10 }
+    let theme: Int32 = ui_app_select(panel, 30, 600, 38,
+                                      0x111827u32, 0xFFFFFFu32, 8, 0)
+    if theme == 0 { return 11 }
+    if !ui_app_select_option(theme, "Light") { return 12 }
+    if !ui_app_select_option(theme, "Dark") { return 13 }
+    if !ui_app_select_option(theme, "System") { return 14 }
+    if !ui_app_bind_app_state(theme, "theme") { return 15 }
+
+    let actions: Int32 = ui_app_row(panel, 600, 50, 0, 12, 0, 1)
+    if actions == 0 { return 16 }
+    if ui_app_button(actions, "Save", 40, 180, 42,
+                      0xFFFFFFu32, 0x168EF5u32, 10, 0) == 0 { return 17 }
+    if ui_app_button(actions, "Cancel", 41, 180, 42,
+                      0xFFFFFFu32, 0x64748Bu32, 10, 0) == 0 { return 18 }
+    if !ui_app_end(actions) { return 19 }
+    if ui_app_status(panel, "Edit settings and choose Save or Cancel.", 600, 44,
+                     0x111827u32, 0xDCFCE7u32, 10, 1) == 0 { return 20 }
+    if !ui_app_end(panel) { return 21 }
+    if !ui_app_end(root) { return 22 }
+    refresh_form()
+    return ui_app_run()
+}

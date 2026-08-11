@@ -1,0 +1,37 @@
+module examples.stdlib_buffer_nested_pop
+
+// buffer_pop moves the last inner descriptor out of an owning nested buffer.
+// The consumed outer slot is reset, so the outer drop glue cannot double-free it.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let inner_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match inner_created {
+                Ok(inner) => {
+                    if !buffer_append(inner, 7) { result_code = 1 }
+                    if !buffer_append(outer, inner) { result_code = 2 }
+                    let popped: Result<Buffer<Int32>, Int32> = buffer_pop(outer)
+                    match popped {
+                        Ok(value) => {
+                            if buffer_length(value) != 1usize { result_code = 3 }
+                            if value[0] != 7 { result_code = 4 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                    if buffer_length(outer) != 0usize { result_code = 5 }
+                    let empty: Result<Buffer<Int32>, Int32> = buffer_pop(outer)
+                    match empty {
+                        Ok(value) => { result_code = 6 }
+                        Error(status) => { if status != -20 { result_code = 7 } }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

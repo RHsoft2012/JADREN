@@ -1,0 +1,24 @@
+module examples.stdlib_buffer_bool
+
+// Bool is a copy-safe scalar. This fixture keeps the generic Buffer contract
+// executable instead of relying only on the type checker implementation.
+fn main() -> Int32 {
+    let created: Result<Buffer<Bool>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            let enabled: Bool = true
+            let disabled: Bool = false
+            let inserted: Bool = true
+            if !buffer_append(values, enabled) { result_code = 1 }
+            if !buffer_append(values, disabled) { result_code = 2 }
+            if buffer_length(values) != 2usize { result_code = 3 }
+            if !buffer_insert(values, 1usize, inserted) { result_code = 4 }
+            if buffer_length(values) != 3usize { result_code = 5 }
+            if !buffer_remove(values, 0usize) { result_code = 6 }
+            if buffer_length(values) != 2usize { result_code = 7 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

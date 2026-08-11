@@ -243,6 +243,12 @@ pub enum TypeKind {
     Char,
     /// UTF-8 string value.
     String,
+    /// Owning, move-only UTF-8 string value.
+    ///
+    /// The semantic representation is distinct from [`TypeKind::String`]
+    /// (which is an immutable borrowed UTF-8 view), while JIR lowers both to
+    /// the runtime's stable UTF-8 header layout.
+    OwnedString,
     /// Empty value returned by procedures.
     Unit,
     /// Uninhabited type of diverging expressions.
@@ -419,6 +425,8 @@ pub struct CoreTypes {
     pub char_: TypeId,
     /// UTF-8 string.
     pub string: TypeId,
+    /// Owning UTF-8 string.
+    pub owned_string: TypeId,
     /// Unit.
     pub unit: TypeId,
     /// Never.
@@ -469,6 +477,7 @@ impl TypeStore {
                 bool_: TypeId(0),
                 char_: TypeId(0),
                 string: TypeId(0),
+                owned_string: TypeId(0),
                 unit: TypeId(0),
                 never: TypeId(0),
                 int8: TypeId(0),
@@ -528,11 +537,15 @@ impl TypeStore {
             element: float32,
             lanes: 3,
         });
+        // Keep the new owning string after all legacy core identities so
+        // existing stable type IDs remain unchanged.
+        let owned_string = store.intern(TypeKind::OwnedString);
         store.core = CoreTypes {
             error,
             bool_,
             char_,
             string,
+            owned_string,
             unit,
             never,
             int8,
@@ -579,6 +592,66 @@ impl TypeStore {
         id
     }
 
+    /// Imports one type graph from another semantic store while preserving
+    /// nominal identities and rebuilding all structural children locally.
+    ///
+    /// TypeId values are intentionally store-local; package monomorphization
+    /// therefore uses this boundary before applying a substitution to a
+    /// dependency module.
+    pub fn import_from(
+        &mut self,
+        source: &TypeStore,
+        ty: TypeId,
+    ) -> Result<TypeId, TypeTransformError> {
+        let kind = source
+            .kind(ty)
+            .cloned()
+            .ok_or(TypeTransformError::InvalidType(ty))?;
+        let imported = match kind {
+            TypeKind::Array { element, length } => TypeKind::Array {
+                element: self.import_from(source, element)?,
+                length,
+            },
+            TypeKind::Vector { element, lanes } => TypeKind::Vector {
+                element: self.import_from(source, element)?,
+                lanes,
+            },
+            TypeKind::Buffer(element) => TypeKind::Buffer(self.import_from(source, element)?),
+            TypeKind::Slice(element) => TypeKind::Slice(self.import_from(source, element)?),
+            TypeKind::Pointer(element) => TypeKind::Pointer(self.import_from(source, element)?),
+            TypeKind::Option(inner) => TypeKind::Option(self.import_from(source, inner)?),
+            TypeKind::Result { ok, error } => TypeKind::Result {
+                ok: self.import_from(source, ok)?,
+                error: self.import_from(source, error)?,
+            },
+            TypeKind::Nominal {
+                constructor,
+                arguments,
+            } => TypeKind::Nominal {
+                constructor,
+                arguments: arguments
+                    .iter()
+                    .map(|argument| self.import_from(source, *argument))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_boxed_slice(),
+            },
+            TypeKind::Function { parameters, result } => TypeKind::Function {
+                parameters: parameters
+                    .iter()
+                    .map(|parameter| self.import_from(source, *parameter))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_boxed_slice(),
+                result: self.import_from(source, result)?,
+            },
+            TypeKind::Capability { capability, inner } => TypeKind::Capability {
+                capability,
+                inner: self.import_from(source, inner)?,
+            },
+            other => other,
+        };
+        Ok(self.intern(imported))
+    }
+
     /// Returns the number of unique canonical types.
     #[must_use]
     pub const fn len(&self) -> usize {
@@ -607,6 +680,7 @@ impl TypeStore {
             "Bool" => Some(core.bool_),
             "Char" => Some(core.char_),
             "String" => Some(core.string),
+            "OwnedString" => Some(core.owned_string),
             "Status" => Some(core.int32),
             "Unit" => Some(core.unit),
             "Never" => Some(core.never),
@@ -1123,6 +1197,7 @@ impl TypeStore {
             TypeKind::Bool => hasher.write_u64(1),
             TypeKind::Char => hasher.write_u64(2),
             TypeKind::String => hasher.write_u64(3),
+            TypeKind::OwnedString => hasher.write_u64(18),
             TypeKind::Unit => hasher.write_u64(4),
             TypeKind::Never => hasher.write_u64(5),
             TypeKind::Integer { signedness, width } => {

@@ -1,0 +1,53 @@
+module examples.http_session_client
+
+// Two requests on one socket. The first request opts into keep-alive.
+fn main() -> Int32 {
+    let socket: UIntSize = net_tcp_connect_dns("localhost", 38125u16)
+    if (socket as Int32) == 0 { return 10 }
+    let timed: Bool = net_socket_set_timeout(socket, 2000u32)
+    if !timed {
+        net_socket_close(socket)
+        return 11
+    }
+
+    var first_request: [UInt8; 64] = [71u8, 69u8, 84u8, 32u8, 47u8, 104u8, 101u8, 108u8, 108u8, 111u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 67u8, 111u8, 110u8, 110u8, 101u8, 99u8, 116u8, 105u8, 111u8, 110u8, 58u8, 32u8, 107u8, 101u8, 101u8, 112u8, 45u8, 97u8, 108u8, 105u8, 118u8, 101u8, 13u8, 10u8, 13u8, 10u8]
+    var second_request: [UInt8; 59] = [71u8, 69u8, 84u8, 32u8, 47u8, 104u8, 101u8, 108u8, 108u8, 111u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 67u8, 111u8, 110u8, 110u8, 101u8, 99u8, 116u8, 105u8, 111u8, 110u8, 58u8, 32u8, 99u8, 108u8, 111u8, 115u8, 101u8, 13u8, 10u8, 13u8, 10u8]
+    var response: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+
+    let sent_first: UIntSize = net_tcp_send(socket, first_request)
+    if (sent_first as Int32) != 64 {
+        net_socket_close(socket)
+        return 12
+    }
+    let received_first: UIntSize = net_tcp_receive(socket, response)
+    if (received_first as Int32) == 0 {
+        net_socket_close(socket)
+        return 13
+    }
+    if response[0] != 72u8 {
+        net_socket_close(socket)
+        return 13
+    }
+    if response[11] != 48u8 {
+        net_socket_close(socket)
+        return 13
+    }
+
+    let sent_second: UIntSize = net_tcp_send(socket, second_request)
+    if (sent_second as Int32) != 59 {
+        net_socket_close(socket)
+        return 14
+    }
+    let received_second: UIntSize = net_tcp_receive(socket, response)
+    net_socket_close(socket)
+    if (received_second as Int32) == 0 {
+        return 15
+    }
+    if response[0] != 72u8 {
+        return 15
+    }
+    if response[11] != 48u8 {
+        return 15
+    }
+    return 0
+}

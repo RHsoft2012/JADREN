@@ -1,0 +1,48 @@
+module examples.app_table_upsert
+
+// Typed find-or-append CRUD helper: kľúčový stĺpec identifikuje riadok,
+// ostatné named polia môže program doplniť bežnými settermi.
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !app_table_set_column_type(0, 0, 0) { return 1 } // text
+    if !app_table_set_column_type(0, 1, 1) { return 2 } // int
+    if !app_table_set_column_type(0, 2, 2) { return 3 } // uint
+    if !app_table_set_column_type(0, 3, 4) { return 4 } // float
+    if !app_table_set_column_type(0, 4, 3) { return 5 } // bool
+    if !app_table_set_column_name(0, 0, "slug") { return 6 }
+    if !app_table_set_column_name(0, 1, "task_id") { return 7 }
+    if !app_table_set_column_name(0, 2, "total") { return 8 }
+    if !app_table_set_column_name(0, 3, "rate") { return 9 }
+    if !app_table_set_column_name(0, 4, "done") { return 10 }
+
+    let text_row: Int32 = app_table_upsert_text(0, 0, "task-a")
+    if text_row != 0 { return 11 }
+    if !app_table_set_named_cell(0, text_row, "slug", "task-a") { return 12 }
+    if app_table_upsert_text(0, 0, "task-a") != text_row { return 13 }
+
+    let int_row: Int32 = app_table_upsert_int(0, 1, 42 as Int64)
+    if int_row != 1 { return 14 }
+    if !app_table_set_named_cell(0, int_row, "slug", "task-b") { return 15 }
+    if app_table_upsert_int(0, 1, 42 as Int64) != int_row { return 16 }
+
+    let uint_row: Int32 = app_table_upsert_uint(0, 2, 7u64)
+    if uint_row != 2 { return 17 }
+    if app_table_upsert_uint(0, 2, 7u64) != uint_row { return 18 }
+
+    let float_row: Int32 = app_table_upsert_float(0, 3, 1.25f64)
+    if float_row != 3 { return 19 }
+    if app_table_upsert_float(0, 3, 1.25f64) != float_row { return 20 }
+
+    let bool_row: Int32 = app_table_upsert_bool(0, 4, true)
+    if bool_row != 4 { return 21 }
+    if app_table_upsert_bool(0, 4, true) != bool_row { return 22 }
+
+    // Mismatch and invalid text key must not leave an extra row behind.
+    let before: Int32 = app_table_row_count(0)
+    if app_table_upsert_int(0, 0, 99 as Int64) != -1 { return 23 }
+    if app_table_upsert_text(0, 0, "") != -1 { return 24 }
+    if app_table_row_count(0) != before { return 25 }
+
+    app_table_clear(0)
+    return 0
+}

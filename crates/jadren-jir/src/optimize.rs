@@ -665,6 +665,34 @@ fn promote_function_stack_slots(
         return;
     }
 
+    // A stack slot that is written on a loop back-edge carries iteration
+    // state. The block-local promotion proof below cannot model that carried
+    // value, so keep the slot in memory and let later loop-aware passes see
+    // the Store explicitly. Promoting it would turn a per-iteration load into
+    // a preheader constant and silently change program semantics.
+    let loops = discover_loops(function);
+    candidates.retain(|pointer, _| {
+        !loops.iter().any(|(_, _, loop_blocks)| {
+            loop_blocks.iter().any(|block_id| {
+                function.blocks[block_id.index()]
+                    .instructions
+                    .iter()
+                    .any(|instruction| {
+                        matches!(
+                            &instruction.kind,
+                            InstructionKind::Store {
+                                pointer: store_pointer,
+                                ..
+                            } if *store_pointer == *pointer
+                        )
+                    })
+            })
+        })
+    });
+    if candidates.is_empty() {
+        return;
+    }
+
     let mut predecessors = vec![Vec::<BlockId>::new(); function.blocks.len()];
     for (source, block) in function.blocks.iter().enumerate() {
         for target in terminator_targets(&block.terminator) {
@@ -1293,8 +1321,64 @@ fn remap_instruction_operands(kind: &mut InstructionKind, values: &BTreeMap<Valu
             remap(count, values);
         }
         InstructionKind::RegionCreate => {}
-        InstructionKind::RegionDestroy { region } | InstructionKind::Drop { value: region } => {
-            remap(region, values)
+        InstructionKind::RegionDestroy { region }
+        | InstructionKind::Drop { value: region }
+        | InstructionKind::OwnedStringDrop { value: region }
+        | InstructionKind::BufferDrop { value: region, .. }
+        | InstructionKind::OwnedStringBufferDrop { value: region, .. }
+        | InstructionKind::NestedBufferDrop { value: region, .. }
+        | InstructionKind::RecursiveBufferDrop { value: region, .. }
+        | InstructionKind::RecursiveOwnedStringBufferDrop { value: region, .. }
+        | InstructionKind::RecursiveRecordBufferFieldsDrop { value: region, .. }
+        | InstructionKind::EnumCarrierBufferDrop { value: region, .. }
+        | InstructionKind::EnumOwningCarrierDrop { value: region, .. }
+        | InstructionKind::EnumCarrierFieldsDrop { value: region, .. }
+        | InstructionKind::EnumOwningFieldsDrop { value: region, .. }
+        | InstructionKind::RecordBufferFieldsDrop { value: region, .. }
+        | InstructionKind::RecordOwningFieldsDrop { value: region, .. }
+        | InstructionKind::CarrierBufferDrop { value: region, .. }
+        | InstructionKind::OwningCarrierDrop { value: region, .. } => remap(region, values),
+        InstructionKind::BufferResizeMoveRecordFields {
+            descriptor,
+            new_length,
+            ..
+        } => {
+            remap(descriptor, values);
+            remap(new_length, values);
+        }
+        InstructionKind::BufferResizeMoveOwnedString {
+            descriptor,
+            new_length,
+            ..
+        } => {
+            remap(descriptor, values);
+            remap(new_length, values);
+        }
+        InstructionKind::BufferResizeMoveNestedOwnedString {
+            descriptor,
+            new_length,
+            ..
+        } => {
+            remap(descriptor, values);
+            remap(new_length, values);
+        }
+        InstructionKind::BufferRemoveDropOwnedString {
+            descriptor, index, ..
+        } => {
+            remap(descriptor, values);
+            remap(index, values);
+        }
+        InstructionKind::BufferRemoveDropRecordFields {
+            descriptor, index, ..
+        } => {
+            remap(descriptor, values);
+            remap(index, values);
+        }
+        InstructionKind::BufferRemoveDropNestedRecordFields {
+            descriptor, index, ..
+        } => {
+            remap(descriptor, values);
+            remap(index, values);
         }
         InstructionKind::Load { pointer, .. } => remap(pointer, values),
         InstructionKind::Store { pointer, value, .. } => {
@@ -1434,9 +1518,49 @@ fn instruction_operands(kind: &InstructionKind) -> Vec<ValueId> {
         InstructionKind::StackAlloc { count, .. } => count.iter().copied().collect(),
         InstructionKind::RegionAlloc { region, count, .. } => vec![*region, *count],
         InstructionKind::RegionCreate => Vec::new(),
-        InstructionKind::RegionDestroy { region } | InstructionKind::Drop { value: region } => {
+        InstructionKind::RegionDestroy { region }
+        | InstructionKind::Drop { value: region }
+        | InstructionKind::OwnedStringDrop { value: region }
+        | InstructionKind::BufferDrop { value: region, .. }
+        | InstructionKind::OwnedStringBufferDrop { value: region, .. }
+        | InstructionKind::NestedBufferDrop { value: region, .. }
+        | InstructionKind::RecursiveBufferDrop { value: region, .. }
+        | InstructionKind::RecursiveOwnedStringBufferDrop { value: region, .. }
+        | InstructionKind::RecursiveRecordBufferFieldsDrop { value: region, .. }
+        | InstructionKind::EnumCarrierBufferDrop { value: region, .. }
+        | InstructionKind::EnumOwningCarrierDrop { value: region, .. }
+        | InstructionKind::EnumCarrierFieldsDrop { value: region, .. }
+        | InstructionKind::EnumOwningFieldsDrop { value: region, .. }
+        | InstructionKind::RecordBufferFieldsDrop { value: region, .. }
+        | InstructionKind::RecordOwningFieldsDrop { value: region, .. }
+        | InstructionKind::CarrierBufferDrop { value: region, .. }
+        | InstructionKind::OwningCarrierDrop { value: region, .. } => {
             vec![*region]
         }
+        InstructionKind::BufferResizeMoveRecordFields {
+            descriptor,
+            new_length,
+            ..
+        } => vec![*descriptor, *new_length],
+        InstructionKind::BufferResizeMoveOwnedString {
+            descriptor,
+            new_length,
+            ..
+        } => vec![*descriptor, *new_length],
+        InstructionKind::BufferResizeMoveNestedOwnedString {
+            descriptor,
+            new_length,
+            ..
+        } => vec![*descriptor, *new_length],
+        InstructionKind::BufferRemoveDropOwnedString {
+            descriptor, index, ..
+        } => vec![*descriptor, *index],
+        InstructionKind::BufferRemoveDropRecordFields {
+            descriptor, index, ..
+        } => vec![*descriptor, *index],
+        InstructionKind::BufferRemoveDropNestedRecordFields {
+            descriptor, index, ..
+        } => vec![*descriptor, *index],
         InstructionKind::Load { pointer, .. } => vec![*pointer],
         InstructionKind::Store { pointer, value, .. } => vec![*pointer, *value],
         InstructionKind::Offset { base, indices } => std::iter::once(*base)
@@ -3566,6 +3690,15 @@ mod tests {
                 .filter(|instruction| matches!(instruction.kind, InstructionKind::Load { .. }))
                 .count(),
             1
+        );
+        let mut promotion_probe = module.clone();
+        let promotion = super::promote_scalar_stack_slots(&mut promotion_probe);
+        assert_eq!(promotion.promoted_stack_slots, 1);
+        assert!(
+            promotion_probe.functions[0].blocks[2]
+                .instructions
+                .iter()
+                .any(|instruction| matches!(instruction.kind, InstructionKind::Store { .. }))
         );
         assert!(crate::verify(&module).is_empty());
     }

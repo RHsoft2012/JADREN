@@ -1,0 +1,42 @@
+module examples.app_scheduler
+
+// The application scheduler is an explicit, bounded timer queue. It never
+// creates a worker thread: the program calls poll at its own event boundary.
+fn main() -> Int32 {
+    app_scheduler_clear()
+    if !app_scheduler_set(20, 100 as Int64, 30u64) { return 1 }
+    if !app_scheduler_set(10, 90 as Int64, 0u64) { return 2 }
+    if !app_scheduler_set(30, 100 as Int64, 0u64) { return 3 }
+
+    var due: [Int32; 4] = [0, 0, 0, 0]
+    let first: UIntSize = app_scheduler_poll(100 as Int64, due)
+    if first != 3usize { return 4 }
+    if due[0] != 10 { return 5 }
+    if due[1] != 20 { return 6 }
+    if due[2] != 30 { return 7 }
+    if app_scheduler_count() != 1usize { return 8 }
+
+    let quiet: UIntSize = app_scheduler_poll(129 as Int64, due)
+    if quiet != 0usize { return 9 }
+    let repeated: UIntSize = app_scheduler_poll(130 as Int64, due)
+    if repeated != 1usize { return 10 }
+    if due[0] != 20 { return 10 }
+    if app_scheduler_count() != 1usize { return 11 }
+    if !app_scheduler_cancel(20) { return 12 }
+    if app_scheduler_count() != 0usize { return 13 }
+
+    // A too-small output buffer leaves all due entries queued.
+    if !app_scheduler_set(1, 200 as Int64, 0u64) { return 14 }
+    if !app_scheduler_set(2, 200 as Int64, 0u64) { return 15 }
+    var short: [Int32; 1] = [77]
+    if app_scheduler_poll(200 as Int64, short) != 0usize { return 16 }
+    if short[0] != 77 { return 17 }
+    if app_scheduler_count() != 2usize { return 18 }
+    let final_count: UIntSize = app_scheduler_poll(200 as Int64, due)
+    if final_count != 2usize { return 19 }
+    if due[0] != 1 { return 20 }
+    if due[1] != 2 { return 20 }
+
+    print("app scheduler ok")
+    return 0
+}

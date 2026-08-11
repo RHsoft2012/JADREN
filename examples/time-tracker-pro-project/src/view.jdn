@@ -1,0 +1,70 @@
+module time_tracker_project.view
+
+import jadren.app.input.bind_state
+import jadren.app.input.set_value
+import jadren.app.ui.list_bind
+import jadren.app.ui.table_bind
+import time_tracker_project.controller.handle
+
+// The view module only projects the model into native Jadren UI controls.
+// It intentionally does not own rows or persistence.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return handle(event_id)
+}
+
+pub fn dispatch_test() -> Bool {
+    if !ui_dispatch_event(42) { return false }
+    set_value(43, "New list item")
+    return ui_dispatch_event(45)
+}
+
+pub fn build() -> Bool {
+    let root: Int32 = ui_app_begin("TimeTracker Pro - multi-file", 900, 720, 0xF6F8FCu32)
+    if root == 0 { return false }
+    let panel: Int32 = ui_app_panel(root, 820, 640, 0xFFFFFFu32, 16, 16, 12, 0, 1)
+    if panel == 0 { return false }
+    let heading: Int32 = ui_app_label(
+        panel,
+        "TimeTracker Pro - model and view are separate Jadren modules",
+        780, 34, 0x111827u32, 0xFFFFFFu32, 8, 1
+    )
+    if heading == 0 { return false }
+    let table_row: Int32 = ui_app_row(panel, 780, 220, 0, 12, 0, 1)
+    if table_row == 0 { return false }
+    let table: Int32 = ui_app_table(table_row, 41, 740, 220,
+        0x111827u32, 0xFFFFFFu32, 8, 0)
+    if table == 0 { return false }
+    if !ui_app_table_column(table, 0, "Title", 360) { return false }
+    if !ui_app_table_column(table, 1, "Time", 150) { return false }
+    if !ui_app_table_column(table, 2, "Status", 180) { return false }
+    if !table_bind(table, 0, 3) { return false }
+    if !ui_app_end(table_row) { return false }
+    let list_row: Int32 = ui_app_row(panel, 780, 120, 0, 12, 0, 1)
+    if list_row == 0 { return false }
+    let list: Int32 = ui_app_list(list_row, 44, 740, 105,
+        0x111827u32, 0xF8FAFCu32, 8, 0)
+    if list == 0 { return false }
+    if !list_bind(list, 0) { return false }
+    if !ui_list_bind_app_state(44, "selected_list_index") { return false }
+    if !ui_app_end(list_row) { return false }
+    let input_row: Int32 = ui_app_row(panel, 780, 52, 0, 12, 0, 1)
+    if input_row == 0 { return false }
+    let input: Int32 = ui_app_text_input(input_row, "New list item", 43, 560, 40,
+        0x111827u32, 0xFFFFFFu32, 8, 0)
+    if input == 0 { return false }
+    bind_state(43, "draft")
+    let add: Int32 = ui_app_button(input_row, "Add item", 45, 140, 40,
+        0xFFFFFFu32, 0x168EF5u32, 10, 0)
+    if add == 0 { return false }
+    if !ui_app_end(input_row) { return false }
+    let status: Int32 = ui_app_status(panel,
+        "Rows and list items come from bounded model stores; input is bound to app_state.",
+        780, 42, 0x111827u32, 0xDCFCE7u32, 12, 1)
+    if status == 0 { return false }
+    let complete: Int32 = ui_app_button(panel, "Complete selected", 42, 220, 42,
+        0xFFFFFFu32, 0x18C964u32, 10, 0)
+    if complete == 0 { return false }
+    if !ui_app_end(panel) { return false }
+    return ui_app_end(root)
+}

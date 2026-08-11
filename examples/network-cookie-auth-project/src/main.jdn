@@ -1,0 +1,36 @@
+module examples.network_cookie_auth_project
+
+import jadren.network.auth.cookie_value_matches
+import jadren.network.http.write_request_header_block
+
+// Cookie matching is explicit, bounded and caller-owned; no session state is
+// created by the helper.
+fn main() -> Int32 {
+    var body: [UInt8; 1] = [0u8]
+    var request: [UInt8; 192] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let written: UIntSize = write_request_header_block(
+        "GET",
+        "/profile",
+        "localhost",
+        "Cookie: sid=abc123; theme=dark; empty=",
+        body,
+        request
+    )
+    if written == 0usize { return 1 }
+
+    var sid_name: [UInt8; 3] = [115u8, 105u8, 100u8]
+    var sid_value: [UInt8; 6] = [97u8, 98u8, 99u8, 49u8, 50u8, 51u8]
+    var scratch: [UInt8; 96] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if !cookie_value_matches(request, sid_name, 3usize, sid_value, 6usize, scratch) { return 2 }
+
+    var theme_name: [UInt8; 5] = [116u8, 104u8, 101u8, 109u8, 101u8]
+    var theme_value: [UInt8; 4] = [100u8, 97u8, 114u8, 107u8]
+    if !cookie_value_matches(request, theme_name, 5usize, theme_value, 4usize, scratch) { return 3 }
+
+    var wrong_value: [UInt8; 5] = [97u8, 98u8, 99u8, 49u8, 50u8]
+    if cookie_value_matches(request, sid_name, 3usize, wrong_value, 5usize, scratch) { return 4 }
+
+    var missing_name: [UInt8; 7] = [109u8, 105u8, 115u8, 115u8, 105u8, 110u8, 103u8]
+    if cookie_value_matches(request, missing_name, 7usize, sid_value, 6usize, scratch) { return 5 }
+    return 0
+}

@@ -1,0 +1,455 @@
+module examples.time_tracker_network_client
+import jadren.network.http.response_body_prefix
+import jadren.network.http.response_header_prefix
+import jadren.network.http.response_status_prefix
+import jadren.network.http.write_request_prefix
+import jadren.network.tcp.close_socket
+import jadren.network.tcp.connect_dns
+import jadren.network.tcp.receive
+import jadren.network.tcp.send_prefix
+import jadren.network.tcp.set_timeout
+fn main() -> Int32 {
+    app_state_clear()
+    app_table_clear(0)
+    if ! app_table_set_column_name(0,
+    0,
+    "title") {
+        return 10
+    }
+    if ! app_table_set_column_type(0,
+    0,
+    0) {
+        return 11
+    }
+    if ! app_table_append_row(0) {
+        return 12
+    }
+    if ! app_table_set_cell(0,
+    0,
+    0,
+    "Plan UI") {
+        return 13
+    }
+    var title:[UInt8;
+    16] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    let title_length = app_table_read_cell(0,
+    0,
+    0,
+    title)
+    if title_length != 7usize {
+        return 14
+    }
+    var body:[UInt8;
+    16] =[116u8,
+    105u8,
+    116u8,
+    108u8,
+    101u8,
+    61u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var index: UIntSize = 0usize
+    while index<title_length {
+        body[index + 6usize] = title[index]
+        index = index + 1usize
+    }
+    var request:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    let request_length = write_request_prefix("POST",
+    "/api/time-entry",
+    "localhost",
+    body,
+    title_length + 6usize,
+    request)
+    if request_length == 0usize {
+        return 15
+    }
+    let socket = connect_dns("localhost",
+    38154u16)
+    if socket == 0usize {
+        return 16
+    }
+    if ! set_timeout(socket,
+    3000u32) {
+        close_socket(socket)
+        return 17
+    }
+    if send_prefix(socket,
+    request,
+    request_length) != request_length {
+        close_socket(socket)
+        return 18
+    }
+    var response:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    let received = receive(socket,
+    response)
+    if received == 0usize {
+        close_socket(socket)
+        return 19
+    }
+    let status = response_status_prefix(response,
+    received)
+    if status != 200u16 {
+        close_socket(socket);
+        return 20
+    }
+    var header:[UInt8;
+    16] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    let header_length = response_header_prefix(response,
+    received,
+    "Content-Length",
+    header)
+    if header_length != 1usize {
+        close_socket(socket)
+        return 21
+    }
+    if header[0] != 50u8 {
+        close_socket(socket)
+        return 21
+    }
+    var response_body:[UInt8;
+    8] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    let body_length = response_body_prefix(response,
+    received,
+    response_body)
+    if body_length != 2usize {
+        close_socket(socket)
+        return 22
+    }
+    if response_body[0] != 79u8 {
+        close_socket(socket)
+        return 22
+    }
+    if response_body[1] != 75u8 {
+        close_socket(socket)
+        return 22
+    }
+    close_socket(socket)
+    app_state_set_text("last_sync",
+    "Plan UI")
+    app_state_set_int("sync_status",
+    status as Int64)
+    if ! app_state_save("target/jadren/time-tracker-network.json") {
+        return 23
+    }
+    if file_write_text("target/jadren/time-tracker-network.csv",
+    "title,status\n") == 0usize {
+        return 24
+    }
+    if file_append("target/jadren/time-tracker-network.csv",
+    title,
+    title_length) != title_length {
+        return 25
+    }
+    if file_append_text("target/jadren/time-tracker-network.csv",
+    ",Synced\n") == 0usize {
+        return 26
+    }
+    if file_write_text("target/jadren/time-tracker-network.ok",
+    "Plan UI synced through natural Jadren network API.\n"
+    ) == 0usize {
+        return 27
+    }
+    print("time tracker network client ok")
+    return 0
+}

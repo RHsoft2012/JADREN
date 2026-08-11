@@ -64,12 +64,223 @@
     ],
     "description": "Create a Jadren import"
   },
+  "App Package Imports": {
+    "prefix": "appimports",
+    "body": [
+      "import jadren.app.state.set_text",
+      "import jadren.app.data.save_atomic",
+      "import jadren.app.list.push_text",
+      "import jadren.app.table.set_cell",
+      "import jadren.app.fs.write_text",
+      "import jadren.app.export.escape_csv",
+      "${0}"
+    ],
+    "description": "Import the natural Jadren application state, persistence, collection, filesystem, and export facades"
+  },
+  "App Checkpoint": {
+    "prefix": "appcheckpoint",
+    "body": [
+      "import jadren.app.data.save_atomic",
+      "",
+      "if !save_atomic(",
+      "    \"target/${1:model}.tmp\",",
+      "    \"target/${1:model}.data\"",
+      ") { return ${2:1} }",
+      "${0}"
+    ],
+    "description": "Write one bounded Jadren application checkpoint atomically"
+  },
+  "File Lock": {
+    "prefix": "filelock",
+    "body": [
+      "let ${1:lock}: UIntSize = file_lock(\"${2:target/app-data.lock}\")",
+      "if ${1:lock} == 0usize { return ${3:1} }",
+      "// Perform the protected file or app-data operation here.",
+      "if !file_unlock(${1:lock}) { return ${4:2} }",
+      "${0}"
+    ],
+    "description": "Acquire and explicitly release a non-blocking cross-process file lock"
+  },
+  "App Memory Checkpoint": {
+    "prefix": "appmemory",
+    "body": [
+      "import jadren.app.data.write_exact",
+      "import jadren.app.data.load_exact",
+      "",
+      "// Declare a caller-owned [UInt8; N] snapshot before this checkpoint.",
+      "var ${3:length}: [UIntSize; 1] = [0usize]",
+      "if !write_exact(${1:snapshot}, ${3:length}) { return ${4:1} }",
+      "if !load_exact(${1:snapshot}, ${3:length}[0]) { return ${5:2} }",
+      "${0}"
+    ],
+    "description": "Export and restore the complete bounded Jadren model through caller-owned memory"
+  },
+  "App Input Binding": {
+    "prefix": "appinput",
+    "body": [
+      "import jadren.app.input.bind_state",
+      "import jadren.app.input.bind_checkbox_state",
+      "import jadren.app.input.bind_select_state",
+      "import jadren.app.input.read_text",
+      "import jadren.app.input.refresh_state",
+      "import jadren.app.input.refresh_checkbox_state",
+      "import jadren.app.input.refresh_select_state",
+      "import jadren.app.input.set_value",
+      "import jadren.app.input.text_length",
+      "",
+      "bind_state(${1:event_id}, \"${2:key}\")",
+      "refresh_state(${1:event_id})",
+      "let ${3:length}: UIntSize = text_length(${1:event_id})",
+      "let ${4:copied}: UIntSize = read_text(${1:event_id}, ${5:output})",
+      "${0}"
+    ],
+    "description": "Read and explicitly refresh a bounded Jadren application input binding"
+  },
+  "App Typed Event Reducer": {
+    "prefix": "appreducer",
+    "body": [
+      "import jadren.app.event.AppEvent",
+      "import jadren.app.event.click",
+      "",
+      "pub struct ${1:Model} {",
+      "    ${2:count}: Int64,",
+      "    ${3:enabled}: Bool,",
+      "}",
+      "",
+      "pub fn reduce(event: AppEvent, model: write Slice<${1:Model}>, capacity: UIntSize) -> Bool {",
+      "    if capacity < 1usize { return false }",
+      "    if event.id != ${4:event_id} { return false }",
+      "    model[0].${2:count} = model[0].${2:count} + 1i64",
+      "    return true",
+      "}",
+      "",
+      "var ${5:model}: [${1:Model}; 1] = [${1:Model} { ${2:count}: 0i64, ${3:enabled}: false }]",
+      "if !reduce(click(${4:event_id}), ${5:model}, 1usize) { return ${6:1} }",
+      "${0}"
+    ],
+    "description": "Create a project-owned typed AppEvent reducer over a caller-owned model slice"
+  },
+  "Unity Typed Scene UI": {
+    "prefix": "unityfacade",
+    "body": [
+      "import jadren.unity.scene.UnityCommandRecord",
+      "import jadren.unity.scene.UnityTransform",
+      "import jadren.unity.scene.unity_transform",
+      "import jadren.unity.scene.unity_scene_spawn_with_transform",
+      "import jadren.unity.ui.UnityUiCommandRecord",
+      "import jadren.unity.ui.UnityColor",
+      "import jadren.unity.ui.unity_color",
+      "import jadren.unity.ui.unity_ui_set_color_value",
+      "",
+      "let ${1:transform}: UnityTransform = unity_transform(",
+      "    ${2:0.0}f32, ${3:0.0}f32, ${4:0.0}f32,",
+      "    0.0f32, 0.0f32, 0.0f32, 1.0f32,",
+      "    1.0f32, 1.0f32, 1.0f32,",
+      ")",
+      "if !unity_scene_spawn_with_transform(${5:scene_output}, ${6:scene_capacity}, ${7:slot}, ${8:entity_id}, ${9:prefab_id}, ${1:transform}) { return ${10:1} }",
+      "let ${11:color}: UnityColor = unity_color(0.1f32, 0.6f32, 1.0f32, 1.0f32)",
+      "if !unity_ui_set_color_value(${12:ui_output}, ${13:ui_capacity}, ${14:ui_slot}, ${15:target_id}, ${11:color}) { return ${16:2} }",
+      "${0}"
+    ],
+    "description": "Use typed UnityTransform and UnityColor facades over the existing bounded ABI"
+  },
+  "Unity Declarative Node Style": {
+    "prefix": "unitynode",
+    "body": [
+      "import jadren.unity.scene.UnityCommandRecord",
+      "import jadren.unity.scene.UnitySceneNode",
+      "import jadren.unity.scene.unity_transform_identity",
+      "import jadren.unity.scene.unity_scene_node",
+      "import jadren.unity.scene.unity_scene_emit_node",
+      "import jadren.unity.ui.UnityUiCommandRecord",
+      "import jadren.unity.ui.UnityUiStyle",
+      "import jadren.unity.ui.unity_color",
+      "import jadren.unity.ui.unity_ui_style",
+      "import jadren.unity.ui.unity_ui_apply_style",
+      "",
+      "let ${1:node}: UnitySceneNode = unity_scene_node(",
+      "    ${2:entity_id}, ${3:prefab_id}, ${4:parent_id},",
+      "    unity_transform_identity(), ${5:true},",
+      ")",
+      "let ${6:node_count}: UIntSize = unity_scene_emit_node(${7:scene_output}, ${8:scene_capacity}, ${9:scene_slot}, ${1:node})",
+      "if ${6:node_count} == 0usize { return ${10:1} }",
+      "let ${11:style}: UnityUiStyle = unity_ui_style(${12:target_id}, unity_color(0.1f32, 0.6f32, 1.0f32, 1.0f32), true, true)",
+      "let ${13:style_count}: UIntSize = unity_ui_apply_style(${14:ui_output}, ${15:ui_capacity}, ${16:ui_slot}, ${11:style})",
+      "if ${13:style_count} == 0usize { return ${17:2} }",
+      "${0}"
+    ],
+    "description": "Declare one bounded Unity scene node and UI style value"
+  },
+  "Unity Declarative Text": {
+    "prefix": "unitytext",
+    "body": [
+      "import jadren.unity.ui.UnityUiTextCommandRecord",
+      "import jadren.unity.ui.UnityUiTextValue",
+      "import jadren.unity.ui.UnityTextRange",
+      "import jadren.unity.ui.unity_text_range",
+      "import jadren.unity.ui.unity_ui_text_value",
+      "import jadren.unity.ui.unity_ui_write_text_value",
+      "",
+      "let ${1:text}: UnityUiTextValue = unity_ui_text_value(${2:target_id}, unity_text_range(${3:0u32}, ${4:text_length}))",
+      "if !unity_ui_write_text_value(${5:command_output}, ${6:text_bytes}, ${7:command_capacity}, ${8:text_capacity}, ${9:slot}, ${1:text}) { return ${10:1} }",
+      "${0}"
+    ],
+    "description": "Use a typed target and caller-owned UTF-8 range for Unity UI text"
+  },
+  "Unity Declarative Collections": {
+    "prefix": "unitycollections",
+    "body": [
+      "import jadren.unity.ui.UnityUiListCommandRecord",
+      "import jadren.unity.ui.UnityUiTableCommandRecord",
+      "import jadren.unity.ui.UnityUiListItemValue",
+      "import jadren.unity.ui.UnityUiTableCellValue",
+      "import jadren.unity.ui.unity_text_range",
+      "import jadren.unity.ui.unity_ui_list_item_value",
+      "import jadren.unity.ui.unity_ui_table_cell_value",
+      "import jadren.unity.ui.unity_ui_write_list_item_value",
+      "import jadren.unity.ui.unity_ui_write_table_cell_value",
+      "",
+      "let ${1:row}: UnityUiListItemValue = unity_ui_list_item_value(${2:list_id}, ${3:item_id}, ${4:index}, unity_text_range(${5:0u32}, ${6:text_length}))",
+      "if !unity_ui_write_list_item_value(${7:list_output}, ${8:text_bytes}, ${9:list_capacity}, ${10:text_capacity}, ${11:slot}, ${1:row}) { return ${12:1} }",
+      "let ${13:cell}: UnityUiTableCellValue = unity_ui_table_cell_value(${14:table_id}, ${15:row_id}, ${16:column_id}, ${17:row_index}, ${18:column_index}, unity_text_range(${19:0u32}, ${20:cell_text_length}))",
+      "if !unity_ui_write_table_cell_value(${21:table_output}, ${8:text_bytes}, ${22:table_capacity}, ${10:text_capacity}, ${23:table_slot}, ${13:cell}) { return ${24:2} }",
+      "${0}"
+    ],
+    "description": "Declare bounded Unity list rows and table cells with typed text ranges"
+  },
+  "Unity Editor Component Plan": {
+    "prefix": "unitycomponentplan",
+    "body": [
+      "import jadren.unity.editor.UnityEditorPlanCommandRecord",
+      "import jadren.unity.editor.unity_editor_plan_add_component",
+      "import jadren.unity.editor.unity_editor_plan_set_component_float",
+      "import jadren.unity.editor.unity_editor_plan_set_component_bool",
+      "import jadren.unity.editor.unity_editor_plan_save_prefab_asset",
+      "",
+      "if !unity_editor_plan_add_component(${1:output}, ${2:capacity}, ${3:slot}, ${4:target_id}, 1u32) { return ${5:1} }",
+      "if !unity_editor_plan_set_component_float(${1:output}, ${2:capacity}, ${6:slot + 1}, ${4:target_id}, 1u32, 1u32, ${7:3.5}f32) { return ${8:2} }",
+      "if !unity_editor_plan_set_component_bool(${1:output}, ${2:capacity}, ${9:slot + 2}, ${4:target_id}, 1u32, 1u32, ${10:false}) { return ${11:3} }",
+      "if !unity_editor_plan_save_prefab_asset(${1:output}, ${2:capacity}, ${12:slot + 3}, ${4:target_id}, ${13:asset_offset}, ${14:asset_length}) { return ${15:4} }",
+      "${0}"
+    ],
+    "description": "Add a whitelisted Rigidbody and set its mass/useGravity through the bounded Editor plan"
+  },
   "Print": {
     "prefix": "print",
     "body": [
       "print(${1:\"value\"})${0}"
     ],
     "description": "Print a value in Jadren"
+  },
+  "Standard IO": {
+    "prefix": "stdio",
+    "body": [
+      "var ${1:input}: [UInt8; 5] = [0u8, 0u8, 0u8, 0u8, 0u8]",
+      "let ${3:received}: UIntSize = stdin_read(${1:input})",
+      "let ${4:sent}: UIntSize = stdout_write(${1:input})",
+      "let ${5:error_sent}: UIntSize = stderr_write(${1:input})${0}"
+    ],
+    "description": "Read caller-owned bytes and write them to native stdout/stderr"
   },
   "Main": {
     "prefix": "main",

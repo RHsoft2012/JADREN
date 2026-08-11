@@ -1,0 +1,23 @@
+module typed_nested_while_local_ordered_body_native_stage2.main
+
+fn local_value() -> Int32 {
+    var outer: Int32 = 0;
+    while outer < 4 {
+        outer = outer + 1;
+        var inner: Int32 = 0;
+        while inner < 5 {
+            inner = inner + 1;
+        if inner <= 0 { continue; }
+        inner = (inner + outer) * 1;
+        inner = (inner + outer) * (outer + 1);
+        if inner >= 99 { continue; }
+        inner = inner + 1;
+        if inner == outer { continue; }
+        inner = inner + 1;
+        inner = (((inner + outer) * 1) + outer) * 1;
+        if inner != 99 { break; }
+        }
+        outer = outer + outer;
+    }
+    return outer;
+}

@@ -1,0 +1,20 @@
+module invalid.callback_region_escape
+
+fn mutate(values: write Buffer<Int32>) -> Bool {
+    return buffer_length(values) == 1usize
+}
+
+fn forward(
+    callback: fn(write Buffer<Int32>) -> Bool,
+    values: Buffer<Int32>
+) -> Bool {
+    return callback(values)
+}
+
+fn leak() -> Bool {
+    region frame {
+        let values: Buffer<Int32> = frame.allocate(1)
+        let callback = mutate
+        return forward(callback, values)
+    }
+}

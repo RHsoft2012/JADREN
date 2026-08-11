@@ -1,0 +1,5 @@
+module multi_file.logic
+
+pub fn answer() -> Int32 {
+    return 42
+}

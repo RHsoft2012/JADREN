@@ -1,0 +1,48 @@
+module examples.app_table_index_range_numeric
+
+// UInt and Float range queries share the same bounded, stale-safe row-id output contract.
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !app_table_set_column_type(0, 0, 2) { return 1 }
+    if !app_table_append_row(0) { return 2 }
+    if !app_table_set_uint(0, 0, 0, 4u64) { return 3 }
+    if !app_table_append_row(0) { return 4 }
+    if !app_table_set_uint(0, 1, 0, 1u64) { return 5 }
+    if !app_table_append_row(0) { return 6 }
+    if !app_table_set_uint(0, 2, 0, 4u64) { return 7 }
+    if !app_table_index_build_uint(0, 0) { return 8 }
+
+    var output: [Int32; 4] = [77, 77, 77, 77]
+    let uint_matches: UIntSize = app_table_index_collect_uint_range(0, 0, 1u64, 4u64, output)
+    if uint_matches != 3usize { return 9 }
+    if output[0] != 1 { return 10 }
+    if output[1] != 0 { return 10 }
+    if output[2] != 2 { return 10 }
+
+    if app_table_index_collect_uint_range(0, 0, 5u64, 4u64, output) != 0usize { return 11 }
+    if output[0] != 1 { return 12 }
+    if output[1] != 0 { return 12 }
+    if output[2] != 2 { return 12 }
+
+    app_table_clear(1)
+    if !app_table_set_column_type(1, 0, 4) { return 13 }
+    if !app_table_append_row(1) { return 14 }
+    if !app_table_set_float(1, 0, 0, 1.5f64) { return 15 }
+    if !app_table_append_row(1) { return 16 }
+    if !app_table_set_float(1, 1, 0, -2.0f64) { return 17 }
+    if !app_table_append_row(1) { return 18 }
+    if !app_table_set_float(1, 2, 0, 1.5f64) { return 19 }
+    if !app_table_index_build_float(1, 0) { return 20 }
+
+    let float_matches: UIntSize = app_table_index_collect_float_range(1, 0, -2.0f64, 1.5f64, output)
+    if float_matches != 3usize { return 21 }
+    if output[0] != 1 { return 22 }
+    if output[1] != 0 { return 22 }
+    if output[2] != 2 { return 22 }
+
+    if !app_table_set_float(1, 2, 0, 2.0f64) { return 23 }
+    if app_table_index_collect_float_range(1, 0, -2.0f64, 2.0f64, output) != 0usize { return 24 }
+    app_table_clear(0)
+    app_table_clear(1)
+    return 0
+}

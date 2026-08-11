@@ -1,0 +1,30 @@
+module examples.http_response_exact
+
+// Exact response read-back writes the output length only after the complete
+// response has been validated. Empty header/body values are valid results.
+fn main() -> Int32 {
+    var response: [UInt8; 53] = [72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 32u8, 50u8, 48u8, 48u8, 32u8, 79u8, 75u8, 13u8, 10u8, 88u8, 45u8, 69u8, 109u8, 112u8, 116u8, 121u8, 58u8, 32u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 52u8, 13u8, 10u8, 13u8, 10u8, 74u8, 68u8, 78u8, 33u8]
+    var output: [UInt8; 4] = [77u8, 77u8, 77u8, 77u8]
+    var length: [UIntSize; 1] = [91usize]
+
+    if !http_response_header_exact(response, "X-Empty", output, length) { return 1 }
+    if length[0] != 0usize { return 2 }
+    if output[0] != 77u8 { return 3 }
+
+    if !http_response_body_exact(response, output, length) { return 4 }
+    if length[0] != 4usize { return 5 }
+    if output[0] != 74u8 { return 6 }
+    if output[3] != 33u8 { return 7 }
+
+    var too_small: [UInt8; 3] = [55u8, 55u8, 55u8]
+    var unchanged: [UIntSize; 1] = [123usize]
+    if http_response_body_exact(response, too_small, unchanged) { return 8 }
+    if too_small[0] != 55u8 { return 9 }
+    if unchanged[0] != 123usize { return 10 }
+
+    var empty_response: [UInt8; 46] = [72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 32u8, 50u8, 48u8, 52u8, 32u8, 78u8, 111u8, 32u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 48u8, 13u8, 10u8, 13u8, 10u8]
+    if !http_response_body_exact(empty_response, output, length) { return 11 }
+    if length[0] != 0usize { return 12 }
+    if output[0] != 74u8 { return 13 }
+    return 0
+}

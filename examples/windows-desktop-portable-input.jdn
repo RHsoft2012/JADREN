@@ -1,0 +1,35 @@
+module windows_desktop_portable_input.main
+
+// The retained input uses a node id for layout and an explicit event id for
+// the source callback. The native Win32 EDIT is created only after the full
+// tree is declared, so resize and restore use the same layout pass.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 2 {
+        ui_set_status("Text input changed.")
+    }
+    if event_id == 3 {
+        ui_set_status("Button clicked.")
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    let root: Int32 = ui_app_begin("Jadren Portable Input", 720, 420, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+
+    let panel: Int32 = ui_app_panel(root, 640, 260, 0xFFFFFFu32, 16, 12, 8, 0, 1)
+    if panel == 0 { return 2 }
+    ui_layout_status("Write text and use the callback without Win32 coordinates.", 560, 34,
+                     0x111827u32, 0xDCFCE7u32, 10, 1)
+    let input: Int32 = ui_app_text_input(panel, "Initial text", 2, 560, 38,
+                                         0x111827u32, 0xFFFFFFu32, 8, 1)
+    let button: Int32 = ui_app_button(panel, "Save value", 3, 180, 42,
+                                      0xFFFFFFu32, 0x168EF5u32, 12, 0)
+    if input == 0 { return 3 }
+    if button == 0 { return 4 }
+    ui_set_input_enabled(2, 1)
+    if !ui_app_end(panel) { return 5 }
+    if !ui_app_end(root) { return 6 }
+    return ui_app_run()
+}

@@ -1,0 +1,18 @@
+module examples.app_data_journal_legacy
+
+// Recovery-only companion for the original 0.1 length-only journal format.
+// The smoke creates the legacy bytes from a valid checkpoint payload and this
+// program proves that the compatibility reader still restores the model.
+fn main() -> Int32 {
+    app_state_clear()
+    if !app_data_journal_recover(
+        "target/jadren/app-data-journal-legacy.journal",
+        "target/jadren/app-data-journal-legacy.scratch",
+    ) {
+        return 1
+    }
+    if app_state_get_int("counter") != 2i64 {
+        return 2
+    }
+    return 0
+}

@@ -1,0 +1,15 @@
+module examples.selfhost.typed_while_local_dynamic_mutable_body_let_native_stage2
+
+// JADREN_STAGE2_DYNAMIC_MUTABLE_BODY_LET
+// The loop creates a mutable iteration-local `step`, updates that slot, and
+// then consumes it in the enclosing loop assignment.
+fn local_value() -> Int32 {
+    var counter: Int32 = 0;
+    while counter < 4 {
+        var step: Int32 = 1 + 0;
+        step = step + 1;
+        counter = counter + step;
+        if counter < 4 { continue; }
+    }
+    return counter;
+}

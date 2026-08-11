@@ -1,0 +1,41 @@
+module examples.app_table_filter_callback
+
+// A predicate receives the source table id and the current source row.
+// Keep the callback read-only so the source fingerprint stays stable.
+fn keep_even(table_id: Int32, row_index: Int32) -> Bool {
+    let value: Int64 = app_table_read_int(table_id, row_index, 0)
+    return (value % (2 as Int64)) == (0 as Int64)
+}
+
+fn main() -> Int32 {
+    app_table_clear(0)
+    app_table_clear(1)
+    let typed: Bool = app_table_set_column_type(0, 0, 1)
+    if !typed {
+        return 1
+    }
+
+    app_table_append_row(0)
+    app_table_append_row(0)
+    app_table_append_row(0)
+    app_table_append_row(0)
+    app_table_set_int(0, 0, 0, 1 as Int64)
+    app_table_set_int(0, 1, 0, 2 as Int64)
+    app_table_set_int(0, 2, 0, 3 as Int64)
+    app_table_set_int(0, 3, 0, 4 as Int64)
+
+    let filtered: Bool = app_table_filter_callback(0, 1, keep_even)
+    if !filtered {
+        return 2
+    }
+    if app_table_row_count(1) != 2 {
+        return 3
+    }
+    if app_table_read_int(1, 0, 0) != 2 as Int64 {
+        return 4
+    }
+    if app_table_read_int(1, 1, 0) != 4 as Int64 {
+        return 5
+    }
+    return 0
+}

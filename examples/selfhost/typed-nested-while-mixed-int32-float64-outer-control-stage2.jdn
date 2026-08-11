@@ -1,0 +1,25 @@
+module examples.selfhost.typed_nested_while_mixed_int32_float64_outer_control_stage2
+
+// Mixed outer control: Int32 outer storage, Float64 inner storage and an
+// explicit outer break after the mixed call in the outer tail.
+
+fn mix(value: Int32, amount: Float64) -> Int32 {
+    return value + 1
+}
+
+fn main() -> Int32 {
+    var outer: Int32 = 0
+    while outer < 2 {
+        outer = outer + 1
+        var inner: Float64 = 0.0f64
+        while inner < 2.0f64 {
+            inner = inner + 1.0f64
+        }
+        outer = mix(outer, inner)
+        break
+    }
+    if outer == 2 {
+        return 0
+    }
+    return 1
+}

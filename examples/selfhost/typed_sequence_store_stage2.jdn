@@ -1,0 +1,23 @@
+module examples.selfhost.typed_sequence_store_stage2
+
+// Source companion for the bounded dynamic-sequence write hand-off. The
+// caller supplies a `TypedSequenceBindingHeader` for `values`; its
+// `reserved[0]` capability is `1` (write). A typed semantic pass may then
+// represent `values[index] = value` as syntax kind `8`, with the index node in
+// `left` and the RHS node in `right`. Stage2 lowers that node to the same
+// runtime length proof, `BoundsCheck`, `Offset` and `Store` for Slice and
+// Buffer descriptors.
+@repr(C)
+pub struct TypedSequenceBindingHeader {
+    pub name_start: UInt64,
+    pub name_end: UInt64,
+    pub element_type_kind: UInt8,
+    pub sequence_kind: UInt8,
+    pub reserved: [UInt8; 6],
+}
+
+fn main() -> Int32 {
+    // The descriptor and assignment AST are caller-owned metadata; this
+    // source fixture keeps the executable result deterministic.
+    return 7
+}

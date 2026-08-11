@@ -1,0 +1,75 @@
+module examples.stdlib_buffer_status_enum
+
+// Standalone native companion for the public jadren.core.status module.
+// The package-level import is checked by stdlib/core/examples/buffer_status_enum.jdn.
+enum BufferStatus {
+    Ok,
+    Disabled,
+    RuntimeNotInitialized,
+    InvalidSize,
+    InvalidAlignment,
+    SizeOverflow,
+    OutOfMemory,
+    NullPointer,
+    OutOfBounds,
+    InvalidBuffer,
+    Unknown(Int32),
+}
+
+fn buffer_status_from_code(code: Int32) -> BufferStatus {
+    if code == 0 { return BufferStatus.Ok }
+    if code == 1 { return BufferStatus.Disabled }
+    if code == -10 { return BufferStatus.RuntimeNotInitialized }
+    if code == -11 { return BufferStatus.InvalidSize }
+    if code == -12 { return BufferStatus.InvalidAlignment }
+    if code == -13 { return BufferStatus.SizeOverflow }
+    if code == -14 { return BufferStatus.OutOfMemory }
+    if code == -15 { return BufferStatus.NullPointer }
+    if code == -20 { return BufferStatus.OutOfBounds }
+    if code == -21 { return BufferStatus.InvalidBuffer }
+    return BufferStatus.Unknown(code)
+}
+
+fn buffer_status_code(status: BufferStatus) -> Int32 {
+    return match status {
+        BufferStatus.Ok => 0,
+        BufferStatus.Disabled => 1,
+        BufferStatus.RuntimeNotInitialized => -10,
+        BufferStatus.InvalidSize => -11,
+        BufferStatus.InvalidAlignment => -12,
+        BufferStatus.SizeOverflow => -13,
+        BufferStatus.OutOfMemory => -14,
+        BufferStatus.NullPointer => -15,
+        BufferStatus.OutOfBounds => -20,
+        BufferStatus.InvalidBuffer => -21,
+        BufferStatus.Unknown(code) => code,
+    }
+}
+
+// Named status values keep the stable numeric ABI while making application
+// error handling readable and forward-compatible through Unknown(code).
+fn main() -> Int32 {
+    var result_code: Int32 = 0
+    if buffer_status_code(buffer_status_from_code(0)) != 0 { result_code = 1 }
+    if buffer_status_code(buffer_status_from_code(1)) != 1 { result_code = 2 }
+    if buffer_status_code(buffer_status_from_code(-10)) != -10 { result_code = 3 }
+    if buffer_status_code(buffer_status_from_code(-11)) != -11 { result_code = 4 }
+    if buffer_status_code(buffer_status_from_code(-12)) != -12 { result_code = 5 }
+    if buffer_status_code(buffer_status_from_code(-13)) != -13 { result_code = 6 }
+    if buffer_status_code(buffer_status_from_code(-14)) != -14 { result_code = 7 }
+    if buffer_status_code(buffer_status_from_code(-15)) != -15 { result_code = 8 }
+    if buffer_status_code(buffer_status_from_code(-20)) != -20 { result_code = 9 }
+    if buffer_status_code(buffer_status_from_code(-21)) != -21 { result_code = 10 }
+    if buffer_status_code(buffer_status_from_code(-77)) != -77 { result_code = 11 }
+    match buffer_status_from_code(-14) {
+        BufferStatus.OutOfMemory => {}
+        _ => { result_code = 12 }
+    }
+    match buffer_status_from_code(-77) {
+        BufferStatus.Unknown(value) => {
+            if value != -77 { result_code = 13 }
+        }
+        _ => { result_code = 14 }
+    }
+    return result_code
+}

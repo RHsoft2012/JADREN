@@ -1,0 +1,78 @@
+module windows_desktop_table_typed_sort.main
+
+// Retained UI tables can sort the bound app_table using its declared column
+// kind.  The model remains the source of truth; no Electron or GUI bridge is
+// involved.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 40 {
+        ui_table_sort_int(30, 0, false)
+        ui_set_status("Priority sorted low to high.")
+    }
+    if event_id == 41 {
+        ui_table_sort_int(30, 0, true)
+        ui_set_status("Priority sorted high to low.")
+    }
+    if event_id == 42 {
+        ui_table_filter_int(30, 1, 0, 11 as Int64)
+        ui_set_status("Priority filter copied matching rows.")
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_table_clear(0)
+    app_table_clear(1)
+    if !app_table_set_column_name(0, 0, "priority") { return 1 }
+    if !app_table_set_column_name(0, 1, "task") { return 2 }
+    if !app_table_set_column_type(0, 0, 1) { return 3 }
+    if !app_table_append_row(0) { return 4 }
+    if !app_table_append_row(0) { return 5 }
+    if !app_table_append_row(0) { return 6 }
+    if !app_table_set_int(0, 0, 0, 20 as Int64) { return 7 }
+    if !app_table_set_int(0, 1, 0, 2 as Int64) { return 8 }
+    if !app_table_set_int(0, 2, 0, 11 as Int64) { return 9 }
+    if !app_table_set_cell(0, 0, 1, "Release") { return 10 }
+    if !app_table_set_cell(0, 1, 1, "Parser") { return 11 }
+    if !app_table_set_cell(0, 2, 1, "Runtime") { return 12 }
+
+    let root: Int32 = ui_app_begin("Jadren Typed Table Sort", 820, 520, 0xF6F8FCu32)
+    if root == 0 { return 13 }
+    let panel: Int32 = ui_app_panel(root, 740, 420, 0xFFFFFFu32, 16, 16, 10, 0, 1)
+    if panel == 0 { return 14 }
+    let heading: Int32 = ui_app_label(panel, "Typed numeric sorting", 680, 34,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if heading == 0 { return 15 }
+    let table: Int32 = ui_app_table(panel, 30, 680, 220,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if table == 0 { return 16 }
+    if !ui_app_table_column(table, 0, "Priority", 160) { return 17 }
+    if !ui_app_table_column(table, 1, "Task", 360) { return 18 }
+    if !ui_app_table_bind_app(table, 0, 2) { return 19 }
+
+    // Text sorting remains available for compatibility; the typed sort gives
+    // numeric ordering and refreshes every view bound to app table 0.
+    if !ui_app_table_sort_text(table, 0, false) { return 20 }
+    if !ui_app_table_sort_int(table, 0, false) { return 21 }
+    if app_table_read_int(0, 0, 0) != 2 as Int64 { return 22 }
+    if app_table_read_int(0, 2, 0) != 20 as Int64 { return 23 }
+    if !ui_app_table_filter_int(table, 1, 0, 11 as Int64) { return 24 }
+    if app_table_row_count(1) != 1 { return 25 }
+    if app_table_read_int(1, 0, 0) != 11 as Int64 { return 25 }
+
+    let actions: Int32 = ui_app_row(panel, 680, 52, 0, 8, 0, 1)
+    if actions == 0 { return 26 }
+    let ascending: Int32 = ui_app_button(actions, "Priority A-Z", 40, 190, 42,
+        0xFFFFFFu32, 0x168EF5u32, 10, 0)
+    let descending: Int32 = ui_app_button(actions, "Priority Z-A", 41, 190, 42,
+        0xFFFFFFu32, 0x0B6FC8u32, 10, 0)
+    let filter: Int32 = ui_app_button(actions, "Filter 11", 42, 150, 42,
+        0xFFFFFFu32, 0x18C964u32, 10, 0)
+    if ascending == 0 { return 27 }
+    if descending == 0 { return 28 }
+    if filter == 0 { return 29 }
+    if !ui_app_end(actions) { return 30 }
+    if !ui_app_end(panel) { return 31 }
+    if !ui_app_end(root) { return 32 }
+    return ui_app_run()
+}

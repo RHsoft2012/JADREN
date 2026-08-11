@@ -1,0 +1,13 @@
+module examples.if_local_branch_scopes
+
+fn main() -> Int32 {
+    var value: Int32 = 10
+    if value < 11 {
+        var branch: Int32 = 20
+        value = branch + 1
+    } else {
+        let other: Int32 = 30
+        value = other + 2
+    }
+    return value
+}

@@ -4,7 +4,7 @@ Jadren is an experimental systems and compute programming language focused on
 safe native performance, predictable memory behaviour, data-parallel workloads,
 and practical Unity integration.
 
-The current implementation is the **0.1.0-preview.4 public preview**. It is
+The current implementation is the **0.1.3-preview.11 public preview**. It is
 suitable for evaluation, local experiments, and integration testing. It is not
 yet a stable language or a production-supported release, and the Windows
 installer is unsigned.
@@ -52,6 +52,27 @@ cargo run -p jadren-cli -- build examples/hello.jdn
 cargo run -p jadren-cli -- run examples/hello.jdn
 ```
 
+## VS Code workflow on Windows
+
+The local VS Code package provides syntax and LSP support, **Jadren: Debug
+Current File** for a debug build with native breakpoints, and **Jadren: Build
+Release EXE** for a standalone optimized executable. The latter writes
+the executable to the configured release output location without starting a
+debugger. See the
+[VS Code extension guide](docs/VSCODE_EXTENSION.md) for installation and
+configuration details.
+
+## Windows desktop preview
+
+The repository also contains `examples/windows-desktop-preview.jdn`: a tested
+Windows x86-64 vertical slice that creates a native Win32 window. Direct Jadren
+UI functions define labels, status text, buttons, dimensions, `0xRRGGBB`
+colours, and corner radii in Jadren source. It is deliberately bounded preview
+API, not a released
+cross-platform GUI framework. See
+[Getting started](docs/GETTING_STARTED.md#windows-desktop-preview) for the
+build and launch command.
+
 ## Documentation
 
 - [Getting started](docs/GETTING_STARTED.md) — requirements and first build;
@@ -67,11 +88,13 @@ cargo run -p jadren-cli -- run examples/hello.jdn
 
 ## Unity distribution
 
-Unity packages, native plugins, samples, and asset files are distributed
-separately through the Unity Asset Store. They are intentionally excluded from
-this public source export. Use a package and documentation set from the same
-Jadren release line; do not mix binaries from an older `Jadren_win` build with
-a newer Unity package.
+The development repository publishes the Unity packages, native preview
+plugins, samples, and package documentation under `unity/`. The Downloads page
+provides the same files as a versioned Unity Integration Bundle for convenient
+installation. Asset Store review, signing, stable compatibility and production
+support remain separate gates. Always use a package and documentation set from
+the same Jadren release line; do not mix binaries from an older `Jadren_win`
+build with a newer Unity package.
 
 ## Current scope
 

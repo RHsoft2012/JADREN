@@ -1,0 +1,45 @@
+module examples.app_data_save_if_revision
+
+// A model-wide revision guard prevents a stale controller from atomically
+// replacing a newer state/list/table checkpoint. The guard is process-local
+// and caller-driven; a rejected save is an explicit retry signal.
+fn main() -> Int32 {
+    app_state_clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    if !app_state_set_text("mode", "first") { return 1 }
+    if !app_list_push_text(0, "Task") { return 2 }
+    if !app_table_set_column_name(0, 0, "name") { return 3 }
+    if !app_table_append_row(0) { return 4 }
+    if !app_table_set_cell(0, 0, 0, "Task") { return 5 }
+    if !app_data_validate() { return 6 }
+
+    let snapshot: UInt64 = app_data_revision()
+    if !app_data_save_atomic_if_revision(
+        "target/app-data-save-if-revision.tmp",
+        "target/app-data-save-if-revision.jdn",
+        snapshot,
+    ) { return 7 }
+
+    if !app_state_set_text("mode", "newer") { return 8 }
+    if app_data_save_atomic_if_revision(
+        "target/app-data-save-if-revision.tmp",
+        "target/app-data-save-if-revision.jdn",
+        snapshot,
+    ) { return 9 }
+
+    if !app_data_load("target/app-data-save-if-revision.jdn") { return 10 }
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if app_state_read_text("mode", output) != 5usize { return 11 }
+    if output[0] != 102u8 { return 12 }
+    if app_list_count(0) != 1 { return 13 }
+    if app_table_row_count(0) != 1 { return 14 }
+
+    file_delete("target/app-data-save-if-revision.tmp")
+    file_delete("target/app-data-save-if-revision.jdn")
+    app_state_clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    return 0
+}

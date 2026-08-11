@@ -1,0 +1,62 @@
+module examples.net_reactor_buffered;
+
+// Buffered one-shot transfer: the caller owns both arrays and keeps them alive
+// until the reactor reports the operation. The event exposes bytes transferred.
+// The receive intentionally uses a four-byte buffer while the probe sends two
+// bytes, so the gate also proves that a short transfer is reported exactly.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38132u16)
+    if (listener as Int32) == 0 { return 10 }
+    let reactor: UIntSize = net_reactor_open(4u32, 8u32)
+    if (reactor as Int32) == 0 { net_socket_close(listener); return 11 }
+    let accept_operation: UIntSize = net_reactor_submit_accept(reactor, listener, 10usize)
+    if (accept_operation as Int32) == 0 {
+        net_reactor_close(reactor)
+        net_socket_close(listener)
+        return 12
+    }
+    let accepted_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    if accepted_events == 0u32 {
+        net_reactor_close(reactor)
+        net_socket_close(listener)
+        return 13
+    }
+    let client: UIntSize = net_reactor_event_socket(reactor, 0u32)
+    if (client as Int32) == 0 { net_reactor_close(reactor); net_socket_close(listener); return 14 }
+
+    var request: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    let receive_operation: UIntSize = net_reactor_submit_receive_buffer(
+        reactor, client, request, 20usize)
+    if (receive_operation as Int32) == 0 {
+        net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 15
+    }
+    let received_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    let received_bytes: UIntSize = if received_events == 0u32 {
+        0usize
+    } else {
+        net_reactor_event_bytes(reactor, 0u32)
+    }
+    if (received_bytes as Int32) != 2 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 16 }
+    if request[0] != 112u8 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 16 }
+    if request[1] != 105u8 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 16 }
+
+    var response: [UInt8; 2] = [79u8, 75u8]
+    let send_operation: UIntSize = net_reactor_submit_send_buffer(
+        reactor, client, response, 30usize)
+    if (send_operation as Int32) == 0 { net_socket_close(client); net_reactor_close(reactor); net_socket_close(listener); return 17 }
+    let sent_events: UInt32 = net_reactor_poll(reactor, 5000u32)
+    let sent_bytes: UIntSize = if sent_events == 0u32 {
+        0usize
+    } else {
+        net_reactor_event_bytes(reactor, 0u32)
+    }
+    let client_closed: Bool = net_socket_close(client)
+    let reactor_closed: Bool = net_reactor_close(reactor)
+    let listener_closed: Bool = net_socket_close(listener)
+    if (sent_bytes as Int32) != 2 { return 18 }
+    if sent_events == 0u32 { return 18 }
+    if !client_closed { return 18 }
+    if !reactor_closed { return 18 }
+    if !listener_closed { return 18 }
+    return 0
+}

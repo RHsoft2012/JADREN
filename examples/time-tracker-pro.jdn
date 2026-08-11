@@ -1,0 +1,528 @@
+module examples.time_tracker_pro
+
+// Practical TimeTrackerPro slice written only in Jadren.
+// The model is app_table/app_state, the native controls are projections, and
+// every mutation is persisted through one model-wide atomic checkpoint.
+
+fn save_model() -> Bool {
+    return app_data_save_atomic(
+        "target/jadren/time-tracker-pro.tmp",
+        "target/jadren/time-tracker-pro.data"
+    )
+}
+
+fn seed_model() -> Bool {
+    app_state_clear()
+    app_table_clear(0)
+    app_table_clear(1)
+    if !app_table_set_column_name(0, 0, "title") { return false }
+    if !app_table_set_column_name(0, 1, "time") { return false }
+    if !app_table_set_column_name(0, 2, "status") { return false }
+    if !app_table_set_column_name(0, 3, "task_id") { return false }
+    if !app_table_set_column_type(0, 0, 0) { return false }
+    if !app_table_set_column_type(0, 1, 0) { return false }
+    if !app_table_set_column_type(0, 2, 0) { return false }
+    if !app_table_set_column_type(0, 3, 1) { return false }
+    let first: Int32 = app_table_upsert_int(0, 3, 1 as Int64)
+    let second: Int32 = app_table_upsert_int(0, 3, 2 as Int64)
+    let third: Int32 = app_table_upsert_int(0, 3, 3 as Int64)
+    if first != 0 as Int32 { return false }
+    if second != 1 as Int32 { return false }
+    if third != 2 as Int32 { return false }
+    if !app_table_set_named_cell(0, first, "title", "Plan UI") { return false }
+    if !app_table_set_named_cell(0, first, "time", "08:30") { return false }
+    if !app_table_set_named_cell(0, first, "status", "Open") { return false }
+    if !app_table_set_named_cell(0, second, "title", "Review build") { return false }
+    if !app_table_set_named_cell(0, second, "time", "09:15") { return false }
+    if !app_table_set_named_cell(0, second, "status", "Open") { return false }
+    if !app_table_set_named_cell(0, third, "title", "Release smoke") { return false }
+    if !app_table_set_named_cell(0, third, "time", "10:00") { return false }
+    if !app_table_set_named_cell(0, third, "status", "Done") { return false }
+    app_state_set_text("draft", "")
+    app_state_set_int("selected_row", -1 as Int64)
+    app_state_set_int("selected_task_id", -1 as Int64)
+    app_state_set_int("next_task_id", 4 as Int64)
+    return save_model()
+}
+
+fn ensure_task_key() -> Bool {
+    // Older checkpoints have only title/time/status. The unused fourth
+    // column is upgraded in place and receives stable positive IDs.
+    if !app_table_set_column_name(0, 3, "task_id") { return false }
+    if !app_table_set_column_type(0, 3, 1) { return false }
+    let rows: Int32 = app_table_row_count(0)
+    var row: Int32 = 0
+    var next: Int64 = 1 as Int64
+    while row < rows {
+        let existing: Int64 = app_table_read_int(0, row, 3)
+        var key: Int64 = existing
+        if key <= 0 as Int64 {
+            key = next
+            if !app_table_set_int(0, row, 3, key) { return false }
+        }
+        if key >= next { next = key + 1 as Int64 }
+        row = row + 1
+    }
+    if !app_state_set_int("next_task_id", next) { return false }
+    return true
+}
+
+fn load_or_seed() -> Bool {
+    let loaded: Bool = app_data_load("target/jadren/time-tracker-pro.data")
+    if loaded {
+        if !ensure_task_key() { return false }
+        if app_state_exists("selected_row") {
+            app_state_set_int("selected_row", app_state_get_int("selected_row"))
+        } else {
+            app_state_set_int("selected_row", -1 as Int64)
+        }
+        if app_state_exists("selected_task_id") {
+            app_state_set_int("selected_task_id", app_state_get_int("selected_task_id"))
+        } else {
+            app_state_set_int("selected_task_id", -1 as Int64)
+        }
+        restore_selection()
+        // Persist the normalized schema so a legacy checkpoint is migrated
+        // once and remains stable on the next launch.
+        return save_model()
+    }
+    return seed_model()
+}
+
+fn selected_row() -> Int32 {
+    let model_row: Int32 = app_state_get_int("selected_row") as Int32
+    let native_row: Int32 = ui_table_selected_row(30)
+    if native_row >= 0 { return native_row }
+    return model_row
+}
+
+fn selected_model_row() -> Int32 {
+    let task_id: Int64 = app_state_get_int("selected_task_id")
+    if task_id > 0 as Int64 {
+        let keyed_row: Int32 = app_table_find_int(0, 3, task_id, 0)
+        if keyed_row >= 0 { return keyed_row }
+    }
+    return selected_row()
+}
+
+fn restore_selection() {
+    let task_id: Int64 = app_state_get_int("selected_task_id")
+    if task_id > 0 as Int64 {
+        let keyed_row: Int32 = app_table_find_int(0, 3, task_id, 0)
+        if keyed_row >= 0 {
+            app_state_set_int("selected_row", keyed_row as Int64)
+            return
+        }
+    }
+    app_state_set_int("selected_task_id", -1 as Int64)
+    app_state_set_int("selected_row", -1 as Int64)
+}
+
+fn sync_selected_task_id() {
+    let row: Int32 = selected_row()
+    if row >= 0 {
+        let task_id: Int64 = app_table_read_int(0, row, 3)
+        if task_id > 0 as Int64 {
+            app_state_set_int("selected_task_id", task_id)
+            return
+        }
+    }
+    app_state_set_int("selected_task_id", -1 as Int64)
+}
+
+fn refresh_filter() {
+    // Read the current UI text and pass only the valid prefix length. The
+    // filter API remains bounded and byte-oriented; the source table is not
+    // modified and the second table is only a projection.
+    var query: [UInt8; 67] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8]
+    let query_length: UIntSize = ui_input_read(20, query)
+    app_table_filter_text_ex_bytes(0, 1, 0, query, query_length, 1)
+    ui_refresh_bindings()
+}
+
+fn export_csv() -> Bool {
+    let header: UIntSize = file_write_text(
+        "target/jadren/time-tracker-pro.csv",
+        "title,time,status\n"
+    )
+    if header == 0usize { return false }
+    var row: Int32 = 0
+    let rows: Int32 = app_table_row_count(0)
+    while row < rows {
+        var title: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+        var time: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+        var status: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+        let title_length: UIntSize = app_table_read_cell(0, row, 0, title)
+        let time_length: UIntSize = app_table_read_cell(0, row, 1, time)
+        let status_length: UIntSize = app_table_read_cell(0, row, 2, status)
+        file_append("target/jadren/time-tracker-pro.csv", title, title_length)
+        file_append_text("target/jadren/time-tracker-pro.csv", ",")
+        file_append("target/jadren/time-tracker-pro.csv", time, time_length)
+        file_append_text("target/jadren/time-tracker-pro.csv", ",")
+        file_append("target/jadren/time-tracker-pro.csv", status, status_length)
+        file_append_text("target/jadren/time-tracker-pro.csv", "\n")
+        row = row + 1
+    }
+    return true
+}
+
+fn sync_selected_task() -> Int32 {
+    // This is an explicit, bounded loopback sync action.  The UI callback is
+    // allowed to block here because it is a user-triggered operation; a
+    // reactor/async client is a separate future API layer.
+    let row: Int32 = selected_model_row()
+    if row < 0 { return 1 }
+    var title: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let title_length: UIntSize = app_table_read_cell(0, row, 0, title)
+    if title_length == 0usize { return 2 }
+    if title_length > 58usize { return 3 }
+
+    // Form `title=<value>` in the same caller-owned buffer, moving bytes from
+    // the end so the source text is not overwritten before it is copied.
+    var shift: UIntSize = title_length
+    while shift > 0usize {
+        shift = shift - 1usize
+        title[shift + 6usize] = title[shift]
+    }
+    title[0] = 116u8
+    title[1] = 105u8
+    title[2] = 116u8
+    title[3] = 108u8
+    title[4] = 101u8
+    title[5] = 61u8
+
+    var request: [UInt8; 192] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let body_length: UIntSize = title_length + 6usize
+    let request_length: UIntSize = http_request_write_prefix(
+        "POST", "/api/time-entry", "localhost", title, body_length, request)
+    if request_length == 0usize { return 4 }
+
+    let socket: UIntSize = net_tcp_connect_dns("localhost", 38152u16)
+    if (socket as Int32) == 0 { return 5 }
+    if !net_socket_set_timeout(socket, 2000u32) {
+        net_socket_close(socket)
+        return 6
+    }
+    let sent: UIntSize = net_tcp_send_prefix(socket, request, request_length)
+    if sent != request_length {
+        net_socket_close(socket)
+        return 7
+    }
+    var response: [UInt8; 160] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let received: UIntSize = net_tcp_receive(socket, response)
+    net_socket_close(socket)
+    if received == 0usize { return 8 }
+    let status: UInt16 = http_response_status_prefix(response, received)
+    if status != 200u16 { return 9 }
+    if !app_state_set_int("last_sync_task_id", app_table_read_int(0, row, 3)) { return 10 }
+    if !app_state_set_int("last_sync_status", status as Int64) { return 11 }
+    if !save_model() { return 12 }
+    return 0
+}
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 30 {
+        // Table selection events update the stable key; row positions remain
+        // only a native projection and may change after model mutations.
+        sync_selected_task_id()
+    }
+    if event_id == 90 {
+        var input: [UInt8; 67] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8]
+        let copied: UIntSize = ui_input_read(20, input)
+        if copied == 0usize {
+            ui_set_status("Enter a task title first.")
+        } else {
+            let began: Bool = app_data_tx_begin()
+            if !began {
+                ui_set_status("Model transaction is already active.")
+            } else {
+                var task_id: Int64 = app_state_get_int("next_task_id")
+                if task_id <= 0 as Int64 { task_id = 1 as Int64 }
+                let row: Int32 = app_table_upsert_int(0, 3, task_id)
+                var task_ok: Bool = row >= 0
+                var title_set: Bool = false
+                var time_set: Bool = false
+                var status_set: Bool = false
+                if task_ok {
+                    title_set = app_table_set_cell_bytes_ex(0, row, 0, input, copied)
+                    time_set = app_table_set_named_cell(0, row, "time", "manual")
+                    status_set = app_table_set_named_cell(0, row, "status", "Open")
+                    if !app_state_set_int("next_task_id", task_id + 1 as Int64) { task_ok = false }
+                }
+                if !title_set { task_ok = false }
+                if !time_set { task_ok = false }
+                if !status_set { task_ok = false }
+                if !task_ok {
+                    app_data_tx_rollback()
+                    ui_set_status("Task could not be added.")
+                } else {
+                    app_data_tx_commit()
+                    if save_model() {
+                        refresh_filter()
+                        // Keep the newly-created task as the active row. The
+                        // table binding mirrors the row projection into app_state;
+                        // the key is the durable application identity.
+                        app_state_set_int("selected_task_id", task_id)
+                        ui_table_set_selected_row(30, row)
+                        ui_set_status("Task added and checkpoint saved.")
+                    } else {
+                        ui_set_status("Task added, but checkpoint failed.")
+                    }
+                }
+            }
+        }
+    }
+    if event_id == 91 {
+        let selected: Int32 = selected_model_row()
+        if selected < 0 {
+            ui_set_status("Select a task first.")
+        } else {
+            let task_id: Int64 = app_state_get_int("selected_task_id")
+            if task_id <= 0 as Int64 {
+                ui_set_status("Selected task has no stable ID.")
+            } else if app_table_remove_int(0, 3, task_id) {
+                app_state_set_int("selected_row", -1 as Int64)
+                app_state_set_int("selected_task_id", -1 as Int64)
+                save_model()
+                refresh_filter()
+                ui_set_status("Selected task removed.")
+            } else {
+                ui_set_status("Selected task could not be removed.")
+            }
+        }
+    }
+    if event_id == 92 {
+        let selected: Int32 = selected_model_row()
+        if selected >= 0 {
+            let done: Bool = app_table_set_cell(0, selected, 2, "Done")
+            if done {
+                save_model()
+                refresh_filter()
+                ui_set_status("Selected task marked done.")
+            } else {
+                ui_set_status("Selected task could not be updated.")
+            }
+        } else {
+            ui_set_status("Select a task first.")
+        }
+    }
+    if event_id == 96 {
+        let selected: Int32 = selected_model_row()
+        var input: [UInt8; 67] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8]
+        let copied: UIntSize = ui_input_read(20, input)
+        if selected < 0 {
+            ui_set_status("Select a task first.")
+        } else if copied == 0usize {
+            ui_set_status("Enter a title first.")
+        } else if app_table_set_cell_bytes_ex(0, selected, 0, input, copied) {
+            save_model()
+            refresh_filter()
+            ui_set_status("Selected task updated.")
+        } else {
+            ui_set_status("Selected task could not be updated.")
+        }
+    }
+    if event_id == 93 {
+        refresh_filter()
+        ui_set_status("Filter preview uses the current input text.")
+    }
+    if event_id == 94 {
+        if export_csv() {
+            ui_set_status("CSV export saved to target/jadren/time-tracker-pro.csv.")
+        } else {
+            ui_set_status("CSV export failed.")
+        }
+    }
+    if event_id == 95 {
+        if save_model() {
+            ui_set_status("Full model checkpoint saved.")
+        } else {
+            ui_set_status("Checkpoint failed.")
+        }
+    }
+    if event_id == 97 {
+        let sync_result: Int32 = sync_selected_task()
+        if sync_result == 0 {
+            ui_set_status("Selected task synced through native HTTP.")
+        } else if sync_result == 1 {
+            ui_set_status("Select a task before syncing.")
+        } else if sync_result == 5 {
+            ui_set_status("Sync server is not reachable.")
+        } else if sync_result == 9 {
+            ui_set_status("Sync server returned a non-success response.")
+        } else if sync_result == 12 {
+            ui_set_status("Sync succeeded, but checkpoint failed.")
+        } else if sync_result == 2 {
+            ui_set_status("Sync failed: selected task title is empty.")
+        } else if sync_result == 3 {
+            ui_set_status("Sync failed: selected task title is too long.")
+        } else if sync_result == 4 {
+            ui_set_status("Sync failed: HTTP request could not be built.")
+        } else if sync_result == 6 {
+            ui_set_status("Sync failed: socket timeout setup failed.")
+        } else if sync_result == 7 {
+            ui_set_status("Sync failed: request send was incomplete.")
+        } else if sync_result == 8 {
+            ui_set_status("Sync failed: server returned no response.")
+        } else if sync_result == 10 {
+            ui_set_status("Sync succeeded, but task checkpoint state failed.")
+        } else if sync_result == 11 {
+            ui_set_status("Sync succeeded, but status checkpoint state failed.")
+        } else {
+            ui_set_status("Sync failed (native status code recorded in the source path).")
+        }
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    if !load_or_seed() { return 1 }
+    let root: Int32 = ui_app_begin("Jadren TimeTracker Pro", 1120, 930, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+    let panel: Int32 = ui_app_panel(root, 1040, 860, 0xFFFFFFu32, 16, 16, 12, 0, 1)
+    if panel == 0 { return 2 }
+    let heading: Int32 = ui_app_label(panel,
+        "TimeTracker Pro - model, bindings, persistence and export",
+        1000, 34, 0x111827u32, 0xFFFFFFu32, 8, 1)
+    if heading == 0 { return 3 }
+    let description: Int32 = ui_app_label(panel,
+        "Input slúži na novú úlohu, editáciu aj filter; tabuľka je source of truth.",
+        1000, 30, 0x475569u32, 0xFFFFFFu32, 8, 1)
+    if description == 0 { return 4 }
+    let tables: Int32 = ui_app_row(panel, 1000, 250, 0, 12, 0, 1)
+    if tables == 0 { return 5 }
+    let primary_table: Int32 = ui_app_table(tables, 30, 650, 230,
+        0x111827u32, 0xFFFFFFu32, 8, 0)
+    if primary_table == 0 { return 6 }
+    if !ui_app_table_column(primary_table, 0, "Title", 330) { return 7 }
+    if !ui_app_table_column(primary_table, 1, "Time", 150) { return 8 }
+    if !ui_app_table_column(primary_table, 2, "Status", 180) { return 9 }
+    if !ui_app_table_bind_app(primary_table, 0, 3) { return 10 }
+    if !ui_table_bind_app_state(30, "selected_row") { return 32 }
+    let filtered_table: Int32 = ui_app_table(tables, 31, 320, 230,
+        0x111827u32, 0xFFFFFFu32, 8, 0)
+    if filtered_table == 0 { return 11 }
+    if !ui_app_table_column(filtered_table, 0, "Focus filter", 300) { return 12 }
+    if !ui_app_table_column(filtered_table, 1, "Time", 120) { return 13 }
+    if !ui_app_table_column(filtered_table, 2, "Status", 140) { return 14 }
+    if !ui_app_table_bind_app(filtered_table, 1, 3) { return 15 }
+    if !ui_app_end(tables) { return 16 }
+    let input_row: Int32 = ui_app_row(panel, 1000, 50, 0, 12, 0, 1)
+    if input_row == 0 { return 17 }
+    let input: Int32 = ui_app_text_input(input_row,
+        "", 20, 500, 40,
+        0x111827u32, 0xFFFFFFu32, 8, 0)
+    if input == 0 { return 18 }
+    ui_input_bind_app_state(20, "draft")
+    let add: Int32 = ui_app_button(input_row, "Add", 90, 120, 42,
+        0xFFFFFFu32, 0x168EF5u32, 10, 0)
+    if add == 0 { return 19 }
+    let filter: Int32 = ui_app_button(input_row, "Filter", 93, 120, 42,
+        0xFFFFFFu32, 0x64748Bu32, 10, 0)
+    if filter == 0 { return 20 }
+    if !ui_app_end(input_row) { return 21 }
+    let actions: Int32 = ui_app_row(panel, 1000, 50, 0, 12, 0, 1)
+    if actions == 0 { return 22 }
+    let remove: Int32 = ui_app_button(actions, "Remove", 91, 130, 42,
+        0xFFFFFFu32, 0xF7356Bu32, 10, 0)
+    if remove == 0 { return 23 }
+    let done: Int32 = ui_app_button(actions, "Done", 92, 130, 42,
+        0xFFFFFFu32, 0x18C964u32, 10, 0)
+    if done == 0 { return 24 }
+    let export: Int32 = ui_app_button(actions, "Export CSV", 94, 140, 42,
+        0xFFFFFFu32, 0x0B6FC8u32, 10, 0)
+    if export == 0 { return 25 }
+    let save: Int32 = ui_app_button(actions, "Save", 95, 120, 42,
+        0xFFFFFFu32, 0x475569u32, 10, 0)
+    if save == 0 { return 26 }
+    let edit: Int32 = ui_app_button(actions, "Edit", 96, 120, 42,
+        0xFFFFFFu32, 0x8B5CF6u32, 10, 0)
+    if edit == 0 { return 27 }
+    let sync: Int32 = ui_app_button(actions, "Sync", 97, 120, 42,
+        0xFFFFFFu32, 0x0F766Eu32, 10, 0)
+    if sync == 0 { return 33 }
+    if !ui_app_end(actions) { return 28 }
+    let status: Int32 = ui_app_status(panel,
+        "Ready. Select a row before Remove or Done.",
+        1000, 44, 0x111827u32, 0xDCFCE7u32, 12, 1)
+    if status == 0 { return 29 }
+    if !ui_app_end(panel) { return 30 }
+    if !ui_app_end(root) { return 31 }
+    refresh_filter()
+    ui_refresh_bindings()
+    // Po reštarte zobraz, že posledný sieťový checkpoint bol načítaný.
+    // Stav je uložený v app_state spolu s modelom, preto UI nemusí spoliehať
+    // na pamäť procesu ani na externý Electron most.
+    if app_state_exists("last_sync_status") {
+        ui_set_status("Last sync checkpoint loaded.")
+    }
+    return ui_app_run()
+}

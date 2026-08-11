@@ -1,0 +1,34 @@
+module examples.app_state_save_if_revision
+
+// A revision-guarded checkpoint prevents a stale controller snapshot from
+// replacing a newer state document. The runtime remains process-local and
+// caller-driven; a rejected save is a normal retry signal.
+fn main() -> Int32 {
+    app_state_clear()
+    if !app_state_set_text("name", "first") { return 1 }
+    let snapshot: UInt64 = app_state_revision()
+    if !app_state_save_atomic_if_revision(
+        "target/app-state-save-if-revision.tmp",
+        "target/app-state-save-if-revision.json",
+        snapshot,
+    ) { return 2 }
+
+    if !app_state_set_text("name", "newer") { return 3 }
+    if app_state_save_atomic_if_revision(
+        "target/app-state-save-if-revision.tmp",
+        "target/app-state-save-if-revision.json",
+        snapshot,
+    ) { return 4 }
+
+    if !app_state_load("target/app-state-save-if-revision.json") { return 5 }
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = app_state_read_text("name", output)
+    if length != 5usize { return 6 }
+    if output[0] != 102u8 { return 7 }
+
+    file_delete("target/app-state-save-if-revision.tmp")
+    file_delete("target/app-state-save-if-revision.json")
+    app_state_clear()
+    return 0
+}

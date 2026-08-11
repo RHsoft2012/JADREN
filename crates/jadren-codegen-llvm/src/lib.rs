@@ -12,7 +12,7 @@ mod object;
 mod types;
 
 #[cfg(any(windows, target_os = "linux"))]
-pub use debug::{DebugInfoConfig, DebugInfoError};
+pub use debug::{DebugInfoConfig, DebugInfoError, DebugLocal};
 #[cfg(any(windows, target_os = "linux"))]
 pub use link::{
     LinkError, LinuxLinkOptions, WindowsLinkOptions, WindowsSubsystem,

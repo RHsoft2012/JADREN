@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use jadren_determinism::Fingerprint;
 use jadren_hir::{
     HirBlock, HirExport, HirExpression, HirExpressionKind, HirFunction, HirLiteral, HirMatchArm,
     HirModule, HirPattern, HirPatternKind, HirStatement, PropagationKind, TypedExpression,
@@ -11,7 +12,9 @@ use jadren_lexer::Operator;
 use jadren_parser::LiteralKind;
 use jadren_resolve::SymbolId;
 use jadren_source::Span;
-use jadren_types::{Capability, NominalLayout, TypeId, TypeKind, TypeStore};
+use jadren_types::{
+    Capability, GenericParameterId, NominalLayout, Substitution, TypeId, TypeKind, TypeStore,
+};
 
 /// Function-local storage slot.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -108,6 +111,10 @@ pub enum AccessKind {
     Read,
     /// Consuming read of a move-only value.
     Move,
+    /// Consuming runtime move whose source remains drop-managed. The native
+    /// operation zeroes the source after success; on failure ordinary scope
+    /// cleanup must still release it.
+    MoveOrDrop,
     /// Write through an existing place.
     Write,
     /// Creates a shared read-only borrow for the evaluation duration.
@@ -416,6 +423,467 @@ pub fn lower_mir(hir: &HirModule, types: &TypeStore) -> MirModule {
     }
 }
 
+/// Materializes one concrete instance of a generic function in a package
+/// module.  The frontend records generic calls in the importing module, while
+/// native lowering needs an ordinary scalar/aggregate signature and body.
+/// This helper keeps that transformation target-neutral and deterministic.
+pub fn specialize_generic_function(
+    module: &MirModule,
+    types: &mut TypeStore,
+    owner: Fingerprint,
+    arguments: &[TypeId],
+    function_name: &str,
+    specialized_name: &str,
+) -> Result<MirModule, String> {
+    specialize_generic_functions(
+        module,
+        types,
+        &[GenericSpecialization {
+            owner,
+            arguments: arguments.to_vec(),
+            function_name: function_name.to_owned(),
+            specialized_name: specialized_name.to_owned(),
+        }],
+    )
+}
+
+/// One concrete package-level generic function instance.
+#[derive(Clone, Debug)]
+pub struct GenericSpecialization {
+    /// Stable owner identity of the generic declaration.
+    pub owner: Fingerprint,
+    /// Concrete arguments in declaration order, already interned in the target module store.
+    pub arguments: Vec<TypeId>,
+    /// Source declaration name.
+    pub function_name: String,
+    /// Deterministic native symbol for the concrete instance.
+    pub specialized_name: String,
+}
+
+/// Materializes several concrete generic instances in one MIR module.
+pub fn specialize_generic_functions(
+    module: &MirModule,
+    types: &mut TypeStore,
+    specializations: &[GenericSpecialization],
+) -> Result<MirModule, String> {
+    let mut functions = Vec::with_capacity(module.functions.len() + specializations.len());
+    let mut found = vec![false; specializations.len()];
+    for function in &module.functions {
+        let matching: Vec<_> = specializations
+            .iter()
+            .enumerate()
+            .filter(|(_, specification)| {
+                function.name == specification.function_name
+                    && function
+                        .signature
+                        .contains_generic_parameter(types, specification.owner)
+            })
+            .collect();
+        if matching.is_empty() {
+            functions.push(function.clone());
+            continue;
+        }
+        for (index, specification) in matching {
+            found[index] = true;
+            let mut substitution = Substitution::new();
+            for (parameter, argument) in specification.arguments.iter().copied().enumerate() {
+                substitution.insert(
+                    GenericParameterId {
+                        owner: specification.owner,
+                        index: parameter,
+                    },
+                    argument,
+                );
+            }
+            let mut specialized = function.clone();
+            specialized.name = specification.specialized_name.clone();
+            specialize_function(&mut specialized, types, &substitution)?;
+            functions.push(specialized);
+        }
+    }
+    if let Some((_, specification)) = specializations
+        .iter()
+        .enumerate()
+        .find(|(index, _)| !found[*index])
+    {
+        return Err(format!(
+            "generic function `{}` with owner {:?} was not found in package module",
+            specification.function_name, specification.owner
+        ));
+    }
+    let mut specialized_module = module.clone();
+    specialized_module.functions = functions;
+    Ok(specialized_module)
+}
+
+/// Rewrites the function-value type at one imported generic call site.  A
+/// call result is already concrete after type checking, but its callee value
+/// still carries the generic function signature; replacing that signature is
+/// required before JIR lowers the function-value operand itself.
+pub fn specialize_generic_call_types(
+    module: &mut MirModule,
+    types: &mut TypeStore,
+    owner: Fingerprint,
+    arguments: &[TypeId],
+    function_name: &str,
+    call_span: Span,
+) -> Result<(), String> {
+    let mut substitution = Substitution::new();
+    for (index, argument) in arguments.iter().copied().enumerate() {
+        substitution.insert(GenericParameterId { owner, index }, argument);
+    }
+    for function in &mut module.functions {
+        for block in &mut function.blocks {
+            for statement in &mut block.statements {
+                specialize_statement_call_site(
+                    statement,
+                    types,
+                    &substitution,
+                    function_name,
+                    call_span,
+                )?;
+            }
+            specialize_terminator_call_site(
+                &mut block.terminator,
+                types,
+                &substitution,
+                function_name,
+                call_span,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn spans_overlap(left: Span, right: Span) -> bool {
+    left.source == right.source
+        && ((left.start <= right.start && right.end <= left.end)
+            || (right.start <= left.start && left.end <= right.end))
+}
+
+fn specialize_statement_call_site(
+    statement: &mut MirStatement,
+    types: &mut TypeStore,
+    substitution: &Substitution,
+    function_name: &str,
+    call_span: Span,
+) -> Result<(), String> {
+    match statement {
+        MirStatement::Assign {
+            value,
+            destination_indices,
+            ..
+        } => {
+            for operand in destination_indices {
+                specialize_call_site_operand(
+                    operand,
+                    types,
+                    substitution,
+                    function_name,
+                    call_span,
+                )?;
+            }
+            if let Some(value) = value {
+                specialize_call_site_operand(value, types, substitution, function_name, call_span)?;
+            }
+        }
+        MirStatement::Evaluate { value, .. } => {
+            if let Some(value) = value {
+                specialize_call_site_operand(value, types, substitution, function_name, call_span)?;
+            }
+        }
+        MirStatement::StorageLive { .. }
+        | MirStatement::StorageDead { .. }
+        | MirStatement::RegionEnter { .. }
+        | MirStatement::RegionExit { .. }
+        | MirStatement::Borrow { .. }
+        | MirStatement::Drop { .. } => {}
+    }
+    Ok(())
+}
+
+fn specialize_terminator_call_site(
+    terminator: &mut Terminator,
+    types: &mut TypeStore,
+    substitution: &Substitution,
+    function_name: &str,
+    call_span: Span,
+) -> Result<(), String> {
+    match terminator {
+        Terminator::Switch { value, .. } | Terminator::Return { value, .. } => {
+            if let Some(value) = value {
+                specialize_call_site_operand(value, types, substitution, function_name, call_span)?;
+            }
+        }
+        Terminator::Match { value, .. } | Terminator::Propagate { value, .. } => {
+            specialize_call_site_operand(value, types, substitution, function_name, call_span)?;
+        }
+        Terminator::Goto { .. } | Terminator::Unreachable { .. } => {}
+    }
+    Ok(())
+}
+
+fn specialize_call_site_operand(
+    operand: &mut MirOperand,
+    types: &mut TypeStore,
+    substitution: &Substitution,
+    function_name: &str,
+    call_span: Span,
+) -> Result<(), String> {
+    if let MirOperandKind::Call { callee, arguments } = &mut operand.kind {
+        if let MirOperandKind::Function { name, .. } = &callee.kind
+            && name == function_name
+            && spans_overlap(operand.span, call_span)
+        {
+            callee.ty = specialize_type(types, substitution, callee.ty)?;
+        }
+        specialize_call_site_operand(callee, types, substitution, function_name, call_span)?;
+        for argument in arguments {
+            specialize_call_site_operand(argument, types, substitution, function_name, call_span)?;
+        }
+    } else {
+        match &mut operand.kind {
+            MirOperandKind::Unary { operand, .. }
+            | MirOperandKind::Cast { operand }
+            | MirOperandKind::Length { base: operand } => {
+                specialize_call_site_operand(
+                    operand,
+                    types,
+                    substitution,
+                    function_name,
+                    call_span,
+                )?;
+            }
+            MirOperandKind::Binary { left, right, .. } => {
+                specialize_call_site_operand(left, types, substitution, function_name, call_span)?;
+                specialize_call_site_operand(right, types, substitution, function_name, call_span)?;
+            }
+            MirOperandKind::RegionAllocate { arguments, .. } | MirOperandKind::Array(arguments) => {
+                for argument in arguments {
+                    specialize_call_site_operand(
+                        argument,
+                        types,
+                        substitution,
+                        function_name,
+                        call_span,
+                    )?;
+                }
+            }
+            MirOperandKind::Index { base, index } => {
+                specialize_call_site_operand(base, types, substitution, function_name, call_span)?;
+                specialize_call_site_operand(index, types, substitution, function_name, call_span)?;
+            }
+            MirOperandKind::Field { base, .. } => {
+                specialize_call_site_operand(base, types, substitution, function_name, call_span)?;
+            }
+            MirOperandKind::Struct { fields, .. } => {
+                for (_, field) in fields {
+                    specialize_call_site_operand(
+                        field,
+                        types,
+                        substitution,
+                        function_name,
+                        call_span,
+                    )?;
+                }
+            }
+            MirOperandKind::PatternExtract { source_indices, .. }
+            | MirOperandKind::CarrierExtract { source_indices, .. } => {
+                for index in source_indices {
+                    specialize_call_site_operand(
+                        index,
+                        types,
+                        substitution,
+                        function_name,
+                        call_span,
+                    )?;
+                }
+            }
+            MirOperandKind::Unit
+            | MirOperandKind::Place(_)
+            | MirOperandKind::Literal(_)
+            | MirOperandKind::Call { .. }
+            | MirOperandKind::Function { .. }
+            | MirOperandKind::PropagateResidual { .. }
+            | MirOperandKind::HighLevel(_) => {}
+        }
+    }
+    Ok(())
+}
+
+trait ContainsGenericParameter {
+    fn contains_generic_parameter(&self, types: &TypeStore, owner: Fingerprint) -> bool;
+}
+
+impl ContainsGenericParameter for TypeId {
+    fn contains_generic_parameter(&self, types: &TypeStore, owner: Fingerprint) -> bool {
+        let Some(kind) = types.kind(*self) else {
+            return false;
+        };
+        match kind {
+            TypeKind::GenericParameter(parameter) => parameter.owner == owner,
+            TypeKind::Array { element, .. }
+            | TypeKind::Vector { element, .. }
+            | TypeKind::Buffer(element)
+            | TypeKind::Slice(element)
+            | TypeKind::Pointer(element)
+            | TypeKind::Option(element) => element.contains_generic_parameter(types, owner),
+            TypeKind::Result { ok, error } => {
+                ok.contains_generic_parameter(types, owner)
+                    || error.contains_generic_parameter(types, owner)
+            }
+            TypeKind::Nominal { arguments, .. } => arguments
+                .iter()
+                .any(|argument| argument.contains_generic_parameter(types, owner)),
+            TypeKind::Function { parameters, result } => {
+                parameters
+                    .iter()
+                    .any(|parameter| parameter.contains_generic_parameter(types, owner))
+                    || result.contains_generic_parameter(types, owner)
+            }
+            TypeKind::Capability { inner, .. } => inner.contains_generic_parameter(types, owner),
+            _ => false,
+        }
+    }
+}
+
+fn specialize_type(
+    types: &mut TypeStore,
+    substitution: &Substitution,
+    ty: TypeId,
+) -> Result<TypeId, String> {
+    substitution
+        .apply(types, ty)
+        .map_err(|error| format!("generic MIR type substitution failed for {ty:?}: {error:?}"))
+}
+
+fn specialize_function(
+    function: &mut MirFunction,
+    types: &mut TypeStore,
+    substitution: &Substitution,
+) -> Result<(), String> {
+    function.signature = specialize_type(types, substitution, function.signature)?;
+    for local in &mut function.locals {
+        local.ty = specialize_type(types, substitution, local.ty)?;
+    }
+    for block in &mut function.blocks {
+        for statement in &mut block.statements {
+            specialize_statement(statement, types, substitution)?;
+        }
+        specialize_terminator(&mut block.terminator, types, substitution)?;
+    }
+    Ok(())
+}
+
+fn specialize_statement(
+    statement: &mut MirStatement,
+    types: &mut TypeStore,
+    substitution: &Substitution,
+) -> Result<(), String> {
+    match statement {
+        MirStatement::Assign {
+            value,
+            destination_indices,
+            ..
+        } => {
+            for operand in destination_indices {
+                specialize_operand(operand, types, substitution)?;
+            }
+            if let Some(value) = value {
+                specialize_operand(value, types, substitution)?;
+            }
+        }
+        MirStatement::Evaluate { value, .. } => {
+            if let Some(value) = value {
+                specialize_operand(value, types, substitution)?;
+            }
+        }
+        MirStatement::StorageLive { .. }
+        | MirStatement::StorageDead { .. }
+        | MirStatement::RegionEnter { .. }
+        | MirStatement::RegionExit { .. }
+        | MirStatement::Borrow { .. }
+        | MirStatement::Drop { .. } => {}
+    }
+    Ok(())
+}
+
+fn specialize_terminator(
+    terminator: &mut Terminator,
+    types: &mut TypeStore,
+    substitution: &Substitution,
+) -> Result<(), String> {
+    match terminator {
+        Terminator::Switch { value, .. } | Terminator::Return { value, .. } => {
+            if let Some(value) = value {
+                specialize_operand(value, types, substitution)?;
+            }
+        }
+        Terminator::Match { value, .. } | Terminator::Propagate { value, .. } => {
+            specialize_operand(value, types, substitution)?;
+        }
+        Terminator::Goto { .. } | Terminator::Unreachable { .. } => {}
+    }
+    Ok(())
+}
+
+fn specialize_operand(
+    operand: &mut MirOperand,
+    types: &mut TypeStore,
+    substitution: &Substitution,
+) -> Result<(), String> {
+    operand.ty = specialize_type(types, substitution, operand.ty)?;
+    match &mut operand.kind {
+        MirOperandKind::Unary { operand, .. }
+        | MirOperandKind::Cast { operand }
+        | MirOperandKind::Length { base: operand } => {
+            specialize_operand(operand, types, substitution)?;
+        }
+        MirOperandKind::Binary { left, right, .. } => {
+            specialize_operand(left, types, substitution)?;
+            specialize_operand(right, types, substitution)?;
+        }
+        MirOperandKind::Call { callee, arguments } => {
+            specialize_operand(callee, types, substitution)?;
+            for argument in arguments {
+                specialize_operand(argument, types, substitution)?;
+            }
+        }
+        MirOperandKind::RegionAllocate { arguments, .. } | MirOperandKind::Array(arguments) => {
+            for argument in arguments {
+                specialize_operand(argument, types, substitution)?;
+            }
+        }
+        MirOperandKind::Index { base, index } => {
+            specialize_operand(base, types, substitution)?;
+            specialize_operand(index, types, substitution)?;
+        }
+        MirOperandKind::Field { base, .. } => {
+            specialize_operand(base, types, substitution)?;
+        }
+        MirOperandKind::Struct { fields, .. } => {
+            for (_, field) in fields {
+                specialize_operand(field, types, substitution)?;
+            }
+        }
+        MirOperandKind::PatternExtract { source_indices, .. }
+        | MirOperandKind::CarrierExtract { source_indices, .. } => {
+            for index in source_indices {
+                specialize_operand(index, types, substitution)?;
+            }
+        }
+        MirOperandKind::PropagateResidual { residual_type, .. } => {
+            *residual_type = specialize_type(types, substitution, *residual_type)?;
+        }
+        MirOperandKind::Unit
+        | MirOperandKind::Place(_)
+        | MirOperandKind::Literal(_)
+        | MirOperandKind::Function { .. }
+        | MirOperandKind::HighLevel(_) => {}
+    }
+    Ok(())
+}
+
 struct Builder<'a> {
     function: &'a HirFunction,
     types: &'a TypeStore,
@@ -426,6 +894,13 @@ struct Builder<'a> {
     current_region: Option<LocalId>,
     pattern_sources: BTreeMap<SymbolId, PatternSource>,
     loop_targets: Vec<LoopTargets>,
+    /// Owning values used inline as legacy Buffer append/insert arguments are
+    /// materialized into real locals so the move runtime can preserve them on
+    /// failure and the normal scope-drop pass can clean them up.
+    pending_inline_move_temporaries: Vec<LocalId>,
+    /// Enables inline owning argument materialization only in expression
+    /// contexts where the caller can flush the temporary after the statement.
+    materialize_inline_move_arguments: bool,
 }
 
 struct LoopTargets {
@@ -469,6 +944,8 @@ impl<'a> Builder<'a> {
             current_region: None,
             pattern_sources: BTreeMap::new(),
             loop_targets: Vec::new(),
+            pending_inline_move_temporaries: Vec::new(),
+            materialize_inline_move_arguments: false,
         }
     }
 
@@ -589,7 +1066,7 @@ impl<'a> Builder<'a> {
                             span: *span,
                         });
                     } else {
-                        let lowered = self.lower_value(value);
+                        let lowered = self.lower_value_with_inline_move_materialization(value);
                         let accesses = self.operand_accesses(&lowered);
                         self.push_statement(MirStatement::Assign {
                             destination: Place::local(id),
@@ -602,7 +1079,15 @@ impl<'a> Builder<'a> {
                 }
             }
             HirStatement::Return { value, span } => {
-                let value = value.as_ref().map(|value| self.lower_value(value));
+                // Return lowering keeps inline move temporaries live until
+                // `materialize_returns` evaluates the return operand into its
+                // dedicated return local.  Dropping them before emitting the
+                // Return terminator would invalidate a call embedded in that
+                // operand; the later return materialization is the cleanup
+                // edge for this context.
+                let value = value
+                    .as_ref()
+                    .map(|value| self.lower_value_with_inline_move_materialization(value));
                 let accesses = value
                     .as_ref()
                     .map_or_else(Vec::new, |value| self.operand_accesses(value));
@@ -656,15 +1141,81 @@ impl<'a> Builder<'a> {
                 });
 
                 self.switch_to(head);
-                let condition = self.lower_value(condition);
-                let discriminant = self.operand_accesses(&condition);
-                self.terminate(Terminator::Switch {
-                    value: Some(condition),
-                    discriminant,
-                    targets: vec![body_target],
-                    otherwise: exit,
-                    span: *span,
-                });
+                let condition = self.lower_value_with_inline_move_materialization(condition);
+                if self.pending_inline_move_temporaries.is_empty() {
+                    let discriminant = self.operand_accesses(&condition);
+                    self.terminate(Terminator::Switch {
+                        value: Some(condition),
+                        discriminant,
+                        targets: vec![body_target],
+                        otherwise: exit,
+                        span: *span,
+                    });
+                } else {
+                    // A condition may contain a legacy Buffer move call such
+                    // as `while buffer_append(values, Some(item))`.  Evaluate
+                    // it into a scalar local, branch through two cleanup
+                    // blocks, and only then enter the body/exit.  This keeps
+                    // every owning temporary live across the call while
+                    // ensuring both control-flow paths end its lifetime.
+                    let condition_result_name = format!("$loop_condition_tmp{}", self.locals.len());
+                    let condition_result = self.add_local(
+                        None,
+                        &condition_result_name,
+                        condition.ty,
+                        false,
+                        false,
+                        condition.span,
+                    );
+                    self.push_statement(MirStatement::StorageLive {
+                        local: condition_result,
+                        span: condition.span,
+                    });
+                    let condition_accesses = self.operand_accesses(&condition);
+                    self.push_statement(MirStatement::Assign {
+                        destination: Place::local(condition_result),
+                        destination_indices: Vec::new(),
+                        value: Some(condition),
+                        accesses: condition_accesses,
+                        span: *span,
+                    });
+                    let inline_move_temporaries =
+                        std::mem::take(&mut self.pending_inline_move_temporaries);
+                    let true_cleanup = self.new_block();
+                    let false_cleanup = self.new_block();
+                    let condition_place =
+                        self.place_operand(condition_result, self.types.core().bool_, *span);
+                    let discriminant = self.operand_accesses(&condition_place);
+                    self.terminate(Terminator::Switch {
+                        value: Some(condition_place),
+                        discriminant,
+                        targets: vec![true_cleanup],
+                        otherwise: false_cleanup,
+                        span: *span,
+                    });
+
+                    self.switch_to(true_cleanup);
+                    self.flush_inline_move_temporary_list(&inline_move_temporaries, *span);
+                    self.push_statement(MirStatement::StorageDead {
+                        local: condition_result,
+                        span: *span,
+                    });
+                    self.terminate(Terminator::Goto {
+                        target: body_target,
+                        span: *span,
+                    });
+
+                    self.switch_to(false_cleanup);
+                    self.flush_inline_move_temporary_list(&inline_move_temporaries, *span);
+                    self.push_statement(MirStatement::StorageDead {
+                        local: condition_result,
+                        span: *span,
+                    });
+                    self.terminate(Terminator::Goto {
+                        target: exit,
+                        span: *span,
+                    });
+                }
 
                 self.switch_to(body_target);
                 self.loop_targets.push(LoopTargets {
@@ -723,7 +1274,7 @@ impl<'a> Builder<'a> {
                     )
                 {
                 } else {
-                    let lowered = self.lower_value(expression);
+                    let lowered = self.lower_value_with_inline_move_materialization(expression);
                     let accesses = self.operand_accesses(&lowered);
                     self.push_statement(MirStatement::Evaluate {
                         value: Some(lowered),
@@ -732,6 +1283,40 @@ impl<'a> Builder<'a> {
                     });
                 }
             }
+        }
+        // A legacy Buffer call in an ordinary statement now owns a concrete
+        // temporary local.  End that local lifetime immediately after the
+        // statement so a failed move is dropped and a successful move sees a
+        // zeroed descriptor.  Terminators (return/loop conditions) deliberately
+        // keep the old path until they can be lowered with an explicit cleanup
+        // edge rather than placing a drop before the terminator call.
+        if !self.current_terminated() {
+            self.flush_inline_move_temporaries(self.function.span);
+        }
+    }
+
+    fn lower_value_with_inline_move_materialization(
+        &mut self,
+        expression: &HirExpression,
+    ) -> MirOperand {
+        let previous = self.materialize_inline_move_arguments;
+        self.materialize_inline_move_arguments = true;
+        let value = self.lower_value(expression);
+        self.materialize_inline_move_arguments = previous;
+        value
+    }
+
+    fn flush_inline_move_temporaries(&mut self, span: Span) {
+        let locals = std::mem::take(&mut self.pending_inline_move_temporaries);
+        self.flush_inline_move_temporary_list(&locals, span);
+    }
+
+    fn flush_inline_move_temporary_list(&mut self, locals: &[LocalId], span: Span) {
+        for local in locals.iter().rev() {
+            self.push_statement(MirStatement::StorageDead {
+                local: *local,
+                span,
+            });
         }
     }
 
@@ -746,7 +1331,7 @@ impl<'a> Builder<'a> {
         match operator {
             Operator::Assign => {
                 let destination_indices = self.lower_place_indices(left);
-                let lowered = self.lower_value(right);
+                let lowered = self.lower_value_with_inline_move_materialization(right);
                 let mut accesses = Vec::new();
                 for index in &destination_indices {
                     self.collect_operand_accesses(index, &mut accesses);
@@ -1651,12 +2236,85 @@ impl<'a> Builder<'a> {
                     _ => &[],
                 };
                 for (index, argument) in arguments.iter().enumerate() {
-                    let capability = parameters.get(index).and_then(|parameter| {
-                        match self.types.kind(*parameter) {
+                    let builtin_borrow_capability = match &callee.kind {
+                        MirOperandKind::Function { name, .. } => match name.as_str() {
+                            "string_length" if index == 0 => Some(Capability::Read),
+                            "string_equals" if index < 2 => Some(Capability::Read),
+                            "buffer_length" | "buffer_capacity" if index == 0 => {
+                                Some(Capability::Read)
+                            }
+                            "buffer_clear" | "buffer_clear_status" if index == 0 => {
+                                Some(Capability::Write)
+                            }
+                            "buffer_clear_move" | "buffer_clear_move_status" if index == 0 => {
+                                Some(Capability::Write)
+                            }
+                            "buffer_pop" if index == 0 => Some(Capability::Write),
+                            "buffer_remove_move" if index == 0 => Some(Capability::Write),
+                            "buffer_remove_move_into" | "buffer_remove_move_into_status"
+                                if index == 0 || index == 2 =>
+                            {
+                                Some(Capability::Write)
+                            }
+                            "buffer_pop_move_into" | "buffer_pop_move_into_status"
+                                if index == 0 || index == 1 =>
+                            {
+                                Some(Capability::Write)
+                            }
+                            "buffer_insert_move" | "buffer_insert_move_status" if index == 0 => {
+                                Some(Capability::Write)
+                            }
+                            "buffer_insert_move_from" | "buffer_insert_move_from_status"
+                                if index == 0 =>
+                            {
+                                Some(Capability::Write)
+                            }
+                            "buffer_append_move" | "buffer_append_move_status" if index == 0 => {
+                                Some(Capability::Write)
+                            }
+                            "buffer_resize"
+                            | "buffer_resize_move"
+                            | "buffer_append_i32"
+                            | "buffer_reserve_i32"
+                            | "buffer_append_i32_grow"
+                            | "buffer_reserve"
+                            | "buffer_append"
+                            | "buffer_insert"
+                            | "buffer_remove"
+                            | "buffer_remove_drop"
+                            | "buffer_remove_drop_status"
+                            | "buffer_resize_status"
+                            | "buffer_resize_move_status"
+                            | "buffer_reserve_status"
+                            | "buffer_append_status"
+                            | "buffer_insert_status"
+                            | "buffer_remove_status"
+                                if index == 0 =>
+                            {
+                                Some(Capability::Write)
+                            }
+                            "string_builder_append" if index == 0 => Some(Capability::Read),
+                            "string_builder_append" if index == 1 => Some(Capability::Write),
+                            "string_builder_append_bytes" if index == 0 => Some(Capability::Read),
+                            "string_builder_append_bytes" if index == 1 => Some(Capability::Write),
+                            "string_owned_append" if index == 0 => Some(Capability::Write),
+                            "string_owned_append" if index == 1 => Some(Capability::Read),
+                            "string_owned_length" | "string_owned_copy" if index == 0 => {
+                                Some(Capability::Read)
+                            }
+                            "string_owned_copy" if index == 1 => Some(Capability::Write),
+                            "string_owned_clear" if index == 0 => Some(Capability::Write),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let capability = parameters
+                        .get(index)
+                        .and_then(|parameter| match self.types.kind(*parameter) {
                             Some(TypeKind::Capability { capability, .. }) => Some(*capability),
                             _ => None,
-                        }
-                    });
+                        })
+                        .or(builtin_borrow_capability);
                     if let (Some(capability), Some(place)) =
                         (capability, Self::operand_place(argument))
                         && matches!(capability, Capability::Read | Capability::Write)
@@ -1672,7 +2330,37 @@ impl<'a> Builder<'a> {
                         });
                         Self::collect_index_accesses(argument, self, output);
                     } else {
+                        let move_source = matches!(
+                            &callee.kind,
+                            MirOperandKind::Function { name, .. }
+                                if matches!(
+                                    (name.as_str(), index),
+                                    (
+                                        "buffer_append"
+                                            | "buffer_append_status"
+                                            | "buffer_append_move"
+                                            | "buffer_append_move_status",
+                                        1
+                                    ) | (
+                                        "buffer_insert"
+                                            | "buffer_insert_status"
+                                            | "buffer_insert_move"
+                                            | "buffer_insert_move_status"
+                                            | "buffer_insert_move_from"
+                                            | "buffer_insert_move_from_status",
+                                        2
+                                    )
+                                )
+                        ) && is_move_only(self.types, argument.ty);
+                        let before = output.len();
                         self.collect_operand_accesses(argument, output);
+                        if move_source && Self::operand_place(argument).is_some() {
+                            for access in output[before..].iter_mut() {
+                                if access.kind == AccessKind::Move {
+                                    access.kind = AccessKind::MoveOrDrop;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1868,13 +2556,46 @@ impl<'a> Builder<'a> {
                 operator: *operator,
                 right: Box::new(self.lower_value(right)),
             },
-            HirExpressionKind::Call { callee, arguments } => MirOperandKind::Call {
-                callee: Box::new(self.lower_value(callee)),
-                arguments: arguments
-                    .iter()
-                    .map(|argument| self.lower_value(argument))
-                    .collect(),
-            },
+            HirExpressionKind::Call { callee, arguments } => {
+                let lowered_callee = self.lower_value(callee);
+                let mut lowered_arguments = Vec::with_capacity(arguments.len());
+                for (index, argument) in arguments.iter().enumerate() {
+                    let lowered = self.lower_value(argument);
+                    if self.should_materialize_inline_buffer_move(
+                        callee, arguments, index, argument, &lowered,
+                    ) {
+                        let name = format!("$buffer_move_tmp{}", self.locals.len());
+                        let local =
+                            self.add_local(None, &name, lowered.ty, true, false, argument.span);
+                        self.locals[local.index()].owned_region =
+                            self.expression_region_owner(argument);
+                        self.push_statement(MirStatement::StorageLive {
+                            local,
+                            span: argument.span,
+                        });
+                        let accesses = self.operand_accesses(&lowered);
+                        self.push_statement(MirStatement::Assign {
+                            destination: Place::local(local),
+                            destination_indices: Vec::new(),
+                            value: Some(lowered),
+                            accesses,
+                            span: argument.span,
+                        });
+                        self.pending_inline_move_temporaries.push(local);
+                        lowered_arguments.push(self.place_operand(
+                            local,
+                            argument.ty,
+                            argument.span,
+                        ));
+                    } else {
+                        lowered_arguments.push(lowered);
+                    }
+                }
+                MirOperandKind::Call {
+                    callee: Box::new(lowered_callee),
+                    arguments: lowered_arguments,
+                }
+            }
             HirExpressionKind::RegionAllocate { region, arguments } => {
                 let region = self.symbols.get(region).copied();
                 MirOperandKind::RegionAllocate {
@@ -1926,6 +2647,44 @@ impl<'a> Builder<'a> {
             kind,
             span: expression.span,
         }
+    }
+
+    fn should_materialize_inline_buffer_move(
+        &self,
+        callee: &HirExpression,
+        arguments: &[HirExpression],
+        index: usize,
+        argument: &HirExpression,
+        lowered: &MirOperand,
+    ) -> bool {
+        if !self.materialize_inline_move_arguments
+            || self.expression_place(argument).is_some()
+            || matches!(lowered.kind, MirOperandKind::Place(_))
+        {
+            return false;
+        }
+        let HirExpressionKind::Name { name, .. } = &callee.kind else {
+            return false;
+        };
+        let expected_index = match name.as_str() {
+            "buffer_append" | "buffer_append_status" => 1,
+            "buffer_insert" | "buffer_insert_status" => 2,
+            _ => return false,
+        };
+        if index != expected_index {
+            return false;
+        }
+        let Some(buffer_argument) = arguments.first() else {
+            return false;
+        };
+        let mut buffer_ty = buffer_argument.ty;
+        while let Some(TypeKind::Capability { inner, .. }) = self.types.kind(buffer_ty) {
+            buffer_ty = *inner;
+        }
+        let Some(TypeKind::Buffer(element)) = self.types.kind(buffer_ty) else {
+            return false;
+        };
+        is_move_only(self.types, *element) && is_move_only(self.types, argument.ty)
     }
 
     fn expression_place(&self, expression: &HirExpression) -> Option<Place> {
@@ -2877,16 +3636,17 @@ fn check_initialized(
 }
 
 fn analyze_function_moves(function: &MirFunction) -> Vec<MirError> {
-    let mut inputs: Vec<Option<BTreeSet<Place>>> = vec![None; function.blocks.len()];
+    let mut inputs: Vec<Option<(BTreeSet<Place>, BTreeSet<Place>)>> =
+        vec![None; function.blocks.len()];
     if inputs.is_empty() {
         return Vec::new();
     }
-    inputs[0] = Some(BTreeSet::new());
+    inputs[0] = Some((BTreeSet::new(), BTreeSet::new()));
     let mut queue = VecDeque::from([BasicBlockId(0)]);
     let mut reported = BTreeSet::new();
     let mut errors = Vec::new();
     while let Some(block_id) = queue.pop_front() {
-        let Some(mut moved) = inputs[block_id.index()].clone() else {
+        let Some((mut moved, mut move_or_drop)) = inputs[block_id.index()].clone() else {
             continue;
         };
         let block = &function.blocks[block_id.index()];
@@ -2895,18 +3655,27 @@ fn analyze_function_moves(function: &MirFunction) -> Vec<MirError> {
                 MirStatement::StorageLive { local, .. }
                 | MirStatement::StorageDead { local, .. } => {
                     moved.retain(|place| place.local != *local);
+                    move_or_drop.retain(|place| place.local != *local);
                 }
                 MirStatement::RegionEnter { region, .. }
                 | MirStatement::RegionExit { region, .. } => {
                     moved.retain(|place| place.local != *region);
+                    move_or_drop.retain(|place| place.local != *region);
                 }
                 MirStatement::Assign {
                     destination,
                     accesses,
                     ..
                 } => {
-                    apply_move_accesses(accesses, &mut moved, &mut reported, &mut errors);
+                    apply_move_accesses(
+                        accesses,
+                        &mut moved,
+                        &mut move_or_drop,
+                        &mut reported,
+                        &mut errors,
+                    );
                     moved.retain(|place| !place.overlaps(destination));
+                    move_or_drop.retain(|place| !place.overlaps(destination));
                 }
                 MirStatement::Borrow {
                     destination,
@@ -2921,12 +3690,19 @@ fn analyze_function_moves(function: &MirFunction) -> Vec<MirError> {
                             span: *span,
                         }],
                         &mut moved,
+                        &mut move_or_drop,
                         &mut reported,
                         &mut errors,
                     );
                     moved.retain(|place| place.local != *destination);
                 }
                 MirStatement::Drop { place, span } => {
+                    if move_or_drop.iter().any(|moved| moved.overlaps(place)) {
+                        // MoveOrDrop is consumed for use-after-move analysis,
+                        // but remains drop-managed for native failure paths.
+                        move_or_drop.retain(|moved| !moved.overlaps(place));
+                        continue;
+                    }
                     apply_move_accesses(
                         &[PlaceAccess {
                             place: place.clone(),
@@ -2934,30 +3710,40 @@ fn analyze_function_moves(function: &MirFunction) -> Vec<MirError> {
                             span: *span,
                         }],
                         &mut moved,
+                        &mut move_or_drop,
                         &mut reported,
                         &mut errors,
                     );
                 }
                 MirStatement::Evaluate { accesses, .. } => {
-                    apply_move_accesses(accesses, &mut moved, &mut reported, &mut errors);
+                    apply_move_accesses(
+                        accesses,
+                        &mut moved,
+                        &mut move_or_drop,
+                        &mut reported,
+                        &mut errors,
+                    );
                 }
             }
         }
         apply_move_accesses(
             terminator_accesses(&block.terminator),
             &mut moved,
+            &mut move_or_drop,
             &mut reported,
             &mut errors,
         );
         for successor in successors(&block.terminator) {
             let changed = match &mut inputs[successor.index()] {
                 Some(existing) => {
-                    let before = existing.len();
-                    existing.extend(moved.iter().cloned());
-                    existing.len() != before
+                    let before = existing.0.len();
+                    existing.0.extend(moved.iter().cloned());
+                    let move_before = existing.1.len();
+                    existing.1.extend(move_or_drop.iter().cloned());
+                    existing.0.len() != before || existing.1.len() != move_before
                 }
                 slot @ None => {
-                    *slot = Some(moved.clone());
+                    *slot = Some((moved.clone(), move_or_drop.clone()));
                     true
                 }
             };
@@ -3102,8 +3888,30 @@ fn elaborate_function_drops(function: &mut MirFunction, types: &TypeStore) {
         let Some(mut state) = inputs[block.id.index()].clone() else {
             continue;
         };
-        for statement in &block.statements {
-            transfer_drop_statement(statement, &mut state);
+        let original = std::mem::take(&mut block.statements);
+        for statement in original {
+            if let MirStatement::StorageDead { local, span } = &statement
+                && function
+                    .locals
+                    .get(local.index())
+                    .is_some_and(|local_info| {
+                        is_move_only(types, local_info.ty)
+                            && !local_info.is_return
+                            && local_info.owned_region.is_none()
+                    })
+                && state.initialized.contains(local)
+                && !state
+                    .moved
+                    .iter()
+                    .any(|moved| moved.overlaps(&Place::local(*local)))
+            {
+                let place = Place::local(*local);
+                let drop = MirStatement::Drop { place, span: *span };
+                transfer_drop_statement(&drop, &mut state);
+                block.statements.push(drop);
+            }
+            transfer_drop_statement(&statement, &mut state);
+            block.statements.push(statement);
         }
         let Terminator::Return { span, .. } = &mut block.terminator else {
             continue;
@@ -3634,14 +4442,14 @@ fn check_region_accesses(
         };
         if !active.contains(&owner) {
             report_region_error(
-                if access.kind == AccessKind::Move {
+                if matches!(access.kind, AccessKind::Move | AccessKind::MoveOrDrop) {
                     "J0507"
                 } else {
                     "J0509"
                 },
                 access.span,
                 access.place.local,
-                if access.kind == AccessKind::Move {
+                if matches!(access.kind, AccessKind::Move | AccessKind::MoveOrDrop) {
                     "region-owned value cannot escape its owning region"
                 } else {
                     "region-owned value used after its region exited"
@@ -3651,7 +4459,7 @@ fn check_region_accesses(
             );
             continue;
         }
-        if access.kind == AccessKind::Move {
+        if matches!(access.kind, AccessKind::Move | AccessKind::MoveOrDrop) {
             let remains_in_region = destination.is_some_and(|destination| {
                 function.locals[destination.index()].scope_region == Some(owner)
             });
@@ -3751,7 +4559,7 @@ fn check_borrow_accesses(
         match access.kind {
             AccessKind::BorrowRead => ephemeral.push((place, BorrowKind::Read)),
             AccessKind::BorrowWrite => ephemeral.push((place, BorrowKind::Write)),
-            AccessKind::Read | AccessKind::Move | AccessKind::Write => {}
+            AccessKind::Read | AccessKind::Move | AccessKind::MoveOrDrop | AccessKind::Write => {}
         }
     }
 }
@@ -3771,6 +4579,7 @@ const fn access_conflicts_with_loan(access: AccessKind, loan: BorrowKind) -> boo
         (
             AccessKind::Read
             | AccessKind::Move
+            | AccessKind::MoveOrDrop
             | AccessKind::Write
             | AccessKind::BorrowRead
             | AccessKind::BorrowWrite,
@@ -3796,6 +4605,7 @@ fn report_borrow_error(
 fn apply_move_accesses(
     accesses: &[PlaceAccess],
     moved: &mut BTreeSet<Place>,
+    move_or_drop: &mut BTreeSet<Place>,
     reported: &mut BTreeSet<(u32, usize, usize)>,
     errors: &mut Vec<MirError>,
 ) {
@@ -3815,8 +4625,11 @@ fn apply_move_accesses(
             }
             continue;
         }
-        if access.kind == AccessKind::Move {
+        if matches!(access.kind, AccessKind::Move | AccessKind::MoveOrDrop) {
             moved.insert(access.place.clone());
+            if access.kind == AccessKind::MoveOrDrop {
+                move_or_drop.insert(access.place.clone());
+            }
         }
     }
 }
@@ -3857,7 +4670,12 @@ fn successors(terminator: &Terminator) -> Vec<BasicBlockId> {
 #[must_use]
 pub fn is_move_only(types: &TypeStore, ty: TypeId) -> bool {
     match types.kind(ty) {
-        Some(TypeKind::String | TypeKind::Buffer(_) | TypeKind::Nominal { .. }) => true,
+        Some(
+            TypeKind::String
+            | TypeKind::OwnedString
+            | TypeKind::Buffer(_)
+            | TypeKind::Nominal { .. },
+        ) => true,
         Some(TypeKind::Array { element, .. } | TypeKind::Option(element)) => {
             is_move_only(types, *element)
         }
@@ -3941,6 +4759,141 @@ mod tests {
                 statement,
                 super::MirStatement::Assign { accesses, .. }
                     if accesses.iter().any(|access| access.kind == AccessKind::Move)
+            )
+        }));
+    }
+
+    #[test]
+    fn materializes_inline_owning_buffer_arguments_into_drop_managed_places() {
+        let (module, types) = lower(
+            "module test; fn run(values: write Buffer<Option<Buffer<Int32>>>, incoming: Buffer<Int32>) { if !buffer_append(values, Some(incoming)) { print(1) } }",
+        );
+        let verification = verify_mir(&module, &types);
+        assert!(verification.is_empty(), "{verification:?}");
+        let function = &module.functions[0];
+        let temporary = function
+            .locals
+            .iter()
+            .find(|local| local.name.starts_with("$buffer_move_tmp"))
+            .expect("inline owning argument must have a temporary local");
+        assert!(function.blocks.iter().any(|block| {
+            block.statements.iter().any(|statement| {
+                matches!(
+                    statement,
+                    super::MirStatement::StorageDead { local, .. } if *local == temporary.id
+                )
+            })
+        }));
+        assert!(function.blocks.iter().any(|block| {
+            matches!(
+                &block.terminator,
+                Terminator::Switch { discriminant, .. }
+                    if discriminant.iter().any(|access| {
+                        access.place.local == temporary.id
+                            && access.kind == AccessKind::MoveOrDrop
+                    })
+            )
+        }));
+    }
+
+    #[test]
+    fn keeps_inline_owning_return_arguments_live_until_return_materialization() {
+        let (module, types) = lower(
+            "module test; fn run(values: write Buffer<Option<Buffer<Int32>>>, incoming: Buffer<Int32>) -> Bool { return buffer_append(values, Some(incoming)) }",
+        );
+        let verification = verify_mir(&module, &types);
+        assert!(verification.is_empty(), "{verification:?}");
+        let function = &module.functions[0];
+        let temporary = function
+            .locals
+            .iter()
+            .find(|local| local.name.starts_with("$buffer_move_tmp"))
+            .expect("return inline owning argument must have a temporary local");
+        let return_terminator = function
+            .blocks
+            .iter()
+            .find_map(|block| match &block.terminator {
+                Terminator::Return {
+                    value: Some(value),
+                    accesses,
+                    ..
+                } => Some((value, accesses)),
+                _ => None,
+            })
+            .expect("return terminator");
+        assert!(matches!(
+            return_terminator.0.kind,
+            super::MirOperandKind::Call { .. }
+        ));
+        assert!(return_terminator.1.iter().any(|access| {
+            access.place.local == temporary.id && access.kind == AccessKind::MoveOrDrop
+        }));
+        assert!(!function.blocks.iter().any(|block| {
+            block.statements.iter().any(|statement| {
+                matches!(
+                    statement,
+                    super::MirStatement::StorageDead { local, .. } if *local == temporary.id
+                )
+            })
+        }));
+    }
+
+    #[test]
+    fn cleans_inline_owning_while_condition_on_both_edges() {
+        let (module, types) = lower(
+            "module test; fn run(values: write Buffer<Option<Buffer<Int32>>>, incoming: Buffer<Int32>) { while buffer_append(values, Some(incoming)) { break } }",
+        );
+        let verification = verify_mir(&module, &types);
+        assert!(verification.is_empty(), "{verification:?}");
+        let function = &module.functions[0];
+        let temporary = function
+            .locals
+            .iter()
+            .find(|local| local.name.starts_with("$buffer_move_tmp"))
+            .expect("loop condition must have a temporary local");
+        let condition_result = function
+            .locals
+            .iter()
+            .find(|local| local.name.starts_with("$loop_condition_tmp"))
+            .expect("loop condition result must be materialized");
+        let cleanup_blocks = function
+            .blocks
+            .iter()
+            .filter(|block| {
+                block.statements.iter().any(|statement| {
+                    matches!(
+                        statement,
+                        super::MirStatement::StorageDead { local, .. }
+                            if *local == temporary.id
+                    )
+                })
+            })
+            .count();
+        assert_eq!(cleanup_blocks, 2);
+        assert_eq!(
+            function
+                .blocks
+                .iter()
+                .filter(|block| {
+                    block.statements.iter().any(|statement| {
+                        matches!(
+                            statement,
+                            super::MirStatement::StorageDead { local, .. }
+                                if *local == condition_result.id
+                        )
+                    })
+                })
+                .count(),
+            2
+        );
+        assert!(function.blocks.iter().any(|block| {
+            matches!(
+                &block.terminator,
+                Terminator::Switch { discriminant, .. }
+                    if discriminant.iter().any(|access| {
+                        access.place.local == condition_result.id
+                            && access.kind == AccessKind::Read
+                    })
             )
         }));
     }
@@ -4050,6 +5003,17 @@ mod tests {
             "module test; fn replace(first: Buffer<Int32>, second: Buffer<Int32>) { var data = first; let old = data; data = second; print(data) }",
         );
         assert!(analyze_moves(&reinitialized).is_empty());
+    }
+
+    #[test]
+    fn accepts_repeated_string_reads_through_builtin_helpers() {
+        let (module, _) = lower(
+            "module test; fn main() { let title: String = \"Jadren\"; let length: UIntSize = string_length(title); let same: Bool = string_equals(title, \"Jadren\"); print(title) }",
+        );
+        assert!(
+            analyze_moves(&module).is_empty(),
+            "string helper reads must not consume the source String"
+        );
     }
 
     #[test]

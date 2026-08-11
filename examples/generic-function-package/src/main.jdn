@@ -1,0 +1,12 @@
+module generic_function.main
+
+import generic_function.library.identity
+
+fn main() -> Int32 {
+    let number: Int32 = identity(7)
+    let enabled: Bool = identity(true)
+    if !enabled {
+        return 0
+    }
+    return number
+}

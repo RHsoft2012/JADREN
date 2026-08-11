@@ -1,0 +1,45 @@
+module lessons.calculator_window
+
+// Tento prvý GUI kalkulátor používa rovnakú výpočtovú logiku ako konzolová
+// lekcia. Tlačidlo je udalosť 1 a po kliknutí zobrazí pripravený výsledok.
+// Ďalší krok môže nahradiť konštanty textovými vstupmi a parse_int.
+fn add(a: Int32, b: Int32) -> Int32 {
+    return a + b
+}
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 1 {
+        ui_set_status("Calculation completed: result is 20.")
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    let root: Int32 = ui_app_begin("Jadren calculator", 680, 460, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+
+    let panel: Int32 = ui_app_panel(root, 600, 300, 0xFFFFFFu32, 16, 12, 8, 0, 1)
+    if panel == 0 { return 2 }
+
+    let heading: Int32 = ui_app_label(panel, "First calculation", 520, 34,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let explanation: Int32 = ui_app_label(panel,
+        "The source calculates 12 + 8 before the window opens.",
+        520, 34, 0x475569u32, 0xFFFFFFu32, 8, 1)
+    if heading == 0 { return 3 }
+    if explanation == 0 { return 4 }
+
+    let computed_total: Int32 = 12 + 8
+    if computed_total != 20 { return 5 }
+    let status_text: String = "Result: 12 + 8 = 20"
+    ui_app_status(panel, status_text, 520, 44,
+        0x14532Du32, 0xDCFCE7u32, 8, 1)
+
+    let button: Int32 = ui_app_button(panel, "Run calculation", 1, 220, 42,
+        0xFFFFFFu32, 0x168EF5u32, 12, 0)
+    if button == 0 { return 6 }
+    if !ui_app_end(panel) { return 7 }
+    if !ui_app_end(root) { return 8 }
+    return ui_app_run()
+}

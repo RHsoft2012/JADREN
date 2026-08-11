@@ -1,0 +1,35 @@
+module examples.http_session_tls_client
+
+// TLS client for the bounded HTTP session fixture.
+fn main() -> Int32 {
+    let socket: UIntSize = net_tcp_connect_dns("localhost", 38130u16)
+    if (socket as Int32) == 0 { return 10 }
+    let tls: UIntSize = net_tls_open_client(socket, "localhost", false)
+    if (tls as Int32) == 0 { net_socket_close(socket); return 11 }
+    let first: UInt32 = net_tls_step(tls, 2000u32)
+    let second: UInt32 = net_tls_step(tls, 2000u32)
+    let third: UInt32 = net_tls_step(tls, 2000u32)
+    let fourth: UInt32 = net_tls_step(tls, 2000u32)
+    let fifth: UInt32 = net_tls_step(tls, 2000u32)
+    let sixth: UInt32 = net_tls_step(tls, 2000u32)
+    let seventh: UInt32 = net_tls_step(tls, 2000u32)
+    let eighth: UInt32 = net_tls_step(tls, 2000u32)
+    if net_tls_state(tls) != 2u32 {
+        net_tls_close(tls)
+        return 12
+    }
+    var request: [UInt8; 59] = [71u8, 69u8, 84u8, 32u8, 47u8, 104u8, 101u8, 108u8, 108u8, 111u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 67u8, 111u8, 110u8, 110u8, 101u8, 99u8, 116u8, 105u8, 111u8, 110u8, 58u8, 32u8, 99u8, 108u8, 111u8, 115u8, 101u8, 13u8, 10u8, 13u8, 10u8]
+    let sent: UIntSize = net_tls_send(tls, request)
+    if (sent as Int32) != 59 {
+        net_tls_close(tls)
+        return 13
+    }
+    var response: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let received: UIntSize = net_tls_receive(tls, response)
+    let closed: Bool = net_tls_close(tls)
+    if (received as Int32) == 0 { return 14 }
+    if !closed { return 15 }
+    if response[0] != 72u8 { return 16 }
+    if response[11] != 48u8 { return 17 }
+    return 0
+}

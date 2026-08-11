@@ -1,0 +1,13 @@
+module examples.time_monotonic
+
+// Monotónny čas je určený na meranie trvania, nie na zobrazovanie dátumu.
+fn main() -> Int32 {
+    let first: UInt64 = time_now_monotonic_ms()
+    let second: UInt64 = time_now_monotonic_ms()
+    if second < first {
+        print("time_now_monotonic_ms failed")
+        return 1
+    }
+    print("time_now_monotonic_ms ok")
+    return 0
+}

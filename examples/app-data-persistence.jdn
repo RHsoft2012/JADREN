@@ -1,0 +1,46 @@
+module examples.app_data_persistence
+
+// A deterministic single-file checkpoint for the bounded application model.
+fn main() -> Int32 {
+    app_state_clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    if !app_state_set_text("mode", "before") { return 1 }
+    if !app_state_set_bool("ready", true) { return 2 }
+    if !app_list_push_text(0, "before") { return 3 }
+    if !app_table_set_column_name(0, 0, "name") { return 4 }
+    if !app_table_set_schema_version(0, 7) { return 5 }
+    if !app_table_append_row(0) { return 6 }
+    if !app_table_set_cell(0, 0, 0, "before") { return 7 }
+    if !app_data_save("target/app-data-checkpoint.jdn") { return 8 }
+
+    if !app_state_set_text("mode", "mutated") { return 9 }
+    if !app_state_set_bool("ready", false) { return 10 }
+    if !app_list_set_text(0, 0, "mutated") { return 11 }
+    if !app_table_set_column_name(0, 0, "mutated_name") { return 12 }
+    if !app_table_set_schema_version(0, 99) { return 13 }
+    if !app_table_set_cell(0, 0, 0, "mutated") { return 14 }
+    if !app_data_load("target/app-data-checkpoint.jdn") { return 15 }
+
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if app_state_read_text("mode", output) != 6usize { return 16 }
+    if output[0] != 98u8 { return 17 }
+    if !app_state_get_bool("ready") { return 18 }
+    if app_list_read_text(0, 0, output) != 6usize { return 19 }
+    if output[0] != 98u8 { return 20 }
+    if app_table_find_column(0, "name") != 0 { return 21 }
+    if app_table_schema_version(0) != 7 { return 22 }
+    if app_table_read_cell(0, 0, 0, output) != 6usize { return 23 }
+    if output[0] != 98u8 { return 24 }
+
+    if !app_data_save_atomic("target/app-data-checkpoint.tmp.jdn", "target/app-data-checkpoint-atomic.jdn") { return 25 }
+    if !app_state_set_text("mode", "after_atomic") { return 26 }
+    if !app_data_load("target/app-data-checkpoint-atomic.jdn") { return 27 }
+    if app_state_read_text("mode", output) != 6usize { return 28 }
+    if output[0] != 98u8 { return 29 }
+    file_delete("target/app-data-checkpoint.jdn")
+    file_delete("target/app-data-checkpoint.tmp.jdn")
+    file_delete("target/app-data-checkpoint-atomic.jdn")
+    return 0
+}

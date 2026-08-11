@@ -1,0 +1,11 @@
+module generic_nominal.model
+
+@repr(C)
+pub struct Box<T> {
+    pub value: T
+}
+
+@repr(C)
+pub struct Frame<T> {
+    pub first: Box<T>
+}

@@ -1,0 +1,66 @@
+module examples.stdlib_buffer_owning_nested_record_remove_drop
+
+// Nested owning records use the same caller-owned field table as direct
+// records. `buffer_remove_drop` destroys the selected chain before compacting
+// the remaining nested Buffer descriptors.
+@repr(C)
+struct Entry {
+    values: Buffer<Int32>,
+    id: Int32
+}
+
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Entry>>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let first_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            match first_values_created {
+                                Ok(first_values) => {
+                                    match second_values_created {
+                                        Ok(second_values) => {
+                                            if !buffer_append(first_values, 11) { result_code = 1 }
+                                            if !buffer_append(second_values, 22) { result_code = 2 }
+                                            let first_entry: Entry = Entry { values: first_values, id: 11 }
+                                            let second_entry: Entry = Entry { values: second_values, id: 22 }
+                                            if !buffer_append(first, first_entry) { result_code = 3 }
+                                            if !buffer_append(second, second_entry) { result_code = 4 }
+                                            if !buffer_append(outer, first) { result_code = 5 }
+                                            if !buffer_append(outer, second) { result_code = 6 }
+                                            if buffer_length(outer) != 2usize { result_code = 7 }
+
+                                            let removed: Bool = buffer_remove_drop(outer, 0usize)
+                                            if !removed { result_code = 8 }
+                                            if buffer_length(outer) != 1usize { result_code = 9 }
+
+                                            let status: Int32 = buffer_remove_drop_status(outer, 0usize)
+                                            if status != 0 { result_code = 10 }
+                                            if buffer_length(outer) != 0usize { result_code = 11 }
+
+                                            let invalid: Int32 = buffer_remove_drop_status(outer, 0usize)
+                                            if invalid != -20 { result_code = 12 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

@@ -1,0 +1,32 @@
+module examples.string_builder
+
+// Bounded builder zapisuje do caller-owned buffera a vracia novy offset.
+// Nealokuje a pri malej kapacite vrati 0 bez ciastocneho zapisu.
+fn main() -> Int32 {
+    var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var suffix: [UInt8; 2] = [33u8, 33u8]
+    var tiny: [UInt8; 4] = [7u8, 7u8, 7u8, 7u8]
+    let overflow: UIntSize = string_builder_append("Jadren", tiny, 0usize)
+    if overflow != 0usize {
+        print("string builder capacity failed")
+        return 3
+    }
+    if tiny[0] != 7u8 {
+        print("string builder capacity failed")
+        return 3
+    }
+    let first: UIntSize = string_builder_append("Jadren", output, 0usize)
+    let used: UIntSize = string_builder_append_bytes(suffix, output, first)
+    if used != 8usize {
+        print("string builder failed")
+        return 1
+    }
+    file_delete("target/jadren/string-builder.txt")
+    let written: UIntSize = file_append("target/jadren/string-builder.txt", output, used)
+    if written != used {
+        print("string builder file failed")
+        return 2
+    }
+    print("string builder ok")
+    return 0
+}

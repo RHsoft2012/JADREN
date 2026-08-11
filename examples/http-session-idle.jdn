@@ -1,0 +1,22 @@
+module examples.http_session_idle
+
+// A short timeout with no pending client is an idle step, not a failure.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38126u16)
+    if (listener as Int32) == 0 { return 10 }
+    let rejected: UIntSize = http_session_open(listener, 9u32, 1024u32, 1024u32)
+    if (rejected as Int32) != 0 {
+        net_socket_close(listener)
+        return 11
+    }
+    let session: UIntSize = http_session_open(listener, 1u32, 1024u32, 1024u32)
+    if (session as Int32) == 0 {
+        net_socket_close(listener)
+        return 12
+    }
+    let state: UInt32 = http_session_step(session, 1u32)
+    let closed: Bool = http_session_close(session)
+    if state != 0u32 { return 13 }
+    if !closed { return 14 }
+    return 0
+}

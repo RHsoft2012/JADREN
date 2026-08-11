@@ -1,0 +1,44 @@
+module examples.windows_desktop_text_state
+
+// Textové väzby prepájajú natívny ui_text_input s bounded stavovým slotom.
+// Slot má pevný limit 256 UTF-16 znakov; čítanie vracia UTF-8 do poľa, ktoré
+// vlastní program. Tento súbor je deterministický build/runtime smoke test a
+// nepotrebuje spustiť ui_run ani otvoriť okno.
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    ui_text_input("Draft", 10, 0, 0, 240, 32,
+                  0x111827u32, 0xFFFFFFu32, 8)
+    ui_state_bind_text(10, 0)
+
+    if ui_state_text_length(0) != 5usize { return 1 }
+    var initial: [UInt8; 8] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    let initial_read: UIntSize = ui_state_text_read(0, initial)
+    if initial_read != 5usize { return 2 }
+    if initial[0] != 68u8 { return 3 }
+
+    let updated: Bool = ui_state_text_set(0, "Žltý")
+    if !updated { return 4 }
+    if ui_state_text_length(0) != 6usize { return 5 }
+    if ui_input_length(10) != 6usize { return 6 }
+
+    var output: [UInt8; 8] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    let copied: UIntSize = ui_state_text_read(0, output)
+    if copied != 6usize { return 7 }
+    // UTF-8: Ž = C5 BD, l = 6C, t = 74, ý = C3 BD.
+    if output[0] != 197u8 { return 8 }
+    if output[1] != 189u8 { return 9 }
+    if output[2] != 108u8 { return 10 }
+    if output[3] != 116u8 { return 11 }
+    if output[4] != 195u8 { return 12 }
+    if output[5] != 189u8 { return 13 }
+    return 0
+}

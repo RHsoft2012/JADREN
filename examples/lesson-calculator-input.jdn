@@ -1,0 +1,72 @@
+module lessons.calculator_input
+
+// Text input -> bounded byte buffer -> parse_int -> app_state.
+// Výsledok je zámerne uložený v modeli, aby bola hranica UI/logika jasná.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 3 {
+        var left_text: [UInt8; 16] = [
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+        ]
+        var right_text: [UInt8; 16] = [
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+        ]
+        var left_value: [Int64; 1] = [0 as Int64]
+        var right_value: [Int64; 1] = [0 as Int64]
+        let left_length: UIntSize = ui_input_read(1, left_text)
+        let right_length: UIntSize = ui_input_read(2, right_text)
+        if !parse_int(left_text, left_length, left_value) {
+            ui_set_status("Left value is not a whole number.")
+            return event_id
+        }
+        if !parse_int(right_text, right_length, right_value) {
+            ui_set_status("Right value is not a whole number.")
+            return event_id
+        }
+        let sum: Int64 = left_value[0] + right_value[0]
+        if !app_state_set_int("result", sum) {
+            ui_set_status("The app state rejected the result.")
+        } else {
+            ui_set_status("Inputs parsed. Result is stored in app_state[result].")
+        }
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    if !app_state_set_text("left", "12") { return 1 }
+    if !app_state_set_text("right", "8") { return 2 }
+
+    let root: Int32 = ui_app_begin("Jadren input calculator", 720, 500, 0xF6F8FCu32)
+    if root == 0 { return 3 }
+    let panel: Int32 = ui_app_panel(root, 640, 340, 0xFFFFFFu32, 16, 12, 8, 0, 1)
+    if panel == 0 { return 4 }
+
+    let heading: Int32 = ui_app_label(panel, "Enter two whole numbers", 560, 34,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let left: Int32 = ui_app_text_input(panel, "First value", 1, 240, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let right: Int32 = ui_app_text_input(panel, "Second value", 2, 240, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if heading == 0 { return 5 }
+    if left == 0 { return 6 }
+    if right == 0 { return 7 }
+    if !ui_app_bind_app_state(left, "left") { return 8 }
+    if !ui_app_bind_app_state(right, "right") { return 9 }
+    ui_app_refresh_app_state(left)
+    ui_app_refresh_app_state(right)
+
+    let status: Int32 = ui_app_status(panel,
+        "Press Calculate to parse both inputs.", 560, 44,
+        0x14532Du32, 0xDCFCE7u32, 8, 1)
+    let calculate: Int32 = ui_app_button(panel, "Calculate", 3, 200, 42,
+        0xFFFFFFu32, 0x168EF5u32, 12, 0)
+    if status == 0 { return 10 }
+    if calculate == 0 { return 11 }
+    if !ui_app_end(panel) { return 12 }
+    if !ui_app_end(root) { return 13 }
+    return ui_app_run()
+}

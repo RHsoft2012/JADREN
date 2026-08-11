@@ -1,0 +1,46 @@
+module examples.app_state_json_roundtrip
+
+// JSON can cross a network/server boundary through caller-owned memory. The
+// load operation validates the complete prefix before touching the live state.
+fn main() -> Int32 {
+    app_state_clear()
+    if !app_state_set_int("count", 3 as Int64) { return 1 }
+    if !app_state_set_bool("enabled", true) { return 2 }
+    if !app_state_set_text("name", "Jadren") { return 3 }
+
+    var snapshot: [UInt8; 64] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var snapshot_length: [UIntSize; 1] = [0usize]
+    if !app_state_write_json_exact(snapshot, snapshot_length) { return 4 }
+    if snapshot_length[0] != 42usize { return 5 }
+
+    app_state_clear()
+    if !app_state_load_json_exact(snapshot, snapshot_length[0]) { return 6 }
+    if app_state_get_int("count") != 3 as Int64 { return 7 }
+    if !app_state_get_bool("enabled") { return 8 }
+
+    var name: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var name_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("name", name, name_length) { return 9 }
+    if name_length[0] != 6usize { return 10 }
+    if name[0] != 74u8 { return 11 }
+
+    // Invalid JSON and an input-length overflow are rejected atomically.
+    var invalid: [UInt8; 4] = [123u8, 98u8, 97u8, 100u8]
+    if app_state_load_json_exact(invalid, 4usize) { return 12 }
+    if app_state_get_int("count") != 3 as Int64 { return 13 }
+    if app_state_load_json_exact(snapshot, 65usize) { return 14 }
+    if app_state_get_int("count") != 3 as Int64 { return 15 }
+    return 0
+}

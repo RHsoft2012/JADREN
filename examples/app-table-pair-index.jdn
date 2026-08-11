@@ -1,0 +1,30 @@
+module examples.app_table_pair_index
+
+// Dvojkľúčový index pre typický lookup napr. (project, task).
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !app_table_set_column_type(0, 0, 0) { return 1 }
+    if !app_table_set_column_type(0, 1, 0) { return 2 }
+
+    if !app_table_append_row(0) { return 3 }
+    if !app_table_set_cell(0, 0, 0, "jadren") { return 4 }
+    if !app_table_set_cell(0, 0, 1, "compiler") { return 5 }
+    if !app_table_append_row(0) { return 6 }
+    if !app_table_set_cell(0, 1, 0, "jadren") { return 7 }
+    if !app_table_set_cell(0, 1, 1, "runtime") { return 8 }
+    if !app_table_append_row(0) { return 9 }
+    if !app_table_set_cell(0, 2, 0, "unity") { return 10 }
+    if !app_table_set_cell(0, 2, 1, "runtime") { return 11 }
+
+    if !app_table_index_build_pair(0, 0, 1) { return 12 }
+    if app_table_index_find_pair_text(0, 0, 1, "jadren", "compiler") != 0 { return 13 }
+    if app_table_index_find_pair_text(0, 0, 1, "jadren", "runtime") != 1 { return 14 }
+    if app_table_index_find_pair_text(0, 0, 1, "unity", "compiler") != -1 { return 15 }
+
+    // Fingerprint odmietne starý planner po mutácii tabuľky.
+    if !app_table_set_cell(0, 1, 1, "editor") { return 16 }
+    if app_table_index_find_pair_text(0, 0, 1, "jadren", "runtime") != -1 { return 17 }
+    if !app_table_index_clear(0) { return 18 }
+    app_table_clear(0)
+    return 0
+}

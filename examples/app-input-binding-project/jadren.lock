@@ -1,0 +1,13 @@
+version = 1
+manifest_fingerprint = "56eecf02d052123e"
+
+[package]
+name = "app-input-binding-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"
+

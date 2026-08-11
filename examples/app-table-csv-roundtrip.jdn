@@ -1,0 +1,52 @@
+module examples.app_table_csv_roundtrip
+
+// Export and import use explicit caller-owned buffers.
+// The destination table keeps its typed schema; import replaces rows only
+// after the complete CSV has been parsed and validated.
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !app_table_set_column_name(0, 0, "task_id") { return 1 }
+    if !app_table_set_column_name(0, 1, "title") { return 2 }
+    if !app_table_set_column_type(0, 0, 1) { return 3 }
+    if !app_table_set_column_type(0, 1, 0) { return 4 }
+    if !app_table_append_row(0) { return 5 }
+    if !app_table_set_named_int(0, 0, "task_id", 1 as Int64) { return 6 }
+    if !app_table_set_named_cell(0, 0, "title", "A,B") { return 7 }
+
+    // Export is independently checked before feeding an equivalent read buffer.
+    var csv: [UInt8; 32] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    let csv_length: UIntSize = app_table_export_csv(0, csv)
+    if csv_length != 22usize { return 8 }
+
+    // Standard CSV: task_id,title\n1,"A,B"\n
+    var input: [UInt8; 32] = [
+        116u8, 97u8, 115u8, 107u8, 95u8, 105u8, 100u8, 44u8,
+        116u8, 105u8, 116u8, 108u8, 101u8, 10u8, 49u8, 44u8,
+        34u8, 65u8, 44u8, 66u8, 34u8, 10u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    app_table_clear(1)
+    if !app_table_set_column_name(1, 0, "old_id") { return 9 }
+    if !app_table_set_column_name(1, 1, "old_title") { return 10 }
+    if !app_table_set_column_type(1, 0, 1) { return 11 }
+    if !app_table_set_column_type(1, 1, 0) { return 12 }
+    if !app_table_import_csv(1, input, 22usize) { return 13 }
+    if app_table_row_count(1) != 1 { return 14 }
+    if app_table_read_named_int(1, 0, "task_id") != (1 as Int64) { return 15 }
+    if app_table_find_text(1, 1, "A,B", 0) != 0 { return 16 }
+
+    // A typed parse failure must not replace the valid row.
+    var bad: [UInt8; 21] = [
+        116u8, 97u8, 115u8, 107u8, 95u8, 105u8, 100u8, 44u8,
+        116u8, 105u8, 116u8, 108u8, 101u8, 10u8,
+        111u8, 111u8, 112u8, 115u8, 44u8, 120u8, 10u8
+    ]
+    if app_table_import_csv(1, bad, 21usize) { return 17 }
+    if app_table_row_count(1) != 1 { return 18 }
+    return 0
+}

@@ -1,0 +1,32 @@
+module examples.selfhost.typed_sequence_index_stage2
+
+// Stage2 dynamic sequence fixture.
+//
+// The caller-owned metadata declares `values` as either Slice<Integer> or
+// Buffer<Integer>. The typed AST route then lowers values[1] to:
+//   descriptor pointer/length read -> integer-size conversion -> BoundsCheck
+//   -> pointer Offset -> Load
+//
+// The source fixture intentionally keeps the descriptor hand-off explicit;
+// runtime data is supplied by the native caller and is never fabricated by
+// the frontend. `capacity` is present only for Buffer descriptors and is not
+// used for read indexing.
+@repr(C)
+pub struct TypedSequenceBindingHeader {
+    pub name_start: UIntSize,
+    pub name_end: UIntSize,
+    pub element_type_kind: UInt8,
+    pub sequence_kind: UInt8,
+    pub reserved: [UInt8; 6],
+}
+
+@export(name: "jadren_typed_sequence_index_fixture", abi: "C")
+pub fn typed_sequence_index_fixture() -> Int32 {
+    // The executable fixture remains deterministic; the descriptor/index
+    // lowering is verified by the Stage2 Rust oracle and the self-host API.
+    return 3
+}
+
+fn main() -> Int32 {
+    return typed_sequence_index_fixture()
+}

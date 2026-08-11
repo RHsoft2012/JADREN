@@ -1,0 +1,11 @@
+module examples.file_lock_blocked
+
+// A second process must not acquire a lock already held by the holder.
+fn main() -> Int32 {
+    let token: UIntSize = file_lock("target/jadren-file-lock.lock")
+    if token != 0usize {
+        file_unlock(token)
+        return 1
+    }
+    return 0
+}

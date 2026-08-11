@@ -1,0 +1,46 @@
+module time_tracker_project.controller
+
+import jadren.app.input.read_text
+import jadren.app.input.refresh_all
+import jadren.app.list.push_bytes
+import jadren.app.state.get_int
+import jadren.app.state.set_int
+import jadren.app.table.find_int
+import jadren.app.table.set_named_cell
+import time_tracker_project.network.sync_selected
+import time_tracker_project.storage.save
+
+// Controller owns event decisions.  It receives only the numeric event ID
+// from the view callback and mutates the model through its public runtime API.
+pub fn handle(event_id: Int32) -> Int32 {
+    if event_id == 45 {
+        var input: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+        let length: UIntSize = read_text(43, input)
+        if length == 0usize { return 8 }
+        if !push_bytes(0, input, length) { return 9 }
+        let events: Int64 = get_int("list_events") + 1 as Int64
+        if !set_int("list_events", events) { return 10 }
+        if !save() { return 11 }
+        refresh_all()
+        return 0
+    }
+    if event_id != 42 { return 1 }
+    let task_id: Int64 = get_int("selected_task_id")
+    let row: Int32 = find_int(0, 3, task_id, 0)
+    if row < 0 { return 2 }
+    if !set_named_cell(0, row, "status", "Done") { return 3 }
+    let count: Int64 = get_int("controller_events") + 1 as Int64
+    if !set_int("controller_events", count) { return 4 }
+    let network_status: Int32 = sync_selected()
+    if !set_int("network_status", network_status as Int64) { return 5 }
+    if network_status != 200 { return 6 }
+    if !save() { return 7 }
+    return 0
+}

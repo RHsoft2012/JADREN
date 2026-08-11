@@ -1,0 +1,33 @@
+module examples.format_values;
+
+// Dynamický text export: hodnoty sa formátujú do caller-owned bufferu.
+fn main() -> Int32 {
+    file_delete("target/jadren/jadren-format-values.txt")
+    file_write_text("target/jadren/jadren-format-values.txt", "values:")
+    var buffer: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let signed_length: UIntSize = format_int(-42 as Int64, buffer)
+    file_append("target/jadren/jadren-format-values.txt", buffer, signed_length)
+    file_append_text("target/jadren/jadren-format-values.txt", ",")
+    let bool_length: UIntSize = format_bool(true, buffer)
+    file_append("target/jadren/jadren-format-values.txt", buffer, bool_length)
+    file_append_text("target/jadren/jadren-format-values.txt", ",")
+    let unsigned_length: UIntSize = format_uint(2u64, buffer)
+    file_append("target/jadren/jadren-format-values.txt", buffer, unsigned_length)
+    file_append_text("target/jadren/jadren-format-values.txt", ",")
+    let float_length: UIntSize = format_float(3.1415926f64, buffer)
+    file_append("target/jadren/jadren-format-values.txt", buffer, float_length)
+    file_append_text("target/jadren/jadren-format-values.txt", "\n")
+
+    var output: [UInt8; 27] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let loaded: UIntSize = file_read("target/jadren/jadren-format-values.txt", output)
+    if (signed_length as Int32) != 3 { file_delete("target/jadren/jadren-format-values.txt"); return 10 }
+    if (bool_length as Int32) != 4 { file_delete("target/jadren/jadren-format-values.txt"); return 11 }
+    if (unsigned_length as Int32) != 1 { file_delete("target/jadren/jadren-format-values.txt"); return 12 }
+    if (float_length as Int32) != 8 { file_delete("target/jadren/jadren-format-values.txt"); return 13 }
+    if (loaded as Int32) != 27 { file_delete("target/jadren/jadren-format-values.txt"); return 14 }
+    if output[7] != 45u8 { file_delete("target/jadren/jadren-format-values.txt"); return 15 }
+    if output[18] != 51u8 { file_delete("target/jadren/jadren-format-values.txt"); return 16 }
+    if output[26] != 10u8 { file_delete("target/jadren/jadren-format-values.txt"); return 17 }
+    file_delete("target/jadren/jadren-format-values.txt")
+    return 0
+}

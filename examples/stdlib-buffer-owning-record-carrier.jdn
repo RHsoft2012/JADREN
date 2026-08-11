@@ -1,0 +1,68 @@
+module examples.stdlib_buffer_owning_record_carrier
+
+// A C-layout record may contain tagged Option/Result fields that own Buffers.
+// The record field table keeps the five-word ABI and selects only the active
+// carrier branch during cleanup.
+@repr(C)
+struct Meta {
+    maybe: Option<Buffer<Int32>>
+}
+
+@repr(C)
+struct Entry {
+    id: Int32,
+    nested: Meta,
+    maybe: Option<Buffer<Int32>>,
+    outcome: Result<Buffer<Int32>, Buffer<Int32>>
+}
+
+fn main() -> Int32 {
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let third_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let records_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match first_created {
+        Ok(first) => {
+            match second_created {
+                Ok(second) => {
+                    match third_created {
+                        Ok(third) => {
+                            match records_created {
+                                Ok(records) => {
+                                    if !buffer_append(first, 11) { result_code = 1 }
+                                    if !buffer_append(second, 22) { result_code = 2 }
+                                    if !buffer_append(third, 33) { result_code = 3 }
+                                    let item: Entry = Entry {
+                                        id: 7,
+                                        nested: Meta { maybe: Some(first) },
+                                        maybe: None,
+                                        outcome: Ok(second)
+                                    }
+                                    if !buffer_append(records, item) { result_code = 4 }
+
+                                    let none_state: Option<Buffer<Int32>> = None
+                                    let error_state: Result<Buffer<Int32>, Buffer<Int32>> = Error(third)
+                                    let copy_only: Entry = Entry {
+                                        id: 8,
+                                        nested: Meta { maybe: None },
+                                        maybe: none_state,
+                                        outcome: error_state
+                                    }
+                                    if !buffer_append(records, copy_only) { result_code = 5 }
+                                    if buffer_length(records) != 2usize { result_code = 6 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

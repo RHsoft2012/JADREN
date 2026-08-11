@@ -1,0 +1,39 @@
+module examples.stdlib_buffer_owning_nested_record
+
+// Owning fields may be nested through an inline C-layout record.  The
+// compiler flattens the inline offsets into one record drop table; no manual
+// destructor or FFI bridge is needed in Jadren source.
+@repr(C)
+struct Inner {
+    id: Int32,
+    values: Buffer<Int32>
+}
+
+@repr(C)
+struct Entry {
+    nested: Inner,
+    marker: Int32
+}
+
+fn main() -> Int32 {
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match entries_created {
+        Ok(entries) => {
+            match values_created {
+                Ok(values) => {
+                    if !buffer_append(values, 7) { result_code = 1 }
+                    let nested: Inner = Inner { id: 11, values: values }
+                    let item: Entry = Entry { nested: nested, marker: 42 }
+                    if !buffer_append(entries, item) { result_code = 2 }
+                    if buffer_length(entries) != 1usize { result_code = 3 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

@@ -1,0 +1,8 @@
+version = 1
+manifest_fingerprint = "f9093d8f8ec0d3a0"
+
+[package]
+name = "stdlib-buffer-indirect-callback-project"
+version = "0.1.0"
+edition = "2026"
+

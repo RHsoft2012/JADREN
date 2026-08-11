@@ -1,0 +1,17 @@
+module examples.selfhost.typed_while_float_local_mutable_body_let_stage2
+
+// Float64 loop state stays in the outer local while the mutable body-local
+// `step` is initialized and updated on every iteration.
+
+fn main() -> Int32 {
+    var counter: Float64 = 0.0f64
+    while counter < 3.0f64 {
+        var step: Float64 = 1.0f64
+        step = step + 1.0f64
+        counter = counter + step
+    }
+    if counter == 4.0f64 {
+        return 0
+    }
+    return 1
+}

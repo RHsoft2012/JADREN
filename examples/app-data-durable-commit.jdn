@@ -1,0 +1,31 @@
+module examples.app_data_durable_commit
+
+// A complete bounded model transaction can be promoted to one checkpoint.
+// The temporary file and the target must share a filesystem; keep the lock
+// path separate so another process can coordinate commits without holding the
+// data file open.
+fn main() -> Int32 {
+    app_state_clear()
+    if !app_state_set_text("theme", "dark") { return 1 }
+    if !app_data_tx_begin() { return 2 }
+    if !app_state_set_text("theme", "light") { return 3 }
+    if !app_data_tx_commit_durable(
+        "target/app-data-durable.tmp",
+        "target/app-data-durable.data",
+        "target/app-data-durable.lock"
+    ) { return 4 }
+
+    // Reload proves that the promoted checkpoint contains the committed model.
+    if !app_state_set_text("theme", "mutated") { return 5 }
+    if !app_data_load("target/app-data-durable.data") { return 6 }
+    var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = app_state_read_text("theme", output)
+    if length != 5usize { return 7 }
+    if output[0] != 108u8 { return 8 }
+    if output[4] != 116u8 { return 8 }
+
+    file_delete("target/app-data-durable.tmp")
+    file_delete("target/app-data-durable.data")
+    file_delete("target/app-data-durable.lock")
+    return 0
+}

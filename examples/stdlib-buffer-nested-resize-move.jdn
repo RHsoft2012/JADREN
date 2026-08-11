@@ -1,0 +1,74 @@
+module examples.stdlib_buffer_nested_resize_move
+
+// buffer_resize_move is the ownership-aware resize for nested owning buffers.
+// Growing zero-initializes new descriptors; shrinking recursively destroys
+// descriptors that leave the logical range before updating the outer length.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            if !buffer_append(first, 11) { result_code = 1 }
+                            if !buffer_append(second, 22) { result_code = 2 }
+                            if !buffer_append(outer, first) { result_code = 3 }
+                            if !buffer_append(outer, second) { result_code = 4 }
+
+                            let grown_status: Int32 = buffer_resize_move_status(outer, 3usize)
+                            if grown_status != 0 { result_code = 5 }
+                            if buffer_length(outer) != 3usize { result_code = 6 }
+                            if outer[0][0] != 11 { result_code = 7 }
+                            if outer[1][0] != 22 { result_code = 8 }
+
+                            let shrunk_status: Int32 = buffer_resize_move_status(outer, 1usize)
+                            if shrunk_status != 0 { result_code = 9 }
+                            if buffer_length(outer) != 1usize { result_code = 10 }
+                            if outer[0][0] != 11 { result_code = 10 }
+
+                            let emptied: Bool = buffer_resize_move(outer, 0usize)
+                            if !emptied { result_code = 11 }
+                            if buffer_length(outer) != 0usize { result_code = 11 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    // The same API must release a deeper descriptor chain, not only one level.
+    let recursive_outer: Result<Buffer<Buffer<Buffer<Int32>>>, Int32> = buffer_create(0usize)
+    let recursive_middle: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let recursive_leaf: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    match recursive_outer {
+        Ok(outer) => {
+            match recursive_middle {
+                Ok(middle) => {
+                    match recursive_leaf {
+                        Ok(leaf) => {
+                            if !buffer_append(leaf, 33) { result_code = 12 }
+                            if !buffer_append(middle, leaf) { result_code = 13 }
+                            if !buffer_append(outer, middle) { result_code = 14 }
+                            let recursive_status: Int32 = buffer_resize_move_status(outer, 0usize)
+                            if recursive_status != 0 { result_code = 15 }
+                            if buffer_length(outer) != 0usize { result_code = 15 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

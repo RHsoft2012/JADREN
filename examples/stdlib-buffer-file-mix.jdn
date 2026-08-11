@@ -1,0 +1,18 @@
+module examples.stdlib_buffer_file_mix
+
+fn main() -> Int32 {
+    // File and heap Buffer runtimes must coexist without duplicate ABI shims.
+    if !file_exists("examples/stdlib-buffer-owning-list.jdn") { return 1 }
+
+    let created: Result<Buffer<Int32>, Int32> = buffer_create_i32(1usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            let appended: Bool = buffer_append_i32_grow(values, 42)
+            if !appended { result_code = 2 }
+            if buffer_length(values) != 1usize { result_code = 3 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

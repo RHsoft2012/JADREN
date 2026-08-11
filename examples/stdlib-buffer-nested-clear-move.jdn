@@ -1,0 +1,38 @@
+// Move-aware clear recursively destroys initialized nested descriptors while
+// retaining the outer allocation for later reuse.
+module stdlib_buffer_nested_clear_move
+
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let inner_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match inner_created {
+                Ok(inner) => {
+                    if !buffer_append(inner, 7) { result_code = 1 }
+                    if !buffer_append(outer, inner) { result_code = 2 }
+                    if buffer_length(outer) != 1usize { result_code = 3 }
+                    if !buffer_clear_move(outer) { result_code = 4 }
+                    if buffer_length(outer) != 0usize { result_code = 5 }
+
+                    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+                    match second_created {
+                        Ok(second) => {
+                            if !buffer_append(second, 42) { result_code = 6 }
+                            if !buffer_append(outer, second) { result_code = 7 }
+                            let clear_status: Int32 = buffer_clear_move_status(outer)
+                            if clear_status != 0 { result_code = 8 }
+                            if buffer_length(outer) != 0usize { result_code = 9 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

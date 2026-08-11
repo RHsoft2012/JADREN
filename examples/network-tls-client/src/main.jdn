@@ -1,0 +1,98 @@
+module examples.network_tls_client
+import jadren.network.tcp.close_socket
+import jadren.network.tcp.connect_dns
+import jadren.network.tcp.set_timeout
+import jadren.network.tls.close
+import jadren.network.tls.open_client
+import jadren.network.tls.receive
+import jadren.network.tls.send
+import jadren.network.tls.state
+import jadren.network.tls.step
+fn main() -> Int32 {
+    let socket = connect_dns("localhost",
+    38149u16)
+    if socket == 0usize {
+        return 10
+    }
+    if ! set_timeout(socket,
+    2000u32) {
+        close_socket(socket)
+        return 11
+    }
+    let tls = open_client(socket,
+    "localhost",
+    false)
+    if tls == 0usize {
+        close_socket(socket)
+        return 12
+    }
+    let first = step(tls,
+    2000u32)
+    let second = step(tls,
+    2000u32)
+    let third = step(tls,
+    2000u32)
+    let fourth = step(tls,
+    2000u32)
+    let fifth = step(tls,
+    2000u32)
+    let sixth = step(tls,
+    2000u32)
+    let seventh = step(tls,
+    2000u32)
+    let eighth = step(tls,
+    2000u32)
+    if first == 4u32 {
+        return 13
+    }
+    if second == 4u32 {
+        return 13
+    }
+    if third == 4u32 {
+        return 13
+    }
+    if fourth == 4u32 {
+        return 13
+    }
+    if fifth == 4u32 {
+        return 13
+    }
+    if sixth == 4u32 {
+        return 13
+    }
+    if seventh == 4u32 {
+        return 13
+    }
+    if eighth == 4u32 {
+        return 13
+    }
+    if state(tls) != 2u32 {
+        return 14
+    }
+    var request:[UInt8;
+    1] =[84u8]
+    if send(tls,
+    request) != 1usize {
+        return 15
+    }
+    var response:[UInt8;
+    5] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    if receive(tls,
+    response) != 5usize {
+        return 16
+    }
+    if response[0] != 74u8 {
+        return 17
+    }
+    if response[4] != 78u8 {
+        return 18
+    }
+    if ! close(tls) {
+        return 19
+    }
+    return 0
+}

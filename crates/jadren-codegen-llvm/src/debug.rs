@@ -11,7 +11,7 @@ use inkwell::debug_info::{
 use inkwell::module::{FlagBehavior, Module};
 use inkwell::values::{AsValueRef, BasicValueEnum, FunctionValue, InstructionValue};
 use jadren_determinism::normalize_path;
-use jadren_jir::{Function, Linkage, TypeId};
+use jadren_jir::{Function, InstructionKind, Linkage, TypeId, ValueId};
 use jadren_source::{SourceId, SourceManager, Span};
 
 use crate::{LoweredTypeTable, TypeLoweringConfig};
@@ -25,12 +25,31 @@ pub struct DebugInfoConfig {
     producer: String,
     optimized: bool,
     sources: BTreeMap<SourceId, DebugSource>,
+    stack_locals: BTreeMap<(usize, usize), DebugLocal>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct DebugSource {
     path: String,
     text: String,
+}
+
+/// Source-local storage metadata retained independently from JIR.
+///
+/// The MIR-to-JIR lowering creates one entry-block `StackAlloc` for every MIR
+/// local in source order. This sidecar keeps user-visible local names out of
+/// the JIR contract while letting native debug artifacts bind them to that
+/// already-verified storage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DebugLocal {
+    /// Dense index of the source function in the verified JIR module.
+    pub function: usize,
+    /// Dense source-local index, matching the entry-block `StackAlloc` order.
+    pub allocation: usize,
+    /// User-visible local name.
+    pub name: String,
+    /// Source declaration range.
+    pub span: Span,
 }
 
 impl DebugInfoConfig {
@@ -65,7 +84,35 @@ impl DebugInfoConfig {
             producer: PRODUCER.to_owned(),
             optimized,
             sources: copied,
+            stack_locals: BTreeMap::new(),
         })
+    }
+
+    /// Adds stable MIR local names for native automatic-variable metadata.
+    ///
+    /// Callers must supply only user-visible non-parameter, non-synthetic
+    /// locals. Parameters use the separate LLVM argument metadata path.
+    pub fn with_stack_locals(
+        mut self,
+        locals: impl IntoIterator<Item = DebugLocal>,
+    ) -> Result<Self, DebugInfoError> {
+        for local in locals {
+            validate_text("debug local name", &local.name)?;
+            if local.name.is_empty() {
+                return Err(DebugInfoError::EmptyLocalName {
+                    function: local.function,
+                    allocation: local.allocation,
+                });
+            }
+            let key = (local.function, local.allocation);
+            if self.stack_locals.insert(key, local).is_some() {
+                return Err(DebugInfoError::DuplicateStackLocal {
+                    function: key.0,
+                    allocation: key.1,
+                });
+            }
+        }
+        Ok(self)
     }
 
     /// Returns the normalized compilation directory embedded in the compile unit.
@@ -92,6 +139,11 @@ pub enum DebugInfoError {
     LocationOverflow { source: SourceId, offset: usize },
     MissingFunctionSpan(String),
     TypeMetadata(String),
+    EmptyLocalName { function: usize, allocation: usize },
+    DuplicateStackLocal { function: usize, allocation: usize },
+    MissingStackAllocation { function: usize, allocation: usize },
+    MissingStackStorage(ValueId),
+    InvalidStackStorage(ValueId),
 }
 
 impl fmt::Display for DebugInfoError {
@@ -131,6 +183,39 @@ impl fmt::Display for DebugInfoError {
             Self::TypeMetadata(message) => {
                 write!(formatter, "debug type metadata failed: {message}")
             }
+            Self::EmptyLocalName {
+                function,
+                allocation,
+            } => write!(
+                formatter,
+                "debug local {allocation} in function {function} has an empty name"
+            ),
+            Self::DuplicateStackLocal {
+                function,
+                allocation,
+            } => write!(
+                formatter,
+                "debug local {allocation} is duplicated in function {function}"
+            ),
+            Self::MissingStackAllocation {
+                function,
+                allocation,
+            } => write!(
+                formatter,
+                "debug local {allocation} has no stack allocation in function {function}"
+            ),
+            Self::MissingStackStorage(value) => {
+                write!(
+                    formatter,
+                    "debug stack storage %v{} is missing",
+                    value.index()
+                )
+            }
+            Self::InvalidStackStorage(value) => write!(
+                formatter,
+                "debug stack storage %v{} is not an LLVM pointer",
+                value.index()
+            ),
         }
     }
 }
@@ -287,7 +372,7 @@ impl<'ctx, 'config> DebugState<'ctx, 'config> {
                     }
                 })?)
                 .expect("verified LLVM parameter exists");
-            let ty = self.parameter_type(parameter.ty, types)?;
+            let ty = self.variable_type(parameter.ty, types)?;
             let variable = self.builder.create_parameter_variable(
                 info.scope.as_debug_info_scope(),
                 name,
@@ -309,7 +394,73 @@ impl<'ctx, 'config> DebugState<'ctx, 'config> {
         Ok(())
     }
 
-    fn parameter_type(
+    pub(crate) fn insert_stack_locals(
+        &self,
+        context: &'ctx Context,
+        function: &Function,
+        info: FunctionDebugInfo<'ctx>,
+        values: &BTreeMap<ValueId, BasicValueEnum<'ctx>>,
+        first_instruction: InstructionValue<'ctx>,
+        types: &LoweredTypeTable<'ctx>,
+    ) -> Result<(), DebugInfoError> {
+        let function_index = function.id.index();
+        let mut stack_allocation = 0usize;
+        let mut inserted = BTreeMap::new();
+        for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+            let InstructionKind::StackAlloc { ty, .. } = &instruction.kind else {
+                continue;
+            };
+            let Some(result) = instruction.result else {
+                continue;
+            };
+            let current_allocation = stack_allocation;
+            stack_allocation += 1;
+            let Some(local) = self
+                .config
+                .stack_locals
+                .get(&(function_index, current_allocation))
+            else {
+                continue;
+            };
+            let value = values
+                .get(&result.value)
+                .copied()
+                .ok_or(DebugInfoError::MissingStackStorage(result.value))?;
+            let BasicValueEnum::PointerValue(storage) = value else {
+                return Err(DebugInfoError::InvalidStackStorage(result.value));
+            };
+            let (file, line, _) = self.resolve(local.span)?;
+            let variable = self.builder.create_auto_variable(
+                info.scope.as_debug_info_scope(),
+                &local.name,
+                file,
+                line,
+                self.variable_type(*ty, types)?,
+                true,
+                DIFlags::ZERO,
+                0,
+            );
+            insert_debug_declare_record(
+                &self.builder,
+                storage,
+                variable,
+                self.location(context, local.span, info)?,
+                first_instruction,
+            );
+            inserted.insert(current_allocation, ());
+        }
+        for &(configured_function, allocation) in self.config.stack_locals.keys() {
+            if configured_function == function_index && !inserted.contains_key(&allocation) {
+                return Err(DebugInfoError::MissingStackAllocation {
+                    function: function_index,
+                    allocation,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn variable_type(
         &self,
         ty: TypeId,
         types: &LoweredTypeTable<'ctx>,
@@ -378,6 +529,30 @@ fn insert_debug_value_record<'ctx>(
         let _ = llvm_sys::debuginfo::LLVMDIBuilderInsertDbgValueRecordBefore(
             builder.as_mut_ptr(),
             value.as_value_ref(),
+            variable.as_mut_ptr(),
+            expression.as_mut_ptr(),
+            location.as_mut_ptr(),
+            instruction.as_value_ref(),
+        );
+    }
+}
+
+// JADREN-UNSAFE-AUDIT: mirrors `insert_debug_value_record` for storage-backed
+// locals. LLVM 22 returns an opaque DbgRecord, so the record is intentionally
+// discarded instead of constructing an invalid `InstructionValue` wrapper.
+#[allow(unsafe_code)]
+fn insert_debug_declare_record<'ctx>(
+    builder: &DebugInfoBuilder<'ctx>,
+    storage: inkwell::values::PointerValue<'ctx>,
+    variable: inkwell::debug_info::DILocalVariable<'ctx>,
+    location: DILocation<'ctx>,
+    instruction: InstructionValue<'ctx>,
+) {
+    let expression = builder.create_expression(Vec::new());
+    unsafe {
+        let _ = llvm_sys::debuginfo::LLVMDIBuilderInsertDeclareRecordBefore(
+            builder.as_mut_ptr(),
+            storage.as_value_ref(),
             variable.as_mut_ptr(),
             expression.as_mut_ptr(),
             location.as_mut_ptr(),

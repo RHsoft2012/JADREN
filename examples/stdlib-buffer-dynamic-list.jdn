@@ -1,0 +1,28 @@
+module examples.stdlib_buffer_dynamic_list
+
+fn main() -> Int32 {
+    // Buffer operations are intentionally explicit: resize changes the
+    // logical length, while append writes one Int32 into the reserved slot.
+    region frame {
+        let values: Buffer<Int32> = frame.allocate(4)
+        let cleared: Bool = buffer_resize(values, 0usize)
+        if !cleared { return 1 }
+
+        let first: Bool = buffer_append_i32(values, 4)
+        let second: Bool = buffer_append_i32(values, 8)
+        let third: Bool = buffer_append_i32(values, 15)
+        if !first { return 2 }
+        if !second { return 3 }
+        if !third { return 4 }
+
+        if buffer_length(values) != 3usize { return 5 }
+        if buffer_capacity(values) != 4usize { return 6 }
+        if values[0] + values[1] + values[2] != 27 { return 7 }
+
+        // Region-backed buffers currently have a fixed capacity. A future
+        // owning constructor will provide reallocation and unbounded growth.
+        let rejected: Bool = buffer_resize(values, 5usize)
+        if rejected { return 8 }
+    }
+    return 0
+}

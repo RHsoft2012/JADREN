@@ -1,0 +1,60 @@
+module examples.unity_ui_command_stream;
+
+/// Fixed 24-byte UI command record shared by Jadren and Unity.
+/// Target IDs are registered and owned by Unity; Jadren emits only values.
+@repr(C)
+pub struct UnityUiCommandRecord {
+    pub kind: UInt8,
+    pub active: UInt8,
+    pub reserved: UInt16,
+    pub target_id: UInt32,
+    pub red: Float32,
+    pub green: Float32,
+    pub blue: Float32,
+    pub alpha: Float32,
+}
+
+/// Emits color, visibility and widget-interactable updates for one registered
+/// target. The third command requires the Unity target to expose a Selectable.
+@export(name: "jadren_unity_emit_demo_ui_commands", abi: "C")
+@noalloc
+pub fn emit_demo_ui_commands(
+    output: write Slice<UnityUiCommandRecord>,
+    capacity: UIntSize,
+) -> UIntSize {
+    if capacity < 3usize {
+        return 0usize
+    }
+
+    output[0] = UnityUiCommandRecord {
+        kind: 1u8,
+        active: 1u8,
+        reserved: 0u16,
+        target_id: 21u32,
+        red: 0.1f32,
+        green: 0.6f32,
+        blue: 1.0f32,
+        alpha: 1.0f32,
+    }
+    output[1] = UnityUiCommandRecord {
+        kind: 2u8,
+        active: 0u8,
+        reserved: 0u16,
+        target_id: 21u32,
+        red: 0.0f32,
+        green: 0.0f32,
+        blue: 0.0f32,
+        alpha: 1.0f32,
+    }
+    output[2] = UnityUiCommandRecord {
+        kind: 4u8,
+        active: 0u8,
+        reserved: 0u16,
+        target_id: 21u32,
+        red: 0.0f32,
+        green: 0.0f32,
+        blue: 0.0f32,
+        alpha: 1.0f32,
+    }
+    return 3usize
+}

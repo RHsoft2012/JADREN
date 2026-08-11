@@ -1,0 +1,16 @@
+module examples.selfhost.typed_float64_return_abi_stage2
+
+// `direct_value` is a real Float64-returning function. `main` only adapts its
+// result to an Int32 process exit code for the executable smoke test.
+
+fn direct_value() -> Float64 {
+    return 42.5f64
+}
+
+fn main() -> Int32 {
+    let value: Float64 = direct_value()
+    if value == 42.5f64 {
+        return 0
+    }
+    return 1
+}

@@ -1,0 +1,17 @@
+module typed_nested_while_local_dynamic_conditional_native_stage2.main
+
+fn local_value() -> Int32 {
+    var outer: Int32 = 0;
+    while outer < 4 {
+        outer = outer + 1;
+        var inner: Int32 = 0;
+        while inner < 5 {
+            inner = inner + 1;
+            if inner < 2 { continue; }
+            if inner < 3 { continue; }
+            if inner < 4 { break; }
+        }
+        outer = outer + outer;
+    }
+    return outer;
+}

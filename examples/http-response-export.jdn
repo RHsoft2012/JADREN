@@ -1,0 +1,29 @@
+module examples.http_response_export;
+
+// Bounded HTTP/1.1 response serializer. It performs no network I/O.
+fn main() -> Int32 {
+    var body: [UInt8; 4] = [65u8, 104u8, 111u8, 106u8]
+    var too_small: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    let rejected: UIntSize = http_response_write(200u16, "text/plain", body, too_small)
+    if (rejected as Int32) != 0 { return 10 }
+
+    var output: [UInt8; 87] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let written: UIntSize = http_response_write(200u16, "text/plain", body, output)
+    if (written as Int32) != 87 { return 11 }
+    if output[0] != 72u8 { return 12 }
+    if output[9] != 50u8 { return 13 }
+    if output[17] != 67u8 { return 14 }
+    if output[83] != 65u8 { return 15 }
+    if output[86] != 106u8 { return 16 }
+
+    file_delete("target/jadren/http-response.bin")
+    let saved: UIntSize = file_write("target/jadren/http-response.bin", output)
+    if (saved as Int32) != 87 { file_delete("target/jadren/http-response.bin"); return 17 }
+    var loaded: [UInt8; 87] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let loaded_length: UIntSize = file_read("target/jadren/http-response.bin", loaded)
+    file_delete("target/jadren/http-response.bin")
+    if (loaded_length as Int32) != 87 { return 18 }
+    if loaded[83] != 65u8 { return 19 }
+    if loaded[86] != 106u8 { return 20 }
+    return 0
+}

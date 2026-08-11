@@ -19,17 +19,24 @@ jadren-lsp = { path = "../jadren-lsp" }
 jadren-driver = { path = "../jadren-driver" }
 jadren-diagnostics = { path = "../jadren-diagnostics" }
 jadren-lexer = { path = "../jadren-lexer" }
+jadren-mir = { path = "../jadren-mir" }
 jadren-parser = { path = "../jadren-parser" }
 jadren-package = { path = "../jadren-package" }
 jadren-toolchain = { path = "../jadren-installer" }
 jadren-release = { path = "../jadren-release" }
 jadren-migration = { path = "../jadren-migration" }
 jadren-source = { path = "../jadren-source" }
+jadren-resolve = { path = "../jadren-resolve" }
+jadren-typeck = { path = "../jadren-typeck" }
+jadren-types = { path = "../jadren-types" }
 jadren-jir = { path = "../jadren-jir" }
 
 [target.'cfg(any(windows, target_os = "linux"))'.dependencies]
 inkwell = { version = "=0.9.0", default-features = false, features = ["llvm22-1-no-llvm-linking", "target-x86"] }
 jadren-codegen-llvm = { path = "../jadren-codegen-llvm" }
+
+[target.'cfg(windows)'.dependencies]
+resvg = "=0.45.1"
 
 [lints]
 workspace = true

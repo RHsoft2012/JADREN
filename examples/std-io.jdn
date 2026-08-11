@@ -1,0 +1,14 @@
+module std_io.main
+
+// Natívne štandardné IO: stdin_read naplní caller-owned buffer a stdout/stderr
+// write zapíšu jeho celý bounded obsah bez FFI alebo skrytej alokácie.
+fn main() -> Int32 {
+    var input: [UInt8; 5] = [0u8, 0u8, 0u8, 0u8, 0u8]
+    let received: UIntSize = stdin_read(input)
+    let sent: UIntSize = stdout_write(input)
+    let error_sent: UIntSize = stderr_write(input)
+    if received != 5usize { return 1 }
+    if sent != 5usize { return 2 }
+    if error_sent != 5usize { return 3 }
+    return 0
+}

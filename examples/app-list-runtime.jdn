@@ -1,0 +1,27 @@
+module examples.app_list_runtime
+
+// General bounded application list, independent from the Windows UI list.
+// Four lists are available; each holds up to 64 UTF-8 text values of 256 bytes.
+fn main() -> Int32 {
+    app_list_clear(0)
+    let first: Bool = app_list_push_text(0, "Focus")
+    let second: Bool = app_list_push_text(0, "Review")
+    let count: Int32 = app_list_count(0)
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let copied: UIntSize = app_list_read_text(0, 0, output)
+    let updated: Bool = app_list_set_text(0, 1, "Done")
+    let removed: Bool = app_list_remove(0, 0)
+    let remaining: Int32 = app_list_count(0)
+    app_list_clear(0)
+    let cleared: Int32 = app_list_count(0)
+    if !first { return 1 }
+    if !second { return 2 }
+    if count != 2 { return 3 }
+    if copied != 5usize { return 4 }
+    if output[0] != 70u8 { return 5 }
+    if !updated { return 6 }
+    if !removed { return 7 }
+    if remaining != 1 { return 8 }
+    if cleared != 0 { return 9 }
+    return 0
+}

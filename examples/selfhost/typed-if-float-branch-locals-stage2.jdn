@@ -1,0 +1,18 @@
+module examples.selfhost.typed_if_float_branch_locals_stage2
+
+// Branch-local Float64 values are scoped to their branch and use native
+// 8-byte slots; only the outer value crosses the join.
+fn main() -> Int32 {
+    var value: Float64 = 10.0f64
+    if value < 11.0f64 {
+        var branch: Float64 = 20.0f64
+        value = branch + 1.0f64
+    } else {
+        let other: Float64 = 30.0f64
+        value = other + 2.0f64
+    }
+    if value == 21.0f64 {
+        return 0
+    }
+    return 1
+}

@@ -1,0 +1,82 @@
+module examples.network_session_server
+import jadren.app.fs.write_text
+import jadren.app.state.save_atomic
+import jadren.app.state.set_int
+import jadren.network.router.add
+import jadren.network.router.clear
+import jadren.network.session.close
+import jadren.network.session.open_tls
+import jadren.network.session.step
+import jadren.network.tcp.listen
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    if ! set_int("session_status", 200i64) {
+        return 9
+    }
+    let listener = listen(38150u16)
+    if listener == 0usize {
+        return 10
+    }
+    let session = open_tls(listener,
+    1u32,
+    1024u32,
+    1024u32,
+    "target/network-tls-smoke/server.pfx",
+    "testpass",
+    )
+    if session == 0usize {
+        return 11
+    }
+    clear()
+    var body:[UInt8;
+    5] =[72u8,
+    69u8,
+    76u8,
+    76u8,
+    79u8]
+    if ! add("GET",
+    "/hello",
+    200u16,
+    "text/plain",
+    body) {
+        return 12
+    }
+    // A session step is deliberately non-blocking with respect to the TLS
+    // handshake: the first calls may only advance the connection and return
+    // zero. Keep polling until the request with Connection: close is served
+    // and the session reports the bounded close outcome.
+    var attempts: UInt32 = 0u32
+    var outcome: UInt32 = 0u32
+    while attempts<32u32 {
+        outcome = step(session,
+        5000u32)
+        if outcome == 2u32 {
+            break
+        }
+        attempts += 1u32
+    }
+    if outcome != 2u32 {
+        return 13
+    }
+    if ! close(session) {
+        return 14
+    }
+    if ! save_atomic(
+        "target/jadren/network-session-server.tmp",
+        "target/jadren/network-session-server.data"
+    ) {
+        return 15
+    }
+    if write_text(
+        "target/jadren/network-session-server.result",
+        "network-session-server:200\n"
+    ) == 0usize {
+        return 16
+    }
+    return 0
+}

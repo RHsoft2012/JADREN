@@ -1,0 +1,23 @@
+module examples.file_copy_runtime;
+
+// file_copy is deliberately create-only: an existing target is not replaced.
+// This makes a backup copy safe even when the caller did not intend to overwrite
+// an earlier export.
+fn main() -> Int32 {
+    if !directory_create("target") { return 8 }
+    if !directory_create("target/jadren") { return 9 }
+    file_delete("target/jadren/file-copy/source.txt")
+    file_delete("target/jadren/file-copy/backup.txt")
+    if !directory_create("target/jadren/file-copy") { return 10 }
+    if file_write_text("target/jadren/file-copy/source.txt", "backup") != 6usize { return 11 }
+    if !file_copy("target/jadren/file-copy/source.txt", "target/jadren/file-copy/backup.txt") { return 12 }
+    if file_copy("target/jadren/file-copy/source.txt", "target/jadren/file-copy/backup.txt") { return 13 }
+    if !file_exists("target/jadren/file-copy/backup.txt") { return 14 }
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if file_read("target/jadren/file-copy/backup.txt", output) != 6usize { return 15 }
+    if !file_delete("target/jadren/file-copy/source.txt") { return 16 }
+    if !file_delete("target/jadren/file-copy/backup.txt") { return 17 }
+    if !directory_delete("target/jadren/file-copy") { return 18 }
+    return 0
+}

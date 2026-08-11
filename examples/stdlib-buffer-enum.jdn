@@ -1,0 +1,31 @@
+module examples.stdlib_buffer_enum
+
+// A zero-payload @repr(C) enum is a fixed-width tag-only value. Buffer<T>
+// copies it with the same bounded native stride as other copy-safe values.
+@repr(C)
+enum State {
+    Idle,
+    Running,
+    Done
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<State>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            let idle: State = State.Idle
+            let running: State = State.Running
+            let inserted: State = State.Idle
+            if !buffer_append(values, idle) { result_code = 1 }
+            if !buffer_append(values, running) { result_code = 2 }
+            if buffer_length(values) != 2usize { result_code = 3 }
+            if !buffer_insert(values, 1usize, inserted) { result_code = 4 }
+            if buffer_length(values) != 3usize { result_code = 5 }
+            if !buffer_remove(values, 0usize) { result_code = 6 }
+            if buffer_length(values) != 2usize { result_code = 7 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

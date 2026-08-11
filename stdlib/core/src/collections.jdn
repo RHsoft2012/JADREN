@@ -17,3 +17,29 @@ pub fn first_i32(values: read Slice<Int32>, count: UIntSize) -> Option<Int32> {
     }
     return Some(values[0])
 }
+
+/// Sums every initialized element in a caller-owned dynamic buffer.
+///
+/// The compiler exposes `Buffer<T>.indices` as a checked borrowed view, so the
+/// loop remains bounds-safe while the storage can be resized by the caller.
+@noalloc
+pub fn sum_buffer_i32(values: read Buffer<Int32>) -> Int32 {
+    var total: Int32 = 0
+    for index in values.indices {
+        total = total + values[index]
+    }
+    return total
+}
+
+/// Updates one element in a dynamic buffer without exposing raw pointers.
+/// Returns `false` when the requested index is outside the current length.
+@noalloc
+pub fn set_buffer_i32(values: write Buffer<Int32>, index: UIntSize, value: Int32) -> Bool {
+    for candidate in values.indices {
+        if candidate == index {
+            values[index] = value
+            return true
+        }
+    }
+    return false
+}

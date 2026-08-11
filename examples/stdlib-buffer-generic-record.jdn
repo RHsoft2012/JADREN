@@ -1,0 +1,30 @@
+module examples.stdlib_buffer_generic_record
+
+// Generic value ABI also accepts a C-layout record and copies its complete
+// semantic byte layout through a temporary stack slot.
+@repr(C)
+struct Pair {
+    left: Int32,
+    right: Int32
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<Pair>, Int32> = buffer_create(1usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            if !buffer_append(values, Pair { left: 4, right: 9 }) { result_code = 1 }
+            if !buffer_insert(values, 0usize, Pair { left: 1, right: 2 }) { result_code = 2 }
+            if values[0].left != 1 { result_code = 3 }
+            if values[0].right != 2 { result_code = 4 }
+            if values[1].left != 4 { result_code = 5 }
+            if values[1].right != 9 { result_code = 6 }
+            if !buffer_remove(values, 0usize) { result_code = 7 }
+            if buffer_length(values) != 1usize { result_code = 8 }
+            if values[0].left != 4 { result_code = 9 }
+            if values[0].right != 9 { result_code = 10 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

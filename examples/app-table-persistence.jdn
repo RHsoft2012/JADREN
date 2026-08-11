@@ -1,0 +1,34 @@
+module examples.app_table_persistence
+
+// A table is persisted as [[cell0,...,cell7], ...] and loaded transactionally.
+fn main() -> Int32 {
+    app_table_clear(0)
+    app_table_append_row(0)
+    app_table_append_row(0)
+    app_table_set_cell(0, 0, 0, "Plan UI")
+    app_table_set_cell(0, 0, 1, "08:30")
+    app_table_set_cell(0, 1, 0, "Review")
+    app_table_set_cell(0, 1, 1, "09:15")
+    let saved: Bool = app_table_save(0, "target/jadren/app-table.json")
+    app_table_clear(0)
+    let loaded: Bool = app_table_load(0, "target/jadren/app-table.json")
+    let rows: Int32 = app_table_row_count(0)
+    var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let copied: UIntSize = app_table_read_cell(0, 1, 1, output)
+    let invalid_written: UIntSize = file_write_text("target/jadren/app-table-invalid.json", "[[\"broken\"]]")
+    let rejected: Bool = app_table_load(0, "target/jadren/app-table-invalid.json")
+    let preserved_rows: Int32 = app_table_row_count(0)
+    let removed: Bool = file_delete("target/jadren/app-table.json")
+    let removed_invalid: Bool = file_delete("target/jadren/app-table-invalid.json")
+    if !saved { return 1 }
+    if !loaded { return 2 }
+    if rows != 2 { return 3 }
+    if copied != 5usize { return 4 }
+    if output[0] != 48u8 { return 5 }
+    if invalid_written == 0usize { return 6 }
+    if rejected { return 7 }
+    if preserved_rows != 2 { return 8 }
+    if !removed { return 9 }
+    if !removed_invalid { return 10 }
+    return 0
+}
