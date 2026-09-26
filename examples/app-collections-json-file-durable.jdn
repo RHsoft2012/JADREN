@@ -1,0 +1,57 @@
+module examples.app_collections_json_file_durable
+
+// Durable JSON exports use a distinct temporary path, flush it and atomically
+// promote it. A failed preflight must not replace an existing output.
+fn main() -> Int32 {
+    file_delete("target/app-collections-json-list.json")
+    file_delete("target/app-collections-json-list.tmp")
+    file_delete("target/app-collections-json-table.json")
+    file_delete("target/app-collections-json-table.tmp")
+
+    app_list_clear(0)
+    if !app_list_export_json_file_durable(0, "target/app-collections-json-list.json", "target/app-collections-json-list.tmp") { return 1 }
+    if file_exists("target/app-collections-json-list.tmp") { return 2 }
+    if file_size("target/app-collections-json-list.json") != 2usize { return 3 }
+    var list_output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var list_length: [UIntSize; 1] = [0usize]
+    if !file_read_exact("target/app-collections-json-list.json", list_output, list_length) { return 4 }
+    if list_length[0] != 2usize { return 5 }
+    if list_output[0] != 91u8 { return 5 }
+    if list_output[1] != 93u8 { return 5 }
+
+    if !app_list_push_text(0, "A") { return 6 }
+    if !app_list_push_text(0, "B,C") { return 7 }
+    if file_write_text("target/app-collections-json-list.json", "old") != 3usize { return 8 }
+    if !app_list_export_json_file_durable(0, "target/app-collections-json-list.json", "target/app-collections-json-list.tmp") { return 9 }
+    if file_exists("target/app-collections-json-list.tmp") { return 10 }
+    if file_size("target/app-collections-json-list.json") != 11usize { return 10 }
+    if app_list_export_json_file_durable(0, "target/app-collections-json-list.json", "target/app-collections-json-list.json") { return 11 }
+    if file_size("target/app-collections-json-list.json") != 11usize { return 12 }
+
+    app_table_clear(0)
+    if !app_table_set_column_name(0, 0, "name") { return 13 }
+    if !app_table_append_row(0) { return 14 }
+    if !app_table_set_cell(0, 0, 0, "Alice") { return 15 }
+    if file_write_text("target/app-collections-json-table.json", "old-table") != 9usize { return 16 }
+    if !app_table_export_json_file_durable(0, "target/app-collections-json-table.json", "target/app-collections-json-table.tmp") { return 17 }
+    if file_exists("target/app-collections-json-table.tmp") { return 18 }
+    if file_size("target/app-collections-json-table.json") != 39usize { return 18 }
+    var table_output: [UInt8; 50] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var table_length: [UIntSize; 1] = [0usize]
+    if !file_read_exact("target/app-collections-json-table.json", table_output, table_length) { return 19 }
+    if table_length[0] != 39usize { return 20 }
+    if table_output[0] != 123u8 { return 20 }
+    if table_output[1] != 34u8 { return 20 }
+
+    app_table_clear(1)
+    if file_write_text("target/app-collections-json-table.json", "keep") != 4usize { return 21 }
+    if app_table_export_json_file_durable(4, "target/app-collections-json-table.json", "target/app-collections-json-table.tmp") { return 22 }
+    if file_exists("target/app-collections-json-table.tmp") { return 23 }
+    if file_size("target/app-collections-json-table.json") != 4usize { return 23 }
+
+    file_delete("target/app-collections-json-list.json")
+    file_delete("target/app-collections-json-list.tmp")
+    file_delete("target/app-collections-json-table.json")
+    file_delete("target/app-collections-json-table.tmp")
+    return 0
+}

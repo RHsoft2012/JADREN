@@ -1,0 +1,83 @@
+module examples.stdlib_buffer_owning_record_enum_record_payload
+
+// A named owning enum may carry a bounded C-layout record payload.  The
+// record may contain direct owning descriptors or a fixed array of such
+// records; nested Option/Result carriers remain outside this marker ABI.
+@repr(C)
+struct Detail {
+    id: Int32,
+    values: Buffer<Int32>
+}
+
+@repr(C)
+enum Payload {
+    Empty,
+    Detail(Detail),
+    Pair([Detail; 2]),
+    Done
+}
+
+@repr(C)
+struct Entry {
+    id: Int32,
+    payload: Payload
+}
+
+fn main() -> Int32 {
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let third_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let fourth_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match entries_created {
+        Ok(entries) => {
+            match first_created {
+                Ok(first) => {
+                    if !buffer_append(first, 11) { result_code = 1 }
+                    let direct: Detail = Detail { id: 1, values: first }
+                    let item: Entry = Entry { id: 1, payload: Payload.Detail(direct) }
+                    if !buffer_append(entries, item) { result_code = 2 }
+
+                    match second_created {
+                        Ok(second) => {
+                            match third_created {
+                                Ok(third) => {
+                                    match fourth_created {
+                                        Ok(fourth) => {
+                                            if !buffer_append(second, 22) { result_code = 3 }
+                                            if !buffer_append(third, 33) { result_code = 4 }
+                                            if !buffer_append(fourth, 44) { result_code = 5 }
+                                            let left: Detail = Detail { id: 2, values: second }
+                                            let right: Detail = Detail { id: 3, values: third }
+                                            let spare: Detail = Detail { id: 4, values: fourth }
+                                            let pair: [Detail; 2] = [left, right]
+                                            let pair_item: Entry = Entry { id: 2, payload: Payload.Pair(pair) }
+                                            if !buffer_append(entries, pair_item) { result_code = 6 }
+                                            if buffer_length(entries) != 2usize { result_code = 7 }
+                                            if !buffer_resize_move(entries, 3usize) { result_code = 8 }
+                                            let shrunk: Int32 = buffer_resize_move_status(entries, 1usize)
+                                            if shrunk != 0 { result_code = 9 }
+                                            if !buffer_remove_drop(entries, 0usize) { result_code = 10 }
+                                            if !buffer_clear_move(entries) { result_code = 11 }
+                                            // Keep a second record value in scope so its ownership is
+                                            // also checked by the source-level move/drop pass.
+                                            if spare.id != 4 { result_code = 10 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

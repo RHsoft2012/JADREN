@@ -31,15 +31,16 @@ use jadren_selfhost_api::{
     STAGE2_JIR_RECORD_DIRECT_CALL, STAGE2_JIR_RECORD_FUNCTION, STAGE2_JIR_RECORD_INSTRUCTION,
     STAGE2_JIR_RECORD_LOCAL_BINDING_METADATA, STAGE2_JIR_RECORD_TERMINATOR, STAGE2_JIR_RECORD_TYPE,
     STAGE2_JIR_STATUS_COMPLETE, STAGE2_JIR_TERMINATOR_RETURN, STAGE2_JIR_TYPE_INTEGER,
-    Stage2JirRecord, Stage2JirSummary, TYPE_KIND_BOOL, TYPE_KIND_FLOAT, TYPE_KIND_INTEGER,
-    TYPED_CONTROL_FLOW_KIND_IF_RETURN, TYPED_CONTROL_FLOW_KIND_IF_VALUE,
-    TYPED_CONTROL_FLOW_KIND_WHILE, TYPED_EXPRESSION_SYNTAX_INDEX_STORE, TYPED_SEQUENCE_ACCESS_READ,
-    TYPED_SEQUENCE_ACCESS_WRITE, TYPED_SEQUENCE_KIND_BUFFER, TYPED_SEQUENCE_KIND_SLICE,
-    TYPED_STATEMENT_FLAG_CONDITIONAL, TYPED_STATEMENT_FLAG_MUTABLE, TYPED_STATEMENT_KIND_ASSIGN,
-    TYPED_STATEMENT_KIND_BREAK, TYPED_STATEMENT_KIND_CONTINUE, TYPED_STATEMENT_KIND_LET,
-    TYPED_STATEMENT_KIND_RETURN, TypedArrayBindingHeader, TypedCallBindingHeader,
-    TypedCallCandidateHeader, TypedExpressionAstNodeHeader, TypedIfReturnHeader,
-    TypedNameBindingHeader, TypedSequenceBindingHeader, TypedStatementHeader, TypedWhileHeader,
+    STAGE2_TYPED_CALL_MAX_ARGUMENTS, Stage2JirRecord, Stage2JirSummary, TYPE_KIND_BOOL,
+    TYPE_KIND_FLOAT, TYPE_KIND_INTEGER, TYPED_CONTROL_FLOW_KIND_IF_RETURN,
+    TYPED_CONTROL_FLOW_KIND_IF_VALUE, TYPED_CONTROL_FLOW_KIND_WHILE,
+    TYPED_EXPRESSION_SYNTAX_INDEX_STORE, TYPED_SEQUENCE_ACCESS_READ, TYPED_SEQUENCE_ACCESS_WRITE,
+    TYPED_SEQUENCE_KIND_BUFFER, TYPED_SEQUENCE_KIND_SLICE, TYPED_STATEMENT_FLAG_CONDITIONAL,
+    TYPED_STATEMENT_FLAG_MUTABLE, TYPED_STATEMENT_KIND_ASSIGN, TYPED_STATEMENT_KIND_BREAK,
+    TYPED_STATEMENT_KIND_CONTINUE, TYPED_STATEMENT_KIND_LET, TYPED_STATEMENT_KIND_RETURN,
+    TypedArrayBindingHeader, TypedCallBindingHeader, TypedCallCandidateHeader,
+    TypedExpressionAstNodeHeader, TypedIfReturnHeader, TypedNameBindingHeader,
+    TypedSequenceBindingHeader, TypedStatementHeader, TypedWhileHeader,
 };
 use jadren_source::{SourceId, Span};
 
@@ -2754,6 +2755,12 @@ pub fn lower_typed_expression_ast_with_arrays_and_sequences(
             }
             5 => {
                 typed_child_index(index, node.left, "callee index is not post-order")?;
+                if node.aux > STAGE2_TYPED_CALL_MAX_ARGUMENTS {
+                    return Err(TypedExpressionLowerError::InvalidCall {
+                        index,
+                        message: "typed call exceeds caller-owned argument budget",
+                    });
+                }
                 if node.aux == 1 {
                     typed_child_index(index, node.right, "argument index is not post-order")?;
                 }
@@ -3673,6 +3680,60 @@ pub fn materialize_typed_local_function_definitions(
     mut module: Module,
     definitions: &[TypedLocalFunctionDefinition],
 ) -> Result<Module, TypedExpressionLowerError> {
+    // Predeclare every admitted definition before lowering any body. A body
+    // may call a sibling that is not referenced by the entry statement; that
+    // sibling still needs a stable module identity so the later remap can
+    // resolve it without fabricating an external import. The declaration is
+    // intentionally scalar-only and reuses the caller module's type-0 ABI.
+    for (definition_index, definition) in definitions.iter().enumerate() {
+        if definition.return_type_kind != TYPE_KIND_INTEGER
+            && definition.return_type_kind != TYPE_KIND_FLOAT
+        {
+            return Err(TypedExpressionLowerError::UnsupportedType {
+                index: definition_index,
+                type_kind: definition.return_type_kind,
+            });
+        }
+        let name_span = typed_expression_span(
+            source,
+            source_id,
+            definition_index,
+            definition.name_start,
+            definition.name_end,
+        )?;
+        let target_name = source[name_span.start..name_span.end].to_owned();
+        let parameter_types = vec![TypeId::new(0); definition.parameters.len()];
+        let already_declared = module.functions.iter().any(|function| {
+            function.linkage == Linkage::Import
+                && function.name == target_name
+                && function
+                    .parameters
+                    .iter()
+                    .map(|parameter| parameter.ty)
+                    .eq(parameter_types.iter().copied())
+                && function.result == TypeId::new(0)
+        });
+        if !already_declared {
+            let function_id = FunctionId::new(module.functions.len());
+            module.functions.push(Function {
+                id: function_id,
+                name: target_name,
+                linkage: Linkage::Import,
+                parameters: parameter_types
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, ty)| Parameter {
+                        value: ValueId::new(index),
+                        ty,
+                        name: None,
+                    })
+                    .collect(),
+                result: TypeId::new(0),
+                blocks: Vec::new(),
+                span: Some(name_span),
+            });
+        }
+    }
     for (definition_index, definition) in definitions.iter().enumerate() {
         let name_span = typed_expression_span(
             source,
@@ -3688,7 +3749,9 @@ pub fn materialize_typed_local_function_definitions(
             definition.body_start,
             definition.body_end,
         )?;
-        if definition.return_type_kind != TYPE_KIND_INTEGER {
+        if definition.return_type_kind != TYPE_KIND_INTEGER
+            && definition.return_type_kind != TYPE_KIND_FLOAT
+        {
             return Err(TypedExpressionLowerError::UnsupportedType {
                 index: definition_index,
                 type_kind: definition.return_type_kind,
@@ -3728,15 +3791,23 @@ pub fn materialize_typed_local_function_definitions(
                 index: definition_index,
                 message: "same-module definition has no matching call import",
             })?;
-        if body_function.result != TypeId::new(0)
-            || body_function.result.index() >= module.types.len()
-            || !matches!(
+        let result_matches_definition = match definition.return_type_kind {
+            TYPE_KIND_INTEGER => matches!(
                 module.types.get(body_function.result.index()),
                 Some(Type::Integer {
                     signed: true,
                     bits: 32
                 })
-            )
+            ),
+            TYPE_KIND_FLOAT => matches!(
+                module.types.get(body_function.result.index()),
+                Some(Type::Float { bits: 64 })
+            ),
+            _ => false,
+        };
+        if body_function.result != TypeId::new(0)
+            || body_function.result.index() >= module.types.len()
+            || !result_matches_definition
         {
             return Err(TypedExpressionLowerError::InvalidCall {
                 index: definition_index,
@@ -3963,6 +4034,19 @@ pub fn lower_typed_statement_sequence_with_calls(
 
         let target = match statement.kind {
             TYPED_STATEMENT_KIND_LET | TYPED_STATEMENT_KIND_ASSIGN => {
+                if statement.kind == TYPED_STATEMENT_KIND_LET {
+                    if statement.flags & !TYPED_STATEMENT_FLAG_MUTABLE != 0 {
+                        return Err(TypedStatementLowerError::InvalidStatement {
+                            index: statement_index,
+                            message: "statement let carries unsupported flags",
+                        });
+                    }
+                } else if statement.flags != 0 {
+                    return Err(TypedStatementLowerError::InvalidStatement {
+                        index: statement_index,
+                        message: "statement assignment flags must be zero",
+                    });
+                }
                 let target_span = typed_statement_span(
                     source,
                     source_id,
@@ -16987,16 +17071,17 @@ mod tests {
     use jadren_selfhost_api::{
         ExpressionAstArgumentHeader, STAGE2_JIR_INSTRUCTION_ADD, STAGE2_JIR_INSTRUCTION_MULTIPLY,
         STAGE2_JIR_INSTRUCTION_SUBTRACT, STAGE2_JIR_RECORD_DIRECT_CALL,
-        STAGE2_JIR_RECORD_LOCAL_BINDING_METADATA, Stage2JirRecord, Stage2JirSummary,
-        TYPE_KIND_BOOL, TYPE_KIND_FLOAT, TYPE_KIND_INTEGER, TYPED_CONTROL_FLOW_KIND_IF_RETURN,
-        TYPED_CONTROL_FLOW_KIND_IF_VALUE, TYPED_CONTROL_FLOW_KIND_WHILE,
-        TYPED_EXPRESSION_SYNTAX_INDEX_STORE, TYPED_SEQUENCE_ACCESS_WRITE,
-        TYPED_SEQUENCE_KIND_BUFFER, TYPED_SEQUENCE_KIND_SLICE, TYPED_STATEMENT_FLAG_CONDITIONAL,
-        TYPED_STATEMENT_FLAG_MUTABLE, TYPED_STATEMENT_KIND_ASSIGN, TYPED_STATEMENT_KIND_BREAK,
-        TYPED_STATEMENT_KIND_CONTINUE, TYPED_STATEMENT_KIND_LET, TYPED_STATEMENT_KIND_RETURN,
-        TypedArrayBindingHeader, TypedCallBindingHeader, TypedCallCandidateHeader,
-        TypedExpressionAstNodeHeader, TypedIfReturnHeader, TypedNameBindingHeader,
-        TypedSequenceBindingHeader, TypedStatementHeader, TypedWhileHeader,
+        STAGE2_JIR_RECORD_LOCAL_BINDING_METADATA, STAGE2_TYPED_CALL_MAX_ARGUMENTS, Stage2JirRecord,
+        Stage2JirSummary, TYPE_KIND_BOOL, TYPE_KIND_FLOAT, TYPE_KIND_INTEGER,
+        TYPED_CONTROL_FLOW_KIND_IF_RETURN, TYPED_CONTROL_FLOW_KIND_IF_VALUE,
+        TYPED_CONTROL_FLOW_KIND_WHILE, TYPED_EXPRESSION_SYNTAX_INDEX_STORE,
+        TYPED_SEQUENCE_ACCESS_WRITE, TYPED_SEQUENCE_KIND_BUFFER, TYPED_SEQUENCE_KIND_SLICE,
+        TYPED_STATEMENT_FLAG_CONDITIONAL, TYPED_STATEMENT_FLAG_MUTABLE,
+        TYPED_STATEMENT_KIND_ASSIGN, TYPED_STATEMENT_KIND_BREAK, TYPED_STATEMENT_KIND_CONTINUE,
+        TYPED_STATEMENT_KIND_LET, TYPED_STATEMENT_KIND_RETURN, TypedArrayBindingHeader,
+        TypedCallBindingHeader, TypedCallCandidateHeader, TypedExpressionAstNodeHeader,
+        TypedIfReturnHeader, TypedNameBindingHeader, TypedSequenceBindingHeader,
+        TypedStatementHeader, TypedWhileHeader,
     };
     use jadren_source::SourceManager;
 
@@ -22988,6 +23073,180 @@ mod tests {
     }
 
     #[test]
+    fn rejects_typed_expression_ast_call_over_caller_owned_argument_budget() {
+        let mut source = String::from("add(");
+        let mut argument_spans = Vec::new();
+        for value in 1..=33u64 {
+            if value > 1 {
+                source.push_str(", ");
+            }
+            let start = source.len() as u64;
+            source.push_str(&value.to_string());
+            let end = source.len() as u64;
+            argument_spans.push((start, end));
+        }
+        source.push(')');
+
+        let mut sources = SourceManager::new();
+        let source_id = sources
+            .add("typed-expression-call-budget.jdn", &source)
+            .expect("source ID should fit");
+        let mut ast = Vec::with_capacity(35);
+        ast.push(TypedExpressionAstNodeHeader {
+            syntax_kind: 1,
+            type_kind: TYPE_KIND_INTEGER,
+            flags: 2,
+            reserved: 0,
+            left: 0,
+            right: 0,
+            aux: 0,
+            start: 0,
+            end: 3,
+        });
+        for (start, end) in &argument_spans {
+            ast.push(TypedExpressionAstNodeHeader {
+                syntax_kind: 2,
+                type_kind: TYPE_KIND_INTEGER,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: *start,
+                end: *end,
+            });
+        }
+        ast.push(TypedExpressionAstNodeHeader {
+            syntax_kind: 5,
+            type_kind: TYPE_KIND_INTEGER,
+            flags: 1,
+            reserved: 0,
+            left: 0,
+            right: 1,
+            aux: 33,
+            start: 0,
+            end: source.len() as u64,
+        });
+        let call_node = (ast.len() - 1) as u64;
+        let calls = [TypedCallBindingHeader {
+            name_start: 0,
+            name_end: 3,
+            parameter_count: 33,
+            return_type_kind: TYPE_KIND_INTEGER,
+        }];
+        let arguments = argument_spans
+            .iter()
+            .enumerate()
+            .map(|(ordinal, (start, end))| ExpressionAstArgumentHeader {
+                call_node,
+                ordinal: ordinal as u64,
+                node: (ordinal + 1) as u64,
+                start: *start,
+                end: *end,
+            })
+            .collect::<Vec<_>>();
+
+        let error = lower_typed_expression_ast(&source, source_id, &ast, &[], &calls, &arguments)
+            .expect_err("calls over the caller-owned budget must be rejected");
+        assert!(matches!(
+            error,
+            TypedExpressionLowerError::InvalidCall {
+                message: "typed call exceeds caller-owned argument budget",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn lowers_typed_expression_ast_call_at_caller_owned_argument_budget() {
+        let mut source = String::from("add(");
+        let mut argument_spans = Vec::new();
+        for value in 1..=STAGE2_TYPED_CALL_MAX_ARGUMENTS {
+            if value > 1 {
+                source.push_str(", ");
+            }
+            let start = source.len() as u64;
+            source.push_str(&value.to_string());
+            let end = source.len() as u64;
+            argument_spans.push((start, end));
+        }
+        source.push(')');
+
+        let mut sources = SourceManager::new();
+        let source_id = sources
+            .add("typed-expression-call-budget-max.jdn", &source)
+            .expect("source ID should fit");
+        let mut ast = Vec::with_capacity((STAGE2_TYPED_CALL_MAX_ARGUMENTS + 2) as usize);
+        ast.push(TypedExpressionAstNodeHeader {
+            syntax_kind: 1,
+            type_kind: TYPE_KIND_INTEGER,
+            flags: 2,
+            reserved: 0,
+            left: 0,
+            right: 0,
+            aux: 0,
+            start: 0,
+            end: 3,
+        });
+        for (start, end) in &argument_spans {
+            ast.push(TypedExpressionAstNodeHeader {
+                syntax_kind: 2,
+                type_kind: TYPE_KIND_INTEGER,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: *start,
+                end: *end,
+            });
+        }
+        ast.push(TypedExpressionAstNodeHeader {
+            syntax_kind: 5,
+            type_kind: TYPE_KIND_INTEGER,
+            flags: 1,
+            reserved: 0,
+            left: 0,
+            right: 1,
+            aux: STAGE2_TYPED_CALL_MAX_ARGUMENTS,
+            start: 0,
+            end: source.len() as u64,
+        });
+        let call_node = (ast.len() - 1) as u64;
+        let calls = [TypedCallBindingHeader {
+            name_start: 0,
+            name_end: 3,
+            parameter_count: STAGE2_TYPED_CALL_MAX_ARGUMENTS,
+            return_type_kind: TYPE_KIND_INTEGER,
+        }];
+        let arguments = argument_spans
+            .iter()
+            .enumerate()
+            .map(|(ordinal, (start, end))| ExpressionAstArgumentHeader {
+                call_node,
+                ordinal: ordinal as u64,
+                node: (ordinal + 1) as u64,
+                start: *start,
+                end: *end,
+            })
+            .collect::<Vec<_>>();
+
+        let module = lower_typed_expression_ast(&source, source_id, &ast, &[], &calls, &arguments)
+            .expect("the shared caller-owned argument budget must remain inclusive");
+        assert_eq!(module.functions.len(), 2);
+        assert_eq!(
+            module.functions[1].parameters.len(),
+            STAGE2_TYPED_CALL_MAX_ARGUMENTS as usize
+        );
+        assert!(matches!(
+            module.functions[0].blocks[0].instructions.last().map(|instruction| &instruction.kind),
+            Some(jadren_jir::InstructionKind::Call { arguments, .. })
+                if arguments.len() == STAGE2_TYPED_CALL_MAX_ARGUMENTS as usize
+        ));
+        assert!(verify(&module).is_empty());
+    }
+
+    #[test]
     fn materializes_recursive_same_module_body_call() {
         let source = "recurse(1)\nfn recurse(value: Int32) -> Int32 { return recurse(value - 1); }";
         let source_id = source_id_for(source);
@@ -24171,6 +24430,1080 @@ mod tests {
         assert!(text.contains("store"), "{text}");
         assert!(text.contains("load"), "{text}");
         assert!(text.contains("add"), "{text}");
+    }
+
+    #[test]
+    fn lowers_straight_line_float64_two_mutable_locals_assignment_and_return() {
+        let source = "let first: Float64 = 1.5f64;\nlet second: Float64 = 2.5f64;\nfirst = first + 0.5f64;\nsecond = first - 0.5f64;\nreturn second;";
+        let mut sources = SourceManager::new();
+        let source_id = sources
+            .add("typed-statements-float64-two-locals.jdn", source)
+            .expect("source ID should fit");
+        let first_spans = source
+            .match_indices("first")
+            .map(|(start, _)| (start as u64, (start + "first".len()) as u64))
+            .collect::<Vec<_>>();
+        let second_spans = source
+            .match_indices("second")
+            .map(|(start, _)| (start as u64, (start + "second".len()) as u64))
+            .collect::<Vec<_>>();
+        let half_spans = source
+            .match_indices("0.5f64")
+            .map(|(start, _)| (start as u64, (start + "0.5f64".len()) as u64))
+            .collect::<Vec<_>>();
+        assert_eq!(first_spans.len(), 4);
+        assert_eq!(second_spans.len(), 3);
+        assert_eq!(half_spans.len(), 2);
+        let literals = [
+            (source.find("1.5f64").unwrap() as u64, "1.5f64".len() as u64),
+            (source.find("2.5f64").unwrap() as u64, "2.5f64".len() as u64),
+        ];
+        let newlines = source
+            .match_indices('\n')
+            .map(|(start, _)| start as u64)
+            .collect::<Vec<_>>();
+        assert_eq!(newlines.len(), 4);
+        let ast = [
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 2,
+                type_kind: TYPE_KIND_FLOAT,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: literals[0].0,
+                end: literals[0].0 + literals[0].1,
+            },
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 2,
+                type_kind: TYPE_KIND_FLOAT,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: literals[1].0,
+                end: literals[1].0 + literals[1].1,
+            },
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 1,
+                type_kind: TYPE_KIND_FLOAT,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: first_spans[2].0,
+                end: first_spans[2].1,
+            },
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 2,
+                type_kind: TYPE_KIND_FLOAT,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: half_spans[0].0,
+                end: half_spans[0].1,
+            },
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 7,
+                type_kind: TYPE_KIND_FLOAT,
+                flags: 1,
+                reserved: 0,
+                left: 2,
+                right: 3,
+                aux: 0,
+                start: first_spans[2].0,
+                end: half_spans[0].1,
+            },
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 1,
+                type_kind: TYPE_KIND_FLOAT,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: first_spans[3].0,
+                end: first_spans[3].1,
+            },
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 2,
+                type_kind: TYPE_KIND_FLOAT,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: half_spans[1].0,
+                end: half_spans[1].1,
+            },
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 7,
+                type_kind: TYPE_KIND_FLOAT,
+                flags: 1,
+                reserved: 0,
+                left: 5,
+                right: 6,
+                aux: 0,
+                start: first_spans[3].0,
+                end: half_spans[1].1,
+            },
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 1,
+                type_kind: TYPE_KIND_FLOAT,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: second_spans[2].0,
+                end: second_spans[2].1,
+            },
+        ];
+        let statements = [
+            TypedStatementHeader {
+                kind: TYPED_STATEMENT_KIND_LET,
+                flags: TYPED_STATEMENT_FLAG_MUTABLE,
+                type_kind: TYPE_KIND_FLOAT,
+                reserved: 0,
+                target_start: first_spans[0].0,
+                target_end: first_spans[0].1,
+                expression_node: 0,
+                start: 0,
+                end: newlines[0],
+            },
+            TypedStatementHeader {
+                kind: TYPED_STATEMENT_KIND_LET,
+                flags: TYPED_STATEMENT_FLAG_MUTABLE,
+                type_kind: TYPE_KIND_FLOAT,
+                reserved: 0,
+                target_start: second_spans[0].0,
+                target_end: second_spans[0].1,
+                expression_node: 1,
+                start: newlines[0] + 1,
+                end: newlines[1],
+            },
+            TypedStatementHeader {
+                kind: TYPED_STATEMENT_KIND_ASSIGN,
+                flags: 0,
+                type_kind: TYPE_KIND_FLOAT,
+                reserved: 0,
+                target_start: first_spans[1].0,
+                target_end: first_spans[1].1,
+                expression_node: 4,
+                start: newlines[1] + 1,
+                end: newlines[2],
+            },
+            TypedStatementHeader {
+                kind: TYPED_STATEMENT_KIND_ASSIGN,
+                flags: 0,
+                type_kind: TYPE_KIND_FLOAT,
+                reserved: 0,
+                target_start: second_spans[1].0,
+                target_end: second_spans[1].1,
+                expression_node: 7,
+                start: newlines[2] + 1,
+                end: newlines[3],
+            },
+            TypedStatementHeader {
+                kind: TYPED_STATEMENT_KIND_RETURN,
+                flags: 0,
+                type_kind: TYPE_KIND_FLOAT,
+                reserved: 0,
+                target_start: 0,
+                target_end: 0,
+                expression_node: 8,
+                start: newlines[3] + 1,
+                end: source.len() as u64,
+            },
+        ];
+        let module = lower_typed_statement_sequence(source, source_id, &ast, &[], &statements)
+            .expect("two mutable Float64 locals should lower");
+        assert!(verify(&module).is_empty());
+        let text = module.to_text();
+        assert_eq!(text.matches("stack_alloc").count(), 2, "{text}");
+        assert!(text.matches("store").count() >= 4, "{text}");
+        assert!(text.matches("load").count() >= 3, "{text}");
+        assert!(text.contains("align 8"), "{text}");
+        assert!(text.contains("add"), "{text}");
+        assert!(text.contains(" sub "), "{text}");
+    }
+
+    #[test]
+    fn lowers_straight_line_float64_three_mutable_locals_assignment_and_return() {
+        let source = "let first: Float64 = 1.5f64;\nlet second: Float64 = 2.5f64;\nlet third: Float64 = 3.5f64;\nfirst = first + 0.5f64;\nsecond = first - 0.5f64;\nthird = second * 2.0f64;\nreturn third;";
+        let mut sources = SourceManager::new();
+        let source_id = sources
+            .add("typed-statements-float64-three-locals.jdn", source)
+            .expect("source ID should fit");
+        let first_spans = source
+            .match_indices("first")
+            .map(|(start, _)| (start as u64, (start + "first".len()) as u64))
+            .collect::<Vec<_>>();
+        let second_spans = source
+            .match_indices("second")
+            .map(|(start, _)| (start as u64, (start + "second".len()) as u64))
+            .collect::<Vec<_>>();
+        let third_spans = source
+            .match_indices("third")
+            .map(|(start, _)| (start as u64, (start + "third".len()) as u64))
+            .collect::<Vec<_>>();
+        let half_spans = source
+            .match_indices("0.5f64")
+            .map(|(start, _)| (start as u64, (start + "0.5f64".len()) as u64))
+            .collect::<Vec<_>>();
+        assert_eq!(first_spans.len(), 4);
+        assert_eq!(second_spans.len(), 3);
+        assert_eq!(third_spans.len(), 3);
+        assert_eq!(half_spans.len(), 2);
+        let literal = |needle: &str| {
+            let start = source.find(needle).expect("literal span") as u64;
+            (start, start + needle.len() as u64)
+        };
+        let literals = [
+            literal("1.5f64"),
+            literal("2.5f64"),
+            literal("3.5f64"),
+            literal("2.0f64"),
+        ];
+        let newlines = source
+            .match_indices('\n')
+            .map(|(start, _)| start as u64)
+            .collect::<Vec<_>>();
+        assert_eq!(newlines.len(), 6);
+        let node = |syntax_kind: u8, start: u64, end: u64, left: u64, right: u64| {
+            TypedExpressionAstNodeHeader {
+                syntax_kind,
+                type_kind: TYPE_KIND_FLOAT,
+                flags: 1,
+                reserved: 0,
+                left,
+                right,
+                aux: 0,
+                start,
+                end,
+            }
+        };
+        let ast = vec![
+            node(2, literals[0].0, literals[0].1, 0, 0),
+            node(2, literals[1].0, literals[1].1, 0, 0),
+            node(2, literals[2].0, literals[2].1, 0, 0),
+            node(1, first_spans[2].0, first_spans[2].1, 0, 0),
+            node(2, half_spans[0].0, half_spans[0].1, 0, 0),
+            node(7, first_spans[2].0, half_spans[0].1, 3, 4),
+            node(1, first_spans[3].0, first_spans[3].1, 0, 0),
+            node(2, half_spans[1].0, half_spans[1].1, 0, 0),
+            node(7, first_spans[3].0, half_spans[1].1, 6, 7),
+            node(1, second_spans[2].0, second_spans[2].1, 0, 0),
+            node(2, literals[3].0, literals[3].1, 0, 0),
+            node(7, second_spans[2].0, literals[3].1, 9, 10),
+            node(1, third_spans[2].0, third_spans[2].1, 0, 0),
+        ];
+        let statement = |kind: u8,
+                         flags: u8,
+                         target_start: u64,
+                         target_end: u64,
+                         expression_node: u64,
+                         start: u64,
+                         end: u64| TypedStatementHeader {
+            kind,
+            flags,
+            type_kind: TYPE_KIND_FLOAT,
+            reserved: 0,
+            target_start,
+            target_end,
+            expression_node,
+            start,
+            end,
+        };
+        let statements = vec![
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                first_spans[0].0,
+                first_spans[0].1,
+                0,
+                0,
+                newlines[0],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                second_spans[0].0,
+                second_spans[0].1,
+                1,
+                newlines[0] + 1,
+                newlines[1],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                third_spans[0].0,
+                third_spans[0].1,
+                2,
+                newlines[1] + 1,
+                newlines[2],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                first_spans[1].0,
+                first_spans[1].1,
+                5,
+                newlines[2] + 1,
+                newlines[3],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                second_spans[1].0,
+                second_spans[1].1,
+                8,
+                newlines[3] + 1,
+                newlines[4],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                third_spans[1].0,
+                third_spans[1].1,
+                11,
+                newlines[4] + 1,
+                newlines[5],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_RETURN,
+                0,
+                0,
+                0,
+                12,
+                newlines[5] + 1,
+                source.len() as u64,
+            ),
+        ];
+        let module = lower_typed_statement_sequence(source, source_id, &ast, &[], &statements)
+            .expect("three mutable Float64 locals should lower");
+        assert!(verify(&module).is_empty());
+        let text = module.to_text();
+        assert_eq!(text.matches("stack_alloc").count(), 3, "{text}");
+        assert!(text.matches("store").count() >= 6, "{text}");
+        assert!(text.matches("load").count() >= 4, "{text}");
+        assert!(text.contains("align 8"), "{text}");
+        assert!(text.contains("add"), "{text}");
+        assert!(text.contains(" sub "), "{text}");
+        assert!(text.contains(" mul "), "{text}");
+    }
+
+    #[test]
+    fn lowers_straight_line_int32_three_mutable_locals_assignment_and_return() {
+        let source = "let first: Int32 = 10;\nlet second: Int32 = 20;\nlet third: Int32 = 30;\nfirst = first + 1;\nsecond = first - 2;\nthird = second * 3;\nreturn third;";
+        let mut sources = SourceManager::new();
+        let source_id = sources
+            .add("typed-statements-int32-three-locals.jdn", source)
+            .expect("source ID should fit");
+        let first_spans = source
+            .match_indices("first")
+            .map(|(start, _)| (start as u64, (start + "first".len()) as u64))
+            .collect::<Vec<_>>();
+        let second_spans = source
+            .match_indices("second")
+            .map(|(start, _)| (start as u64, (start + "second".len()) as u64))
+            .collect::<Vec<_>>();
+        let third_spans = source
+            .match_indices("third")
+            .map(|(start, _)| (start as u64, (start + "third".len()) as u64))
+            .collect::<Vec<_>>();
+        assert_eq!(first_spans.len(), 4);
+        assert_eq!(second_spans.len(), 3);
+        assert_eq!(third_spans.len(), 3);
+        let literal = |needle: &str| {
+            let start = source.find(needle).expect("literal span") as u64;
+            (start, start + needle.len() as u64)
+        };
+        let rhs_literal = |needle: &str, offset: usize| {
+            let start = (source.find(needle).expect("RHS literal span") + offset) as u64;
+            (start, start + 1)
+        };
+        let literals = [
+            literal("10"),
+            literal("20"),
+            literal("30"),
+            rhs_literal(" + 1", 3),
+            rhs_literal(" - 2", 3),
+            rhs_literal(" * 3", 3),
+        ];
+        let newlines = source
+            .match_indices('\n')
+            .map(|(start, _)| start as u64)
+            .collect::<Vec<_>>();
+        assert_eq!(newlines.len(), 6);
+        let node = |syntax_kind: u8, start: u64, end: u64, left: u64, right: u64| {
+            TypedExpressionAstNodeHeader {
+                syntax_kind,
+                type_kind: TYPE_KIND_INTEGER,
+                flags: 1,
+                reserved: 0,
+                left,
+                right,
+                aux: 0,
+                start,
+                end,
+            }
+        };
+        let ast = vec![
+            node(2, literals[0].0, literals[0].1, 0, 0),
+            node(2, literals[1].0, literals[1].1, 0, 0),
+            node(2, literals[2].0, literals[2].1, 0, 0),
+            node(1, first_spans[2].0, first_spans[2].1, 0, 0),
+            node(2, literals[3].0, literals[3].1, 0, 0),
+            node(7, first_spans[2].0, literals[3].1, 3, 4),
+            node(1, first_spans[3].0, first_spans[3].1, 0, 0),
+            node(2, literals[4].0, literals[4].1, 0, 0),
+            node(7, first_spans[3].0, literals[4].1, 6, 7),
+            node(1, second_spans[2].0, second_spans[2].1, 0, 0),
+            node(2, literals[5].0, literals[5].1, 0, 0),
+            node(7, second_spans[2].0, literals[5].1, 9, 10),
+            node(1, third_spans[2].0, third_spans[2].1, 0, 0),
+        ];
+        let statement = |kind: u8,
+                         flags: u8,
+                         target_start: u64,
+                         target_end: u64,
+                         expression_node: u64,
+                         start: u64,
+                         end: u64| TypedStatementHeader {
+            kind,
+            flags,
+            type_kind: TYPE_KIND_INTEGER,
+            reserved: 0,
+            target_start,
+            target_end,
+            expression_node,
+            start,
+            end,
+        };
+        let statements = vec![
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                first_spans[0].0,
+                first_spans[0].1,
+                0,
+                0,
+                newlines[0],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                second_spans[0].0,
+                second_spans[0].1,
+                1,
+                newlines[0] + 1,
+                newlines[1],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                third_spans[0].0,
+                third_spans[0].1,
+                2,
+                newlines[1] + 1,
+                newlines[2],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                first_spans[1].0,
+                first_spans[1].1,
+                5,
+                newlines[2] + 1,
+                newlines[3],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                second_spans[1].0,
+                second_spans[1].1,
+                8,
+                newlines[3] + 1,
+                newlines[4],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                third_spans[1].0,
+                third_spans[1].1,
+                11,
+                newlines[4] + 1,
+                newlines[5],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_RETURN,
+                0,
+                0,
+                0,
+                12,
+                newlines[5] + 1,
+                source.len() as u64,
+            ),
+        ];
+        let module = lower_typed_statement_sequence(source, source_id, &ast, &[], &statements)
+            .expect("three mutable Int32 locals should lower");
+        assert!(verify(&module).is_empty());
+        let text = module.to_text();
+        assert_eq!(text.matches("stack_alloc").count(), 3, "{text}");
+        assert!(text.matches("store").count() >= 6, "{text}");
+        assert!(text.matches("load").count() >= 4, "{text}");
+        assert!(text.contains("align 4"), "{text}");
+        assert!(text.contains("add"), "{text}");
+        assert!(text.contains(" sub "), "{text}");
+        assert!(text.contains(" mul "), "{text}");
+    }
+
+    #[test]
+    fn lowers_straight_line_int32_four_mutable_locals_assignment_and_return() {
+        let source = "let first: Int32 = 10;\nlet second: Int32 = 20;\nlet third: Int32 = 30;\nlet fourth: Int32 = 40;\nfirst = first + 1;\nsecond = first - 2;\nthird = second * 3;\nfourth = third + 4;\nreturn fourth;";
+        let mut sources = SourceManager::new();
+        let source_id = sources
+            .add("typed-statements-int32-four-locals.jdn", source)
+            .expect("source ID should fit");
+        let spans = |needle: &str| {
+            source
+                .match_indices(needle)
+                .map(|(start, _)| (start as u64, (start + needle.len()) as u64))
+                .collect::<Vec<_>>()
+        };
+        let first = spans("first");
+        let second = spans("second");
+        let third = spans("third");
+        let fourth = spans("fourth");
+        assert_eq!(first.len(), 4);
+        assert_eq!(second.len(), 3);
+        assert_eq!(third.len(), 3);
+        assert_eq!(fourth.len(), 3);
+        let literal = |needle: &str| {
+            let start = source.find(needle).expect("literal span") as u64;
+            (start, start + needle.len() as u64)
+        };
+        let rhs_literal = |needle: &str| {
+            let start = (source.find(needle).expect("RHS literal span") + 3) as u64;
+            (start, start + 1)
+        };
+        let literals = [
+            literal("10"),
+            literal("20"),
+            literal("30"),
+            literal("40"),
+            rhs_literal(" + 1"),
+            rhs_literal(" - 2"),
+            rhs_literal(" * 3"),
+            rhs_literal(" + 4"),
+        ];
+        let newlines = source
+            .match_indices('\n')
+            .map(|(start, _)| start as u64)
+            .collect::<Vec<_>>();
+        assert_eq!(newlines.len(), 8);
+        let node = |syntax_kind: u8, start: u64, end: u64, left: u64, right: u64| {
+            TypedExpressionAstNodeHeader {
+                syntax_kind,
+                type_kind: TYPE_KIND_INTEGER,
+                flags: 1,
+                reserved: 0,
+                left,
+                right,
+                aux: 0,
+                start,
+                end,
+            }
+        };
+        let ast = vec![
+            node(2, literals[0].0, literals[0].1, 0, 0),
+            node(2, literals[1].0, literals[1].1, 0, 0),
+            node(2, literals[2].0, literals[2].1, 0, 0),
+            node(2, literals[3].0, literals[3].1, 0, 0),
+            node(1, first[2].0, first[2].1, 0, 0),
+            node(2, literals[4].0, literals[4].1, 0, 0),
+            node(7, first[2].0, literals[4].1, 4, 5),
+            node(1, first[3].0, first[3].1, 0, 0),
+            node(2, literals[5].0, literals[5].1, 0, 0),
+            node(7, first[3].0, literals[5].1, 7, 8),
+            node(1, second[2].0, second[2].1, 0, 0),
+            node(2, literals[6].0, literals[6].1, 0, 0),
+            node(7, second[2].0, literals[6].1, 10, 11),
+            node(1, third[2].0, third[2].1, 0, 0),
+            node(2, literals[7].0, literals[7].1, 0, 0),
+            node(7, third[2].0, literals[7].1, 13, 14),
+            node(1, fourth[2].0, fourth[2].1, 0, 0),
+        ];
+        let statement = |kind: u8,
+                         flags: u8,
+                         target_start: u64,
+                         target_end: u64,
+                         expression_node: u64,
+                         start: u64,
+                         end: u64| TypedStatementHeader {
+            kind,
+            flags,
+            type_kind: TYPE_KIND_INTEGER,
+            reserved: 0,
+            target_start,
+            target_end,
+            expression_node,
+            start,
+            end,
+        };
+        let statements = vec![
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                first[0].0,
+                first[0].1,
+                0,
+                0,
+                newlines[0],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                second[0].0,
+                second[0].1,
+                1,
+                newlines[0] + 1,
+                newlines[1],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                third[0].0,
+                third[0].1,
+                2,
+                newlines[1] + 1,
+                newlines[2],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                fourth[0].0,
+                fourth[0].1,
+                3,
+                newlines[2] + 1,
+                newlines[3],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                first[1].0,
+                first[1].1,
+                6,
+                newlines[3] + 1,
+                newlines[4],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                second[1].0,
+                second[1].1,
+                9,
+                newlines[4] + 1,
+                newlines[5],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                third[1].0,
+                third[1].1,
+                12,
+                newlines[5] + 1,
+                newlines[6],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                fourth[1].0,
+                fourth[1].1,
+                15,
+                newlines[6] + 1,
+                newlines[7],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_RETURN,
+                0,
+                0,
+                0,
+                16,
+                newlines[7] + 1,
+                source.len() as u64,
+            ),
+        ];
+        let module = lower_typed_statement_sequence(source, source_id, &ast, &[], &statements)
+            .expect("four mutable Int32 locals should lower");
+        assert!(verify(&module).is_empty());
+        let text = module.to_text();
+        assert_eq!(text.matches("stack_alloc").count(), 4, "{text}");
+        assert!(text.matches("store").count() >= 8, "{text}");
+        assert!(text.matches("load").count() >= 5, "{text}");
+        assert!(text.contains("align 4"), "{text}");
+        assert!(text.contains("add"), "{text}");
+        assert!(text.contains(" sub "), "{text}");
+        assert!(text.contains(" mul "), "{text}");
+    }
+
+    #[test]
+    fn lowers_straight_line_int32_four_mutable_locals_cross_local_assignment_and_return() {
+        let source = "let first: Int32 = 10;let second: Int32 = 20;let third: Int32 = 30;let fourth: Int32 = 40;first = first + 1;second = first - 2;third = second * 3;fourth = third + second;return fourth;";
+        let mut sources = SourceManager::new();
+        let source_id = sources
+            .add("typed-statements-int32-four-locals-cross-local.jdn", source)
+            .expect("source ID should fit");
+        let spans = |needle: &str| {
+            source
+                .match_indices(needle)
+                .map(|(start, _)| (start as u64, (start + needle.len()) as u64))
+                .collect::<Vec<_>>()
+        };
+        let first = spans("first");
+        let second = spans("second");
+        let third = spans("third");
+        let fourth = spans("fourth");
+        assert_eq!(first.len(), 4);
+        assert_eq!(second.len(), 4);
+        assert_eq!(third.len(), 3);
+        assert_eq!(fourth.len(), 3);
+        let literal = |needle: &str| {
+            let start = source.find(needle).expect("literal span") as u64;
+            (start, start + needle.len() as u64)
+        };
+        let rhs_literal = |needle: &str| {
+            let start = (source.find(needle).expect("RHS literal span") + 3) as u64;
+            (start, start + 1)
+        };
+        let literals = [
+            literal("10"),
+            literal("20"),
+            literal("30"),
+            literal("40"),
+            rhs_literal(" + 1"),
+            rhs_literal(" - 2"),
+            rhs_literal(" * 3"),
+        ];
+        let ends = source
+            .match_indices(';')
+            .map(|(start, _)| (start + 1) as u64)
+            .collect::<Vec<_>>();
+        assert_eq!(ends.len(), 9);
+        let node = |syntax_kind: u8, start: u64, end: u64, left: u64, right: u64| {
+            TypedExpressionAstNodeHeader {
+                syntax_kind,
+                type_kind: TYPE_KIND_INTEGER,
+                flags: 1,
+                reserved: 0,
+                left,
+                right,
+                aux: 0,
+                start,
+                end,
+            }
+        };
+        let ast = vec![
+            node(2, literals[0].0, literals[0].1, 0, 0),
+            node(2, literals[1].0, literals[1].1, 0, 0),
+            node(2, literals[2].0, literals[2].1, 0, 0),
+            node(2, literals[3].0, literals[3].1, 0, 0),
+            node(1, first[2].0, first[2].1, 0, 0),
+            node(2, literals[4].0, literals[4].1, 0, 0),
+            node(7, first[2].0, literals[4].1, 4, 5),
+            node(1, first[3].0, first[3].1, 0, 0),
+            node(2, literals[5].0, literals[5].1, 0, 0),
+            node(7, first[3].0, literals[5].1, 7, 8),
+            node(1, second[2].0, second[2].1, 0, 0),
+            node(2, literals[6].0, literals[6].1, 0, 0),
+            node(7, second[2].0, literals[6].1, 10, 11),
+            node(1, third[2].0, third[2].1, 0, 0),
+            node(1, second[3].0, second[3].1, 0, 0),
+            node(7, third[2].0, second[3].1, 13, 14),
+            node(1, fourth[2].0, fourth[2].1, 0, 0),
+        ];
+        let statement = |kind: u8,
+                         flags: u8,
+                         target_start: u64,
+                         target_end: u64,
+                         expression_node: u64,
+                         start: u64,
+                         end: u64| TypedStatementHeader {
+            kind,
+            flags,
+            type_kind: TYPE_KIND_INTEGER,
+            reserved: 0,
+            target_start,
+            target_end,
+            expression_node,
+            start,
+            end,
+        };
+        let statements = vec![
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                first[0].0,
+                first[0].1,
+                0,
+                0,
+                ends[0],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                second[0].0,
+                second[0].1,
+                1,
+                ends[0],
+                ends[1],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                third[0].0,
+                third[0].1,
+                2,
+                ends[1],
+                ends[2],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                fourth[0].0,
+                fourth[0].1,
+                3,
+                ends[2],
+                ends[3],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                first[1].0,
+                first[1].1,
+                6,
+                ends[3],
+                ends[4],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                second[1].0,
+                second[1].1,
+                9,
+                ends[4],
+                ends[5],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                third[1].0,
+                third[1].1,
+                12,
+                ends[5],
+                ends[6],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                fourth[1].0,
+                fourth[1].1,
+                15,
+                ends[6],
+                ends[7],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_RETURN,
+                0,
+                0,
+                0,
+                16,
+                ends[7],
+                source.len() as u64,
+            ),
+        ];
+        let module = lower_typed_statement_sequence(source, source_id, &ast, &[], &statements)
+            .expect("four mutable Int32 cross-local assignment should lower");
+        assert!(verify(&module).is_empty());
+        let text = module.to_text();
+        assert_eq!(text.matches("stack_alloc").count(), 4, "{text}");
+        assert!(text.matches("store").count() >= 8, "{text}");
+        assert!(text.matches("load").count() >= 6, "{text}");
+        assert!(text.contains("align 4"), "{text}");
+        assert!(text.contains("add"), "{text}");
+        assert!(text.contains(" sub "), "{text}");
+        assert!(text.contains(" mul "), "{text}");
+    }
+
+    #[test]
+    fn lowers_straight_line_int32_three_mutable_locals_cross_local_binary_assignment() {
+        let source = "let first: Int32 = 10;\nlet second: Int32 = 20;\nlet third: Int32 = 30;\nfirst = first + 1;\nsecond = first - 2;\nthird = first * second;\nreturn third;";
+        let mut sources = SourceManager::new();
+        let source_id = sources
+            .add(
+                "typed-statements-int32-three-locals-cross-local.jdn",
+                source,
+            )
+            .expect("source ID should fit");
+        let spans = |needle: &str| {
+            source
+                .match_indices(needle)
+                .map(|(start, _)| (start as u64, (start + needle.len()) as u64))
+                .collect::<Vec<_>>()
+        };
+        let first = spans("first");
+        let second = spans("second");
+        let third = spans("third");
+        assert_eq!(first.len(), 5);
+        assert_eq!(second.len(), 3);
+        assert_eq!(third.len(), 3);
+        let literal = |needle: &str| {
+            let start = source.find(needle).expect("literal span") as u64;
+            (start, start + needle.len() as u64)
+        };
+        let rhs_literal = |needle: &str| {
+            let start = (source.find(needle).expect("RHS literal span") + 3) as u64;
+            (start, start + 1)
+        };
+        let literals = [
+            literal("10"),
+            literal("20"),
+            literal("30"),
+            rhs_literal(" + 1"),
+            rhs_literal(" - 2"),
+        ];
+        let newlines = source
+            .match_indices('\n')
+            .map(|(start, _)| start as u64)
+            .collect::<Vec<_>>();
+        assert_eq!(newlines.len(), 6);
+        let node = |syntax_kind: u8, start: u64, end: u64, left: u64, right: u64| {
+            TypedExpressionAstNodeHeader {
+                syntax_kind,
+                type_kind: TYPE_KIND_INTEGER,
+                flags: 1,
+                reserved: 0,
+                left,
+                right,
+                aux: 0,
+                start,
+                end,
+            }
+        };
+        let ast = vec![
+            node(2, literals[0].0, literals[0].1, 0, 0),
+            node(2, literals[1].0, literals[1].1, 0, 0),
+            node(2, literals[2].0, literals[2].1, 0, 0),
+            node(1, first[2].0, first[2].1, 0, 0),
+            node(2, literals[3].0, literals[3].1, 0, 0),
+            node(7, first[2].0, literals[3].1, 3, 4),
+            node(1, first[3].0, first[3].1, 0, 0),
+            node(2, literals[4].0, literals[4].1, 0, 0),
+            node(7, first[3].0, literals[4].1, 6, 7),
+            node(1, first[4].0, first[4].1, 0, 0),
+            node(1, second[2].0, second[2].1, 0, 0),
+            node(7, first[4].0, second[2].1, 9, 10),
+            node(1, third[2].0, third[2].1, 0, 0),
+        ];
+        let statement = |kind: u8,
+                         flags: u8,
+                         target_start: u64,
+                         target_end: u64,
+                         expression_node: u64,
+                         start: u64,
+                         end: u64| TypedStatementHeader {
+            kind,
+            flags,
+            type_kind: TYPE_KIND_INTEGER,
+            reserved: 0,
+            target_start,
+            target_end,
+            expression_node,
+            start,
+            end,
+        };
+        let statements = vec![
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                first[0].0,
+                first[0].1,
+                0,
+                0,
+                newlines[0],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                second[0].0,
+                second[0].1,
+                1,
+                newlines[0] + 1,
+                newlines[1],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_LET,
+                TYPED_STATEMENT_FLAG_MUTABLE,
+                third[0].0,
+                third[0].1,
+                2,
+                newlines[1] + 1,
+                newlines[2],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                first[1].0,
+                first[1].1,
+                5,
+                newlines[2] + 1,
+                newlines[3],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                second[1].0,
+                second[1].1,
+                8,
+                newlines[3] + 1,
+                newlines[4],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_ASSIGN,
+                0,
+                third[1].0,
+                third[1].1,
+                11,
+                newlines[4] + 1,
+                newlines[5],
+            ),
+            statement(
+                TYPED_STATEMENT_KIND_RETURN,
+                0,
+                0,
+                0,
+                12,
+                newlines[5] + 1,
+                source.len() as u64,
+            ),
+        ];
+        let module = lower_typed_statement_sequence(source, source_id, &ast, &[], &statements)
+            .expect("three mutable Int32 cross-local assignment should lower");
+        assert!(verify(&module).is_empty());
+        let text = module.to_text();
+        assert_eq!(text.matches("stack_alloc").count(), 3, "{text}");
+        assert!(text.matches("store").count() >= 6, "{text}");
+        assert!(text.matches("load").count() >= 5, "{text}");
+        assert!(text.contains("align 4"), "{text}");
+        assert!(text.contains("add"), "{text}");
+        assert!(text.contains(" sub "), "{text}");
+        assert!(text.contains(" mul "), "{text}");
     }
 
     #[test]
@@ -33316,6 +34649,118 @@ mod tests {
             error,
             TypedStatementLowerError::InvalidStatement {
                 message: "assignment target is immutable",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_statement_flags_before_lowering() {
+        let source = "let value: Int32 = 1;\nvalue = 2;\nreturn value;";
+        let mut sources = SourceManager::new();
+        let source_id = sources
+            .add("typed-statements-unknown-flags.jdn", source)
+            .expect("source ID should fit");
+        let value_spans = source
+            .match_indices("value")
+            .map(|(start, _)| (start as u64, (start + "value".len()) as u64))
+            .collect::<Vec<_>>();
+        let first_newline = source.find('\n').expect("first newline");
+        let second_newline = source[first_newline + 1..]
+            .find('\n')
+            .map(|offset| first_newline + 1 + offset)
+            .expect("second newline");
+        let one = source.find('1').expect("literal one");
+        let two = source.rfind('2').expect("literal two");
+        let ast = [
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 2,
+                type_kind: TYPE_KIND_INTEGER,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: one as u64,
+                end: (one + 1) as u64,
+            },
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 2,
+                type_kind: TYPE_KIND_INTEGER,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: two as u64,
+                end: (two + 1) as u64,
+            },
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 1,
+                type_kind: TYPE_KIND_INTEGER,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: value_spans[2].0,
+                end: value_spans[2].1,
+            },
+        ];
+        let mut statements = [
+            TypedStatementHeader {
+                kind: TYPED_STATEMENT_KIND_LET,
+                flags: TYPED_STATEMENT_FLAG_MUTABLE | 2,
+                type_kind: TYPE_KIND_INTEGER,
+                reserved: 0,
+                target_start: value_spans[0].0,
+                target_end: value_spans[0].1,
+                expression_node: 0,
+                start: 0,
+                end: first_newline as u64,
+            },
+            TypedStatementHeader {
+                kind: TYPED_STATEMENT_KIND_ASSIGN,
+                flags: 0,
+                type_kind: TYPE_KIND_INTEGER,
+                reserved: 0,
+                target_start: value_spans[1].0,
+                target_end: value_spans[1].1,
+                expression_node: 1,
+                start: (first_newline + 1) as u64,
+                end: second_newline as u64,
+            },
+            TypedStatementHeader {
+                kind: TYPED_STATEMENT_KIND_RETURN,
+                flags: 0,
+                type_kind: TYPE_KIND_INTEGER,
+                reserved: 0,
+                target_start: 0,
+                target_end: 0,
+                expression_node: 2,
+                start: (second_newline + 1) as u64,
+                end: source.len() as u64,
+            },
+        ];
+
+        let error = lower_typed_statement_sequence(source, source_id, &ast, &[], &statements)
+            .expect_err("unknown let flags must fail");
+        assert!(matches!(
+            error,
+            TypedStatementLowerError::InvalidStatement {
+                message: "statement let carries unsupported flags",
+                ..
+            }
+        ));
+
+        statements[0].flags = TYPED_STATEMENT_FLAG_MUTABLE;
+        statements[1].flags = 2;
+        let error = lower_typed_statement_sequence(source, source_id, &ast, &[], &statements)
+            .expect_err("unknown assignment flags must fail");
+        assert!(matches!(
+            error,
+            TypedStatementLowerError::InvalidStatement {
+                message: "statement assignment flags must be zero",
                 ..
             }
         ));

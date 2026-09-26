@@ -1,0 +1,25 @@
+module process_args_forwarded.main
+
+// This fixture is invoked through `jadren run ... -- ...`.  It validates that
+// the CLI separator forwards each OS argument without re-parsing or joining it.
+fn main() -> Int32 {
+    if process_arg_count() != 3usize { return 1 }
+
+    var first: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let first_length: UIntSize = process_arg_read(1usize, first)
+    if first_length != 5usize { return 2 }
+    if first[0] != 97u8 { return 3 }
+    if first[1] != 108u8 { return 4 }
+    if first[2] != 112u8 { return 5 }
+    if first[3] != 104u8 { return 6 }
+    if first[4] != 97u8 { return 7 }
+
+    var second: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let second_length: UIntSize = process_arg_read(2usize, second)
+    if second_length != 9usize { return 8 }
+    if second[0] != 116u8 { return 9 }
+    if second[3] != 32u8 { return 10 }
+    if second[8] != 115u8 { return 11 }
+    return 0
+}

@@ -1,0 +1,7 @@
+module examples.app_collection_clear_if_revision_project.table_probe
+
+import jadren.app.table.clear_if_model_revision
+
+pub fn clear_table_if_model_revision(table_id: Int32, expected_revision: UInt64,) -> Bool {
+    return clear_if_model_revision(table_id, expected_revision)
+}

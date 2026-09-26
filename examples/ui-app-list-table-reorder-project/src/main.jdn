@@ -1,0 +1,112 @@
+module ui_app_list_table_reorder_project.main
+
+import jadren.app.state.clear
+import jadren.app.state.set_text
+import jadren.app.data.revision
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.panel
+import jadren.app.ui.list
+import jadren.app.ui.list_item
+import jadren.app.ui.list_move_item
+import jadren.app.ui.list_move_item_if_revision
+import jadren.app.ui.list_read_item_exact_if_revision
+import jadren.app.ui.list_set_index
+import jadren.app.ui.list_index
+import jadren.app.ui.list_count
+import jadren.app.ui.table
+import jadren.app.ui.table_column
+import jadren.app.ui.table_cell
+import jadren.app.ui.table_move_row
+import jadren.app.ui.table_move_row_if_revision
+import jadren.app.ui.table_read_cell_exact_if_revision
+import jadren.app.ui.table_set_selected_row
+import jadren.app.ui.table_selected_row
+import jadren.app.ui.table_row_count
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear()
+    if !set_text("revision_seed", "ready") { return 1 }
+
+    let root: Int32 = begin("Retained list/table reorder", 720, 520, 0xF6F8FCu32)
+    if root == 0 { return 2 }
+    let panel_node: Int32 = panel(root, 660, 420, 0xFFFFFFu32, 12, 12, 8, 0, 1)
+    if panel_node == 0 { return 3 }
+    let list_node: Int32 = list(panel_node, 71, 280, 180, 0x111827u32, 0xFFFFFFu32, 8, 1)
+    if list_node == 0 { return 4 }
+    if !list_item(list_node, "Alpha") { return 5 }
+    if !list_item(list_node, "Bravo") { return 6 }
+    if !list_item(list_node, "Charlie") { return 7 }
+    if !list_set_index(list_node, 1) { return 8 }
+
+    let list_revision: UInt64 = revision()
+    if !list_move_item_if_revision(list_node, 1, 0, list_revision) { return 9 }
+    if list_index(list_node) != 0 { return 10 }
+    if list_count(list_node) != 3 { return 11 }
+    var list_bytes: [UInt8; 32] = [90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8]
+    var list_length: [UIntSize; 1] = [77usize]
+    if !list_read_item_exact_if_revision(list_node, 0, list_bytes, list_length, list_revision) { return 12 }
+    if list_length[0] != 5usize { return 13 }
+    if list_bytes[0] != 66u8 { return 14 }
+    if !list_move_item(list_node, 0, 2) { return 15 }
+    if list_index(list_node) != 2 { return 16 }
+    if list_bytes[0] == 66u8 { return 17 }
+    if list_move_item(list_node, -1, 0) { return 18 }
+    if list_move_item(list_node, 0, list_count(list_node)) { return 19 }
+    if list_count(list_node) != 3 { return 20 }
+    let stale_list_revision: UInt64 = revision()
+    if !set_text("revision_seed", "changed") { return 21 }
+    if list_move_item_if_revision(list_node, 0, 1, stale_list_revision) { return 22 }
+    let current_list_revision: UInt64 = revision()
+    if !list_move_item_if_revision(list_node, 2, 0, current_list_revision) { return 23 }
+    if list_index(list_node) != 0 { return 24 }
+
+    let table_node: Int32 = table(panel_node, 72, 320, 180, 0x111827u32, 0xFFFFFFu32, 8, 1)
+    if table_node == 0 { return 25 }
+    if !table_column(table_node, 0, "Name", 180) { return 26 }
+    if !table_column(table_node, 1, "State", 120) { return 27 }
+    if !table_cell(table_node, 0, 0, "RowA") { return 28 }
+    if !table_cell(table_node, 0, 1, "Open") { return 29 }
+    if !table_cell(table_node, 1, 0, "RowB") { return 30 }
+    if !table_cell(table_node, 1, 1, "Ready") { return 31 }
+    if !table_cell(table_node, 2, 0, "RowC") { return 32 }
+    if !table_cell(table_node, 2, 1, "Done") { return 33 }
+    if !table_set_selected_row(table_node, 1) { return 34 }
+
+    let table_revision: UInt64 = revision()
+    if !table_move_row_if_revision(table_node, 1, 0, table_revision) { return 35 }
+    if table_selected_row(table_node) != 0 { return 36 }
+    if table_row_count(table_node) != 3 { return 37 }
+    var table_bytes: [UInt8; 32] = [90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8]
+    var table_length: [UIntSize; 1] = [77usize]
+    if !table_read_cell_exact_if_revision(table_node, 0, 0, table_bytes, table_length, table_revision) { return 38 }
+    if table_length[0] != 4usize { return 39 }
+    if table_bytes[0] != 82u8 { return 40 }
+    if !table_move_row(table_node, 0, 2) { return 41 }
+    if table_selected_row(table_node) != 2 { return 42 }
+    if table_move_row(table_node, -1, 0) { return 43 }
+    if table_move_row(table_node, 0, table_row_count(table_node)) { return 44 }
+    if table_row_count(table_node) != 3 { return 45 }
+    let stale_table_revision: UInt64 = revision()
+    if !set_text("revision_seed", "table-changed") { return 46 }
+    if table_move_row_if_revision(table_node, 2, 0, stale_table_revision) { return 47 }
+    let current_table_revision: UInt64 = revision()
+    if !table_move_row_if_revision(table_node, 2, 0, current_table_revision) { return 48 }
+    if table_selected_row(table_node) != 0 { return 49 }
+
+    if !finish(panel_node) { return 50 }
+    if !finish(root) { return 51 }
+    clear()
+    return 0
+}

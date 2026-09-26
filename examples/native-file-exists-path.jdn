@@ -1,0 +1,23 @@
+module examples.native_file_exists_path
+
+// Existence is tested through a caller-owned UTF-8 path so an existing empty
+// file remains distinguishable from a zero-size query result.
+fn main() -> Int32 {
+    var path: [UInt8; 16] = [116u8, 97u8, 114u8, 103u8, 101u8, 116u8, 47u8,
+        101u8, 109u8, 112u8, 116u8, 121u8, 46u8, 98u8, 105u8, 110u8]
+    var output: [UInt8; 3] = [90u8, 90u8, 90u8]
+
+    if file_exists_path(path, 16usize) { return 1 }
+    if file_write_text("target/empty.bin", "") != 0usize { return 2 }
+    if !file_exists_path(path, 16usize) { return 3 }
+    if file_size_path(path, 16usize) != 0usize { return 4 }
+    if file_exists_path(path, 17usize) { return 5 }
+    if !file_delete_path(path, 16usize) { return 6 }
+    if file_exists_path(path, 16usize) { return 7 }
+    if file_size_path(path, 17usize) != 0usize { return 8 }
+    if file_read_at_path(path, 17usize, 0usize, output) != 0usize { return 9 }
+    if output[0] != 90u8 { return 10 }
+    if output[1] != 90u8 { return 11 }
+    if output[2] != 90u8 { return 12 }
+    return 0
+}

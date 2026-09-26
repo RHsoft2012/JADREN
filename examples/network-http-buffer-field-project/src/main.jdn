@@ -1,0 +1,114 @@
+module network_http_buffer_field_project.main
+
+import jadren.network.http.form_param_exact_prefix_buffer
+import jadren.network.http.multipart_part_exact_prefix_buffer
+import jadren.network.http.query_param_exact_buffer
+
+fn append_frame(request: write Buffer<UInt8>, frame: read Slice<UInt8>, frame_length: UIntSize) -> Bool {
+    var index: UIntSize = 0usize
+    while index < frame_length {
+        if !buffer_append(request, frame[index]) { return false }
+        index = index + 1usize
+    }
+    return true
+}
+
+fn append_query(request: write Buffer<UInt8>) -> Bool {
+    var frame: [UInt8; 22] = [63u8, 110u8, 97u8, 109u8, 101u8, 61u8, 74u8, 97u8, 100u8, 114u8, 101u8, 110u8, 43u8, 85u8, 73u8, 38u8, 101u8, 109u8, 112u8, 116u8, 121u8, 61u8]
+    return append_frame(request, frame, 22usize)
+}
+
+fn append_form(request: write Buffer<UInt8>) -> Bool {
+    var frame: [UInt8; 125] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 115u8, 117u8, 98u8, 109u8, 105u8, 116u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 84u8, 121u8, 112u8, 101u8, 58u8, 32u8, 97u8, 112u8, 112u8, 108u8, 105u8, 99u8, 97u8, 116u8, 105u8, 111u8, 110u8, 47u8, 120u8, 45u8, 119u8, 119u8, 119u8, 45u8, 102u8, 111u8, 114u8, 109u8, 45u8, 117u8, 114u8, 108u8, 101u8, 110u8, 99u8, 111u8, 100u8, 101u8, 100u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 49u8, 52u8, 13u8, 10u8, 13u8, 10u8, 110u8, 97u8, 109u8, 101u8, 61u8, 74u8, 97u8, 100u8, 114u8, 101u8, 110u8, 43u8, 85u8, 73u8]
+    return append_frame(request, frame, 125usize)
+}
+
+fn append_multipart(request: write Buffer<UInt8>) -> Bool {
+    var frame: [UInt8; 176] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 117u8, 112u8, 108u8, 111u8, 97u8, 100u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 84u8, 121u8, 112u8, 101u8, 58u8, 32u8, 109u8, 117u8, 108u8, 116u8, 105u8, 112u8, 97u8, 114u8, 116u8, 47u8, 102u8, 111u8, 114u8, 109u8, 45u8, 100u8, 97u8, 116u8, 97u8, 59u8, 32u8, 98u8, 111u8, 117u8, 110u8, 100u8, 97u8, 114u8, 121u8, 61u8, 74u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 54u8, 55u8, 13u8, 10u8, 13u8, 10u8, 45u8, 45u8, 74u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 68u8, 105u8, 115u8, 112u8, 111u8, 115u8, 105u8, 116u8, 105u8, 111u8, 110u8, 58u8, 32u8, 102u8, 111u8, 114u8, 109u8, 45u8, 100u8, 97u8, 116u8, 97u8, 59u8, 32u8, 110u8, 97u8, 109u8, 101u8, 61u8, 34u8, 116u8, 105u8, 116u8, 108u8, 101u8, 34u8, 13u8, 10u8, 13u8, 10u8, 104u8, 101u8, 108u8, 108u8, 111u8, 13u8, 10u8, 45u8, 45u8, 74u8, 45u8, 45u8, 13u8, 10u8]
+    return append_frame(request, frame, 176usize)
+}
+
+fn run(
+    query: write Buffer<UInt8>,
+    form: write Buffer<UInt8>,
+    multipart: write Buffer<UInt8>,
+    output: write Buffer<UInt8>,
+    short: write Buffer<UInt8>,
+) -> Int32 {
+    if !append_query(query) { return 1 }
+    if !append_form(form) { return 2 }
+    if !append_multipart(multipart) { return 3 }
+    if !buffer_resize(output, 32usize) { return 4 }
+    if !buffer_resize(short, 2usize) { return 5 }
+
+    var length: [UIntSize; 1] = [777usize]
+    if !query_param_exact_buffer(query, "name", output, 32usize, length) { return 6 }
+    if length[0] != 9usize { return 7 }
+    if output[6] != 32u8 { return 8 }
+    if output[8] != 73u8 { return 8 }
+    if !query_param_exact_buffer(query, "empty", output, 32usize, length) { return 9 }
+    if length[0] != 0usize { return 10 }
+
+    short[0] = 55u8
+    short[1] = 55u8
+    length[0] = 123usize
+    if query_param_exact_buffer(query, "name", short, 2usize, length) { return 11 }
+    if short[0] != 55u8 { return 12 }
+    if length[0] != 123usize { return 12 }
+    if query_param_exact_buffer(query, "name", output, 33usize, length) { return 13 }
+
+    if !form_param_exact_prefix_buffer(form, 125usize, "name", output, 32usize, length) { return 14 }
+    if length[0] != 9usize { return 15 }
+    if output[6] != 32u8 { return 15 }
+    if output[8] != 73u8 { return 15 }
+    output[0] = 91u8
+    length[0] = 321usize
+    if form_param_exact_prefix_buffer(form, 124usize, "name", output, 32usize, length) { return 16 }
+    if output[0] != 91u8 { return 17 }
+    if length[0] != 321usize { return 17 }
+
+    if !multipart_part_exact_prefix_buffer(multipart, 176usize, "title", output, 32usize, length) { return 18 }
+    if length[0] != 5usize { return 19 }
+    if output[0] != 104u8 { return 19 }
+    if output[4] != 111u8 { return 19 }
+    output[0] = 91u8
+    length[0] = 321usize
+    if multipart_part_exact_prefix_buffer(multipart, 175usize, "title", output, 32usize, length) { return 20 }
+    if output[0] != 91u8 { return 21 }
+    if length[0] != 321usize { return 21 }
+    return 0
+}
+
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    let query_created: Result<Buffer<UInt8>, Int32> = buffer_create(128usize)
+    match query_created {
+        Error(error) => { status = error }
+        Ok(query) => {
+            let form_created: Result<Buffer<UInt8>, Int32> = buffer_create(256usize)
+            match form_created {
+                Error(error) => { status = error }
+                Ok(form) => {
+                    let multipart_created: Result<Buffer<UInt8>, Int32> = buffer_create(256usize)
+                    match multipart_created {
+                        Error(error) => { status = error }
+                        Ok(multipart) => {
+                            let output_created: Result<Buffer<UInt8>, Int32> = buffer_create(32usize)
+                            match output_created {
+                                Error(error) => { status = error }
+                                Ok(output) => {
+                                    let short_created: Result<Buffer<UInt8>, Int32> = buffer_create(2usize)
+                                    match short_created {
+                                        Error(error) => { status = error }
+                                        Ok(short) => { status = run(query, form, multipart, output, short) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return status
+}

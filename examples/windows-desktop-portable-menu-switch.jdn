@@ -1,0 +1,59 @@
+module windows_desktop_portable_menu_switch.main
+
+// A retained top bar can host several popup menus like a native desktop
+// application menu. The switch shares the normal Bool event/read-back path
+// while using the compact native on/off rendering.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 40 {
+        ui_set_status("Switch changed.")
+    }
+    if event_id == 41 {
+        ui_set_status("File menu action.")
+    }
+    return event_id
+}
+
+fn main() -> Int32 {
+    let root: Int32 = ui_app_begin("Jadren menu and switch", 760, 440, 0x0B1220u32)
+    if root == 0 { return 1 }
+
+    let top_bar: Int32 = ui_app_top_bar(root, 700, 54, 0x111827u32,
+                                        0, 10, 8, 0, 1)
+    if top_bar == 0 { return 2 }
+    let file: Int32 = ui_app_menu(top_bar, "Subor", 92, 38,
+                                  0xF9FAFBu32, 0x1F2937u32, 6, 0)
+    let edit: Int32 = ui_app_menu(top_bar, "Upravit", 96, 38,
+                                  0xF9FAFBu32, 0x1F2937u32, 6, 0)
+    let view: Int32 = ui_app_menu(top_bar, "Zobrazenie", 116, 38,
+                                  0xF9FAFBu32, 0x1F2937u32, 6, 0)
+    let help: Int32 = ui_app_menu(top_bar, "Pomoc", 86, 38,
+                                  0xF9FAFBu32, 0x1F2937u32, 6, 0)
+    if file == 0 { return 3 }
+    if edit == 0 { return 3 }
+    if view == 0 { return 3 }
+    if help == 0 { return 3 }
+    if !ui_app_menu_item(file, "Otvorit", 41) { return 4 }
+    if !ui_app_menu_item(edit, "Spat", 42) { return 4 }
+    if !ui_app_menu_item(view, "Tema", 43) { return 4 }
+    if !ui_app_menu_item(help, "O Jadrene", 44) { return 4 }
+    if !ui_app_end(top_bar) { return 5 }
+
+    let panel: Int32 = ui_app_panel(root, 700, 280, 0x111827u32,
+                                    14, 18, 12, 0, 1)
+    if panel == 0 { return 6 }
+    let heading: Int32 = ui_app_label(panel, "Jadren native desktop UI", 620, 36,
+                                      0xF9FAFBu32, 0x111827u32, 0, 1)
+    let status: Int32 = ui_app_status(panel, "Ready", 620, 36,
+                                      0xD1D5DBu32, 0x1F2937u32, 6, 1)
+    let compact: Int32 = ui_app_switch(panel, "Tmavy rezim", 40, 300, 42,
+                                       0xF9FAFBu32, 0x2563EBu32, 18, 0, 1)
+    if heading == 0 { return 7 }
+    if status == 0 { return 7 }
+    if compact == 0 { return 7 }
+    if !ui_app_tooltip(compact, "Prepina svetlu a tmavu temu.", 250, 32,
+                       0xF9FAFBu32, 0x1F2937u32, 6) { return 8 }
+    if !ui_app_end(panel) { return 9 }
+    if !ui_app_end(root) { return 10 }
+    return ui_app_run()
+}

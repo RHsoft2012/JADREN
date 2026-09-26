@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "67639c06eb964dc3"
+
+[package]
+name = "ui-app-input-commit-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

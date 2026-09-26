@@ -1,0 +1,8 @@
+module generic_create_no_expected
+
+fn make<T>() -> T {}
+
+fn main() -> Int32 {
+    let values = make()
+    return 0
+}

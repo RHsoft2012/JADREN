@@ -1,0 +1,59 @@
+module examples.app_export_exact_project
+
+import jadren.app.list.clear
+import jadren.app.list.export_csv_exact
+import jadren.app.list.push_text
+import jadren.app.table.append_row
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    var empty_list_output: [UInt8; 1] = [77u8]
+    var empty_list_length: [UIntSize; 1] = [999usize]
+    clear(0)
+    if !export_csv_exact(0, empty_list_output, empty_list_length) { return 1 }
+    if empty_list_length[0] != 0usize { return 2 }
+    if empty_list_output[0] != 77u8 { return 3 }
+
+    if !push_text(0, "A") { return 4 }
+    if !push_text(0, "B,C") { return 5 }
+    var list_output: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var list_length: [UIntSize; 1] = [999usize]
+    if !export_csv_exact(0, list_output, list_length) { return 6 }
+    if list_length[0] != 8usize { return 7 }
+    if list_output[0] != 65u8 { return 8 }
+    if list_output[2] != 34u8 { return 9 }
+    if list_output[6] != 34u8 { return 10 }
+    if list_output[7] != 10u8 { return 11 }
+
+    var short_list_output: [UInt8; 7] = [55u8, 55u8, 55u8, 55u8, 55u8, 55u8, 55u8]
+    var short_list_length: [UIntSize; 1] = [777usize]
+    if export_csv_exact(0, short_list_output, short_list_length) { return 12 }
+    if short_list_output[0] != 55u8 { return 13 }
+    if short_list_length[0] != 777usize { return 14 }
+
+    app_table_clear(0)
+    if !set_column_name(0, 0, "name") { return 15 }
+    if !append_row(0) { return 16 }
+    if !set_cell(0, 0, 0, "Alpha") { return 17 }
+    var table_output: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var table_length: [UIntSize; 1] = [888usize]
+    if !app_table_export_csv_exact(0, table_output, table_length) { return 18 }
+    if table_length[0] != 11usize { return 19 }
+    if table_output[0] != 110u8 { return 20 }
+    if table_output[4] != 10u8 { return 21 }
+    if table_output[5] != 65u8 { return 22 }
+    if table_output[10] != 10u8 { return 23 }
+
+    var short_table_output: [UInt8; 10] = [66u8, 66u8, 66u8, 66u8, 66u8, 66u8, 66u8, 66u8, 66u8, 66u8]
+    var short_table_length: [UIntSize; 1] = [666usize]
+    if app_table_export_csv_exact(0, short_table_output, short_table_length) { return 24 }
+    if short_table_output[0] != 66u8 { return 25 }
+    if short_table_length[0] != 666usize { return 26 }
+    return 0
+}

@@ -1,0 +1,167 @@
+module examples.network_cookie_jar
+
+import jadren.app.fs.write_text
+import jadren.network.cookies.clear
+import jadren.network.cookies.get
+import jadren.network.cookies.put
+import jadren.network.cookies.read_response_cookie
+import jadren.network.cookies.remove
+import jadren.network.cookies.snapshot_length
+import jadren.network.cookies.snapshot_load_exact
+import jadren.network.cookies.snapshot_write_exact
+import jadren.network.cookies.write_request_header
+import jadren.network.http.write_response_cookie_policy
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    var names: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var values: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var name_lengths: [UIntSize; 2] = [0usize, 0usize]
+    var value_lengths: [UIntSize; 2] = [0usize, 0usize]
+    var expires_at: [Int64; 2] = [0i64, 0i64]
+    var flags: [UInt32; 2] = [0u32, 0u32]
+    var output: [UInt8; 32] = [165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8]
+    var value_output: [UInt8; 16] = [165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8]
+    var sid_name: [UInt8; 3] = [115u8, 105u8, 100u8]
+    var sid_value: [UInt8; 3] = [97u8, 98u8, 99u8]
+    var old_name: [UInt8; 3] = [111u8, 108u8, 100u8]
+    var old_value: [UInt8; 3] = [120u8, 120u8, 120u8]
+    var secure_name: [UInt8; 3] = [115u8, 101u8, 99u8]
+    var secure_value: [UInt8; 3] = [116u8, 111u8, 112u8]
+    var response_body: [UInt8; 2] = [79u8, 75u8]
+    var response: [UInt8; 256] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var parsed_name: [UInt8; 8] = [165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8]
+    var parsed_value: [UInt8; 16] = [165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8]
+    var parsed_name_length: [UIntSize; 1] = [99usize]
+    var parsed_value_length: [UIntSize; 1] = [99usize]
+    var parsed_max_age: [Int64; 1] = [99i64]
+    var parsed_flags: [UInt32; 1] = [99u32]
+    var snapshot_length_out: [UIntSize; 1] = [99usize]
+    var response_scratch: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+
+    if !clear(2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) {
+        return 1
+    }
+    if put(sid_name, 3usize, 3usize, sid_value, 3usize, 3usize, 0i64, 0u32, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) != 0 {
+        return 2
+    }
+    if put(old_name, 3usize, 3usize, old_value, 3usize, 3usize, 50i64, 0u32, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) != 1 {
+        return 3
+    }
+
+    let response_length: UIntSize = write_response_cookie_policy(200u16, "text/plain", "sid", "xyz", "", "", 60i64, 0u32, 1u32, response_body, false, response)
+    if response_length == 0usize { return 24 }
+    if !read_response_cookie(response, response_length, parsed_name, 8usize, parsed_value, 16usize, parsed_name_length, parsed_value_length, parsed_max_age, parsed_flags, response_scratch) {
+        return 25
+    }
+    if parsed_name_length[0] != 3usize { return 26 }
+    if parsed_value_length[0] != 3usize { return 27 }
+    if parsed_name[0] != 115u8 { return 28 }
+    if parsed_value[0] != 120u8 { return 29 }
+    if parsed_max_age[0] != 60i64 { return 30 }
+    if parsed_flags[0] != 1u32 { return 31 }
+    if put(parsed_name, parsed_name_length[0], 8usize, parsed_value, parsed_value_length[0], 16usize, 160i64, parsed_flags[0], 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) != 0 {
+        return 32
+    }
+    parsed_name[0] = 165u8
+    parsed_name_length[0] = 77usize
+    if read_response_cookie(response, response_length, parsed_name, 2usize, parsed_value, 16usize, parsed_name_length, parsed_value_length, parsed_max_age, parsed_flags, response_scratch) {
+        return 33
+    }
+    if parsed_name[0] != 165u8 { return 34 }
+    if parsed_name_length[0] != 77usize { return 35 }
+
+    if write_request_header(100i64, false, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, output, 32usize) != -2 {
+        return 4
+    }
+
+    if get(sid_name, 3usize, 3usize, 100i64, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, value_output, 16usize) != 3 {
+        return 9
+    }
+    if value_output[0] != 120u8 { return 10 }
+    if value_output[2] != 122u8 { return 11 }
+    if get(sid_name, 3usize, 3usize, 100i64, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, value_output, 2usize) != -2 {
+        return 12
+    }
+    if value_output[0] != 120u8 { return 13 }
+
+    if !remove(old_name, 3usize, 3usize, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) {
+        return 14
+    }
+    if put(secure_name, 3usize, 3usize, secure_value, 3usize, 3usize, 0i64, 1u32, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) != 1 {
+        return 15
+    }
+    if write_request_header(100i64, false, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, output, 32usize) != -2 {
+        return 16
+    }
+    if write_request_header(100i64, true, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, output, 32usize) != 26 {
+        return 17
+    }
+
+    var short_output: [UInt8; 4] = [165u8, 165u8, 165u8, 165u8]
+    if write_request_header(100i64, true, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, short_output, 4usize) != -3 {
+        return 18
+    }
+    if short_output[0] != 165u8 { return 19 }
+
+    if snapshot_length(2usize, 8usize, 16usize) != 235usize {
+        return 36
+    }
+    if !snapshot_write_exact(names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, 2usize, 8usize, 16usize, response, 256usize, snapshot_length_out) {
+        return 37
+    }
+    if snapshot_length_out[0] != 235usize {
+        return 38
+    }
+    if !clear(2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) {
+        return 39
+    }
+    if !snapshot_load_exact(response, snapshot_length_out[0], names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, 2usize, 8usize, 16usize) {
+        return 40
+    }
+    if get(sid_name, 3usize, 3usize, 100i64, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, value_output, 16usize) != 3 {
+        return 41
+    }
+    if value_output[0] != 120u8 { return 42 }
+    if value_output[2] != 122u8 { return 43 }
+    snapshot_length_out[0] = 99usize
+    if snapshot_write_exact(names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, 2usize, 8usize, 16usize, short_output, 4usize, snapshot_length_out) {
+        return 44
+    }
+    if short_output[0] != 165u8 { return 45 }
+    if snapshot_length_out[0] != 99usize { return 46 }
+
+    if !remove(sid_name, 3usize, 3usize, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) {
+        return 20
+    }
+    if !remove(secure_name, 3usize, 3usize, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) {
+        return 21
+    }
+    if write_request_header(100i64, true, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, output, 32usize) != -2 {
+        return 22
+    }
+    response[0] = 0u8
+    names[0] = 165u8
+    values[0] = 165u8
+    name_lengths[0] = 77usize
+    value_lengths[0] = 77usize
+    expires_at[0] = 77i64
+    flags[0] = 1u32
+    if snapshot_load_exact(response, 235usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, 2usize, 8usize, 16usize) {
+        return 47
+    }
+    if names[0] != 165u8 { return 48 }
+    if values[0] != 165u8 { return 49 }
+    if name_lengths[0] != 77usize { return 50 }
+    if value_lengths[0] != 77usize { return 51 }
+    if expires_at[0] != 77i64 { return 52 }
+    if flags[0] != 1u32 { return 53 }
+    if write_text("target/jadren/network-cookie-jar.result", "cookie-jar:pass\n") == 0usize {
+        return 23
+    }
+    return 0
+}

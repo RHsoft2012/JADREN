@@ -1,0 +1,42 @@
+module examples.network_cookie_block_request_project
+
+import jadren.network.http.request_header
+import jadren.network.http.write_request_cookie_block
+
+// The block writer keeps cookie/session policy in the caller and only emits
+// one validated, canonical request header into the supplied output buffer.
+fn main() -> Int32 {
+    var body: [UInt8; 2] = [79u8, 75u8]
+    var request: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let written: UIntSize = write_request_cookie_block(
+        "POST",
+        "/tasks",
+        "localhost",
+        " sid = abc123 ; theme = dark ",
+        body,
+        request)
+    if written == 0usize { return 1 }
+
+    var cookie: [UInt8; 22] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if request_header(request, "Cookie", cookie) != 22usize { return 2 }
+    if cookie[0] != 115u8 { return 3 }
+    if cookie[3] != 61u8 { return 3 }
+    if cookie[10] != 59u8 { return 3 }
+    if cookie[11] != 32u8 { return 4 }
+    if cookie[12] != 116u8 { return 4 }
+    if cookie[17] != 61u8 { return 4 }
+    if cookie[21] != 107u8 { return 4 }
+
+    request[0] = 77u8
+    if write_request_cookie_block("GET", "/tasks", "localhost", "sid=abc123;", body, request) != 0usize { return 5 }
+    if request[0] != 77u8 { return 6 }
+    if write_request_cookie_block("GET", "/tasks", "localhost", "sid=abc123; bad name=value", body, request) != 0usize { return 7 }
+    if request[0] != 77u8 { return 8 }
+    if write_request_cookie_block("GET", "/tasks", "localhost", "sid=abc123; bad=bad;value", body, request) != 0usize { return 9 }
+    if request[0] != 77u8 { return 10 }
+
+    var short_request: [UInt8; 8] = [55u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if write_request_cookie_block("GET", "/tasks", "localhost", "sid=abc123; theme=dark", body, short_request) != 0usize { return 11 }
+    if short_request[0] != 55u8 { return 12 }
+    return 0
+}

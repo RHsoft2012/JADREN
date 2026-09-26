@@ -11,6 +11,20 @@ and a Language Server Protocol client.
 4. Reload VS Code when requested.
 5. Open a `.jdn` file and confirm that the language mode is **Jadren**.
 
+## Workspace Trust and Restricted Mode
+
+When VS Code displays **You are in Restricted Mode**, the current workspace
+folder has not been trusted. This is a VS Code safety boundary, not a Jadren
+compiler error. Tasks, debugging, and some extension features stay disabled
+until the folder is trusted.
+
+Open your local checkout with **File: Open Folder...** (for example
+`C:/path/to/JADREN`), then select **Trust** on the Workspace Trust page. Trust is
+per-folder and per-window; opening only a `.jdn` file or another checkout can
+return to Restricted Mode. **Workspaces: Manage Workspace Trust** in the
+Command Palette shows the folders currently trusted. Trust only source folders
+you recognize.
+
 The extension setting `jadren.lspPath` selects the Jadren CLI executable. Its
 default value is `jadren`, so install the CLI or make it available on `PATH`.
 The VS Code stdio client passes `--stdio`, which Jadren accepts as the standard
@@ -24,6 +38,15 @@ LSP transport flag.
 
 To verify an installed VSIX, open a `.jdn` file, confirm the **Jadren** language
 mode, and check that diagnostics and completion appear without errors.
+
+## Package trust and self-hosted updates
+
+The preview `.vsix` is a developer package. The Windows Authenticode profile
+documented for Jadren EXE/DLL artifacts does not sign the VSIX, and the local
+self-signed identity `Roman Hladky, C=SK` is not a public trust chain. The
+self-hosted updater uses HTTPS, the release catalog's exact byte count, and
+SHA-256 before asking VS Code to install a downloaded VSIX. Public Marketplace
+signing remains a separate release gate.
 
 ## Current capabilities
 

@@ -3,6 +3,8 @@ module examples.stdlib_core_demo
 import jadren.core.collections.set_buffer_i32
 import jadren.core.collections.sum_buffer_i32
 import jadren.core.collections.sum_i32
+import jadren.core.collections.find_buffer_i32
+import jadren.core.collections.buffer_index_valid
 import jadren.core.io.write_stdout
 import jadren.core.option.unwrap_or_i32
 import jadren.core.outcome.ok_i32
@@ -59,6 +61,11 @@ fn main() -> Int32 {
         if !set_buffer_i32(values, 2usize, 30) { return 3 }
         if set_buffer_i32(values, 3usize, 40) { return 4 }
         if summarize_buffer(values) != 60 { return 5 }
+        if find_buffer_i32(values, 20, 0usize) != 1 { return 8 }
+        if find_buffer_i32(values, 20, 2usize) != -1 { return 9 }
+        if find_buffer_i32(values, 99, 0usize) != -1 { return 10 }
+        if !buffer_index_valid(values, 0usize) { return 11 }
+        if buffer_index_valid(values, 3usize) { return 12 }
     }
     let fallback: Option<Int32> = Some(7)
     let stable_total = unwrap_or_i32(fallback, 0)

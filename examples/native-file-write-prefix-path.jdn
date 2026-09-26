@@ -1,0 +1,32 @@
+module examples.native_file_write_prefix_path
+
+// Writes an export directly through a caller-owned UTF-8 path, such as the
+// exact bytes published by ui_file_save_extension_exact. Invalid explicit
+// lengths are rejected before the existing target can be opened or changed.
+fn main() -> Int32 {
+    var path: [UInt8; 28] = [116u8, 97u8, 114u8, 103u8, 101u8, 116u8, 47u8,
+        106u8, 97u8, 100u8, 114u8, 101u8, 110u8, 45u8, 119u8, 114u8,
+        105u8, 116u8, 101u8, 45u8, 112u8, 97u8, 116u8, 104u8, 46u8, 98u8,
+        105u8, 110u8]
+    var input: [UInt8; 4] = [65u8, 66u8, 67u8, 68u8]
+    var before: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+
+    if file_write_prefix_path(path, 29usize, input, 3usize) != 0usize { return 1 }
+    if file_read_at_path(path, 28usize, 0usize, before) != 3usize { return 2 }
+    if before[0] != 79u8 { return 3 }
+    if before[1] != 76u8 { return 4 }
+    if before[2] != 68u8 { return 5 }
+
+    if file_write_prefix_path(path, 28usize, input, 5usize) != 0usize { return 6 }
+    if file_read_at_path(path, 28usize, 0usize, before) != 3usize { return 7 }
+    if before[0] != 79u8 { return 8 }
+    if before[1] != 76u8 { return 9 }
+    if before[2] != 68u8 { return 10 }
+
+    if file_write_prefix_path(path, 28usize, input, 3usize) != 3usize { return 11 }
+    if file_read_at_path(path, 28usize, 0usize, before) != 3usize { return 12 }
+    if before[0] != 65u8 { return 13 }
+    if before[1] != 66u8 { return 14 }
+    if before[2] != 67u8 { return 15 }
+    return 0
+}

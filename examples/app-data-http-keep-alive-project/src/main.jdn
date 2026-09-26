@@ -1,0 +1,118 @@
+module app_data_http_keep_alive_project.main
+import jadren.app.data.write_exact
+import jadren.app.data.save_atomic
+import jadren.app.fs.write_text
+import jadren.app.list.push_text
+import jadren.app.state.set_int
+import jadren.app.table.append_row
+import jadren.app.table.set_cell
+import jadren.network.router.add_exact
+import jadren.network.session.close
+import jadren.network.session.open
+import jadren.network.session.step
+import jadren.network.tcp.listen
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn publish_model(body: write Slice<UInt8>) -> Bool {
+    var body_length:[UIntSize;
+    1] =[0usize]
+    if ! write_exact(body,
+    body_length) {
+        return false
+    }
+    return add_exact("GET",
+    "/api/model",
+    200u16,
+    "application/json",
+    body,
+    body_length[0],
+    )
+}
+fn main() -> Int32 {
+    region frame {
+        app_state_clear()
+        app_list_clear(0)
+        app_table_clear(0)
+        if ! set_int("selected",
+        7i64) {
+            return 1
+        }
+        if ! push_text(0,
+        "First task") {
+            return 2
+        }
+        if ! append_row(0) {
+            return 3
+        }
+        if ! set_cell(0,
+        0,
+        0,
+        "Build") {
+            return 4
+        }
+        if ! set_cell(0,
+        0,
+        1,
+        "Open") {
+            return 5
+        }
+        let body: Buffer<UInt8> = frame.allocate(2048)
+        http_router_clear()
+        if ! publish_model(body) {
+            return 6
+        }
+        let listener: UIntSize = listen(38164u16)
+        if listener == 0usize {
+            return 7
+        }
+        let session: UIntSize = open(listener,
+        1u32,
+        2048u32,
+        2048u32)
+        if session == 0usize {
+            return 8
+        }
+        let first: UInt32 = step(session,
+        5000u32)
+        if first != 1u32 {
+            close(session)
+            return 9
+        }
+        if ! set_int("selected",
+        42i64) {
+            close(session)
+            return 10
+        }
+        if ! push_text(0,
+        "Second task") {
+            close(session)
+            return 11
+        }
+        if ! publish_model(body) {
+            close(session)
+            return 12
+        }
+        let second: UInt32 = step(session,
+        5000u32)
+        if second != 2u32 {
+            close(session)
+            return 13
+        }
+        if ! close(session) {
+            return 14
+        }
+        if ! save_atomic("target/app-data-http-keep-alive.data.tmp",
+        "target/app-data-http-keep-alive.data",
+        ) {
+            return 15
+        }
+        if write_text("target/app-data-http-keep-alive.result",
+        "session:2,selected:42,list:2,table:1\n",
+        ) == 0usize {
+            return 16
+        }
+    }
+    return 0
+}

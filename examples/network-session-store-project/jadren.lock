@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "67e2d5e2c1b95481"
+
+[package]
+name = "network-session-store-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

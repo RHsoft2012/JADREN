@@ -1,0 +1,67 @@
+module examples.native_file_lock_path
+
+// Exercises a caller-owned sidecar lock path. The lock file intentionally
+// remains after unlock so cooperating POSIX processes retain one inode identity.
+fn has_hold_flag() -> Bool {
+    if process_arg_count() != 2usize { return false }
+    var value: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = process_arg_read(1usize, value)
+    if length != 6usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 104u8 { return false }
+    if value[3] != 111u8 { return false }
+    if value[4] != 108u8 { return false }
+    return value[5] == 100u8
+}
+
+fn has_block_flag() -> Bool {
+    if process_arg_count() != 2usize { return false }
+    var value: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = process_arg_read(1usize, value)
+    if length != 7usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 98u8 { return false }
+    if value[3] != 108u8 { return false }
+    if value[4] != 111u8 { return false }
+    if value[5] != 99u8 { return false }
+    return value[6] == 107u8
+}
+
+fn main() -> Int32 {
+    var lock_path: [UInt8; 28] = [116u8, 97u8, 114u8, 103u8, 101u8, 116u8, 47u8,
+        106u8, 97u8, 100u8, 114u8, 101u8, 110u8, 45u8, 108u8, 111u8,
+        99u8, 107u8, 45u8, 112u8, 97u8, 116u8, 104u8, 46u8, 108u8, 111u8,
+        99u8, 107u8]
+    if has_hold_flag() {
+        let token: UIntSize = file_lock_path(lock_path, 28usize)
+        if token == 0usize { return 10 }
+        var ready_path: [UInt8; 29] = [116u8, 97u8, 114u8, 103u8, 101u8, 116u8,
+            47u8, 106u8, 97u8, 100u8, 114u8, 101u8, 110u8, 45u8, 108u8,
+            111u8, 99u8, 107u8, 45u8, 112u8, 97u8, 116u8, 104u8, 46u8,
+            114u8, 101u8, 97u8, 100u8, 121u8]
+        var ready: [UInt8; 5] = [114u8, 101u8, 97u8, 100u8, 121u8]
+        if file_write_prefix_path(ready_path, 29usize, ready, 5usize) != 5usize {
+            file_unlock(token)
+            return 11
+        }
+        let started: UInt64 = time_now_monotonic_ms()
+        while time_now_monotonic_ms() < started + 3000u64 { }
+        if !file_unlock(token) { return 12 }
+        return 0
+    }
+    if has_block_flag() {
+        let token: UIntSize = file_lock_path(lock_path, 28usize)
+        if token == 0usize { return 0 }
+        file_unlock(token)
+        return 20
+    }
+
+    if file_lock_path(lock_path, 29usize) != 0usize { return 1 }
+    if file_size_path(lock_path, 28usize) != 0usize { return 2 }
+    let token: UIntSize = file_lock_path(lock_path, 28usize)
+    if token == 0usize { return 3 }
+    if !file_unlock(token) { return 4 }
+    return 0
+}

@@ -1,0 +1,18 @@
+module console_app_fs_project.main
+
+import jadren.app.fs.exists
+
+// app.fs currently links desktop helpers, although this program opens no UI.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    print("JADREN-CONSOLE-BEGIN\n")
+    if exists("jadren.toml") {
+        print("JADREN-CONSOLE-FS\n")
+    }
+    print("JADREN-CONSOLE-END\n")
+    return 0
+}

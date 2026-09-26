@@ -1,0 +1,162 @@
+module app_table_sort_if_revision_project.main
+
+import jadren.app.data.revision
+import jadren.app.table.append_row
+import jadren.app.table.clear
+import jadren.app.table.read_bool
+import jadren.app.table.read_cell_exact
+import jadren.app.table.read_float
+import jadren.app.table.read_int
+import jadren.app.table.read_uint
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+import jadren.app.table.sort_bool_if_model_revision
+import jadren.app.table.sort_callback_if_model_revision
+import jadren.app.table.sort_float_if_model_revision
+import jadren.app.table.sort_int_if_model_revision
+import jadren.app.table.sort_bool_if_revision
+import jadren.app.table.sort_float_if_revision
+import jadren.app.table.sort_int_if_revision
+import jadren.app.table.sort_text_if_revision
+import jadren.app.table.sort_text_if_model_revision
+import jadren.app.table.sort_uint_if_model_revision
+import jadren.app.table.sort_uint_if_revision
+
+fn reverse_by_source_index(source: Int32, left: Int32, right: Int32) -> Int32 {
+    return right - left
+}
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    if ! set_column_type(0, 0, 0) { return 1 }
+    if ! set_column_type(0, 1, 1) { return 2 }
+    if ! set_column_type(0, 2, 2) { return 3 }
+    if ! set_column_type(0, 3, 4) { return 4 }
+    if ! set_column_type(0, 4, 3) { return 5 }
+    if ! set_column_name(0, 0, "Name") { return 6 }
+    if ! set_column_name(0, 1, "Signed") { return 7 }
+    if ! set_column_name(0, 2, "Unsigned") { return 8 }
+    if ! set_column_name(0, 3, "Ratio") { return 9 }
+    if ! set_column_name(0, 4, "Enabled") { return 10 }
+    if ! append_row(0) { return 11 }
+    if ! append_row(0) { return 12 }
+    if ! append_row(0) { return 13 }
+
+    if ! set_cell(0, 0, 0, "Zulu") { return 14 }
+    if ! set_cell(0, 1, 0, "Alpha") { return 15 }
+    if ! set_cell(0, 2, 0, "Bravo") { return 16 }
+    if ! set_cell(0, 0, 1, "99") { return 17 }
+    if ! set_cell(0, 1, 1, "10") { return 18 }
+    if ! set_cell(0, 2, 1, "20") { return 19 }
+    if ! set_cell(0, 0, 2, "999") { return 20 }
+    if ! set_cell(0, 1, 2, "100") { return 21 }
+    if ! set_cell(0, 2, 2, "200") { return 22 }
+    if ! set_cell(0, 0, 3, "99.0") { return 23 }
+    if ! set_cell(0, 1, 3, "1.0") { return 24 }
+    if ! set_cell(0, 2, 3, "2.0") { return 25 }
+    if ! set_cell(0, 0, 4, "true") { return 26 }
+    if ! set_cell(0, 1, 4, "false") { return 27 }
+    if ! set_cell(0, 2, 4, "false") { return 28 }
+
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var length: [UIntSize; 1] = [0usize]
+
+    let text_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "Omega") { return 29 }
+    if sort_text_if_revision(0, 0, false, text_stale) { return 30 }
+    if ! read_cell_exact(0, 0, 0, output, length) { return 31 }
+    if length[0] != 5usize { return 32 }
+    if output[0] != 79u8 { return 32 }
+    let text_current: UInt64 = revision()
+    if ! sort_text_if_revision(0, 0, false, text_current) { return 33 }
+    if ! read_cell_exact(0, 0, 0, output, length) { return 34 }
+    if length[0] != 5usize { return 35 }
+    if output[0] != 65u8 { return 35 }
+
+    let int_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 1, "88") { return 36 }
+    if sort_int_if_revision(0, 1, false, int_stale) { return 37 }
+    if read_int(0, 0, 1) != 88 as Int64 { return 38 }
+    let int_current: UInt64 = revision()
+    if ! sort_int_if_revision(0, 1, false, int_current) { return 39 }
+    // Text sorting above moved the complete rows: the former 20 is now the
+    // smallest value after the stale-row edit to 88.
+    if read_int(0, 0, 1) != 20 as Int64 { return 40 }
+
+    let uint_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 2, "888") { return 41 }
+    if sort_uint_if_revision(0, 2, false, uint_stale) { return 42 }
+    if read_uint(0, 0, 2) != 888u64 { return 43 }
+    let uint_current: UInt64 = revision()
+    if ! sort_uint_if_revision(0, 2, false, uint_current) { return 44 }
+    if read_uint(0, 0, 2) != 100u64 { return 45 }
+
+    let float_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 3, "88.0") { return 46 }
+    if sort_float_if_revision(0, 3, false, float_stale) { return 47 }
+    if read_float(0, 0, 3) != 88.0f64 { return 48 }
+    let float_current: UInt64 = revision()
+    if ! sort_float_if_revision(0, 3, false, float_current) { return 49 }
+    if read_float(0, 0, 3) != 2.0f64 { return 50 }
+
+    let bool_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 4, "true") { return 51 }
+    if sort_bool_if_revision(0, 4, false, bool_stale) { return 52 }
+    if ! read_bool(0, 0, 4) { return 53 }
+    let bool_current: UInt64 = revision()
+    if ! sort_bool_if_revision(0, 4, false, bool_current) { return 54 }
+    if read_bool(0, 0, 4) { return 55 }
+
+    let text_model_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "Omega") { return 56 }
+    if sort_text_if_model_revision(0, 0, false, text_model_stale) { return 57 }
+    if ! read_cell_exact(0, 0, 0, output, length) { return 58 }
+    if output[0] != 79u8 { return 59 }
+    let text_model_current: UInt64 = revision()
+    if ! sort_text_if_model_revision(0, 0, false, text_model_current) { return 60 }
+
+    let int_model_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 1, "88") { return 61 }
+    if sort_int_if_model_revision(0, 1, false, int_model_stale) { return 62 }
+    if read_int(0, 0, 1) != 88 as Int64 { return 63 }
+    let int_model_current: UInt64 = revision()
+    if ! sort_int_if_model_revision(0, 1, false, int_model_current) { return 64 }
+
+    let uint_model_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 2, "777") { return 65 }
+    if sort_uint_if_model_revision(0, 2, false, uint_model_stale) { return 66 }
+    if read_uint(0, 0, 2) != 777u64 { return 67 }
+    let uint_model_current: UInt64 = revision()
+    if ! sort_uint_if_model_revision(0, 2, false, uint_model_current) { return 68 }
+
+    let float_model_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 3, "77.0") { return 69 }
+    if sort_float_if_model_revision(0, 3, false, float_model_stale) { return 70 }
+    if read_float(0, 0, 3) != 77.0f64 { return 71 }
+    let float_model_current: UInt64 = revision()
+    if ! sort_float_if_model_revision(0, 3, false, float_model_current) { return 72 }
+
+    let bool_model_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 4, "false") { return 73 }
+    if sort_bool_if_model_revision(0, 4, false, bool_model_stale) { return 74 }
+    if read_bool(0, 0, 4) { return 75 }
+    let bool_model_current: UInt64 = revision()
+    if ! sort_bool_if_model_revision(0, 4, false, bool_model_current) { return 76 }
+
+    let callback_model_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "Omega") { return 77 }
+    if sort_callback_if_model_revision(0, reverse_by_source_index, callback_model_stale) { return 78 }
+    let callback_model_current: UInt64 = revision()
+    if ! sort_callback_if_model_revision(0, reverse_by_source_index, callback_model_current) { return 79 }
+
+    if sort_text_if_model_revision(99, 0, false, revision()) { return 80 }
+
+    return 0
+}

@@ -1,0 +1,116 @@
+module examples.windows_desktop_controls_refresh_if_revision
+
+// All retained selection/input projections use the same equality-only model
+// revision guard. Stale refreshes leave every existing native value intact.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    if !app_state_set_text("note", "Model") { return 1 }
+    if !app_state_set_bool("enabled", true) { return 2 }
+    if !app_state_set_int("choice", 1 as Int64) { return 3 }
+    if !app_state_set_int("list_choice", 1 as Int64) { return 4 }
+    if !app_state_set_int("table_choice", 0 as Int64) { return 5 }
+
+    let root: Int32 = ui_app_begin("Guarded controls", 760, 520, 0xF6F8FCu32)
+    if root == 0 { return 6 }
+    let panel: Int32 = ui_app_panel(root, 680, 420, 0xFFFFFFu32, 16, 12, 8, 0, 1)
+    if panel == 0 { return 7 }
+    let input: Int32 = ui_app_text_input(panel, "Draft", 10, 300, 36,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let checkbox: Int32 = ui_app_checkbox(panel, "Enabled", 20, 300, 36,
+        0x111827u32, 0x168EF5u32, 8, 0, 1)
+    let select: Int32 = ui_app_select(panel, 30, 300, 36,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if !ui_app_select_option(select, "First") { return 8 }
+    if !ui_app_select_option(select, "Second") { return 9 }
+    let list: Int32 = ui_app_list(panel, 40, 300, 90,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if !ui_app_list_item(list, "First") { return 10 }
+    if !ui_app_list_item(list, "Second") { return 11 }
+    let table: Int32 = ui_app_table(panel, 50, 500, 120,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if !ui_app_table_column(table, 0, "Name", 300) { return 12 }
+    if !ui_app_table_cell(table, 0, 0, "First") { return 13 }
+    if !ui_app_table_cell(table, 1, 0, "Second") { return 14 }
+    if !ui_app_bind_app_state_exact(input, "note") { return 15 }
+    if !ui_app_bind_app_state_exact(checkbox, "enabled") { return 16 }
+    if !ui_app_bind_app_state_exact(select, "choice") { return 17 }
+    if !ui_app_bind_app_state_exact(list, "list_choice") { return 18 }
+    if !ui_app_bind_app_state_exact(table, "table_choice") { return 19 }
+    if !ui_app_end(panel) { return 20 }
+    if !ui_app_end(root) { return 21 }
+
+    let stale: UInt64 = app_data_revision()
+    if !app_state_set_bool("enabled", false) { return 22 }
+    if ui_input_refresh_app_state_if_revision(10, stale) { return 23 }
+    if ui_checkbox_refresh_app_state_if_revision(20, stale) { return 24 }
+    if ui_select_refresh_app_state_if_revision(30, stale) { return 25 }
+    if ui_list_refresh_app_state_if_revision(40, stale) { return 26 }
+    if ui_table_refresh_app_state_if_revision(50, stale) { return 27 }
+    if ui_app_refresh_app_state_if_revision(input, stale) { return 28 }
+    if ui_refresh_bindings_if_revision(stale) { return 60 }
+    if ui_checked(20) != 1 { return 29 }
+    if ui_select_index(30) != 1 { return 30 }
+    if ui_list_index(40) != 1 { return 31 }
+    if ui_table_selected_row(50) != 0 { return 32 }
+
+    let current: UInt64 = app_data_revision()
+    if !ui_input_refresh_app_state_if_revision(10, current) { return 33 }
+    if !ui_checkbox_refresh_app_state_if_revision(20, current) { return 34 }
+    if !ui_select_refresh_app_state_if_revision(30, current) { return 35 }
+    if !ui_list_refresh_app_state_if_revision(40, current) { return 36 }
+    if !ui_table_refresh_app_state_if_revision(50, current) { return 37 }
+
+    if !app_state_set_text("note", "Updated") { return 38 }
+    if !app_state_set_bool("enabled", false) { return 39 }
+    if !app_state_set_int("choice", 0 as Int64) { return 40 }
+    if !app_state_set_int("list_choice", 0 as Int64) { return 41 }
+    if !app_state_set_int("table_choice", 1 as Int64) { return 42 }
+    let projected: UInt64 = app_data_revision()
+    if !ui_app_refresh_app_state_if_revision(input, projected) { return 43 }
+    if !ui_app_refresh_app_state_if_revision(checkbox, projected) { return 44 }
+    if !ui_app_refresh_app_state_if_revision(select, projected) { return 45 }
+    if !ui_app_refresh_app_state_if_revision(list, projected) { return 46 }
+    if !ui_app_refresh_app_state_if_revision(table, projected) { return 47 }
+    if !ui_refresh_bindings_if_revision(projected) { return 61 }
+    if ui_checked(20) != 0 { return 48 }
+    if ui_select_index(30) != 0 { return 49 }
+    if ui_list_index(40) != 0 { return 50 }
+    if ui_table_selected_row(50) != 1 { return 51 }
+
+    // A later invalid table binding must not leave earlier projections partly
+    // refreshed. The table slot is deliberately changed to Bool, while the
+    // input and selections receive values different from their current UI.
+    if !app_state_set_text("note", "Next") { return 55 }
+    if !app_state_set_bool("enabled", true) { return 56 }
+    if !app_state_set_int("choice", 1 as Int64) { return 57 }
+    if !app_state_set_int("list_choice", 1 as Int64) { return 58 }
+    if !app_state_set_bool("table_choice", true) { return 59 }
+    let invalid_batch: UInt64 = app_data_revision()
+    if ui_refresh_bindings_if_revision(invalid_batch) { return 62 }
+    if ui_input_length(10) != 7usize { return 63 }
+    if ui_checked(20) != 0 { return 64 }
+    if ui_select_index(30) != 0 { return 65 }
+    if ui_list_index(40) != 0 { return 66 }
+    if ui_table_selected_row(50) != 1 { return 67 }
+
+    if !app_state_set_int("table_choice", 1 as Int64) { return 68 }
+    let recovered_batch: UInt64 = app_data_revision()
+    if !ui_refresh_bindings_if_revision(recovered_batch) { return 69 }
+    if ui_input_length(10) != 4usize { return 70 }
+    if ui_checked(20) != 1 { return 71 }
+    if ui_select_index(30) != 1 { return 72 }
+    if ui_list_index(40) != 1 { return 73 }
+    if ui_table_selected_row(50) != 1 { return 74 }
+
+    if !app_state_set_int("enabled", 1 as Int64) { return 52 }
+    let wrong_kind: UInt64 = app_data_revision()
+    if ui_app_refresh_app_state_if_revision(checkbox, wrong_kind) { return 53 }
+    if ui_checked(20) != 1 { return 54 }
+    app_state_clear()
+    return 0
+}

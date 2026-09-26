@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "c0562cef22e43f61"
+
+[package]
+name = "generic-buffer-upper-bound-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-core"
+requirement = ""
+source = "path:../../stdlib/core"

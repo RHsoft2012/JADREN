@@ -1,0 +1,395 @@
+module ui_app_input_commit_project.main
+import jadren.app.ui.commit_state_if_model_revision
+import jadren.app.ui.refresh_state_if_model_revision
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    app_state_clear()
+    if ! app_state_set_text("draft",
+    "Before") {
+        return 1
+    }
+    if ! app_state_set_bool("enabled",
+    true) {
+        return 2
+    }
+    if ! app_state_set_int("choice",
+    1 as Int64) {
+        return 3
+    }
+    if ! app_state_set_int("list_choice",
+    1 as Int64) {
+        return 4
+    }
+    if ! app_state_set_int("table_choice",
+    0 as Int64) {
+        return 5
+    }
+    let root: Int32 = ui_app_begin("Retained input commit",
+    560,
+    280,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 6
+    }
+    let panel: Int32 = ui_app_panel(root,
+    500,
+    200,
+    0xFFFFFFu32,
+    12,
+    12,
+    8,
+    0,
+    1)
+    if panel == 0 {
+        return 7
+    }
+    let input: Int32 = ui_app_text_input(panel,
+    "Hello",
+    41,
+    320,
+    38,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if input == 0 {
+        return 8
+    }
+    let checkbox: Int32 = ui_app_checkbox(panel,
+    "Enabled",
+    42,
+    320,
+    36,
+    0x111827u32,
+    0x168EF5u32,
+    8,
+    1,
+    1)
+    if checkbox == 0 {
+        return 9
+    }
+    let select: Int32 = ui_app_select(panel,
+    43,
+    320,
+    36,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if select == 0 {
+        return 10
+    }
+    if ! ui_app_select_option(select,
+    "First") {
+        return 11
+    }
+    if ! ui_app_select_option(select,
+    "Second") {
+        return 12
+    }
+    let list: Int32 = ui_app_list(panel,
+    44,
+    320,
+    84,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if list == 0 {
+        return 13
+    }
+    if ! ui_app_list_item(list,
+    "First") {
+        return 14
+    }
+    if ! ui_app_list_item(list,
+    "Second") {
+        return 15
+    }
+    let table: Int32 = ui_app_table(panel,
+    45,
+    480,
+    120,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if table == 0 {
+        return 16
+    }
+    if ! ui_app_table_column(table,
+    0,
+    "Name",
+    280) {
+        return 17
+    }
+    if ! ui_app_table_cell(table,
+    0,
+    0,
+    "First") {
+        return 18
+    }
+    if ! ui_app_table_cell(table,
+    1,
+    0,
+    "Second") {
+        return 19
+    }
+    if ! ui_app_bind_app_state_exact(input,
+    "draft") {
+        return 20
+    }
+    if ! ui_app_bind_app_state_exact(checkbox,
+    "enabled") {
+        return 21
+    }
+    if ! ui_app_bind_app_state_exact(select,
+    "choice") {
+        return 22
+    }
+    if ! ui_app_bind_app_state_exact(list,
+    "list_choice") {
+        return 23
+    }
+    if ! ui_app_bind_app_state_exact(table,
+    "table_choice") {
+        return 24
+    }
+    ui_set_input_text(41,
+    "Edited")
+    let current: UInt64 = app_data_revision()
+    if ! commit_state_if_model_revision(input,
+    current) {
+        return 25
+    }
+    var value:[UInt8;
+    32] =[90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8]
+    var value_length:[UIntSize;
+    1] =[77usize]
+    if ! app_state_read_text_exact("draft",
+    value,
+    value_length) {
+        return 26
+    }
+    if value_length[0] != 6usize {
+        return 27
+    }
+    if value[0] != 69u8 {
+        return 28
+    }
+    if value[5] != 100u8 {
+        return 28
+    }
+    ui_set_input_text(41,
+    "Stale")
+    let stale: UInt64 = app_data_revision()
+    if ! app_state_set_text("draft",
+    "Guarded") {
+        return 29
+    }
+    if commit_state_if_model_revision(input,
+    stale) {
+        return 30
+    }
+    value[0] = 91u8
+    value_length[0] = 78usize
+    if ! app_state_read_text_exact("draft",
+    value,
+    value_length) {
+        return 31
+    }
+    if value_length[0] != 7usize {
+        return 32
+    }
+    if value[0] != 71u8 {
+        return 33
+    }
+    if value[6] != 100u8 {
+        return 33
+    }
+    let fresh: UInt64 = app_data_revision()
+    if ! commit_state_if_model_revision(input,
+    fresh) {
+        return 34
+    }
+    value[0] = 92u8
+    value_length[0] = 79usize
+    if ! app_state_read_text_exact("draft",
+    value,
+    value_length) {
+        return 35
+    }
+    if value_length[0] != 5usize {
+        return 36
+    }
+    if value[0] != 83u8 {
+        return 37
+    }
+    if value[4] != 101u8 {
+        return 37
+    }
+    ui_set_checked(42,
+    0)
+    let stale_checkbox: UInt64 = app_data_revision()
+    if ! app_state_set_bool("enabled",
+    true) {
+        return 38
+    }
+    if commit_state_if_model_revision(checkbox,
+    stale_checkbox) {
+        return 39
+    }
+    if ! app_state_get_bool("enabled") {
+        return 40
+    }
+    if ! commit_state_if_model_revision(checkbox,
+    app_data_revision()) {
+        return 41
+    }
+    if app_state_get_bool("enabled") {
+        return 42
+    }
+    if ! ui_app_select_set_index(select,
+    0) {
+        return 43
+    }
+    let stale_select: UInt64 = app_data_revision()
+    if ! app_state_set_int("choice",
+    1 as Int64) {
+        return 44
+    }
+    if commit_state_if_model_revision(select,
+    stale_select) {
+        return 45
+    }
+    if app_state_get_int("choice") != 1 as Int64 {
+        return 46
+    }
+    if ! commit_state_if_model_revision(select,
+    app_data_revision()) {
+        return 47
+    }
+    if app_state_get_int("choice") != 0 as Int64 {
+        return 48
+    }
+    if ! ui_app_list_set_index(list,
+    0) {
+        return 49
+    }
+    let stale_list: UInt64 = app_data_revision()
+    if ! app_state_set_int("list_choice",
+    1 as Int64) {
+        return 50
+    }
+    if commit_state_if_model_revision(list,
+    stale_list) {
+        return 51
+    }
+    if app_state_get_int("list_choice") != 1 as Int64 {
+        return 52
+    }
+    if ! commit_state_if_model_revision(list,
+    app_data_revision()) {
+        return 53
+    }
+    if app_state_get_int("list_choice") != 0 as Int64 {
+        return 54
+    }
+    if ! ui_app_table_set_selected_row(table,
+    1) {
+        return 55
+    }
+    let stale_table: UInt64 = app_data_revision()
+    if ! app_state_set_int("table_choice",
+    0 as Int64) {
+        return 56
+    }
+    if commit_state_if_model_revision(table,
+    stale_table) {
+        return 57
+    }
+    if app_state_get_int("table_choice") != 0 as Int64 {
+        return 58
+    }
+    if ! commit_state_if_model_revision(table,
+    app_data_revision()) {
+        return 59
+    }
+    if app_state_get_int("table_choice") != 1 as Int64 {
+        return 60
+    }
+    if commit_state_if_model_revision(999,
+    app_data_revision()) {
+        return 61
+    }
+    if ! app_state_set_text("draft",
+    "Reloaded") {
+        return 62
+    }
+    let refresh_current: UInt64 = app_data_revision()
+    if ! refresh_state_if_model_revision(input,
+    refresh_current) {
+        return 63
+    }
+    if ui_input_length(41) != 7usize {
+        return 64
+    }
+    value[0] = 93u8
+    value_length[0] = 80usize
+    if ! app_state_read_text_exact("draft",
+    value,
+    value_length) {
+        return 65
+    }
+    if value_length[0] != 7usize {
+        return 66
+    }
+    if value[0] != 82u8 {
+        return 67
+    }
+    if value[6] != 100u8 {
+        return 67
+    }
+    if ! ui_app_end(panel) {
+        return 68
+    }
+    if ! ui_app_end(root) {
+        return 69
+    }
+    app_state_clear()
+    return 0
+}

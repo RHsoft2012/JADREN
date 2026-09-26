@@ -8,7 +8,7 @@ are ABI-compatible.
 
 | Artifact | Current value | Meaning |
 | --- | --- | --- |
-| Compiler/public installer | `0.1.3-preview.11` | unsigned evaluation preview |
+| Compiler/public installer | `0.1.3-preview.13` | unsigned evaluation preview |
 | Language edition | `0.1-draft` | syntax and standard APIs may still change |
 | Unity package | `com.jadren.animation` `0.1.3` | experimental Unity integration |
 | VS Code extension | `jadren-vscode` `0.1.3` | syntax, LSP diagnostics and navigation |

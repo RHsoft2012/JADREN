@@ -1,0 +1,76 @@
+module ui_checkbox_read_if_revision_project.main
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    let root: Int32 = ui_app_begin("Guarded checkbox",
+    520,
+    260,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 1
+    }
+    let panel: Int32 = ui_app_panel(root,
+    460,
+    180,
+    0xFFFFFFu32,
+    12,
+    12,
+    8,
+    0,
+    1)
+    if panel == 0 {
+        return 2
+    }
+    let checkbox: Int32 = ui_app_checkbox(panel,
+    "Enabled",
+    40,
+    220,
+    38,
+    0x111827u32,
+    0x168EF5u32,
+    8,
+    0,
+    0)
+    if checkbox == 0 {
+        return 3
+    }
+    if ui_checked(40) != 0 {
+        return 4
+    }
+    ui_set_checked(40,
+    1)
+    if ui_checked(40) != 1 {
+        return 5
+    }
+    let stale: UInt64 = app_data_revision()
+    if ! app_state_set_int("probe",
+    1 as Int64) {
+        return 6
+    }
+    if ui_checked_if_revision(40,
+    stale) != - 2 {
+        return 7
+    }
+    let current: UInt64 = app_data_revision()
+    if ui_checked_if_revision(40,
+    current) != 1 {
+        return 8
+    }
+    if ui_checked_if_revision(999,
+    current) != - 2 {
+        return 9
+    }
+    if ! ui_app_end(panel) {
+        return 10
+    }
+    if ! ui_app_end(root) {
+        return 11
+    }
+    app_state_clear()
+    return 0
+}

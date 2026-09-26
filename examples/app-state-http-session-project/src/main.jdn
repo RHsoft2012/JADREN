@@ -1,0 +1,192 @@
+module app_state_http_session_project.main
+
+import jadren.app.state.clear
+import jadren.app.state.load_json_exact
+import jadren.app.state.load
+import jadren.app.state.save_atomic
+import jadren.app.state.set_int
+import jadren.app.state.set_text
+import jadren.app.state.write_json_exact
+import jadren.network.http.request_body_exact_prefix
+import jadren.network.http.request_append
+import jadren.network.http.request_is_complete_prefix
+import jadren.network.http.route_match_prefix
+import jadren.network.http.write_response_header
+import jadren.network.tcp.accept
+import jadren.network.tcp.close_socket
+import jadren.network.tcp.listen
+import jadren.network.tcp.receive
+import jadren.network.tcp.send_all_prefix
+import jadren.network.tcp.set_timeout
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+// One connection-close request. POST validates and replaces state before the
+// response; GET only serializes the already committed state.
+fn serve_client(
+    client: UIntSize,
+    request: write Slice<UInt8>,
+    input_body: write Slice<UInt8>,
+    state_body: write Slice<UInt8>,
+    response: write Slice<UInt8>,
+) -> Int32 {
+    if !set_timeout(client, 3000u32) {
+        close_socket(client)
+        return 1
+    }
+    var chunk: [UInt8; 256] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var received: UIntSize = 0usize
+    var reads: UIntSize = 0usize
+    while reads < 8usize {
+        if received >= 256usize { break }
+        let chunk_received: UIntSize = receive(client, chunk)
+        if chunk_received == 0usize { break }
+        let appended: UIntSize = request_append(request, received, chunk, chunk_received)
+        if appended == 0usize { break }
+        received = appended
+        reads = reads + 1usize
+        if request_is_complete_prefix(request, received) { break }
+    }
+    var accepted: Bool = false
+    if received > 0usize {
+        if request_is_complete_prefix(request, received) {
+            if route_match_prefix(request, received, "POST", "/api/state") {
+                var input_length: [UIntSize; 1] = [0usize]
+                if request_body_exact_prefix(request, received, input_body, input_length) {
+                    if load_json_exact(input_body, input_length[0]) {
+                        accepted = true
+                    }
+                }
+            } else if route_match_prefix(request, received, "GET", "/api/state") {
+                accepted = true
+            }
+        }
+    }
+
+    var status: UInt16 = 404u16
+    var response_length: UIntSize = 0usize
+    if accepted {
+        var state_length: [UIntSize; 1] = [0usize]
+        if !write_json_exact(state_body, state_length) {
+            close_socket(client)
+            return 2
+        }
+        if state_length[0] != 30usize {
+            close_socket(client)
+            return 3
+        }
+        response_length = write_response_header(
+            200u16, "application/json", "X-Jadren-State", "native",
+            state_body, response)
+        status = 200u16
+    } else {
+        response_length = write_response_header(
+            404u16, "application/json", "X-Jadren-State", "native",
+            state_body, response)
+    }
+    if response_length == 0usize {
+        close_socket(client)
+        return 4
+    }
+    let sent: UIntSize = send_all_prefix(client, response, response_length)
+    let closed: Bool = close_socket(client)
+    if sent != response_length { return 5 }
+    if !closed { return 6 }
+    if status == 200u16 { return 0 }
+    return 7
+}
+
+fn main() -> Int32 {
+    let argument_count: UIntSize = process_arg_count()
+    var persist_mode: Bool = false
+    var load_mode: Bool = false
+    if argument_count == 2usize {
+        var flag: [UInt8; 10] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+        let flag_length: UIntSize = process_arg_read(1usize, flag)
+        if flag_length == 9usize {
+            if flag[0] == 45u8 {
+                if flag[1] == 45u8 {
+                    if flag[2] == 112u8 {
+                        if flag[3] == 101u8 {
+                            if flag[4] == 114u8 {
+                                if flag[5] == 115u8 {
+                                    if flag[6] == 105u8 {
+                                        if flag[7] == 115u8 {
+                                            if flag[8] == 116u8 { persist_mode = true }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if flag_length == 6usize {
+            if flag[0] == 45u8 {
+                if flag[1] == 45u8 {
+                    if flag[2] == 108u8 {
+                        if flag[3] == 111u8 {
+                            if flag[4] == 97u8 {
+                                if flag[5] == 100u8 {
+                                    persist_mode = true
+                                    load_mode = true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    clear()
+    if load_mode {
+        if !load("target/app-state-http-session.persist.json") { return 1 }
+    } else {
+        if !set_int("count", 2i64) { return 1 }
+        if !set_text("service", "jadren") { return 2 }
+    }
+
+    var request: [UInt8; 256] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var input_body: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var state_body: [UInt8; 30] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var response: [UInt8; 256] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let listener: UIntSize = listen(38160u16)
+    if listener == 0usize { return 3 }
+    var handled: UIntSize = 0usize
+    var request_limit: UIntSize = 2usize
+    if persist_mode { request_limit = 1usize }
+    while handled < request_limit {
+        let client: UIntSize = accept(listener)
+        if client == 0usize {
+            close_socket(listener)
+            return 4
+        }
+        let served: Int32 = serve_client(
+            client, request, input_body, state_body, response)
+        if served != 0 {
+            close_socket(listener)
+            return 5
+        }
+        if persist_mode {
+            if !load_mode {
+                if !save_atomic(
+                    "target/app-state-http-session.persist.tmp",
+                    "target/app-state-http-session.persist.json"
+                ) {
+                    close_socket(listener)
+                    return 7
+                }
+            }
+        }
+        handled = handled + 1usize
+    }
+    if !close_socket(listener) { return 6 }
+    return 0
+}

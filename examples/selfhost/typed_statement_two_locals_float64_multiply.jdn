@@ -1,0 +1,8 @@
+module examples.selfhost.typed_statement_two_locals_float64_multiply
+
+// Bounded Float64 multiplication variant for the Stage-2 typed statement hand-off.
+fn local_value() -> Float64 {
+    let first: Float64 = 1.5f64;
+    let next: Float64 = first * 2.5f64;
+    return next;
+}

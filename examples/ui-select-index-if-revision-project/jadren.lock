@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "e0d3b9d711ea20c0"
+
+[package]
+name = "ui-select-index-if-revision-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

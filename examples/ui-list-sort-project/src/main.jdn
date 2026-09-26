@@ -1,0 +1,234 @@
+module ui_list_sort_project.main
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.push_text
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.list
+import jadren.app.ui.list_bind
+import jadren.app.ui.list_count
+import jadren.app.ui.list_read_item_exact
+import jadren.app.ui.list_sort_text
+import jadren.app.ui.list_sort_text_if_revision
+import jadren.app.ui.list_sort_text_if_model_revision
+import jadren.app.ui.panel
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear(0)
+    if ! push_text(0,
+    "Charlie") {
+        return 1
+    }
+    if ! push_text(0,
+    "Alpha") {
+        return 2
+    }
+    if ! push_text(0,
+    "Bravo") {
+        return 3
+    }
+    let root: Int32 = begin("Jadren list sort",
+    720,
+    420,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 4
+    }
+    let panel_node: Int32 = panel(root,
+    660,
+    300,
+    0xFFFFFFu32,
+    16,
+    12,
+    8,
+    0,
+    1)
+    if panel_node == 0 {
+        return 5
+    }
+    let first_node: Int32 = list(panel_node,
+    20,
+    600,
+    110,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    let second_node: Int32 = list(panel_node,
+    21,
+    600,
+    110,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if first_node == 0 {
+        return 6
+    }
+    if second_node == 0 {
+        return 6
+    }
+    if ! list_bind(first_node,
+    0) {
+        return 7
+    }
+    if ! list_bind(second_node,
+    0) {
+        return 8
+    }
+    var output:[UInt8;
+    32] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8
+    ]
+    var length:[UIntSize;
+    1] =[99usize]
+    let stale: UInt64 = revision()
+    if ! push_text(0,
+    "Delta") {
+        return 9
+    }
+    if list_sort_text_if_model_revision(first_node,
+    false,
+    stale) {
+        return 10
+    }
+    if list_count(first_node) != 4 {
+        return 11
+    }
+    if list_count(second_node) != 4 {
+        return 12
+    }
+    if ! list_read_item_exact(first_node,
+    0,
+    output,
+    length) {
+        return 13
+    }
+    if length[0] != 7usize {
+        return 14
+    }
+    if output[0] != 67u8 {
+        return 14
+    }
+    let current: UInt64 = revision()
+    if ! list_sort_text_if_model_revision(first_node,
+    false,
+    current) {
+        return 15
+    }
+    if list_count(first_node) != 4 {
+        return 16
+    }
+    if list_count(second_node) != 4 {
+        return 16
+    }
+    if ! list_read_item_exact(first_node,
+    0,
+    output,
+    length) {
+        return 17
+    }
+    if length[0] != 5usize {
+        return 18
+    }
+    if output[0] != 65u8 {
+        return 18
+    }
+    if ! list_read_item_exact(second_node,
+    0,
+    output,
+    length) {
+        return 19
+    }
+    if length[0] != 5usize {
+        return 20
+    }
+    if output[0] != 65u8 {
+        return 20
+    }
+    if ! list_read_item_exact(first_node,
+    3,
+    output,
+    length) {
+        return 21
+    }
+    if length[0] != 7usize {
+        return 22
+    }
+    if output[0] != 68u8 {
+        return 22
+    }
+    if ! list_sort_text(first_node,
+    true) {
+        return 23
+    }
+    if ! list_read_item_exact(first_node,
+    0,
+    output,
+    length) {
+        return 24
+    }
+    if length[0] != 5usize {
+        return 25
+    }
+    if output[0] != 68u8 {
+        return 25
+    }
+    if ! list_read_item_exact(second_node,
+    3,
+    output,
+    length) {
+        return 26
+    }
+    if length[0] != 5usize {
+        return 27
+    }
+    if output[0] != 65u8 {
+        return 27
+    }
+    if list_sort_text_if_revision(0,
+    false,
+    revision()) {
+        return 28
+    }
+    if ! finish(panel_node) {
+        return 29
+    }
+    if ! finish(root) {
+        return 30
+    }
+    return 0
+}

@@ -1,0 +1,71 @@
+module examples.stdlib_buffer_owning_record_nested_enum_move_into
+
+// Caller-owned remove/pop must transfer a complete record whose named enum
+// payload contains another named enum with an owning Buffer leaf. The source
+// buffer compacts without duplicating the nested descriptor and the output is
+// cleaned through the same path-aware record field table.
+@repr(C)
+enum Inner {
+    Empty,
+    Values(Buffer<Int32>),
+    Done
+}
+
+@repr(C)
+enum Outer {
+    Idle,
+    Nested(Inner),
+    Done
+}
+
+@repr(C)
+struct Entry {
+    id: Int32,
+    payload: Outer
+}
+
+fn main() -> Int32 {
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match entries_created {
+        Ok(entries) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            if !buffer_append(first, 11) { result_code = 1 }
+                            if !buffer_append(second, 22) { result_code = 2 }
+                            let first_inner: Inner = Inner.Values(first)
+                            let second_inner: Inner = Inner.Values(second)
+                            let first_item: Entry = Entry { id: 1, payload: Outer.Nested(first_inner) }
+                            let second_item: Entry = Entry { id: 2, payload: Outer.Nested(second_inner) }
+                            if !buffer_append(entries, first_item) { result_code = 3 }
+                            if !buffer_append(entries, second_item) { result_code = 4 }
+
+                            var moved_first: Entry = Entry { id: 0, payload: Outer.Idle }
+                            if !buffer_remove_move_into(entries, 0usize, moved_first) { result_code = 5 }
+                            if moved_first.id != 1 { result_code = 6 }
+                            if buffer_length(entries) != 1usize { result_code = 7 }
+                            let invalid_remove: Int32 = buffer_remove_move_into_status(entries, 99usize, moved_first)
+                            if invalid_remove != -20 { result_code = 8 }
+
+                            var moved_second: Entry = Entry { id: 0, payload: Outer.Idle }
+                            if !buffer_pop_move_into(entries, moved_second) { result_code = 9 }
+                            if moved_second.id != 2 { result_code = 10 }
+                            if buffer_length(entries) != 0usize { result_code = 11 }
+                            let invalid_pop: Int32 = buffer_pop_move_into_status(entries, moved_second)
+                            if invalid_pop != -20 { result_code = 12 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

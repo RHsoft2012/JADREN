@@ -1,0 +1,308 @@
+module app_model_revision_read_project.main
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.push_text
+import jadren.app.list.read_text_exact_buffer_if_revision
+import jadren.app.list.read_text_exact_if_revision
+import jadren.app.list.read_text_exact_buffer_if_model_revision
+import jadren.app.list.read_text_exact_if_model_revision
+import jadren.app.table.append_row
+import jadren.app.table.read_cell_exact_buffer_if_revision
+import jadren.app.table.read_cell_exact_if_revision
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear(0)
+    app_table_clear(0)
+    if ! push_text(0,
+    "Jadren") {
+        return 1
+    }
+    if ! set_column_name(0,
+    0,
+    "title") {
+        return 2
+    }
+    if ! set_column_type(0,
+    0,
+    0) {
+        return 3
+    }
+    if ! append_row(0) {
+        return 4
+    }
+    if ! set_cell(0,
+    0,
+    0,
+    "Jadren") {
+        return 5
+    }
+    let output_created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(16usize)
+    var status: Int32 = 0
+    match output_created {
+        Error(error) => {
+            status = error
+        }
+        Ok(output) => {
+            if ! buffer_resize(output,
+            16usize) {
+                status = 6
+            }
+            var slice_output:[UInt8;
+            16] =[0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8]
+            var length:[UIntSize;
+            1] =[700usize]
+            let current: UInt64 = revision()
+            if status == 0 {
+                if ! read_text_exact_if_revision(0,
+                0,
+                slice_output,
+                length,
+                current) {
+                    status = 7
+                }
+            }
+            if status == 0 {
+                if length[0] != 6usize {
+                    status = 8
+                }
+            }
+            if status == 0 {
+                if slice_output[0] != 74u8 {
+                    status = 9
+                }
+            }
+            if status == 0 {
+                if slice_output[5] != 110u8 {
+                    status = 10
+                }
+            }
+            if status == 0 {
+                length[0] = 701usize
+                if ! read_text_exact_buffer_if_revision(0,
+                0,
+                output,
+                16usize,
+                length,
+                current) {
+                    status = 11
+                }
+            }
+            if status == 0 {
+                if length[0] != 6usize {
+                    status = 12
+                }
+            }
+            if status == 0 {
+                if output[0] != 74u8 {
+                    status = 13
+                }
+            }
+            if status == 0 {
+                if output[5] != 110u8 {
+                    status = 14
+                }
+            }
+            if status == 0 {
+                length[0] = 706usize
+                if ! read_text_exact_if_model_revision(0,
+                0,
+                slice_output,
+                length,
+                current) {
+                    status = 31
+                }
+            }
+            if status == 0 {
+                if length[0] != 6usize {
+                    status = 32
+                }
+            }
+            if status == 0 {
+                length[0] = 707usize
+                if ! read_text_exact_buffer_if_model_revision(0,
+                0,
+                output,
+                16usize,
+                length,
+                current) {
+                    status = 33
+                }
+            }
+            if status == 0 {
+                if length[0] != 6usize {
+                    status = 34
+                }
+            }
+            let stale_list_revision: UInt64 = revision()
+            if status == 0 {
+                if ! push_text(0,
+                "changed") {
+                    status = 15
+                }
+            }
+            if status == 0 {
+                output[0] = 201u8
+                output[1] = 202u8
+                length[0] = 702usize
+                if read_text_exact_buffer_if_revision(0,
+                0,
+                output,
+                16usize,
+                length,
+                stale_list_revision) {
+                    status = 16
+                }
+            }
+            if status == 0 {
+                if output[0] != 201u8 {
+                    status = 17
+                }
+            }
+            if status == 0 {
+                if output[1] != 202u8 {
+                    status = 18
+                }
+            }
+            if status == 0 {
+                if length[0] != 702usize {
+                    status = 19
+                }
+            }
+            if status == 0 {
+                output[0] = 203u8
+                output[1] = 204u8
+                length[0] = 708usize
+                if read_text_exact_buffer_if_model_revision(0,
+                0,
+                output,
+                16usize,
+                length,
+                stale_list_revision) {
+                    status = 35
+                }
+            }
+            if status == 0 {
+                if output[0] != 203u8 {
+                    status = 36
+                }
+            }
+            if status == 0 {
+                if output[1] != 204u8 {
+                    status = 37
+                }
+            }
+            if status == 0 {
+                if length[0] != 708usize {
+                    status = 38
+                }
+            }
+            let current_table: UInt64 = revision()
+            if status == 0 {
+                length[0] = 703usize
+                if ! read_cell_exact_if_revision(0,
+                0,
+                0,
+                slice_output,
+                length,
+                current_table) {
+                    status = 20
+                }
+            }
+            if status == 0 {
+                if length[0] != 6usize {
+                    status = 21
+                }
+            }
+            if status == 0 {
+                if slice_output[0] != 74u8 {
+                    status = 22
+                }
+            }
+            if status == 0 {
+                length[0] = 704usize
+                if ! read_cell_exact_buffer_if_revision(0,
+                0,
+                0,
+                output,
+                16usize,
+                length,
+                current_table) {
+                    status = 23
+                }
+            }
+            if status == 0 {
+                if length[0] != 6usize {
+                    status = 24
+                }
+            }
+            if status == 0 {
+                if output[5] != 110u8 {
+                    status = 25
+                }
+            }
+            let stale_table_revision: UInt64 = revision()
+            if status == 0 {
+                if ! set_cell(0,
+                0,
+                0,
+                "changed") {
+                    status = 26
+                }
+            }
+            if status == 0 {
+                output[0] = 211u8
+                output[1] = 212u8
+                length[0] = 705usize
+                if read_cell_exact_buffer_if_revision(0,
+                0,
+                0,
+                output,
+                16usize,
+                length,
+                stale_table_revision) {
+                    status = 27
+                }
+            }
+            if status == 0 {
+                if output[0] != 211u8 {
+                    status = 28
+                }
+            }
+            if status == 0 {
+                if output[1] != 212u8 {
+                    status = 29
+                }
+            }
+            if status == 0 {
+                if length[0] != 705usize {
+                    status = 30
+                }
+            }
+        }
+    }
+    clear(0)
+    app_table_clear(0)
+    return status
+}

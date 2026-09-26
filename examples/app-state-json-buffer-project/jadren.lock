@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "96476cc94c9142ad"
+
+[package]
+name = "app-state-json-buffer-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

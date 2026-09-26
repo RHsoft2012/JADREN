@@ -1,0 +1,71 @@
+module app_list_filter_if_revision_project.main
+
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.count
+import jadren.app.list.find_text
+import jadren.app.list.filter_text_if_revision
+import jadren.app.list.filter_text_if_model_revision
+import jadren.app.list.filter_text_ex_if_model_revision
+import jadren.app.list.filter_bytes_if_model_revision
+import jadren.app.list.filter_callback_if_model_revision
+import jadren.app.list.push_text
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn keep_first_item(source: Int32, item_index: Int32) -> Bool {
+    return item_index == 0
+}
+
+fn main() -> Int32 {
+    clear(0)
+    clear(1)
+    if ! push_text(0, "Alpha") { return 1 }
+    if ! push_text(0, "Beta") { return 2 }
+    if ! push_text(0, "Gamma") { return 3 }
+    if ! push_text(1, "Sentinel") { return 4 }
+
+    let stale: UInt64 = revision()
+    if ! push_text(0, "Delta") { return 5 }
+    if filter_text_if_revision(0, 1, "Beta", stale) { return 6 }
+    if count(1) != 1 { return 7 }
+    if find_text(1, "Sentinel", 0) != 0 { return 8 }
+
+    let current: UInt64 = revision()
+    if ! filter_text_if_revision(0, 1, "Beta", current) { return 9 }
+    if count(1) != 1 { return 10 }
+    if find_text(1, "Beta", 0) != 0 { return 11 }
+    if find_text(1, "Alpha", 0) != -1 { return 12 }
+    if filter_text_if_revision(0, 0, "Beta", revision()) { return 13 }
+    if filter_text_if_revision(99, 1, "Beta", revision()) { return 14 }
+
+    // Explicit complete-model spellings cover exact, mode, byte-prefix and
+    // callback projections while preserving the stale/no-mutation boundary.
+    let model_text_stale: UInt64 = revision()
+    if ! push_text(0, "Beta plus") { return 15 }
+    if filter_text_if_model_revision(0, 1, "Beta plus", model_text_stale) { return 16 }
+    if count(1) != 1 { return 17 }
+    if ! filter_text_if_model_revision(0, 1, "Beta plus", revision()) { return 18 }
+    if count(1) != 1 { return 19 }
+
+    let model_mode_current: UInt64 = revision()
+    if ! filter_text_ex_if_model_revision(0, 1, "Beta", 1, model_mode_current) { return 20 }
+    if count(1) != 2 { return 21 }
+
+    var query_bytes: [UInt8; 4] = [66u8, 101u8, 116u8, 97u8]
+    let model_bytes_current: UInt64 = revision()
+    if ! filter_bytes_if_model_revision(0, 1, query_bytes, 4usize, 0, model_bytes_current) { return 22 }
+    if count(1) != 1 { return 23 }
+
+    let model_callback_stale: UInt64 = revision()
+    if ! push_text(0, "Callback") { return 24 }
+    if filter_callback_if_model_revision(0, 1, keep_first_item, model_callback_stale) { return 25 }
+    if count(1) != 1 { return 26 }
+    if ! filter_callback_if_model_revision(0, 1, keep_first_item, revision()) { return 27 }
+    if count(1) != 1 { return 28 }
+    if filter_text_if_model_revision(99, 1, "Beta", revision()) { return 29 }
+    return 0
+}

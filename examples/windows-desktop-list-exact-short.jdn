@@ -1,0 +1,28 @@
+module examples.windows_desktop_list_exact_short
+
+// Negative native smoke: a short caller-owned buffer and an invalid index
+// must not mutate either output slice.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    ui_list(20, 0, 0, 260, 120, 0x111827u32, 0xFFFFFFu32)
+    ui_list_item(20, "Focus")
+
+    var output: [UInt8; 2] = [91u8, 92u8]
+    var length: [UIntSize; 1] = [77usize]
+    let short: Bool = ui_list_read_item_exact(20, 0, output, length)
+    if short { return 1 }
+    if output[0] != 91u8 { return 2 }
+    if output[1] != 92u8 { return 3 }
+    if length[0] != 77usize { return 4 }
+
+    let invalid: Bool = ui_list_read_item_exact(20, 4, output, length)
+    if invalid { return 5 }
+    if output[0] != 91u8 { return 6 }
+    if output[1] != 92u8 { return 7 }
+    if length[0] != 77usize { return 8 }
+    return 0
+}

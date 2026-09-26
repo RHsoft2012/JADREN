@@ -1,0 +1,287 @@
+module app_scheduler_snapshot.main
+// The scheduler snapshot is deterministic, caller-owned and transactional on
+// load. It can be written through the existing atomic file APIs by the caller.
+fn main() -> Int32 {
+    app_scheduler_clear()
+    if ! app_scheduler_set(7,
+    300i64,
+    60u64) {
+        return 1
+    }
+    if ! app_scheduler_set(2,
+    100i64,
+    0u64) {
+        return 2
+    }
+    if ! app_scheduler_set(5,
+    100i64,
+    20u64) {
+        return 3
+    }
+    var snapshot:[UInt8;
+    68] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    ]
+    var snapshot_length:[UIntSize;
+    1] =[0usize]
+    if ! app_scheduler_write_exact(snapshot,
+    snapshot_length) {
+        return 4
+    }
+    if snapshot_length[0] != 68usize {
+        return 5
+    }
+    if snapshot[0] != 74u8 {
+        return 6
+    }
+    if snapshot[1] != 68u8 {
+        return 7
+    }
+    if snapshot[2] != 83u8 {
+        return 8
+    }
+    if snapshot[3] != 49u8 {
+        return 9
+    }
+    if snapshot[4] != 3u8 {
+        return 10
+    }
+    if snapshot[8] != 2u8 {
+        return 11
+    }
+    if snapshot[28] != 5u8 {
+        return 12
+    }
+    if snapshot[48] != 7u8 {
+        return 13
+    }
+    app_scheduler_clear()
+    if app_scheduler_count() != 0usize {
+        return 14
+    }
+    if ! app_scheduler_load_exact(snapshot,
+    snapshot_length[0]) {
+        return 15
+    }
+    if app_scheduler_count() != 3usize {
+        return 16
+    }
+    var next_due:[Int64;
+    1] =[0i64]
+    var has_due:[Bool;
+    1] =[false]
+    if ! app_scheduler_next_due_exact(next_due,
+    has_due) {
+        return 17
+    }
+    if ! has_due[0] {
+        return 18
+    }
+    if next_due[0] != 100i64 {
+        return 19
+    }
+    if ! app_scheduler_set(9,
+    400i64,
+    0u64) {
+        return 20
+    }
+    var malformed:[UInt8;
+    68] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    ]
+    var index: UIntSize = 0usize
+    while index<snapshot_length[0] {
+        malformed[index] = snapshot[index]
+        index = index + 1usize
+    }
+    malformed[0] = 88u8
+    if app_scheduler_load_exact(malformed,
+    snapshot_length[0]) {
+        return 21
+    }
+    if app_scheduler_count() != 4usize {
+        return 22
+    }
+    malformed[0] = 74u8
+    malformed[28] = malformed[8]
+    malformed[29] = malformed[9]
+    malformed[30] = malformed[10]
+    malformed[31] = malformed[11]
+    if app_scheduler_load_exact(malformed,
+    snapshot_length[0]) {
+        return 23
+    }
+    if app_scheduler_count() != 4usize {
+        return 24
+    }
+    if app_scheduler_load_exact(snapshot,
+    snapshot_length[0] - 1usize) {
+        return 25
+    }
+    if app_scheduler_count() != 4usize {
+        return 26
+    }
+    var short_output:[UInt8;
+    16] =[170u8,
+    170u8,
+    170u8,
+    170u8,
+    170u8,
+    170u8,
+    170u8,
+    170u8,
+    170u8,
+    170u8,
+    170u8,
+    170u8,
+    170u8,
+    170u8,
+    170u8,
+    170u8]
+    var short_length:[UIntSize;
+    1] =[77usize]
+    if app_scheduler_write_exact(short_output,
+    short_length) {
+        return 27
+    }
+    if short_length[0] != 77usize {
+        return 28
+    }
+    if short_output[0] != 170u8 {
+        return 29
+    }
+    app_scheduler_clear()
+    return 0
+}

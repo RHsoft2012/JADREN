@@ -1,0 +1,297 @@
+module app_json_file_import_if_revision_project.main
+import jadren.app.list
+import jadren.app.table
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    file_delete("target/app-json-file-import-if-revision-list.json")
+    file_delete("target/app-json-file-import-if-revision-list.tmp")
+    file_delete("target/app-json-file-import-if-revision-table.json")
+    file_delete("target/app-json-file-import-if-revision-table.tmp")
+    app_list_clear(0)
+    if ! app_list_push_text(0,
+    "Original") {
+        return 1
+    }
+    if ! app_list_export_json_file_durable(0,
+    "target/app-json-file-import-if-revision-list.json",
+    "target/app-json-file-import-if-revision-list.tmp"
+    ) {
+        return 2
+    }
+    let stale_list: UInt64 = app_data_revision()
+    if ! app_list_set_text(0,
+    0,
+    "Changed") {
+        return 3
+    }
+    if app_list_import_json_file_if_revision(0,
+    "target/app-json-file-import-if-revision-list.json",
+    stale_list
+    ) {
+        return 4
+    }
+    var value:[UInt8;
+    16] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8
+    ]
+    var value_length:[UIntSize;
+    1] =[0usize]
+    if ! app_list_read_text_exact(0,
+    0,
+    value,
+    value_length) {
+        return 5
+    }
+    if value_length[0] != 7usize {
+        return 6
+    }
+    if value[0] != 67u8 {
+        return 7
+    }
+    let current_list: UInt64 = app_data_revision()
+    if ! app_list_import_json_file_if_revision(0,
+    "target/app-json-file-import-if-revision-list.json",
+    current_list
+    ) {
+        return 8
+    }
+    if ! app_list_read_text_exact(0,
+    0,
+    value,
+    value_length) {
+        return 9
+    }
+    if value_length[0] != 8usize {
+        return 10
+    }
+    if value[0] != 79u8 {
+        return 11
+    }
+    let model_stale_list: UInt64 = app_data_revision()
+    if ! app_list_set_text(0,
+    0,
+    "ModelChanged") {
+        return 52
+    }
+    if list.import_json_file_if_model_revision(0,
+    "target/app-json-file-import-if-revision-list.json",
+    model_stale_list
+    ) {
+        return 53
+    }
+    if ! app_list_read_text_exact(0,
+    0,
+    value,
+    value_length) {
+        return 54
+    }
+    if value_length[0] != 12usize {
+        return 55
+    }
+    if value[0] != 77u8 {
+        return 56
+    }
+    let model_current_list: UInt64 = app_data_revision()
+    if ! list.import_json_file_if_model_revision(0,
+    "target/app-json-file-import-if-revision-list.json",
+    model_current_list
+    ) {
+        return 57
+    }
+    if ! app_list_read_text_exact(0,
+    0,
+    value,
+    value_length) {
+        return 58
+    }
+    if value_length[0] != 8usize {
+        return 59
+    }
+    if value[0] != 79u8 {
+        return 60
+    }
+    if file_write_text("target/app-json-file-import-if-revision-list.json",
+    "[") != 1usize {
+        return 12
+    }
+    let malformed_list: UInt64 = app_data_revision()
+    if app_list_import_json_file_if_revision(0,
+    "target/app-json-file-import-if-revision-list.json",
+    malformed_list
+    ) {
+        return 13
+    }
+    if ! app_list_read_text_exact(0,
+    0,
+    value,
+    value_length) {
+        return 14
+    }
+    if value_length[0] != 8usize {
+        return 15
+    }
+    if value[0] != 79u8 {
+        return 16
+    }
+    app_table_clear(1)
+    if ! app_table_set_column_name(1,
+    0,
+    "Value") {
+        return 17
+    }
+    if ! app_table_append_row(1) {
+        return 18
+    }
+    if ! app_table_set_cell(1,
+    0,
+    0,
+    "Original") {
+        return 19
+    }
+    if ! app_table_export_json_file_durable(1,
+    "target/app-json-file-import-if-revision-table.json",
+    "target/app-json-file-import-if-revision-table.tmp"
+    ) {
+        return 20
+    }
+    let stale_table: UInt64 = app_data_revision()
+    if ! app_table_set_cell(1,
+    0,
+    0,
+    "Changed") {
+        return 21
+    }
+    if app_table_import_json_file_if_revision(1,
+    "target/app-json-file-import-if-revision-table.json",
+    stale_table
+    ) {
+        return 22
+    }
+    if ! app_table_read_cell_exact(1,
+    0,
+    0,
+    value,
+    value_length) {
+        return 23
+    }
+    if value_length[0] != 7usize {
+        return 24
+    }
+    if value[0] != 67u8 {
+        return 25
+    }
+    let current_table: UInt64 = app_data_revision()
+    if ! app_table_import_json_file_if_revision(1,
+    "target/app-json-file-import-if-revision-table.json",
+    current_table
+    ) {
+        return 26
+    }
+    if ! app_table_read_cell_exact(1,
+    0,
+    0,
+    value,
+    value_length) {
+        return 27
+    }
+    if value_length[0] != 8usize {
+        return 28
+    }
+    if value[0] != 79u8 {
+        return 29
+    }
+    let model_stale_table: UInt64 = app_data_revision()
+    if ! app_table_set_cell(1,
+    0,
+    0,
+    "ModelChanged") {
+        return 61
+    }
+    if table.import_json_file_if_model_revision(1,
+    "target/app-json-file-import-if-revision-table.json",
+    model_stale_table
+    ) {
+        return 62
+    }
+    if ! app_table_read_cell_exact(1,
+    0,
+    0,
+    value,
+    value_length) {
+        return 63
+    }
+    if value_length[0] != 12usize {
+        return 64
+    }
+    if value[0] != 77u8 {
+        return 65
+    }
+    let model_current_table: UInt64 = app_data_revision()
+    if ! table.import_json_file_if_model_revision(1,
+    "target/app-json-file-import-if-revision-table.json",
+    model_current_table
+    ) {
+        return 66
+    }
+    if ! app_table_read_cell_exact(1,
+    0,
+    0,
+    value,
+    value_length) {
+        return 67
+    }
+    if value_length[0] != 8usize {
+        return 68
+    }
+    if value[0] != 79u8 {
+        return 69
+    }
+    if file_write_text("target/app-json-file-import-if-revision-table.json",
+    "{") != 1usize {
+        return 30
+    }
+    let malformed_table: UInt64 = app_data_revision()
+    if app_table_import_json_file_if_revision(1,
+    "target/app-json-file-import-if-revision-table.json",
+    malformed_table
+    ) {
+        return 31
+    }
+    if ! app_table_read_cell_exact(1,
+    0,
+    0,
+    value,
+    value_length) {
+        return 32
+    }
+    if value_length[0] != 8usize {
+        return 33
+    }
+    if value[0] != 79u8 {
+        return 34
+    }
+    file_delete("target/app-json-file-import-if-revision-list.json")
+    file_delete("target/app-json-file-import-if-revision-list.tmp")
+    file_delete("target/app-json-file-import-if-revision-table.json")
+    file_delete("target/app-json-file-import-if-revision-table.tmp")
+    app_list_clear(0)
+    app_table_clear(1)
+    return 0
+}

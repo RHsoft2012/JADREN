@@ -1,0 +1,222 @@
+module app_asset_buffer_project.main
+import jadren.app.assets.AssetKind
+import jadren.app.assets.AssetStatus
+import jadren.app.assets.configure
+import jadren.app.assets.count
+import jadren.app.assets.export_json_exact_buffer
+import jadren.app.assets.find
+import jadren.app.assets.restore_json_exact_buffer
+import jadren.app.assets.restore_json_exact_buffer_if_model_revision
+import jadren.app.assets.restore_json_memory_exact_if_model_revision
+import jadren.app.assets.upsert
+import jadren.app.data.revision
+import jadren.app.table.clear
+import jadren.app.table.read_named_uint_exact
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    let created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(1024usize)
+    match created {
+        Error(error) => {
+            status = error
+        }
+        Ok(payload) => {
+            if ! buffer_resize(payload, 1024usize) {
+                status = -1i32
+            }
+            if ! configure(0) {
+                status = 1
+            }
+            let row: Int32 = upsert(0,
+            5001i64,
+            AssetKind.Prefab,
+            "Assets/Player.prefab",
+            4096u64,
+            1700000000000000000u64,
+            AssetStatus.Ready)
+            if status == 0 {
+                if row<0i32 {
+                    status = 2
+                }
+            }
+            var length:[UIntSize;
+            1] =[999usize]
+            if status == 0 {
+                if ! export_json_exact_buffer(0,
+                payload,
+                1024usize,
+                length) {
+                    status = 3
+                }
+            }
+            let snapshot_length: UIntSize = length[0]
+            if status == 0 {
+                if snapshot_length == 0usize {
+                    status = 4
+                }
+            }
+            var guarded_size:[UInt64;
+            1] =[0u64]
+            let stale_restore_revision: UInt64 = revision()
+            if status == 0 {
+                if upsert(0,
+                5001i64,
+                AssetKind.Prefab,
+                "Assets/Player.prefab",
+                8193u64,
+                1700000000000000000u64,
+                AssetStatus.Ready) < 0i32 {
+                    status = 52
+                }
+            }
+            if status == 0 {
+                if restore_json_memory_exact_if_model_revision(0,
+                buffer_slice(payload,
+                0usize,
+                snapshot_length),
+                snapshot_length,
+                stale_restore_revision) {
+                    status = 53
+                }
+            }
+            if status == 0 {
+                let guarded_row: Int32 = find(0,
+                5001i64)
+                if ! read_named_uint_exact(0,
+                guarded_row,
+                "size",
+                guarded_size) {
+                    status = 54
+                }
+            }
+            if status == 0 {
+                if guarded_size[0] != 8193u64 {
+                    status = 55
+                }
+            }
+            let current_restore_revision: UInt64 = revision()
+            if status == 0 {
+                if ! restore_json_exact_buffer_if_model_revision(0,
+                payload,
+                snapshot_length,
+                current_restore_revision) {
+                    status = 56
+                }
+            }
+            if status == 0 {
+                let restored_row: Int32 = find(0,
+                5001i64)
+                if ! read_named_uint_exact(0,
+                restored_row,
+                "size",
+                guarded_size) {
+                    status = 57
+                }
+            }
+            if status == 0 {
+                if guarded_size[0] != 4096u64 {
+                    status = 58
+                }
+            }
+            if status == 0 {
+                length[0] = 501usize
+                if export_json_exact_buffer(0,
+                payload,
+                1025usize,
+                length) {
+                    status = 50
+                }
+            }
+            if status == 0 {
+                if length[0] != 501usize {
+                    status = 51
+                }
+            }
+            if status == 0 {
+                clear(0)
+                if ! restore_json_exact_buffer(0,
+                payload,
+                snapshot_length) {
+                    status = 5
+                }
+            }
+            if status == 0 {
+                if count(0) != 1 {
+                    status = 6
+                }
+            }
+            if status == 0 {
+                if find(0,
+                5001i64) < 0i32 {
+                    status = 7
+                }
+            }
+            var size:[UInt64;
+            1] =[0u64]
+            if status == 0 {
+                let restored: Int32 = find(0,
+                5001i64)
+                if ! read_named_uint_exact(0,
+                restored,
+                "size",
+                size) {
+                    status = 8
+                }
+            }
+            if status == 0 {
+                if size[0] != 4096u64 {
+                    status = 9
+                }
+            }
+            // Invalid JSON must leave the restored catalog unchanged.
+            let before_malformed: Int32 = count(0)
+            if status == 0 {
+                payload[0] = 120u8
+                if restore_json_exact_buffer(0,
+                payload,
+                snapshot_length) {
+                    status = 10
+                }
+            }
+            if status == 0 {
+                if count(0) != before_malformed {
+                    status = 11
+                }
+            }
+            // A prefix longer than the dynamic Buffer capacity is rejected.
+            let short_created: Result<Buffer<UInt8>,
+            Int32> = buffer_create(4usize)
+            match short_created {
+                Error(error) => {
+                    if status == 0 {
+                        status = error
+                    }
+                }
+                Ok(short) => {
+                    if ! buffer_resize(short, 4usize) {
+                        if status == 0 { status = 12 }
+                    }
+                    if status == 0 {
+                        if restore_json_exact_buffer(0,
+                        short,
+                        snapshot_length) {
+                            status = 12
+                        }
+                    }
+                    if status == 0 {
+                        if count(0) != before_malformed {
+                            status = 13
+                        }
+                    }
+                }
+            }
+            clear(0)
+        }
+    }
+    clear(0)
+    return status
+}

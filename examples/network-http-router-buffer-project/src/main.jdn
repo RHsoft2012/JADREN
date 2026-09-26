@@ -1,0 +1,109 @@
+module network_http_router_buffer_project.main
+
+import jadren.network.router.add_exact
+import jadren.network.router.clear
+import jadren.network.router.count
+import jadren.network.router.respond_buffer
+import jadren.network.router.respond_chunked_buffer
+import jadren.network.router.respond_chunked_prefix_buffer
+import jadren.network.router.respond_prefix_buffer
+
+fn append_frame(target: write Buffer<UInt8>, frame: read Slice<UInt8>, frame_length: UIntSize) -> Bool {
+    var index: UIntSize = 0usize
+    while index < frame_length {
+        if !buffer_append(target, frame[index]) { return false }
+        index = index + 1usize
+    }
+    return true
+}
+
+fn append_body(target: write Buffer<UInt8>) -> Bool {
+    var body: [UInt8; 7] = [112u8, 111u8, 110u8, 103u8, 45u8, 106u8, 100u8]
+    return append_frame(target, body, 7usize)
+}
+
+fn append_request(target: write Buffer<UInt8>) -> Bool {
+    var request: [UInt8; 37] = [71u8, 69u8, 84u8, 32u8, 47u8, 98u8, 117u8, 102u8, 102u8, 101u8, 114u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 13u8, 10u8, 13u8, 10u8]
+    return append_frame(target, request, 37usize)
+}
+
+fn run(
+    body: write Buffer<UInt8>,
+    request: write Buffer<UInt8>,
+    output: write Buffer<UInt8>,
+    short_output: write Buffer<UInt8>,
+) -> Int32 {
+    clear()
+    if !append_body(body) { return 1 }
+    if count() != 0usize { return 2 }
+    if !add_exact("GET", "/buffer", 200u16, "text/plain", buffer_slice(body, 0usize, 7usize), 7usize) { return 3 }
+    if count() != 1usize { return 4 }
+    if !append_request(request) { return 5 }
+    if !buffer_resize(request, 64usize) { return 6 }
+    request[37] = 90u8
+    request[38] = 90u8
+    if !buffer_resize(output, 128usize) { return 7 }
+    if !buffer_resize(short_output, 16usize) { return 8 }
+    output[0] = 91u8
+    var response_length: UIntSize = respond_prefix_buffer(request, 65usize, output, 128usize)
+    if response_length != 0usize { return 9 }
+    if output[0] != 91u8 { return 10 }
+    output[0] = 91u8
+    response_length = respond_prefix_buffer(request, 37usize, output, 129usize)
+    if response_length != 0usize { return 11 }
+    if output[0] != 91u8 { return 12 }
+    short_output[0] = 91u8
+    response_length = respond_prefix_buffer(request, 37usize, short_output, 16usize)
+    if response_length != 0usize { return 13 }
+    if short_output[0] != 91u8 { return 14 }
+    response_length = respond_prefix_buffer(request, 37usize, output, 128usize)
+    if response_length != 90usize { return 15 }
+    if output[0] != 72u8 { return 16 }
+    if output[9] != 50u8 { return 17 }
+    if output[83] != 112u8 { return 18 }
+    if output[89] != 100u8 { return 19 }
+    if !buffer_resize(request, 37usize) { return 20 }
+    response_length = respond_buffer(request, output)
+    if response_length != 90usize { return 21 }
+    response_length = respond_chunked_prefix_buffer(request, 38usize, output, 128usize)
+    if response_length != 0usize { return 22 }
+    if output[0] != 72u8 { return 23 }
+    response_length = respond_chunked_prefix_buffer(request, 37usize, output, 128usize)
+    if response_length != 109usize { return 24 }
+    if output[0] != 72u8 { return 25 }
+    if output[9] != 50u8 { return 26 }
+    if output[92] != 55u8 { return 27 }
+    if output[95] != 112u8 { return 28 }
+    if output[101] != 100u8 { return 29 }
+    response_length = respond_chunked_buffer(request, output)
+    if response_length != 109usize { return 30 }
+    return 0
+}
+
+fn main() -> Int32 {
+    let body_created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    var status: Int32 = 0i32
+    match body_created {
+        Error(error) => { status = error }
+        Ok(body) => {
+            let request_created: Result<Buffer<UInt8>, Int32> = buffer_create(64usize)
+            match request_created {
+                Error(error) => { status = error }
+                Ok(request) => {
+                    let output_created: Result<Buffer<UInt8>, Int32> = buffer_create(128usize)
+                    match output_created {
+                        Error(error) => { status = error }
+                        Ok(output) => {
+                            let short_created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+                            match short_created {
+                                Error(error) => { status = error }
+                                Ok(short_output) => { status = run(body, request, output, short_output) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return status
+}

@@ -1,0 +1,63 @@
+module examples.network_http_facade_project
+
+import jadren.network.http.response_body_prefix
+import jadren.network.http.response_header_prefix
+import jadren.network.http.response_status_prefix
+import jadren.network.http.request_host_matches
+import jadren.network.http.request_host_matches_any
+import jadren.network.http.write_response
+import jadren.network.http.write_response_ex
+import jadren.network.router.add_prefix
+import jadren.network.router.clear
+import jadren.network.router.count
+import jadren.network.router.remove_prefix
+import jadren.network.router.respond_host
+import jadren.network.router.respond_host_any
+
+fn main() -> Int32 {
+    var body: [UInt8; 2] = [79u8, 75u8]
+    var response: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var parsed_body: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var connection: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+
+    let written: UIntSize = write_response(200u16, "text/plain", body, response)
+    if written == 0usize { return 1 }
+    if response_status_prefix(response, written) != 200u16 { return 2 }
+    if (response_body_prefix(response, written, parsed_body) as Int32) != 2 { return 3 }
+    if parsed_body[0] != 79u8 { return 4 }
+    if parsed_body[1] != 75u8 { return 5 }
+
+    let keep_written: UIntSize = write_response_ex(200u16, "text/plain", body, true, response)
+    if keep_written == 0usize { return 6 }
+    if response_status_prefix(response, keep_written) != 200u16 { return 7 }
+    if (response_header_prefix(response, keep_written, "Connection", connection) as Int32) == 0 { return 8 }
+    if connection[0] != 107u8 { return 9 }
+
+    clear()
+    if !add_prefix("GET", "/api/", 200u16, "text/plain", body) { return 10 }
+    if count() != 1usize { return 11 }
+    if !remove_prefix("GET", "/api/") { return 12 }
+    if count() != 0usize { return 13 }
+
+    clear()
+    if !add_prefix("GET", "/site/", 200u16, "text/plain", body) { return 14 }
+    var site_request: [UInt8; 47] = [71u8, 69u8, 84u8, 32u8, 47u8, 115u8, 105u8, 116u8, 101u8, 47u8, 104u8, 111u8, 109u8, 101u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 83u8, 73u8, 84u8, 69u8, 46u8, 69u8, 88u8, 65u8, 77u8, 80u8, 76u8, 69u8, 13u8, 10u8, 13u8, 10u8]
+    if !request_host_matches(site_request, "site.example") { return 15 }
+    if !request_host_matches(site_request, "SITE.EXAMPLE") { return 16 }
+    let site_written: UIntSize = respond_host(site_request, "site.example", response)
+    if site_written == 0usize { return 17 }
+    if response_status_prefix(response, site_written) != 200u16 { return 18 }
+    if request_host_matches(site_request, "api.example") { return 19 }
+    if respond_host(site_request, "api.example", response) != 0usize { return 20 }
+    var missing_host: [UInt8; 27] = [71u8, 69u8, 84u8, 32u8, 47u8, 115u8, 105u8, 116u8, 101u8, 47u8, 104u8, 111u8, 109u8, 101u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 13u8, 10u8]
+    if request_host_matches(missing_host, "site.example") { return 21 }
+    var duplicate_host: [UInt8; 66] = [71u8, 69u8, 84u8, 32u8, 47u8, 115u8, 105u8, 116u8, 101u8, 47u8, 104u8, 111u8, 109u8, 101u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 115u8, 105u8, 116u8, 101u8, 46u8, 101u8, 120u8, 97u8, 109u8, 112u8, 108u8, 101u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 97u8, 112u8, 105u8, 46u8, 101u8, 120u8, 97u8, 109u8, 112u8, 108u8, 101u8, 13u8, 10u8, 13u8, 10u8]
+    if request_host_matches(duplicate_host, "site.example") { return 22 }
+    var host_allowlist: [UInt8; 24] = [115u8, 105u8, 116u8, 101u8, 46u8, 101u8, 120u8, 97u8, 109u8, 112u8, 108u8, 101u8, 10u8, 97u8, 112u8, 105u8, 46u8, 101u8, 120u8, 97u8, 109u8, 112u8, 108u8, 101u8]
+    if !request_host_matches_any(site_request, host_allowlist, 24usize) { return 23 }
+    let any_written: UIntSize = respond_host_any(site_request, host_allowlist, 24usize, response)
+    if any_written == 0usize { return 24 }
+    if response_status_prefix(response, any_written) != 200u16 { return 25 }
+    if request_host_matches_any(site_request, host_allowlist, 11usize) { return 26 }
+    return 0
+}

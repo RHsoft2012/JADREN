@@ -1,0 +1,31 @@
+module examples.invalid.stdlib_buffer_owning_deep_nested_enum_too_deep
+
+@repr(C)
+enum Leaf {
+    Text(OwnedString)
+}
+
+@repr(C)
+enum Level6 { Nested(Leaf) }
+@repr(C)
+enum Level5 { Nested(Level6) }
+@repr(C)
+enum Level4 { Nested(Level5) }
+@repr(C)
+enum Level3 { Nested(Level4) }
+@repr(C)
+enum Level2 { Nested(Level3) }
+@repr(C)
+enum Level1 { Nested(Level2) }
+@repr(C)
+enum Outer { Nested(Level1) }
+
+fn mutate(values: write Buffer<Outer>, output: write Outer) {
+    buffer_remove_move_into(values, 0usize, output)
+    buffer_resize_move(values, 0usize)
+    buffer_clear_move(values)
+}
+
+fn main() -> Int32 {
+    return 0
+}

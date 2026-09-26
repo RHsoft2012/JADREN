@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "7b51a477d80a03df"
+
+[package]
+name = "generic-buffer-truncate-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-core"
+requirement = ""
+source = "path:../../stdlib/core"

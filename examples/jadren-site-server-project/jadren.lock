@@ -1,0 +1,17 @@
+version = 1
+manifest_fingerprint = "f94bd3b198f7b135"
+
+[package]
+name = "jadren-site-server-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

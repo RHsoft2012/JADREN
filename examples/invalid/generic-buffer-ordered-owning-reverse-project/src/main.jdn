@@ -1,0 +1,19 @@
+module generic_buffer_ordered_owning_reverse.main
+
+import jadren.core.collections.reverse
+
+fn reverse_ordered<T: Ordered>(values: write Buffer<T>) -> Bool {
+    return reverse(values)
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            if reverse_ordered(values) { result_code = 1 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

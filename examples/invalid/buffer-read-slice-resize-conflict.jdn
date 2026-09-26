@@ -1,0 +1,15 @@
+module invalid.buffer_read_slice_resize_conflict
+
+fn main() -> Int32 {
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(2usize)
+    var status: Int32 = 0
+    match created {
+        Ok(values) => {
+            if !buffer_resize(values, 2usize) { status = 1 }
+            let view: read Slice<UInt8> = buffer_slice(values, 0usize, 2usize)
+            if buffer_resize(values, 0usize) { status = view[1usize] as Int32 }
+        }
+        Error(error) => { status = error }
+    }
+    return status
+}

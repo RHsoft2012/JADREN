@@ -1,0 +1,11 @@
+module selfhost.typed_statement_assignment_float64_same_module_five_arg_call_rejected_trailing_separator;
+
+// JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS
+fn local_value() -> Float64 {
+    let first: Float64 = helper(1.0f64, 2.0f64, 3.0f64, 4.0f64, 5.0f64,);
+    return first;
+}
+
+fn helper(first: Float64, second: Float64, third: Float64, fourth: Float64, fifth: Float64) -> Float64 {
+    return first + second + third + fourth + fifth;
+}

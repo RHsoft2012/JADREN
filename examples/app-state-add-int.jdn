@@ -1,0 +1,54 @@
+module app_state_add_int.main
+fn main() -> Int32 {
+    app_state_clear()
+    if ! app_state_add_int("downloads",
+    1i64) {
+        return 1
+    }
+    if app_state_get_int("downloads") != 1i64 {
+        return 2
+    }
+    if ! app_state_add_int("downloads",
+    4i64) {
+        return 3
+    }
+    if ! app_state_add_int("downloads",
+    - 2i64) {
+        return 4
+    }
+    if app_state_get_int("downloads") != 3i64 {
+        return 5
+    }
+    var output:[Int64;
+    1] =[99i64]
+    if ! app_state_read_int("downloads",
+    output) {
+        return 6
+    }
+    if output[0] != 3i64 {
+        return 7
+    }
+    if ! app_state_set_text("wrong_kind",
+    "text") {
+        return 8
+    }
+    if app_state_add_int("wrong_kind",
+    1i64) {
+        return 9
+    }
+    if app_state_get_int("wrong_kind") != 0i64 {
+        return 10
+    }
+    if ! app_state_set_int("maximum",
+    9223372036854775807i64) {
+        return 11
+    }
+    if app_state_add_int("maximum",
+    1i64) {
+        return 12
+    }
+    if app_state_get_int("maximum") != 9223372036854775807i64 {
+        return 13
+    }
+    return 0
+}

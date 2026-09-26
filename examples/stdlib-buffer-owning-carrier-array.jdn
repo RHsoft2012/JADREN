@@ -1,0 +1,58 @@
+module examples.stdlib_buffer_owning_carrier_array
+
+// A direct Buffer element may contain a fixed array of tagged owning strings.
+// The field table must inspect each Option tag at its own inline offset before
+// remove, resize, or clear cleanup.
+fn main() -> Int32 {
+    let values_created: Result<Buffer<[Option<OwnedString>; 2]>, Int32> = buffer_create(0usize)
+    let first_created: Result<OwnedString, Int32> = string_owned_from("first")
+    let second_created: Result<OwnedString, Int32> = string_owned_from("second")
+    var result_code: Int32 = 0
+
+    match values_created {
+        Ok(values) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            let first_item: [Option<OwnedString>; 2] = [Some(first), None]
+                            let second_item: [Option<OwnedString>; 2] = [None, Some(second)]
+                            if !buffer_append(values, first_item) { result_code = 1 }
+                            if !buffer_append(values, second_item) { result_code = 2 }
+                            if buffer_length(values) != 2usize { result_code = 3 }
+                            if !buffer_remove_drop(values, 0usize) { result_code = 4 }
+                            if buffer_length(values) != 1usize { result_code = 5 }
+
+                            let third_created: Result<OwnedString, Int32> = string_owned_from("third")
+                            let fourth_created: Result<OwnedString, Int32> = string_owned_from("fourth")
+                            match third_created {
+                                Ok(third) => {
+                                    match fourth_created {
+                                        Ok(fourth) => {
+                                            let final_item: [Option<OwnedString>; 2] = [Some(third), Some(fourth)]
+                                            if !buffer_append(values, final_item) { result_code = 6 }
+                                            let grown: Int32 = buffer_resize_move_status(values, 3usize)
+                                            if grown != 0 { result_code = 7 }
+                                            let cleared: Bool = buffer_clear_move(values)
+                                            if !cleared { result_code = 8 }
+                                            if buffer_length(values) != 0usize { result_code = 9 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                            let status: Int32 = buffer_remove_drop_status(values, 0usize)
+                            if status != -20 { result_code = 10 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

@@ -1,0 +1,110 @@
+module generic_buffer_move_package.main
+import jadren.core.collections.append_move
+import jadren.core.collections.append_move_status
+import jadren.core.collections.append_move_grow
+import jadren.core.collections.append_move_grow_status
+import jadren.core.collections.clear_move
+import jadren.core.collections.create
+import jadren.core.collections.insert_move_from_status
+import jadren.core.collections.length
+fn main() -> Int32 {
+    let outer_created: Result<DynamicArray<Buffer<Int32>>,
+    Int32> = create(0usize)
+    let first_created: Result<Buffer<Int32>,
+    Int32> = create(0usize)
+    let second_created: Result<Buffer<Int32>,
+    Int32> = create(0usize)
+    let third_created: Result<Buffer<Int32>,
+    Int32> = create(0usize)
+    let fourth_created: Result<Buffer<Int32>,
+    Int32> = create(0usize)
+    var result_code: Int32 = 0
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            match third_created {
+                                Ok(third) => {
+                                    match fourth_created {
+                                        Ok(fourth) => {
+                                            if ! append_move(first,
+                                            10) {
+                                                result_code = 1
+                                            }
+                                            if append_move_status(second,
+                                            20) != 0 {
+                                                result_code = 2
+                                            }
+                                            if append_move_status(third,
+                                            30) != 0 {
+                                                result_code = 3
+                                            }
+                                            if ! append_move_grow(outer,
+                                            first) {
+                                                result_code = 4
+                                            }
+                                            if insert_move_from_status(outer,
+                                            0usize,
+                                            second) != 0 {
+                                                result_code = 5
+                                            }
+                                            if insert_move_from_status(outer,
+                                            99usize,
+                                            third) != - 20 {
+                                                result_code = 6
+                                            }
+                                            if append_move_status(fourth,
+                                            40) != 0 {
+                                                result_code = 7
+                                            }
+                                            if append_move_grow_status(outer,
+                                            fourth) != 0 {
+                                                result_code = 7
+                                            }
+                                            if length(outer) != 3usize {
+                                                result_code = 8
+                                            }
+                                            if outer[0][0] != 20 {
+                                                result_code = 9
+                                            }
+                                            if outer[1][0] != 10 {
+                                                result_code = 10
+                                            }
+                                            if outer[2][0] != 40 {
+                                                result_code = 11
+                                            }
+                                            if ! clear_move(outer) {
+                                                result_code = 12
+                                            }
+                                            if length(outer) != 0usize {
+                                                result_code = 13
+                                            }
+                                        }
+                                        Error(status) => {
+                                            result_code = status
+                                        }
+                                    }
+                                }
+                                Error(status) => {
+                                    result_code = status
+                                }
+                            }
+                        }
+                        Error(status) => {
+                            result_code = status
+                        }
+                    }
+                }
+                Error(status) => {
+                    result_code = status
+                }
+            }
+        }
+        Error(status) => {
+            result_code = status
+        }
+    }
+    return result_code
+}

@@ -1,0 +1,92 @@
+module app_json_import_if_revision_project.main
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_list_clear(0)
+    if ! app_list_push_text(0, "Original") { return 1 }
+
+    var list_json: [UInt8; 17] = [
+        91u8, 34u8, 79u8, 109u8, 101u8, 103u8, 97u8, 34u8,
+        44u8, 34u8, 65u8, 108u8, 112u8, 104u8, 97u8, 34u8, 93u8
+    ]
+    let stale_list: UInt64 = app_data_revision()
+    if ! app_list_set_text(0, 0, "Changed") { return 2 }
+    if app_list_import_json_exact_if_revision(0, list_json, 17usize, stale_list) {
+        return 3
+    }
+
+    var output: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var output_length: [UIntSize; 1] = [0usize]
+    if ! app_list_read_text_exact(0, 0, output, output_length) { return 4 }
+    if output_length[0] != 7usize { return 5 }
+    if output[0] != 67u8 { return 5 }
+
+    let current_list: UInt64 = app_data_revision()
+    if ! app_list_import_json_exact_if_revision(0, list_json, 17usize, current_list) {
+        return 6
+    }
+    if app_list_count(0) != 2 { return 7 }
+    if ! app_list_read_text_exact(0, 0, output, output_length) { return 8 }
+    if output_length[0] != 5usize { return 9 }
+    if output[0] != 79u8 { return 9 }
+
+    var bad_json: [UInt8; 1] = [91u8]
+    let before_bad_list: UInt64 = app_data_revision()
+    if app_list_import_json_exact_if_revision(0, bad_json, 1usize, before_bad_list) {
+        return 10
+    }
+    if app_list_count(0) != 2 { return 11 }
+
+    app_table_clear(1)
+    if ! app_table_set_column_name(1, 0, "Value") { return 12 }
+    if ! app_table_append_row(1) { return 13 }
+    if ! app_table_set_cell(1, 0, 0, "Original") { return 14 }
+
+    var table_json: [UInt8; 64] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var table_length: [UIntSize; 1] = [0usize]
+    if ! app_table_export_json_exact(1, table_json, table_length) { return 15 }
+    let stale_table: UInt64 = app_data_revision()
+    if ! app_table_set_cell(1, 0, 0, "Changed") { return 16 }
+    if app_table_import_json_exact_if_revision(1, table_json, table_length[0], stale_table) {
+        return 17
+    }
+    if ! app_table_read_cell_exact(1, 0, 0, output, output_length) { return 18 }
+    if output_length[0] != 7usize { return 19 }
+    if output[0] != 67u8 { return 19 }
+
+    let current_table: UInt64 = app_data_revision()
+    if ! app_table_import_json_exact_if_revision(1, table_json, table_length[0], current_table) {
+        return 20
+    }
+    if ! app_table_read_cell_exact(1, 0, 0, output, output_length) { return 21 }
+    if output_length[0] != 8usize { return 22 }
+    if output[0] != 79u8 { return 22 }
+
+    let before_bad_table: UInt64 = app_data_revision()
+    if app_table_import_json_exact_if_revision(1, bad_json, 1usize, before_bad_table) {
+        return 23
+    }
+    if ! app_table_read_cell_exact(1, 0, 0, output, output_length) { return 24 }
+    if output_length[0] != 8usize { return 25 }
+    if output[0] != 79u8 { return 25 }
+
+    app_list_clear(0)
+    app_table_clear(1)
+    return 0
+}

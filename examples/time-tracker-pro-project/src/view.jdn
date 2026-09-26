@@ -1,9 +1,12 @@
 module time_tracker_project.view
 
-import jadren.app.input.bind_state
 import jadren.app.input.set_value
+import jadren.app.input.set_list_index
+import jadren.app.input.set_table_selected_row
 import jadren.app.ui.list_bind
 import jadren.app.ui.table_bind
+import jadren.app.state.get_int
+import jadren.app.state.set_int
 import time_tracker_project.controller.handle
 
 // The view module only projects the model into native Jadren UI controls.
@@ -14,6 +17,10 @@ pub fn on_click(event_id: Int32) -> Int32 {
 }
 
 pub fn dispatch_test() -> Bool {
+    set_table_selected_row(41, 0)
+    if !ui_dispatch_event(41) { return false }
+    set_list_index(44, 1)
+    if !ui_dispatch_event(44) { return false }
     if !ui_dispatch_event(42) { return false }
     set_value(43, "New list item")
     return ui_dispatch_event(45)
@@ -38,22 +45,30 @@ pub fn build() -> Bool {
     if !ui_app_table_column(table, 0, "Title", 360) { return false }
     if !ui_app_table_column(table, 1, "Time", 150) { return false }
     if !ui_app_table_column(table, 2, "Status", 180) { return false }
+    let retained_row: Int64 = get_int("selected_row")
     if !table_bind(table, 0, 3) { return false }
+    if !ui_app_bind_app_state(table, "selected_row") { return false }
+    if !set_int("selected_row", retained_row) { return false }
     if !ui_app_end(table_row) { return false }
     let list_row: Int32 = ui_app_row(panel, 780, 120, 0, 12, 0, 1)
     if list_row == 0 { return false }
     let list: Int32 = ui_app_list(list_row, 44, 740, 105,
         0x111827u32, 0xF8FAFCu32, 8, 0)
     if list == 0 { return false }
+    let retained_list: Int64 = get_int("selected_list_index")
     if !list_bind(list, 0) { return false }
-    if !ui_list_bind_app_state(44, "selected_list_index") { return false }
+    if !ui_app_bind_app_state(list, "selected_list_index") { return false }
+    if !set_int("selected_list_index", retained_list) { return false }
     if !ui_app_end(list_row) { return false }
     let input_row: Int32 = ui_app_row(panel, 780, 52, 0, 12, 0, 1)
     if input_row == 0 { return false }
     let input: Int32 = ui_app_text_input(input_row, "New list item", 43, 560, 40,
         0x111827u32, 0xFFFFFFu32, 8, 0)
     if input == 0 { return false }
-    bind_state(43, "draft")
+    // Keep the actual retained node handle in app_state so the controller can
+    // commit the native value through the node-ID/revision guarded boundary.
+    if !ui_app_bind_app_state_exact(input, "draft") { return false }
+    if !set_int("draft_input_node", input as Int64) { return false }
     let add: Int32 = ui_app_button(input_row, "Add item", 45, 140, 40,
         0xFFFFFFu32, 0x168EF5u32, 10, 0)
     if add == 0 { return false }

@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "ec404deedb96d299"
+
+[package]
+name = "ui-table-index-pair-if-revision-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

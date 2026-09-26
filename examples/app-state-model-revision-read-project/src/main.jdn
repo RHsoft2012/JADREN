@@ -1,0 +1,150 @@
+module app_state_model_revision_read_project.main
+
+import jadren.app.data.revision
+import jadren.app.state.clear
+import jadren.app.state.read_bool_buffer_if_model_revision
+import jadren.app.state.read_bool_if_model_revision
+import jadren.app.state.read_float_buffer_if_model_revision
+import jadren.app.state.read_float_if_model_revision
+import jadren.app.state.read_int_buffer_if_model_revision
+import jadren.app.state.read_int_if_model_revision
+import jadren.app.state.read_key_exact_buffer_if_model_revision
+import jadren.app.state.read_key_exact_if_model_revision
+import jadren.app.state.read_uint_buffer_if_model_revision
+import jadren.app.state.read_uint_if_model_revision
+import jadren.app.state.set_bool
+import jadren.app.state.set_float
+import jadren.app.state.set_int
+import jadren.app.state.set_text
+import jadren.app.state.set_uint
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear()
+    app_list_clear(0)
+    if !set_int("signed", -42i64) { return 1 }
+    if !set_uint("unsigned", 42u64) { return 2 }
+    if !set_float("ratio", 1.25f64) { return 3 }
+    if !set_bool("enabled", true) { return 4 }
+    if !set_text("name", "Jadren") { return 5 }
+
+    var signed_slice: [Int64; 1] = [9001i64]
+    var unsigned_slice: [UInt64; 1] = [9002u64]
+    var float_slice: [Float64; 1] = [9003.0f64]
+    var bool_slice: [Bool; 1] = [false]
+    var status: Int32 = 0
+    let current: UInt64 = revision()
+    if !read_int_if_model_revision("signed", signed_slice, current) { status = 6 }
+    if status == 0 { if signed_slice[0] != -42i64 { status = 7 } }
+    if status == 0 { if !read_uint_if_model_revision("unsigned", unsigned_slice, current) { status = 8 } }
+    if status == 0 { if unsigned_slice[0] != 42u64 { status = 9 } }
+    if status == 0 { if !read_float_if_model_revision("ratio", float_slice, current) { status = 10 } }
+    if status == 0 { if float_slice[0] != 1.25f64 { status = 11 } }
+    if status == 0 { if !read_bool_if_model_revision("enabled", bool_slice, current) { status = 12 } }
+    if status == 0 { if !bool_slice[0] { status = 13 } }
+
+    let signed_created: Result<Buffer<Int64>, Int32> = buffer_create(1usize)
+    let unsigned_created: Result<Buffer<UInt64>, Int32> = buffer_create(1usize)
+    let float_created: Result<Buffer<Float64>, Int32> = buffer_create(1usize)
+    let bool_created: Result<Buffer<Bool>, Int32> = buffer_create(1usize)
+    match signed_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(signed) => {
+            if status == 0 { if !buffer_resize(signed, 1usize) { status = 14 } }
+            if status == 0 { if !read_int_buffer_if_model_revision("signed", signed, 1usize, current) { status = 15 } }
+            if status == 0 { if signed[0] != -42i64 { status = 16 } }
+        }
+    }
+    match unsigned_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(unsigned) => {
+            if status == 0 { if !buffer_resize(unsigned, 1usize) { status = 17 } }
+            if status == 0 { if !read_uint_buffer_if_model_revision("unsigned", unsigned, 1usize, current) { status = 18 } }
+            if status == 0 { if unsigned[0] != 42u64 { status = 19 } }
+        }
+    }
+    match float_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(value) => {
+            if status == 0 { if !buffer_resize(value, 1usize) { status = 20 } }
+            if status == 0 { if !read_float_buffer_if_model_revision("ratio", value, 1usize, current) { status = 21 } }
+            if status == 0 { if value[0] != 1.25f64 { status = 22 } }
+        }
+    }
+    match bool_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(value) => {
+            if status == 0 { if !buffer_resize(value, 1usize) { status = 23 } }
+            if status == 0 { if !read_bool_buffer_if_model_revision("enabled", value, 1usize, current) { status = 24 } }
+            if status == 0 { if !value[0] { status = 25 } }
+        }
+    }
+
+    var key_slice: [UInt8; 16] = [201u8, 202u8, 203u8, 204u8, 205u8, 206u8, 207u8, 208u8, 209u8, 210u8, 211u8, 212u8, 213u8, 214u8, 215u8, 216u8]
+    var key_length: [UIntSize; 1] = [901usize]
+    if status == 0 { if !read_key_exact_if_model_revision(0, key_slice, key_length, current) { status = 26 } }
+    if status == 0 { if key_length[0] != 6usize { status = 27 } }
+    if status == 0 { if key_slice[0] != 115u8 { status = 28 } }
+
+    let key_created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    match key_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(key_output) => {
+            if status == 0 { if !buffer_resize(key_output, 16usize) { status = 29 } }
+            if status == 0 { if !read_key_exact_buffer_if_model_revision(0, key_output, 16usize, key_length, current) { status = 30 } }
+            if status == 0 { if key_length[0] != 6usize { status = 31 } }
+            if status == 0 { if key_output[0] != 115u8 { status = 32 } }
+        }
+    }
+
+    let stale: UInt64 = revision()
+    if status == 0 { if !app_list_push_text(0, "changed") { status = 33 } }
+    signed_slice[0] = 301i64
+    unsigned_slice[0] = 302u64
+    float_slice[0] = 303.0f64
+    bool_slice[0] = false
+    key_slice[0] = 304u8
+    key_length[0] = 904usize
+    if status == 0 { if read_int_if_model_revision("signed", signed_slice, stale) { status = 34 } }
+    if status == 0 { if read_uint_if_model_revision("unsigned", unsigned_slice, stale) { status = 35 } }
+    if status == 0 { if read_float_if_model_revision("ratio", float_slice, stale) { status = 36 } }
+    if status == 0 { if read_bool_if_model_revision("enabled", bool_slice, stale) { status = 37 } }
+    if status == 0 { if read_key_exact_if_model_revision(0, key_slice, key_length, stale) { status = 38 } }
+    if status == 0 { if signed_slice[0] != 301i64 { status = 39 } }
+    if status == 0 { if unsigned_slice[0] != 302u64 { status = 40 } }
+    if status == 0 { if float_slice[0] != 303.0f64 { status = 41 } }
+    if status == 0 { if bool_slice[0] { status = 42 } }
+    if status == 0 { if key_slice[0] != 304u8 { status = 43 } }
+    if status == 0 { if key_length[0] != 904usize { status = 44 } }
+
+    let stale_int_created: Result<Buffer<Int64>, Int32> = buffer_create(1usize)
+    match stale_int_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(stale_int) => {
+            if status == 0 { if !buffer_resize(stale_int, 1usize) { status = 45 } }
+            if status == 0 { stale_int[0] = 405i64 }
+            if status == 0 { if read_int_buffer_if_model_revision("signed", stale_int, 1usize, stale) { status = 46 } }
+            if status == 0 { if stale_int[0] != 405i64 { status = 47 } }
+        }
+    }
+    let stale_key_created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    match stale_key_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(stale_key) => {
+            if status == 0 { if !buffer_resize(stale_key, 16usize) { status = 48 } }
+            if status == 0 { stale_key[0] = 406u8 }
+            key_length[0] = 905usize
+            if status == 0 { if read_key_exact_buffer_if_model_revision(0, stale_key, 16usize, key_length, stale) { status = 49 } }
+            if status == 0 { if stale_key[0] != 406u8 { status = 50 } }
+            if status == 0 { if key_length[0] != 905usize { status = 51 } }
+        }
+    }
+
+    clear()
+    app_list_clear(0)
+    return status
+}

@@ -1,0 +1,86 @@
+module app_state_typed_buffer_read_revision_project.main
+
+import jadren.app.state.clear
+import jadren.app.state.read_bool_buffer_if_revision
+import jadren.app.state.read_float_buffer_if_revision
+import jadren.app.state.read_int_buffer_if_revision
+import jadren.app.state.read_uint_buffer_if_revision
+import jadren.app.state.revision
+import jadren.app.state.set_bool
+import jadren.app.state.set_float
+import jadren.app.state.set_int
+import jadren.app.state.set_uint
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear()
+    if !set_int("signed", -42i64) { return 1 }
+    if !set_uint("unsigned", 42u64) { return 2 }
+    if !set_float("ratio", 1.25f64) { return 3 }
+    if !set_bool("enabled", true) { return 4 }
+
+    let signed_created: Result<Buffer<Int64>, Int32> = buffer_create(1usize)
+    let unsigned_created: Result<Buffer<UInt64>, Int32> = buffer_create(1usize)
+    let float_created: Result<Buffer<Float64>, Int32> = buffer_create(1usize)
+    let bool_created: Result<Buffer<Bool>, Int32> = buffer_create(1usize)
+    var status: Int32 = 0
+
+    match signed_created {
+        Error(error) => { status = error }
+        Ok(signed) => {
+            if !buffer_resize(signed, 1usize) { status = 5 }
+            let current: UInt64 = revision()
+            if status == 0 { if !read_int_buffer_if_revision("signed", signed, 1usize, current) { status = 6 } }
+            if status == 0 { if signed[0] != -42i64 { status = 7 } }
+            if status == 0 {
+                signed[0] = 99i64
+                if read_int_buffer_if_revision("signed", signed, 0usize, current) { status = 8 }
+            }
+            if status == 0 { if signed[0] != 99i64 { status = 9 } }
+            if status == 0 { if read_int_buffer_if_revision("unsigned", signed, 1usize, current) { status = 10 } }
+            if status == 0 { if signed[0] != 99i64 { status = 11 } }
+            let stale: UInt64 = revision()
+            if status == 0 { if !set_int("signed", -77i64) { status = 12 } }
+            if status == 0 { signed[0] = 88i64 }
+            if status == 0 { if read_int_buffer_if_revision("signed", signed, 1usize, stale) { status = 13 } }
+            if status == 0 { if signed[0] != 88i64 { status = 14 } }
+        }
+    }
+
+    match unsigned_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(unsigned) => {
+            if status == 0 { if !buffer_resize(unsigned, 1usize) { status = 15 } }
+            let current: UInt64 = revision()
+            if status == 0 { if !read_uint_buffer_if_revision("unsigned", unsigned, 1usize, current) { status = 16 } }
+            if status == 0 { if unsigned[0] != 42u64 { status = 17 } }
+        }
+    }
+
+    match float_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(value) => {
+            if status == 0 { if !buffer_resize(value, 1usize) { status = 18 } }
+            let current: UInt64 = revision()
+            if status == 0 { if !read_float_buffer_if_revision("ratio", value, 1usize, current) { status = 19 } }
+            if status == 0 { if value[0] != 1.25f64 { status = 20 } }
+        }
+    }
+
+    match bool_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(value) => {
+            if status == 0 { if !buffer_resize(value, 1usize) { status = 21 } }
+            let current: UInt64 = revision()
+            if status == 0 { if !read_bool_buffer_if_revision("enabled", value, 1usize, current) { status = 22 } }
+            if status == 0 { if !value[0] { status = 23 } }
+        }
+    }
+
+    clear()
+    return status
+}

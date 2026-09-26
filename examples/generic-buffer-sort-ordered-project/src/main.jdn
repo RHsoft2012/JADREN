@@ -1,0 +1,32 @@
+module generic_buffer_sort_ordered.main
+
+import jadren.core.collections.append
+import jadren.core.collections.capacity
+import jadren.core.collections.create
+import jadren.core.collections.length
+import jadren.core.collections.sort
+
+fn main() -> Int32 {
+    let created: Result<Buffer<Char>, Int32> = create(1usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            if !append(values, 'm') { result_code = 1 }
+            if !append(values, 'a') { result_code = 2 }
+            if !append(values, 'z') { result_code = 3 }
+            let initial_capacity: UIntSize = capacity(values)
+            if !sort(values, false) { result_code = 4 }
+            if values[0] != 'a' { result_code = 5 }
+            if values[1] != 'm' { result_code = 6 }
+            if values[2] != 'z' { result_code = 7 }
+            if !sort(values, true) { result_code = 8 }
+            if values[0] != 'z' { result_code = 9 }
+            if values[1] != 'm' { result_code = 10 }
+            if values[2] != 'a' { result_code = 11 }
+            if length(values) != 3usize { result_code = 12 }
+            if capacity(values) != initial_capacity { result_code = 13 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

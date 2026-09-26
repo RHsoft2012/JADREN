@@ -1,0 +1,158 @@
+module network_http_buffer_parsing_project.main
+
+import jadren.network.http.request_body_exact_buffer
+import jadren.network.http.request_body_exact_prefix_buffer
+import jadren.network.http.request_body_chunked_exact_buffer
+import jadren.network.http.request_header_exact_buffer
+import jadren.network.http.response_body_chunked_exact_buffer
+import jadren.network.http.response_body_exact_buffer
+import jadren.network.http.response_header_exact_buffer
+import jadren.network.http.write_request
+import jadren.network.http.write_response
+import jadren.network.http.write_response_chunked
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 { return event_id }
+
+fn seed_chunked_request(request: write Buffer<UInt8>) -> Bool {
+    var frame: [UInt8; 84] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 117u8, 112u8, 108u8, 111u8, 97u8, 100u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 84u8, 114u8, 97u8, 110u8, 115u8, 102u8, 101u8, 114u8, 45u8, 69u8, 110u8, 99u8, 111u8, 100u8, 105u8, 110u8, 103u8, 58u8, 32u8, 99u8, 104u8, 117u8, 110u8, 107u8, 101u8, 100u8, 13u8, 10u8, 13u8, 10u8, 52u8, 13u8, 10u8, 74u8, 68u8, 78u8, 33u8, 13u8, 10u8, 48u8, 13u8, 10u8, 13u8, 10u8]
+    var index: UIntSize = 0usize
+    while index < 84usize {
+        if !buffer_append(request, frame[index]) { return false }
+        index = index + 1usize
+    }
+    return true
+}
+
+fn run(
+    request: write Buffer<UInt8>,
+    response: write Buffer<UInt8>,
+    chunked: write Buffer<UInt8>,
+    chunked_request: write Buffer<UInt8>,
+    output: write Buffer<UInt8>,
+    short: write Buffer<UInt8>,
+) -> Int32 {
+    if !buffer_resize(request, 512usize) { return 1 }
+    if !buffer_resize(response, 512usize) { return 2 }
+    if !buffer_resize(chunked, 512usize) { return 3 }
+    if !seed_chunked_request(chunked_request) { return 32 }
+    if !buffer_resize(output, 64usize) { return 4 }
+    if !buffer_resize(short, 1usize) { return 5 }
+
+    var request_body: [UInt8; 4] = [65u8, 104u8, 111u8, 106u8]
+    let request_length: UIntSize = write_request(
+        "POST",
+        "/submit",
+        "localhost",
+        request_body,
+        buffer_slice_write(request, 0usize, 512usize),
+    )
+    if request_length == 0usize { return 6 }
+    if !buffer_resize(request, request_length) { return 7 }
+
+    var response_body: [UInt8; 2] = [79u8, 75u8]
+    let response_length: UIntSize = write_response(
+        200u16,
+        "text/plain",
+        response_body,
+        buffer_slice_write(response, 0usize, 512usize),
+    )
+    if response_length == 0usize { return 8 }
+    if !buffer_resize(response, response_length) { return 9 }
+
+    let chunked_length: UIntSize = write_response_chunked(
+        200u16,
+        "text/plain",
+        response_body,
+        buffer_slice_write(chunked, 0usize, 512usize),
+    )
+    if chunked_length == 0usize { return 10 }
+    if !buffer_resize(chunked, chunked_length) { return 11 }
+
+    var length: [UIntSize; 1] = [777usize]
+    if !request_header_exact_buffer(request, "Content-Length", output, 64usize, length) { return 12 }
+    if length[0] != 1usize { return 13 }
+    if output[0] != 52u8 { return 14 }
+    if !request_body_exact_buffer(request, output, 64usize, length) { return 15 }
+    if length[0] != 4usize { return 16 }
+    if output[0] != 65u8 { return 17 }
+    if output[3] != 106u8 { return 17 }
+
+    output[0] = 91u8
+    length[0] = 123usize
+    if request_body_exact_prefix_buffer(request, request_length - 1usize, output, 64usize, length) { return 18 }
+    if output[0] != 91u8 { return 19 }
+    if length[0] != 123usize { return 19 }
+    if request_body_exact_prefix_buffer(request, request_length + 1usize, output, 64usize, length) { return 20 }
+    if output[0] != 91u8 { return 21 }
+    if length[0] != 123usize { return 21 }
+
+    if !request_body_chunked_exact_buffer(chunked_request, output, 64usize, length) { return 33 }
+    if length[0] != 4usize { return 34 }
+    if output[0] != 74u8 { return 35 }
+    if output[3] != 33u8 { return 35 }
+
+    if !response_header_exact_buffer(response, "Content-Length", output, 64usize, length) { return 22 }
+    if length[0] != 1usize { return 23 }
+    if output[0] != 50u8 { return 23 }
+    if !response_body_exact_buffer(response, output, 64usize, length) { return 24 }
+    if length[0] != 2usize { return 25 }
+    if output[0] != 79u8 { return 25 }
+    if output[1] != 75u8 { return 25 }
+
+    if !response_body_chunked_exact_buffer(chunked, output, 64usize, length) { return 26 }
+    if length[0] != 2usize { return 27 }
+    if output[0] != 79u8 { return 27 }
+    if output[1] != 75u8 { return 27 }
+
+    short[0] = 55u8
+    length[0] = 321usize
+    if response_body_exact_buffer(response, short, 1usize, length) { return 28 }
+    if short[0] != 55u8 { return 29 }
+    if length[0] != 321usize { return 29 }
+    if response_body_exact_buffer(response, output, 65usize, length) { return 30 }
+    if length[0] != 321usize { return 31 }
+    return 0
+}
+
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    let request_created: Result<Buffer<UInt8>, Int32> = buffer_create(512usize)
+    match request_created {
+        Error(error) => { status = error }
+        Ok(request) => {
+            let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(512usize)
+            match response_created {
+                Error(error) => { status = error }
+                Ok(response) => {
+                    let chunked_created: Result<Buffer<UInt8>, Int32> = buffer_create(512usize)
+                    match chunked_created {
+                        Error(error) => { status = error }
+                        Ok(chunked) => {
+                            let chunked_request_created: Result<Buffer<UInt8>, Int32> = buffer_create(128usize)
+                            match chunked_request_created {
+                                Error(error) => { status = error }
+                                Ok(chunked_request) => {
+                                    let output_created: Result<Buffer<UInt8>, Int32> = buffer_create(64usize)
+                                    match output_created {
+                                        Error(error) => { status = error }
+                                        Ok(output) => {
+                                            let short_created: Result<Buffer<UInt8>, Int32> = buffer_create(1usize)
+                                            match short_created {
+                                                Error(error) => { status = error }
+                                                Ok(short) => {
+                                                    status = run(request, response, chunked, chunked_request, output, short)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return status
+}

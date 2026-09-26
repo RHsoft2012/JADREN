@@ -855,11 +855,13 @@ fn c_type(
         } => {
             let name = path_text(path);
             match name.as_str() {
-                "Bool" | "Char" | "Buffer" | "Option" | "Result" => Err(BindgenError {
-                    code: "J0809",
-                    message: format!("Jadren type `{name}` has no C 0.1 header mapping"),
-                    span,
-                }),
+                "Bool" | "Char" | "Buffer" | "DynamicArray" | "Option" | "Result" => {
+                    Err(BindgenError {
+                        code: "J0809",
+                        message: format!("Jadren type `{name}` has no C 0.1 header mapping"),
+                        span,
+                    })
+                }
                 "Int8" => Ok("int8_t".to_owned()),
                 "Int16" => Ok("int16_t".to_owned()),
                 "Int32" => Ok("int32_t".to_owned()),
@@ -909,7 +911,8 @@ fn c_type(
             Ok(format!("{element}[{length}]"))
         }
         TypeRef::Capability { inner, .. } => {
-            if matches!(inner.as_ref(), TypeRef::Path { path, .. } if path_text(path) == "Buffer") {
+            if matches!(inner.as_ref(), TypeRef::Path { path, .. } if matches!(path_text(path).as_str(), "Buffer" | "DynamicArray"))
+            {
                 Ok("JadrenBuffer*".to_owned())
             } else {
                 c_type(source, module, inner, span)
@@ -941,7 +944,7 @@ fn is_buffer_capability(ty: &TypeRef) -> bool {
         TypeRef::Capability {
             inner,
             ..
-        } if matches!(inner.as_ref(), TypeRef::Path { path, .. } if path_text(path) == "Buffer")
+        } if matches!(inner.as_ref(), TypeRef::Path { path, .. } if matches!(path_text(path).as_str(), "Buffer" | "DynamicArray"))
     )
 }
 
@@ -987,7 +990,7 @@ fn csharp_type(
                 "Unit" => Ok("void".to_owned()),
                 "Pointer" if arguments.len() == 1 => Ok("IntPtr".to_owned()),
                 "Slice" if arguments.len() == 1 => Ok("JadrenSlice".to_owned()),
-                "Buffer" | "Option" | "Result" => Err(BindgenError {
+                "Buffer" | "DynamicArray" | "Option" | "Result" => Err(BindgenError {
                     code: "J0809",
                     message: format!("Jadren type `{name}` has no C# 0.1 mapping"),
                     span,

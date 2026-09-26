@@ -1,0 +1,16 @@
+module invalid.stdlib_generic_remove_move_into_copy_safe
+
+fn remove_move_into_status_for<T>(values: write Buffer<T>, index: UIntSize, output: write T) -> Int32 {
+    return buffer_remove_move_into_status(values, index, output)
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let output: Int32 = 0
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => { result_code = remove_move_into_status_for(values, 0usize, output) }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

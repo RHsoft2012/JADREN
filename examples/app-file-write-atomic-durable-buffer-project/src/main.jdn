@@ -1,0 +1,155 @@
+module app_file_write_atomic_durable_buffer_project.main
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.dir_delete
+import jadren.app.fs.dir_exists
+import jadren.app.fs.exists
+import jadren.app.fs.read_bytes_exact_buffer
+import jadren.app.fs.size
+import jadren.app.fs.write_atomic_durable_buffer
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    let directory: String = "target/app-file-write-atomic-durable-buffer"
+    let target: String = "target/app-file-write-atomic-durable-buffer/data.bin"
+    let temporary: String = "target/app-file-write-atomic-durable-buffer/data.bin.tmp"
+    var status: Int32 = 0i32
+    delete(target)
+    delete(temporary)
+    if ! dir_exists(directory) {
+        if ! dir_create(directory) {
+            status = 1
+        }
+    }
+    let created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(16usize)
+    match created {
+        Error(error) => {
+            if status == 0 {
+                status = error
+            }
+        }
+        Ok(payload) => {
+            if ! buffer_resize(payload,
+            16usize) {
+                if status == 0 {
+                    status = 2
+                }
+            }
+            payload[0] = 74u8
+            payload[1] = 65u8
+            payload[2] = 68u8
+            payload[3] = 82u8
+            payload[4] = 69u8
+            payload[5] = 78u8
+            payload[6] = 45u8
+            payload[7] = 68u8
+            payload[8] = 85u8
+            payload[9] = 82u8
+            payload[10] = 65u8
+            payload[11] = 66u8
+            payload[12] = 76u8
+            payload[13] = 69u8
+            if status == 0 {
+                if ! write_atomic_durable_buffer(temporary,
+                target,
+                directory,
+                payload,
+                14usize) {
+                    status = 3
+                }
+            }
+            if status == 0 {
+                if ! exists(target) {
+                    status = 4
+                }
+            }
+            if status == 0 {
+                if size(target) != 14usize {
+                    status = 5
+                }
+            }
+            let read_created: Result<Buffer<UInt8>,
+            Int32> = buffer_create(32usize)
+            match read_created {
+                Error(error) => {
+                    if status == 0 {
+                        status = error
+                    }
+                }
+                Ok(readback) => {
+                    if ! buffer_resize(readback,
+                    32usize) {
+                        if status == 0 {
+                            status = 6
+                        }
+                    }
+                    var length:[UIntSize;
+                    1] =[999usize]
+                    if status == 0 {
+                        if ! read_bytes_exact_buffer(target,
+                        readback,
+                        32usize,
+                        length) {
+                            status = 7
+                        }
+                    }
+                    if status == 0 {
+                        if length[0] != 14usize {
+                            status = 8
+                        }
+                    }
+                    if status == 0 {
+                        if readback[0] != 74u8 {
+                            status = 9
+                        }
+                    }
+                    if status == 0 {
+                        if readback[13] != 69u8 {
+                            status = 10
+                        }
+                    }
+                    let before_invalid: UIntSize = size(target)
+                    if status == 0 {
+                        if write_atomic_durable_buffer(temporary,
+                        target,
+                        directory,
+                        payload,
+                        17usize) {
+                            status = 11
+                        }
+                    }
+                    if status == 0 {
+                        if size(target) != before_invalid {
+                            status = 12
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if exists(target) {
+        if ! delete(target) {
+            if status == 0 {
+                status = 13
+            }
+        }
+    }
+    if exists(temporary) {
+        if ! delete(temporary) {
+            if status == 0 {
+                status = 14
+            }
+        }
+    }
+    if dir_exists(directory) {
+        if ! dir_delete(directory) {
+            if status == 0 {
+                status = 15
+            }
+        }
+    }
+    return status
+}

@@ -1,0 +1,69 @@
+module app_state_key_buffer_read_project.main
+
+import jadren.app.state.clear
+import jadren.app.state.read_key_exact_buffer
+import jadren.app.state.read_key_exact_buffer_if_revision
+import jadren.app.state.read_key_exact_if_revision
+import jadren.app.state.revision
+import jadren.app.state.set_int
+import jadren.app.state.set_text
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear()
+    if !set_text("draft", "Jadren") { return 1 }
+    if !set_int("count", 1i64) { return 2 }
+    let output_created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    var status: Int32 = 0
+    match output_created {
+        Error(error) => { status = error }
+        Ok(output) => {
+            if !buffer_resize(output, 16usize) { status = 3 }
+            var slice_output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+            var length: [UIntSize; 1] = [700usize]
+            let current: UInt64 = revision()
+            if status == 0 {
+                if !read_key_exact_if_revision(0, slice_output, length, current) { status = 4 }
+            }
+            if status == 0 { if length[0] != 5usize { status = 5 } }
+            if status == 0 { if slice_output[0] != 100u8 { status = 6 } }
+            if status == 0 { if slice_output[4] != 116u8 { status = 7 } }
+
+            if status == 0 {
+                length[0] = 701usize
+                if !read_key_exact_buffer(0, output, 16usize, length) { status = 8 }
+            }
+            if status == 0 { if length[0] != 5usize { status = 9 } }
+            if status == 0 { if output[0] != 100u8 { status = 10 } }
+            if status == 0 { if output[4] != 116u8 { status = 11 } }
+
+            if status == 0 {
+                output[0] = 201u8
+                output[1] = 202u8
+                length[0] = 702usize
+                if read_key_exact_buffer(99, output, 16usize, length) { status = 12 }
+            }
+            if status == 0 { if output[0] != 201u8 { status = 13 } }
+            if status == 0 { if output[1] != 202u8 { status = 14 } }
+            if status == 0 { if length[0] != 702usize { status = 15 } }
+
+            let stale: UInt64 = revision()
+            if status == 0 { if !set_text("extra", "value") { status = 16 } }
+            if status == 0 {
+                output[0] = 211u8
+                output[1] = 212u8
+                length[0] = 703usize
+                if read_key_exact_buffer_if_revision(0, output, 16usize, length, stale) { status = 17 }
+            }
+            if status == 0 { if output[0] != 211u8 { status = 18 } }
+            if status == 0 { if output[1] != 212u8 { status = 19 } }
+            if status == 0 { if length[0] != 703usize { status = 20 } }
+        }
+    }
+    clear()
+    return status
+}

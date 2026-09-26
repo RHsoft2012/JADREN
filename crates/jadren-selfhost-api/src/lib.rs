@@ -110,6 +110,11 @@ pub const STAGE2_JIR_INSTRUCTION_MULTIPLY: u8 = 4;
 /// function record carries this count in `operand_a` without changing the
 /// fixed record layout.
 pub const STAGE2_JIR_MAX_PARAMETERS: u8 = 2;
+/// Maximum number of positional arguments in the caller-owned typed-call
+/// hand-off. The bound keeps AST/argument streams deterministic while leaving
+/// the fixed C-compatible headers extensible beyond the legacy stage-2 JIR
+/// function-parameter preview.
+pub const STAGE2_TYPED_CALL_MAX_ARGUMENTS: u64 = 32;
 /// Opcode used by the bounded terminator record for a return.
 pub const STAGE2_JIR_TERMINATOR_RETURN: u8 = 1;
 /// Flag carried by the bounded signed-integer type record.
@@ -227,6 +232,26 @@ pub struct TypedStatementStage2Summary {
     pub errors: u64,
     pub status_flags: u64,
     pub reserved: u64,
+}
+
+/// C-compatible summary returned by the fused typed statement-to-JIR hand-off.
+///
+/// The producer first parses the caller-owned typed statement/AST buffers and
+/// then validates/emits the existing 64-byte Stage-2 JIR stream.  The summary
+/// keeps both sizing phases visible so a host can perform a safe sizing pass
+/// before allocating the final record buffer.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypedStage2PipelineSummary {
+    pub source_bytes: u64,
+    pub statements_required: u64,
+    pub statements_emitted: u64,
+    pub ast_nodes_required: u64,
+    pub ast_nodes_emitted: u64,
+    pub records_required: u64,
+    pub records_emitted: u64,
+    pub functions_lowered: u64,
+    pub status_flags: u64,
 }
 
 /// C-compatible typed metadata for one builtin literal expression.
@@ -435,7 +460,9 @@ pub struct TypedWhileHeader {
 /// C-compatible caller-owned function signature entry for the bounded typed
 /// call hand-off. The name span points into the source buffer supplied to the
 /// same call; parameter count and builtin return type are selected by the
-/// caller. This is not overload resolution or a complete function type.
+/// caller. `parameter_count` must not exceed
+/// [`STAGE2_TYPED_CALL_MAX_ARGUMENTS`]. This is not overload resolution or a
+/// complete function type.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TypedCallBindingHeader {
@@ -903,7 +930,8 @@ mod tests {
         TypedArrayBindingHeader, TypedCallBindingHeader, TypedCallCandidateHeader,
         TypedExpressionAstNodeHeader, TypedExpressionHeader, TypedIfReturnHeader,
         TypedNameBindingHeader, TypedRegionNameBindingHeader, TypedScopedNameBindingHeader,
-        TypedSequenceBindingHeader, TypedStatementHeader, TypedStatementStage2Summary,
+        TypedSequenceBindingHeader, TypedStage2PipelineSummary, TypedStatementHeader,
+        TypedStatementStage2Summary,
     };
 
     extern "C" fn classify(_: u8) -> u8 {
@@ -970,6 +998,8 @@ mod tests {
         assert_eq!(align_of::<FrontendStage2Summary>(), 8);
         assert_eq!(size_of::<TypedStatementStage2Summary>(), 64);
         assert_eq!(align_of::<TypedStatementStage2Summary>(), 8);
+        assert_eq!(size_of::<TypedStage2PipelineSummary>(), 72);
+        assert_eq!(align_of::<TypedStage2PipelineSummary>(), 8);
     }
 
     #[test]

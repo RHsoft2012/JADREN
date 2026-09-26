@@ -1,0 +1,49 @@
+module examples.stdlib_buffer_owning_nested_enum
+
+@repr(C)
+enum Inner {
+    Empty,
+    Text(OwnedString),
+    Done
+}
+
+@repr(C)
+enum Outer {
+    Idle,
+    Nested(Inner),
+    Done
+}
+
+fn mutate(values: write Buffer<Outer>, output: write Outer) {
+    let nested: Inner = Inner.Empty
+    let value: Outer = Outer.Nested(nested)
+    buffer_append(values, value)
+    buffer_remove_move_into(values, 0usize, output)
+    buffer_resize_move(values, 1usize)
+    buffer_clear_move(values)
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<Outer>, Int32> = buffer_create(0usize)
+    let text_created: Result<OwnedString, Int32> = string_owned_from("nested")
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            match text_created {
+                Ok(text) => {
+                    let inner: Inner = Inner.Text(text)
+                    if !buffer_append(values, Outer.Nested(inner)) { result_code = 1 }
+                    if buffer_length(values) != 1usize { result_code = 2 }
+                    var output: Outer = Outer.Done
+                    if !buffer_remove_move_into(values, 0usize, output) { result_code = 3 }
+                    if buffer_length(values) != 0usize { result_code = 4 }
+                    let clear_status: Int32 = buffer_clear_move_status(values)
+                    if clear_status != 0 { result_code = clear_status }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

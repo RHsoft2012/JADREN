@@ -1,0 +1,170 @@
+module app_model_buffer_write_project.main
+
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.count
+import jadren.app.list.push_bytes_buffer
+import jadren.app.list.push_bytes_buffer_if_revision
+import jadren.app.list.read_text
+import jadren.app.list.set_bytes_buffer
+import jadren.app.list.set_bytes_buffer_if_model_revision
+import jadren.app.list.set_bytes_buffer_if_revision
+import jadren.app.table.append_row
+import jadren.app.table.read_cell
+import jadren.app.table.row_count
+import jadren.app.table.set_cell_bytes_buffer
+import jadren.app.table.set_cell_bytes_buffer_if_model_revision
+import jadren.app.table.set_cell_bytes_buffer_if_revision
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    app_table_clear(0)
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    var status: Int32 = 0
+    match created {
+        Error(error) => { status = error }
+        Ok(value) => {
+            if !buffer_resize(value, 16usize) { status = 1 }
+            if status == 0 {
+                value[0] = 65u8
+                value[1] = 108u8
+                value[2] = 112u8
+                value[3] = 104u8
+                value[4] = 97u8
+            }
+            if status == 0 { if !push_bytes_buffer(0, value, 5usize) { status = 2 } }
+            let first_revision: UInt64 = revision()
+
+            if status == 0 {
+                value[0] = 66u8
+                value[1] = 101u8
+                value[2] = 116u8
+                value[3] = 97u8
+                if !push_bytes_buffer_if_revision(0, value, 4usize, first_revision) {
+                    status = 3
+                }
+            }
+            if status == 0 { if count(0) != 2 { status = 4 } }
+
+            let current_revision: UInt64 = revision()
+            if status == 0 {
+                value[0] = 71u8
+                value[1] = 97u8
+                value[2] = 109u8
+                value[3] = 109u8
+                value[4] = 97u8
+                if !set_bytes_buffer(0, 1, value, 5usize) { status = 5 }
+            }
+            if status == 0 {
+                value[0] = 68u8
+                value[1] = 101u8
+                value[2] = 108u8
+                value[3] = 116u8
+                value[4] = 97u8
+                if set_bytes_buffer_if_revision(0, 1, value, 5usize, current_revision) {
+                    status = 6
+                }
+            }
+            if status == 0 {
+                var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+                if read_text(0, 1, output) != 5usize { status = 7 }
+                if status == 0 { if output[0] != 71u8 { status = 8 } }
+                if status == 0 { if output[4] != 97u8 { status = 8 } }
+                if status == 0 { if set_bytes_buffer(0, 1, value, 17usize) { status = 9 } }
+                if status == 0 { if read_text(0, 1, output) != 5usize { status = 10 } }
+                if status == 0 { if output[0] != 71u8 { status = 11 } }
+                if status == 0 { if output[4] != 97u8 { status = 11 } }
+            }
+
+            let model_list_stale_revision: UInt64 = revision()
+            if status == 0 { if !set_bytes_buffer(0, 1, value, 5usize) { status = 30 } }
+            if status == 0 {
+                if set_bytes_buffer_if_model_revision(0, 1, value, 5usize, model_list_stale_revision) {
+                    status = 31
+                }
+            }
+            let model_list_current_revision: UInt64 = revision()
+            if status == 0 {
+                if !set_bytes_buffer_if_model_revision(0, 1, value, 5usize, model_list_current_revision) {
+                    status = 32
+                }
+            }
+
+            if status == 0 { if !set_column_name(0, 0, "title") { status = 12 } }
+            if status == 0 { if !set_column_type(0, 0, 0) { status = 13 } }
+            if status == 0 { if !append_row(0) { status = 14 } }
+            if status == 0 { if row_count(0) != 1 { status = 15 } }
+            if status == 0 {
+                value[0] = 65u8
+                value[1] = 108u8
+                value[2] = 112u8
+                value[3] = 104u8
+                value[4] = 97u8
+                if !set_cell_bytes_buffer(0, 0, 0, value, 5usize) { status = 16 }
+            }
+            let table_revision: UInt64 = revision()
+            if status == 0 {
+                value[0] = 66u8
+                value[1] = 101u8
+                value[2] = 116u8
+                value[3] = 97u8
+                if !set_cell_bytes_buffer_if_revision(0, 0, 0, value, 4usize, table_revision) {
+                    status = 17
+                }
+            }
+            let stale_table_revision: UInt64 = revision()
+            if status == 0 {
+                value[0] = 71u8
+                value[1] = 97u8
+                value[2] = 109u8
+                value[3] = 109u8
+                value[4] = 97u8
+                if !set_cell_bytes_buffer(0, 0, 0, value, 5usize) { status = 18 }
+            }
+            if status == 0 {
+                value[0] = 68u8
+                value[1] = 101u8
+                value[2] = 108u8
+                value[3] = 116u8
+                value[4] = 97u8
+                if set_cell_bytes_buffer_if_revision(0, 0, 0, value, 5usize, stale_table_revision) {
+                    status = 19
+                }
+            }
+            if status == 0 {
+                var cell: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+                if read_cell(0, 0, 0, cell) != 5usize { status = 20 }
+                if status == 0 { if cell[0] != 71u8 { status = 21 } }
+                if status == 0 { if cell[4] != 97u8 { status = 21 } }
+                if status == 0 { if set_cell_bytes_buffer(0, 0, 0, value, 17usize) { status = 22 } }
+                if status == 0 { if read_cell(0, 0, 0, cell) != 5usize { status = 23 } }
+                if status == 0 { if cell[0] != 71u8 { status = 24 } }
+                if status == 0 { if cell[4] != 97u8 { status = 24 } }
+            }
+
+            let model_table_stale_revision: UInt64 = revision()
+            if status == 0 { if !set_cell_bytes_buffer(0, 0, 0, value, 5usize) { status = 33 } }
+            if status == 0 {
+                if set_cell_bytes_buffer_if_model_revision(0, 0, 0, value, 5usize, model_table_stale_revision) {
+                    status = 34
+                }
+            }
+            let model_table_current_revision: UInt64 = revision()
+            if status == 0 {
+                if !set_cell_bytes_buffer_if_model_revision(0, 0, 0, value, 5usize, model_table_current_revision) {
+                    status = 35
+                }
+            }
+        }
+    }
+    clear(0)
+    app_table_clear(0)
+    return status
+}

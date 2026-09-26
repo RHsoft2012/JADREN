@@ -1,0 +1,56 @@
+module examples.stdlib_buffer_owning_generic_enum
+
+// A generic C-layout enum can carry an owning Buffer after monomorphization.
+// The selected variant must move without duplicating the nested descriptor.
+@repr(C)
+enum Event<T> {
+    Idle,
+    Ready(T),
+    Done,
+}
+
+fn main() -> Int32 {
+    let events_created: Result<Buffer<Event<Buffer<OwnedString>>>, Int32> = buffer_create(0usize)
+    let inner_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    let output_inner_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match events_created {
+        Error(status) => { result_code = status }
+        Ok(events) => {
+            match inner_created {
+                Error(status) => { result_code = status }
+                Ok(inner) => {
+                    let text_created: Result<OwnedString, Int32> = string_owned_from("Generic")
+                    match text_created {
+                        Error(status) => { result_code = status }
+                        Ok(text) => {
+                            if !buffer_append(inner, text) { result_code = 1 }
+                            let ready: Event<Buffer<OwnedString>> = Event.Ready(inner)
+                            if !buffer_append(events, ready) { result_code = 2 }
+                        }
+                    }
+                }
+            }
+            match output_inner_created {
+                Error(status) => { result_code = status }
+                Ok(output_inner) => {
+                    let output: Event<Buffer<OwnedString>> = Event.Ready(output_inner)
+                    let moved: Int32 = buffer_remove_move_into_status(events, 0usize, output)
+                    if moved != 0 { result_code = moved }
+                    match output {
+                        Event.Ready(value) => {
+                            if buffer_length(value) != 1usize { result_code = 3 }
+                            if string_owned_length(value[0]) != 7usize { result_code = 4 }
+                            let cleared: Int32 = buffer_clear_move_status(value)
+                            if cleared != 0 { result_code = cleared }
+                        }
+                        _ => { result_code = 5 }
+                    }
+                }
+            }
+            let cleared_events: Int32 = buffer_clear_move_status(events)
+            if cleared_events != 0 { result_code = cleared_events }
+        }
+    }
+    return result_code
+}

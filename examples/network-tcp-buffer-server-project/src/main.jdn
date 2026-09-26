@@ -1,0 +1,91 @@
+module network_tcp_buffer_server_project.main
+
+import jadren.network.tcp.accept
+import jadren.network.tcp.close
+import jadren.network.tcp.listen
+import jadren.network.tcp.receive_buffer
+import jadren.network.tcp.send_all_prefix_buffer
+import jadren.network.tcp.send_buffer
+import jadren.network.tcp.set_timeout
+
+fn handle(client: UIntSize, request: write Buffer<UInt8>) -> Int32 {
+    let received: UIntSize = receive_buffer(client, request)
+    if received != 8usize { return 5 }
+    if request[0] != 112u8 { return 6 }
+    if request[1] != 105u8 { return 6 }
+    if request[2] != 110u8 { return 6 }
+    if request[3] != 103u8 { return 6 }
+    if request[4] != 49u8 { return 6 }
+    if request[5] != 50u8 { return 6 }
+    if request[6] != 51u8 { return 6 }
+    if request[7] != 52u8 { return 6 }
+
+    let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    var status: Int32 = 0i32
+    match response_created {
+        Error(error) => { status = error }
+        Ok(response) => {
+            if !buffer_append(response, 80u8) { status = 7 }
+            if status == 0i32 {
+                if !buffer_append(response, 79u8) { status = 7 }
+            }
+            if status == 0i32 {
+                if !buffer_append(response, 78u8) { status = 7 }
+            }
+            if status == 0i32 {
+                if !buffer_append(response, 71u8) { status = 7 }
+            }
+            if status == 0i32 {
+                if !buffer_append(response, 45u8) { status = 7 }
+            }
+            if status == 0i32 {
+                if !buffer_append(response, 74u8) { status = 7 }
+            }
+            if status == 0i32 {
+                if !buffer_append(response, 68u8) { status = 7 }
+            }
+            if status == 0i32 {
+                if !buffer_append(response, 33u8) { status = 7 }
+            }
+            if status == 0i32 {
+                if send_all_prefix_buffer(client, response, 9usize) != 0usize { status = 8 }
+            }
+            if status == 0i32 {
+                if send_buffer(client, response) != 8usize { status = 9 }
+            }
+        }
+    }
+    return status
+}
+
+fn main() -> Int32 {
+    let listener: UIntSize = listen(38172u16)
+    if listener == 0usize { return 1 }
+    let client: UIntSize = accept(listener)
+    if client == 0usize {
+        close(listener)
+        return 2
+    }
+    if !set_timeout(client, 3000u32) {
+        close(client)
+        close(listener)
+        return 3
+    }
+
+    let request_created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    var status: Int32 = 0i32
+    match request_created {
+        Error(error) => { status = error }
+        Ok(request) => {
+            if !buffer_resize(request, 16usize) {
+                status = 4
+            }
+            if status == 0i32 {
+                status = handle(client, request)
+            }
+        }
+    }
+    if !close(client) { return 10 }
+    if !close(listener) { return 11 }
+    return status
+}

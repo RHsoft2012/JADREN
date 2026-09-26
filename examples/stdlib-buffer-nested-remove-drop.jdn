@@ -1,0 +1,49 @@
+module examples.stdlib_buffer_nested_remove_drop
+
+// buffer_remove_drop disposes one nested descriptor chain before closing the
+// outer gap. The remaining inner buffers keep their original ownership.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let third_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            match third_created {
+                                Ok(third) => {
+                                    if !buffer_append(first, 11) { result_code = 1 }
+                                    if !buffer_append(second, 22) { result_code = 2 }
+                                    if !buffer_append(third, 33) { result_code = 3 }
+                                    if !buffer_append(outer, first) { result_code = 4 }
+                                    if !buffer_append(outer, second) { result_code = 5 }
+                                    if !buffer_append(outer, third) { result_code = 6 }
+
+                                    let removed: Bool = buffer_remove_drop(outer, 1usize)
+                                    if !removed { result_code = 7 }
+                                    if buffer_length(outer) != 2usize { result_code = 8 }
+                                    if outer[0][0] != 11 { result_code = 9 }
+                                    if outer[1][0] != 33 { result_code = 10 }
+
+                                    let removed_status: Int32 =
+                                        buffer_remove_drop_status(outer, 99usize)
+                                    if removed_status != -20 { result_code = 11 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

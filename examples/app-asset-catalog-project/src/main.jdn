@@ -1,0 +1,356 @@
+module app_asset_catalog_project.main
+import jadren.app.assets.AssetKind
+import jadren.app.assets.AssetStatus
+import jadren.app.assets.configure
+import jadren.app.assets.count
+import jadren.app.assets.export_json_durable
+import jadren.app.assets.filter_kind
+import jadren.app.assets.filter_status
+import jadren.app.assets.find
+import jadren.app.assets.remove
+import jadren.app.assets.refresh_from_file_path
+import jadren.app.assets.restore_json_file_if_model_revision
+import jadren.app.assets.transition
+import jadren.app.assets.transition_if_current_durable
+import jadren.app.assets.transition_if_current
+import jadren.app.assets.upsert
+import jadren.app.data.revision
+import jadren.app.fs.delete
+import jadren.app.fs.exists
+import jadren.app.fs.write_text
+import jadren.app.table.read_named_cell_exact
+import jadren.app.table.read_named_int_exact
+import jadren.app.table.read_named_uint_exact
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    let table_id: Int32 = 2
+    if ! configure(table_id) {
+        return 1
+    }
+    let first: Int32 = upsert(table_id,
+    1001i64,
+    AssetKind.Prefab,
+    "Assets/Player.prefab",
+    4096u64,
+    1700000000000000000u64,
+    AssetStatus.Ready)
+    if first<0 {
+        return 2
+    }
+    if count(table_id) != 1 {
+        return 3
+    }
+    if find(table_id,
+    1001i64) != first {
+        return 4
+    }
+    // Replacing the same id updates one row, rather than appending a duplicate.
+    if upsert(table_id,
+    1001i64,
+    AssetKind.Prefab,
+    "Assets/Player.prefab",
+    8192u64,
+    1700000000000000100u64,
+    AssetStatus.Ready) != first {
+        return 5
+    }
+    let second: Int32 = upsert(table_id,
+    1002i64,
+    AssetKind.Scene,
+    "Assets/Main.unity",
+    2048u64,
+    1700000000000000200u64,
+    AssetStatus.Discovered)
+    if second<0i32 {
+        return 6
+    }
+    if count(table_id) != 2 {
+        return 6
+    }
+    if write_text("target/jadren/asset-source.bin",
+    "ready") != 5usize {
+        return 7
+    }
+    var source_path:[UInt8;
+    30] =[116u8,
+    97u8,
+    114u8,
+    103u8,
+    101u8,
+    116u8,
+    47u8,
+    106u8,
+    97u8,
+    100u8,
+    114u8,
+    101u8,
+    110u8,
+    47u8,
+    97u8,
+    115u8,
+    115u8,
+    101u8,
+    116u8,
+    45u8,
+    115u8,
+    111u8,
+    117u8,
+    114u8,
+    99u8,
+    101u8,
+    46u8,
+    98u8,
+    105u8,
+    110u8]
+    let source: Int32 = upsert(table_id,
+    1003i64,
+    AssetKind.Data,
+    "target/jadren/asset-source.bin",
+    0u64,
+    1700000000000000300u64,
+    AssetStatus.Discovered)
+    if source<0i32 {
+        return 8
+    }
+    if ! refresh_from_file_path(table_id,
+    source,
+    source_path,
+    30usize) {
+        return 9
+    }
+    if ! filter_status(table_id,
+    0,
+    AssetStatus.Ready) {
+        return 25
+    }
+    if count(0) != 2 {
+        return 26
+    }
+    if ! filter_kind(table_id,
+    1,
+    AssetKind.Data) {
+        return 27
+    }
+    if count(1) != 1 {
+        return 28
+    }
+    if ! transition(table_id,
+    second,
+    AssetStatus.Ready) {
+        return 35
+    }
+    if ! transition_if_current(table_id,
+    second,
+    AssetStatus.Ready,
+    AssetStatus.Missing) {
+        return 36
+    }
+    if transition_if_current(table_id,
+    second,
+    AssetStatus.Ready,
+    AssetStatus.Discovered) {
+        return 37
+    }
+    if ! transition_if_current(table_id,
+    second,
+    AssetStatus.Missing,
+    AssetStatus.Discovered) {
+        return 38
+    }
+    if transition(table_id,
+    second,
+    AssetStatus.Unknown) {
+        return 39
+    }
+    if ! transition_if_current_durable(table_id,
+    second,
+    AssetStatus.Discovered,
+    AssetStatus.Ready,
+    "target/jadren/asset-catalog-lifecycle.json",
+    "target/jadren/asset-catalog-lifecycle.json.tmp") {
+        return 40
+    }
+    if count(table_id) != 3 {
+        return 10
+    }
+    var path:[UInt8;
+    32] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var path_length:[UIntSize;
+    1] =[0usize]
+    if ! read_named_cell_exact(table_id,
+    first,
+    "path",
+    path,
+    path_length) {
+        return 11
+    }
+    if path_length[0] != 20usize {
+        return 12
+    }
+    if path[0] != 65u8 {
+        return 12
+    }
+    if path[19] != 98u8 {
+        return 12
+    }
+    var size:[UInt64;
+    1] =[0u64]
+    if ! read_named_uint_exact(table_id,
+    first,
+    "size",
+    size) {
+        return 13
+    }
+    if size[0] != 8192u64 {
+        return 13
+    }
+    var kind:[Int64;
+    1] =[0i64]
+    if ! read_named_int_exact(table_id,
+    first,
+    "kind",
+    kind) {
+        return 14
+    }
+    if kind[0] != 2i64 {
+        return 14
+    }
+    var source_size:[UInt64;
+    1] =[0u64]
+    if ! read_named_uint_exact(table_id,
+    source,
+    "size",
+    source_size) {
+        return 15
+    }
+    if source_size[0] != 5u64 {
+        return 15
+    }
+    var source_modified:[UInt64;
+    1] =[0u64]
+    if ! read_named_uint_exact(table_id,
+    source,
+    "modified",
+    source_modified) {
+        return 34
+    }
+    if source_modified[0] == 0u64 {
+        return 34
+    }
+    let output_path: String = "target/jadren/asset-catalog.json"
+    let temporary_path: String = "target/jadren/asset-catalog.json.tmp"
+    if ! export_json_durable(table_id,
+    output_path,
+    temporary_path) {
+        return 15
+    }
+    if ! exists("target/jadren/asset-catalog.json") {
+        return 16
+    }
+    let stale_file_revision: UInt64 = revision()
+    if ! configure(table_id) {
+        return 29
+    }
+    if upsert(table_id,
+    1099i64,
+    AssetKind.Data,
+    "Assets/Stale.json",
+    1u64,
+    1700000000000000500u64,
+    AssetStatus.Discovered) < 0i32 {
+        return 30
+    }
+    if restore_json_file_if_model_revision(table_id,
+    "target/jadren/asset-catalog.json",
+    stale_file_revision) {
+        return 41
+    }
+    if count(table_id) != 1 {
+        return 42
+    }
+    let current_file_revision: UInt64 = revision()
+    if ! restore_json_file_if_model_revision(table_id,
+    "target/jadren/asset-catalog.json",
+    current_file_revision) {
+        return 43
+    }
+    if count(table_id) != 3 {
+        return 31
+    }
+    let restored_source: Int32 = find(table_id,
+    1003i64)
+    if restored_source<0 {
+        return 32
+    }
+    if ! read_named_uint_exact(table_id,
+    restored_source,
+    "size",
+    source_size) {
+        return 33
+    }
+    if source_size[0] != 5u64 {
+        return 33
+    }
+    if ! remove(table_id,
+    1002i64) {
+        return 16
+    }
+    if count(table_id) != 2 {
+        return 17
+    }
+    if remove(table_id,
+    1002i64) {
+        return 18
+    }
+    if ! remove(table_id,
+    1003i64) {
+        return 19
+    }
+    if count(table_id) != 1 {
+        return 20
+    }
+    if ! delete("target/jadren/asset-catalog.json") {
+        return 21
+    }
+    if ! delete("target/jadren/asset-catalog-lifecycle.json") {
+        return 22
+    }
+    if ! delete("target/jadren/asset-source.bin") {
+        return 23
+    }
+    return 0
+}

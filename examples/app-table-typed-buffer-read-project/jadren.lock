@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "09057003f7ea29bc"
+
+[package]
+name = "app-table-typed-buffer-read-project"
+version = "0.1.3"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

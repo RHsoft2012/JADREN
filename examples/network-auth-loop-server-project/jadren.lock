@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "a84bf8e1ac939cf5"
+
+[package]
+name = "network-auth-loop-server-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

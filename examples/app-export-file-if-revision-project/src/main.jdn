@@ -1,0 +1,427 @@
+module app_export_file_if_revision_project.main
+import jadren.app.data.revision
+import jadren.app.fs.delete
+import jadren.app.fs.exists
+import jadren.app.fs.read_text_exact
+import jadren.app.fs.size
+import jadren.app.fs.write_text
+import jadren.app.list.clear
+import jadren.app.list.count
+import jadren.app.list.export_csv_file_durable_if_revision
+import jadren.app.list.export_csv_file_durable_if_model_revision
+import jadren.app.list.export_json_file_durable_if_revision
+import jadren.app.list.export_json_file_durable_if_model_revision
+import jadren.app.list.push_text
+import jadren.app.table.append_row
+import jadren.app.table
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear(0)
+    if ! push_text(0,
+    "Alpha") {
+        return 1
+    }
+    if ! push_text(0,
+    "Beta") {
+        return 2
+    }
+    app_table_clear(0)
+    if ! set_column_name(0,
+    0,
+    "name") {
+        return 3
+    }
+    if ! set_column_name(0,
+    1,
+    "rank") {
+        return 4
+    }
+    if ! set_column_type(0,
+    1,
+    1) {
+        return 5
+    }
+    if ! append_row(0) {
+        return 6
+    }
+    if ! set_cell(0,
+    0,
+    0,
+    "Alpha") {
+        return 7
+    }
+    if ! set_cell(0,
+    0,
+    1,
+    "1") {
+        return 8
+    }
+    let stale_revision: UInt64 = revision()
+    if write_text("target/app-export-file-list.csv",
+    "sentinel") != 8usize {
+        return 9
+    }
+    if write_text("target/app-export-file-list.json",
+    "sentinel") != 8usize {
+        return 10
+    }
+    if write_text("target/app-export-file-table.csv",
+    "sentinel") != 8usize {
+        return 11
+    }
+    if write_text("target/app-export-file-table.json",
+    "sentinel") != 8usize {
+        return 12
+    }
+    if ! push_text(0,
+    "Changed") {
+        return 13
+    }
+    if export_csv_file_durable_if_revision(0,
+    "target/app-export-file-list.csv",
+    "target/app-export-file-list.csv.tmp",
+    stale_revision) {
+        return 14
+    }
+    if export_json_file_durable_if_revision(0,
+    "target/app-export-file-list.json",
+    "target/app-export-file-list.json.tmp",
+    stale_revision) {
+        return 15
+    }
+    if app_table_export_csv_file_durable_if_revision(0,
+    "target/app-export-file-table.csv",
+    "target/app-export-file-table.csv.tmp",
+    stale_revision) {
+        return 16
+    }
+    if app_table_export_json_file_durable_if_revision(0,
+    "target/app-export-file-table.json",
+    "target/app-export-file-table.json.tmp",
+    stale_revision) {
+        return 17
+    }
+    if size("target/app-export-file-list.csv") != 8usize {
+        return 18
+    }
+    if size("target/app-export-file-list.json") != 8usize {
+        return 19
+    }
+    if size("target/app-export-file-table.csv") != 8usize {
+        return 20
+    }
+    if size("target/app-export-file-table.json") != 8usize {
+        return 21
+    }
+    if exists("target/app-export-file-list.csv.tmp") {
+        return 22
+    }
+    if exists("target/app-export-file-list.json.tmp") {
+        return 23
+    }
+    if exists("target/app-export-file-table.csv.tmp") {
+        return 24
+    }
+    if exists("target/app-export-file-table.json.tmp") {
+        return 25
+    }
+    let current_revision: UInt64 = revision()
+    if ! export_csv_file_durable_if_revision(0,
+    "target/app-export-file-list.csv",
+    "target/app-export-file-list.csv.tmp",
+    current_revision) {
+        return 26
+    }
+    if ! export_json_file_durable_if_revision(0,
+    "target/app-export-file-list.json",
+    "target/app-export-file-list.json.tmp",
+    current_revision) {
+        return 27
+    }
+    if ! app_table_export_csv_file_durable_if_revision(0,
+    "target/app-export-file-table.csv",
+    "target/app-export-file-table.csv.tmp",
+    current_revision) {
+        return 28
+    }
+    if ! app_table_export_json_file_durable_if_revision(0,
+    "target/app-export-file-table.json",
+    "target/app-export-file-table.json.tmp",
+    current_revision) {
+        return 29
+    }
+    if size("target/app-export-file-list.csv") == 0usize {
+        return 30
+    }
+    if size("target/app-export-file-list.json") == 0usize {
+        return 31
+    }
+    if size("target/app-export-file-table.csv") == 0usize {
+        return 32
+    }
+    if size("target/app-export-file-table.json") == 0usize {
+        return 33
+    }
+    if exists("target/app-export-file-list.csv.tmp") {
+        return 34
+    }
+    if exists("target/app-export-file-list.json.tmp") {
+        return 35
+    }
+    if exists("target/app-export-file-table.csv.tmp") {
+        return 36
+    }
+    if exists("target/app-export-file-table.json.tmp") {
+        return 37
+    }
+    let model_revision: UInt64 = revision()
+    if ! export_csv_file_durable_if_model_revision(0,
+    "target/app-export-file-list-model.csv",
+    "target/app-export-file-list-model.csv.tmp",
+    model_revision) {
+        return 52
+    }
+    if ! export_json_file_durable_if_model_revision(0,
+    "target/app-export-file-list-model.json",
+    "target/app-export-file-list-model.json.tmp",
+    model_revision) {
+        return 53
+    }
+    if ! table.export_csv_file_durable_if_model_revision(0,
+    "target/app-export-file-table-model.csv",
+    "target/app-export-file-table-model.csv.tmp",
+    model_revision) {
+        return 54
+    }
+    if ! table.export_json_file_durable_if_model_revision(0,
+    "target/app-export-file-table-model.json",
+    "target/app-export-file-table-model.json.tmp",
+    model_revision) {
+        return 55
+    }
+    if size("target/app-export-file-list-model.csv") == 0usize {
+        return 56
+    }
+    if size("target/app-export-file-list-model.json") == 0usize {
+        return 57
+    }
+    if size("target/app-export-file-table-model.csv") == 0usize {
+        return 58
+    }
+    if size("target/app-export-file-table-model.json") == 0usize {
+        return 59
+    }
+    if exists("target/app-export-file-list-model.csv.tmp") {
+        return 60
+    }
+    if exists("target/app-export-file-list-model.json.tmp") {
+        return 61
+    }
+    if exists("target/app-export-file-table-model.csv.tmp") {
+        return 62
+    }
+    if exists("target/app-export-file-table-model.json.tmp") {
+        return 63
+    }
+    var probe:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var probe_length:[UIntSize;
+    1] =[0usize]
+    if ! read_text_exact("target/app-export-file-list.csv",
+    probe,
+    probe_length) {
+        return 38
+    }
+    if probe[0] != 65u8 {
+        return 39
+    }
+    if ! read_text_exact("target/app-export-file-list.json",
+    probe,
+    probe_length) {
+        return 40
+    }
+    if probe[0] != 91u8 {
+        return 41
+    }
+    if ! read_text_exact("target/app-export-file-table.csv",
+    probe,
+    probe_length) {
+        return 42
+    }
+    if probe[0] != 110u8 {
+        return 43
+    }
+    if ! read_text_exact("target/app-export-file-table.json",
+    probe,
+    probe_length) {
+        return 44
+    }
+    if probe[0] != 123u8 {
+        return 45
+    }
+    if count(0) != 3 {
+        return 46
+    }
+    if ! delete("target/app-export-file-list.csv") {
+        return 47
+    }
+    if ! delete("target/app-export-file-list.json") {
+        return 48
+    }
+    if ! delete("target/app-export-file-table.csv") {
+        return 49
+    }
+    if ! delete("target/app-export-file-table.json") {
+        return 50
+    }
+    if ! delete("target/app-export-file-list-model.csv") {
+        return 64
+    }
+    if ! delete("target/app-export-file-list-model.json") {
+        return 65
+    }
+    if ! delete("target/app-export-file-table-model.csv") {
+        return 66
+    }
+    if ! delete("target/app-export-file-table-model.json") {
+        return 67
+    }
+    if write_text("target/jadren/app-export-file-if-revision.result",
+    "app-export-file-if-revision:pass\n") == 0usize {
+        return 51
+    }
+    return 0
+}

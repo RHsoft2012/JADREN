@@ -1,0 +1,81 @@
+module generic_buffer_remove_drop.main
+import jadren.core.collections.clear_move
+import jadren.core.collections.length
+import jadren.core.collections.remove_drop
+import jadren.core.collections.remove_drop_status
+@repr(C)
+struct Row<T> {
+    id: Int32,
+    value: T
+}
+fn main() -> Int32 {
+    let rows_created: Result<DynamicArray<Row<OwnedString>>,
+    Int32> = buffer_create(0usize)
+    let first_text: Result<OwnedString,
+    Int32> = string_owned_from("first")
+    let second_text: Result<OwnedString,
+    Int32> = string_owned_from("second")
+    var result_code: Int32 = 0
+    match rows_created {
+        Ok(rows) => {
+            match first_text {
+                Ok(first) => {
+                    match second_text {
+                        Ok(second) => {
+                            let first_row: Row<OwnedString> = Row {
+                                id: 1,
+                                value: first
+                            }
+                            let second_row: Row<OwnedString> = Row {
+                                id: 2,
+                                value: second
+                            }
+                            if ! buffer_append(rows,
+                            first_row) {
+                                result_code = 1
+                            }
+                            if ! buffer_append(rows,
+                            second_row) {
+                                result_code = 2
+                            }
+                            if length(rows) != 2usize {
+                                result_code = 3
+                            }
+                            if remove_drop_status(rows,
+                            0usize) != 0 {
+                                result_code = 4
+                            }
+                            if length(rows) != 1usize {
+                                result_code = 5
+                            }
+                            if rows[0].id != 2 {
+                                result_code = 6
+                            }
+                            if ! remove_drop(rows,
+                            0usize) {
+                                result_code = 7
+                            }
+                            if remove_drop_status(rows,
+                            0usize) != - 20 {
+                                result_code = 8
+                            }
+                            if ! clear_move(rows) {
+                                result_code = 9
+                            }
+                        }
+                        Error(status) => {
+                            result_code = status
+                        }
+                    }
+                }
+                Error(status) => {
+                    result_code = status
+                }
+            }
+        }
+        Error(status) => {
+            result_code = status
+        }
+    }
+    return result_code
+}

@@ -1,0 +1,73 @@
+module app_list_table_reorder_project.main
+
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.count
+import jadren.app.list.move_text
+import jadren.app.list.move_text_if_revision
+import jadren.app.list.push_text
+import jadren.app.table.find_text
+import jadren.app.table.move_row
+import jadren.app.table.move_row_if_revision
+import jadren.app.table.row_count
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    if ! push_text(0, "Alpha") { return 1 }
+    if ! push_text(0, "Bravo") { return 2 }
+    if ! push_text(0, "Charlie") { return 3 }
+    if ! move_text(0, 0, 2) { return 4 }
+    if app_list_find_text(0, "Charlie", 0) != 1 { return 5 }
+    if app_list_find_text(0, "Bravo", 0) != 0 { return 6 }
+    if app_list_find_text(0, "Alpha", 0) != 2 { return 7 }
+    if ! move_text(0, 1, 1) { return 8 }
+    let before_invalid_list: Int32 = count(0)
+    if move_text(0, -1, 0) { return 9 }
+    if move_text(0, 0, before_invalid_list) { return 10 }
+    if count(0) != before_invalid_list { return 11 }
+    if app_list_find_text(0, "Charlie", 0) != 1 { return 11 }
+
+    let stale_list: UInt64 = revision()
+    if ! push_text(0, "Delta") { return 12 }
+    if move_text_if_revision(0, 0, 3, stale_list) { return 13 }
+    let current_list: UInt64 = revision()
+    if ! move_text_if_revision(0, 3, 0, current_list) { return 14 }
+    if app_list_find_text(0, "Delta", 0) != 0 { return 15 }
+    if app_list_find_text(0, "Charlie", 0) != 2 { return 15 }
+
+    clear(0)
+    if ! set_column_name(0, 0, "title") { return 16 }
+    if ! set_column_type(0, 0, 0) { return 17 }
+    app_table_clear(0)
+    if ! app_table_append_row(0) { return 18 }
+    if ! app_table_append_row(0) { return 19 }
+    if ! app_table_append_row(0) { return 20 }
+    if ! set_cell(0, 0, 0, "RowA") { return 21 }
+    if ! set_cell(0, 1, 0, "RowB") { return 22 }
+    if ! set_cell(0, 2, 0, "RowC") { return 23 }
+    if ! move_row(0, 2, 0) { return 24 }
+    if find_text(0, 0, "RowC", 0) != 0 { return 25 }
+    if find_text(0, 0, "RowA", 0) != 1 { return 26 }
+    if find_text(0, 0, "RowB", 0) != 2 { return 27 }
+    let before_invalid_table: Int32 = row_count(0)
+    if move_row(0, -1, 0) { return 28 }
+    if move_row(0, 0, before_invalid_table) { return 29 }
+    if row_count(0) != before_invalid_table { return 30 }
+    if find_text(0, 0, "RowC", 0) != 0 { return 30 }
+    let stale_table: UInt64 = revision()
+    if ! set_cell(0, 1, 0, "FreshRow") { return 31 }
+    if move_row_if_revision(0, 0, 2, stale_table) { return 32 }
+    let current_table: UInt64 = revision()
+    if ! move_row_if_revision(0, 0, 2, current_table) { return 33 }
+    if find_text(0, 0, "FreshRow", 0) != 0 { return 34 }
+    if find_text(0, 0, "RowC", 0) != 2 { return 34 }
+    return 0
+}

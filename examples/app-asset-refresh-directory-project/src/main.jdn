@@ -1,0 +1,126 @@
+module app_asset_refresh_directory_project.main
+
+import jadren.app.assets.AssetKind
+import jadren.app.assets.AssetStatus
+import jadren.app.assets.configure
+import jadren.app.assets.refresh_from_file_durable_directory
+import jadren.app.assets.refresh_from_file_durable_directory_if_revision
+import jadren.app.assets.refresh_from_file_path_durable_directory_if_revision
+import jadren.app.assets.upsert
+import jadren.app.data.revision
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.dir_exists
+import jadren.app.fs.exists
+import jadren.app.fs.write_text
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    if !dir_exists("target/app-asset-refresh-directory") {
+        if !dir_create("target/app-asset-refresh-directory") { return 1 }
+    }
+    delete("target/app-asset-refresh-directory/source.asset")
+    delete("target/app-asset-refresh-directory/catalog.json")
+    delete("target/app-asset-refresh-directory/catalog.json.tmp")
+    delete("target/app-asset-refresh-directory/path.json")
+    delete("target/app-asset-refresh-directory/path.json.tmp")
+    delete("target/app-asset-refresh-directory/invalid.json")
+    delete("target/app-asset-refresh-directory/invalid.json.tmp")
+    delete("target/app-asset-refresh-directory/stale.json")
+    delete("target/app-asset-refresh-directory/stale.json.tmp")
+    if write_text("target/app-asset-refresh-directory/source.asset", "asset-data") != 10usize { return 2 }
+    if !configure(0) { return 3 }
+    let row: Int32 = upsert(
+        0,
+        9101i64,
+        AssetKind.Data,
+        "assets/data.json",
+        0u64,
+        1700000000000000000u64,
+        AssetStatus.Discovered)
+    if row < 0i32 { return 4 }
+    let stale_revision: UInt64 = revision()
+    let other_row: Int32 = upsert(
+        0,
+        9102i64,
+        AssetKind.Prefab,
+        "assets/prefab.json",
+        0u64,
+        1700000000000000001u64,
+        AssetStatus.Discovered)
+    if other_row < 0i32 { return 5 }
+    if refresh_from_file_durable_directory_if_revision(
+        0,
+        row,
+        "target/app-asset-refresh-directory/source.asset",
+        "target/app-asset-refresh-directory/stale.json",
+        "target/app-asset-refresh-directory/stale.json.tmp",
+        "target/app-asset-refresh-directory",
+        stale_revision) { return 6 }
+    if exists("target/app-asset-refresh-directory/stale.json") { return 7 }
+    if exists("target/app-asset-refresh-directory/stale.json.tmp") { return 8 }
+    let current_revision: UInt64 = revision()
+    if !refresh_from_file_durable_directory_if_revision(
+        0,
+        row,
+        "target/app-asset-refresh-directory/source.asset",
+        "target/app-asset-refresh-directory/catalog.json",
+        "target/app-asset-refresh-directory/catalog.json.tmp",
+        "target/app-asset-refresh-directory",
+        current_revision) { return 9 }
+    if !exists("target/app-asset-refresh-directory/catalog.json") { return 10 }
+    if exists("target/app-asset-refresh-directory/catalog.json.tmp") { return 11 }
+    var source_path:[UInt8; 47] =[116u8, 97u8, 114u8, 103u8, 101u8, 116u8, 47u8,
+        97u8, 112u8, 112u8, 45u8, 97u8, 115u8, 115u8, 101u8, 116u8, 45u8,
+        114u8, 101u8, 102u8, 114u8, 101u8, 115u8, 104u8, 45u8, 100u8, 105u8,
+        114u8, 101u8, 99u8, 116u8, 111u8, 114u8, 121u8, 47u8, 115u8, 111u8,
+        117u8, 114u8, 99u8, 101u8, 46u8, 97u8, 115u8, 115u8, 101u8, 116u8]
+    let invalid_path_revision: UInt64 = revision()
+    if refresh_from_file_path_durable_directory_if_revision(
+        0,
+        row,
+        source_path,
+        48usize,
+        "target/app-asset-refresh-directory/invalid.json",
+        "target/app-asset-refresh-directory/invalid.json.tmp",
+        "target/app-asset-refresh-directory",
+        invalid_path_revision) { return 20 }
+    if revision() != invalid_path_revision { return 21 }
+    if exists("target/app-asset-refresh-directory/invalid.json") { return 22 }
+    if exists("target/app-asset-refresh-directory/invalid.json.tmp") { return 23 }
+    let path_revision: UInt64 = revision()
+    if !refresh_from_file_path_durable_directory_if_revision(
+        0,
+        row,
+        source_path,
+        47usize,
+        "target/app-asset-refresh-directory/path.json",
+        "target/app-asset-refresh-directory/path.json.tmp",
+        "target/app-asset-refresh-directory",
+        path_revision) { return 17 }
+    if !exists("target/app-asset-refresh-directory/path.json") { return 18 }
+    if exists("target/app-asset-refresh-directory/path.json.tmp") { return 19 }
+    if !delete("target/app-asset-refresh-directory/source.asset") { return 12 }
+    if !refresh_from_file_durable_directory(
+        0,
+        row,
+        "target/app-asset-refresh-directory/source.asset",
+        "target/app-asset-refresh-directory/catalog.json",
+        "target/app-asset-refresh-directory/catalog.json.tmp",
+        "target/app-asset-refresh-directory") { return 13 }
+    if !exists("target/app-asset-refresh-directory/catalog.json") { return 14 }
+    if exists("target/app-asset-refresh-directory/catalog.json.tmp") { return 15 }
+    if !delete("target/app-asset-refresh-directory/catalog.json") { return 16 }
+    delete("target/app-asset-refresh-directory/catalog.json.tmp")
+    delete("target/app-asset-refresh-directory/path.json")
+    delete("target/app-asset-refresh-directory/path.json.tmp")
+    delete("target/app-asset-refresh-directory/invalid.json")
+    delete("target/app-asset-refresh-directory/invalid.json.tmp")
+    delete("target/app-asset-refresh-directory/stale.json")
+    delete("target/app-asset-refresh-directory/stale.json.tmp")
+    return 0
+}

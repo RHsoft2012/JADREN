@@ -1,0 +1,80 @@
+module ui_app_table_insert_project.main
+
+import jadren.app.state.clear
+import jadren.app.state.set_text
+import jadren.app.data.revision
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.panel
+import jadren.app.ui.table
+import jadren.app.ui.table_column
+import jadren.app.ui.table_cell
+import jadren.app.ui.table_insert_row
+import jadren.app.ui.table_insert_row_if_revision
+import jadren.app.ui.table_read_cell_exact_if_revision
+import jadren.app.ui.table_row_count
+import jadren.app.ui.table_selected_row
+import jadren.app.ui.table_set_selected_row
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear()
+    if !set_text("revision_seed", "ready") { return 1 }
+
+    let root: Int32 = begin("Retained table insertion", 640, 420, 0xF6F8FCu32)
+    if root == 0 { return 2 }
+    let panel_node: Int32 = panel(root, 580, 320, 0xFFFFFFu32, 12, 12, 8, 0, 1)
+    if panel_node == 0 { return 3 }
+    let table_node: Int32 = table(panel_node, 71, 520, 180, 0x111827u32, 0xFFFFFFu32, 8, 1)
+    if table_node == 0 { return 4 }
+    if !table_column(table_node, 0, "Name", 240) { return 5 }
+    if !table_column(table_node, 1, "State", 180) { return 6 }
+    if !table_cell(table_node, 0, 0, "Alpha") { return 7 }
+    if !table_cell(table_node, 0, 1, "Open") { return 8 }
+    if !table_cell(table_node, 1, 0, "Gamma") { return 9 }
+    if !table_cell(table_node, 1, 1, "Done") { return 10 }
+    if !table_set_selected_row(table_node, 1) { return 11 }
+
+    let current: UInt64 = revision()
+    if !table_insert_row_if_revision(table_node, 1, current) { return 12 }
+    if table_row_count(table_node) != 3 { return 13 }
+    if table_selected_row(table_node) != 2 { return 14 }
+
+    var bytes: [UInt8; 32] = [90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8]
+    var length: [UIntSize; 1] = [77usize]
+    if !table_read_cell_exact_if_revision(table_node, 1, 0, bytes, length, current) { return 15 }
+    if length[0] != 0usize { return 16 }
+    if !table_cell(table_node, 1, 0, "Beta") { return 17 }
+    if !table_cell(table_node, 1, 1, "Ready") { return 18 }
+
+    if !table_insert_row(table_node, table_row_count(table_node)) { return 19 }
+    if table_row_count(table_node) != 4 { return 20 }
+    if table_selected_row(table_node) != 2 { return 21 }
+    if !table_cell(table_node, 3, 0, "Omega") { return 22 }
+
+    if table_insert_row(table_node, -1) { return 23 }
+    if table_insert_row(table_node, 99) { return 24 }
+    if table_row_count(table_node) != 4 { return 25 }
+
+    let stale: UInt64 = revision()
+    if !set_text("revision_seed", "changed") { return 26 }
+    if table_insert_row_if_revision(table_node, 0, stale) { return 27 }
+    if table_row_count(table_node) != 4 { return 28 }
+
+    let current_after_change: UInt64 = revision()
+    if !table_insert_row_if_revision(table_node, 0, current_after_change) { return 29 }
+    if table_row_count(table_node) != 5 { return 30 }
+    if table_selected_row(table_node) != 3 { return 31 }
+
+    if !finish(panel_node) { return 32 }
+    if !finish(root) { return 33 }
+    clear()
+    return 0
+}

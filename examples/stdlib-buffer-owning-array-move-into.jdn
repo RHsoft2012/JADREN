@@ -1,0 +1,49 @@
+module examples.stdlib_buffer_owning_array_move_into
+
+// Move a fixed array containing owning Buffer descriptors through the
+// caller-owned ABI. The source slot is zeroed before the field-table cleanup
+// of the output value, so no descriptor is duplicated.
+fn main() -> Int32 {
+    let values_created: Result<Buffer<[Buffer<Int32>; 2]>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let output_first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let output_second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match values_created {
+        Ok(values) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            match output_first_created {
+                                Ok(output_first) => {
+                                    match output_second_created {
+                                        Ok(output_second) => {
+                                            if !buffer_append(first, 11) { result_code = 1 }
+                                            if !buffer_append(second, 22) { result_code = 2 }
+                                            let item: [Buffer<Int32>; 2] = [first, second]
+                                            let output: [Buffer<Int32>; 2] = [output_first, output_second]
+                                            if !buffer_append(values, item) { result_code = 3 }
+                                            if !buffer_remove_move_into(values, 0usize, output) { result_code = 4 }
+                                            if buffer_length(values) != 0usize { result_code = 5 }
+                                            if !buffer_insert_move_from(values, 0usize, output) { result_code = 6 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

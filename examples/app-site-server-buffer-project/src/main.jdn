@@ -1,0 +1,58 @@
+module app_site_server_buffer_project.main
+import jadren.app.site_server.start_with_webroot_buffer
+import jadren.app.site_server.restart_buffer
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    let created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(8usize)
+    match created {
+        Error(error) => {
+            status = error
+        }
+        Ok(webroot) => {
+            if ! buffer_resize(webroot,
+            8usize) {
+                status = 1
+            }
+            if status == 0 {
+                webroot[0] = 67u8
+                webroot[1] = 58u8
+                webroot[2] = 92u8
+                webroot[3] = 106u8
+                webroot[4] = 97u8
+                webroot[5] = 100u8
+                webroot[6] = 114u8
+                webroot[7] = 101u8
+                if start_with_webroot_buffer(18083u16,
+                webroot,
+                9usize) != 0u64 {
+                    status = 2
+                }
+            }
+            if status == 0 {
+                if restart_buffer(0u64,
+                18083u16,
+                webroot,
+                8usize,
+                250u32) != 0u64 {
+                    status = 3
+                }
+            }
+            if status == 0 {
+                if buffer_length(webroot) != 8usize {
+                    status = 4
+                }
+            }
+            if status == 0 {
+                if webroot[0] != 67u8 {
+                    status = 5
+                }
+            }
+        }
+    }
+    return status
+}

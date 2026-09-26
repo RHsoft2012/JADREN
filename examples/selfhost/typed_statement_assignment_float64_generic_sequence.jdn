@@ -1,0 +1,10 @@
+module selfhost.typed_statement_assignment_float64_generic_sequence;
+
+fn local_value() -> Float64 {
+    let first: Float64 = 1.5f64;
+    let second: Float64 = first + 2.0f64;
+    let third: Float64 = second * 2.0f64;
+    let fourth: Float64 = third - 0.5f64;
+    first = fourth + second;
+    return first + third;
+}

@@ -1,0 +1,88 @@
+module examples.dynamic_array_triple_nested_owned_string
+
+// Three DynamicArray descriptor levels can carry move-only UTF-8 text.  The
+// source alias still lowers to the existing recursive Buffer ABI: leaf text
+// descriptors move into the leaf list, then through the middle list, and the
+// outer remove/clear paths release every active owner exactly once.
+fn main() -> Int32 {
+    let outer_created: Result<DynamicArray<DynamicArray<DynamicArray<OwnedString>>>, Int32> = buffer_create(0usize)
+    let first_middle_created: Result<DynamicArray<DynamicArray<OwnedString>>, Int32> = buffer_create(0usize)
+    let second_middle_created: Result<DynamicArray<DynamicArray<OwnedString>>, Int32> = buffer_create(0usize)
+    let first_leaf_created: Result<DynamicArray<OwnedString>, Int32> = buffer_create(0usize)
+    let second_leaf_created: Result<DynamicArray<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_middle_created {
+                Ok(first_middle) => {
+                    match second_middle_created {
+                        Ok(second_middle) => {
+                            match first_leaf_created {
+                                Ok(first_leaf) => {
+                                    match second_leaf_created {
+                                        Ok(second_leaf) => {
+                                            let first_value: Result<OwnedString, Int32> = string_owned_from("first")
+                                            match first_value {
+                                                Ok(value) => {
+                                                    if !buffer_append(first_leaf, value) { result_code = 1 }
+                                                }
+                                                Error(status) => { result_code = status }
+                                            }
+                                            let second_value: Result<OwnedString, Int32> = string_owned_from("second")
+                                            match second_value {
+                                                Ok(value) => {
+                                                    if !buffer_insert_move(second_leaf, 0usize, value) { result_code = 2 }
+                                                }
+                                                Error(status) => { result_code = status }
+                                            }
+                                            if buffer_length(first_leaf) != 1usize { result_code = 3 }
+                                            if buffer_length(second_leaf) != 1usize { result_code = 4 }
+                                            if string_owned_length(first_leaf[0]) != 5usize { result_code = 5 }
+                                            if string_owned_length(second_leaf[0]) != 6usize { result_code = 6 }
+                                            if !buffer_append(first_middle, first_leaf) { result_code = 7 }
+                                            if !buffer_append(second_middle, second_leaf) { result_code = 8 }
+                                            if !buffer_append(outer, first_middle) { result_code = 9 }
+                                            if !buffer_append(outer, second_middle) { result_code = 10 }
+                                            if buffer_length(outer) != 2usize { result_code = 11 }
+                                            if string_owned_length(outer[0][0][0]) != 5usize { result_code = 12 }
+                                            if string_owned_length(outer[1][0][0]) != 6usize { result_code = 13 }
+
+                                            let grown_status: Int32 = buffer_resize_move_status(outer, 3usize)
+                                            if grown_status != 0 { result_code = 14 }
+                                            if buffer_length(outer) != 3usize { result_code = 15 }
+                                            if buffer_length(outer[2]) != 0usize { result_code = 16 }
+                                            let shrunk_status: Int32 = buffer_resize_move_status(outer, 1usize)
+                                            if shrunk_status != 0 { result_code = 17 }
+                                            if buffer_length(outer) != 1usize { result_code = 18 }
+                                            if string_owned_length(outer[0][0][0]) != 5usize { result_code = 19 }
+
+                                            let removed: Result<DynamicArray<DynamicArray<OwnedString>>, Int32> = buffer_remove_move(outer, 0usize)
+                                            match removed {
+                                                Ok(moved) => {
+                                                    if buffer_length(moved) != 1usize { result_code = 20 }
+                                                    if string_owned_length(moved[0][0]) != 5usize { result_code = 21 }
+                                                    if !buffer_clear_move(moved) { result_code = 22 }
+                                                }
+                                                Error(status) => { result_code = status }
+                                            }
+                                            if buffer_length(outer) != 0usize { result_code = 23 }
+                                            if !buffer_clear_move(outer) { result_code = 24 }
+                                            if buffer_length(outer) != 0usize { result_code = 25 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

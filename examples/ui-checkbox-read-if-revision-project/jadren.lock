@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "f2be566b1f029122"
+
+[package]
+name = "ui-checkbox-read-if-revision-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

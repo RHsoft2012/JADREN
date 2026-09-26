@@ -1,0 +1,62 @@
+module examples.dynamic_array_owning_nested_pop_move_into
+
+// Independent application-shaped fixture for moving the last owning row into
+// caller-owned storage.  The child DynamicArray and its OwnedString payload
+// must transfer exactly once; the source buffer is then empty and safe to
+// clear.
+@repr(C)
+struct Row<T> {
+    id: Int32,
+    values: DynamicArray<T>
+}
+
+fn main() -> Int32 {
+    let rows_created: Result<DynamicArray<Row<DynamicArray<OwnedString>>>, Int32> = buffer_create(0usize)
+    let values_created: Result<DynamicArray<DynamicArray<OwnedString>>, Int32> = buffer_create(0usize)
+    let leaf_created: Result<DynamicArray<OwnedString>, Int32> = buffer_create(0usize)
+    let text_created: Result<OwnedString, Int32> = string_owned_from("pop-deep")
+    let output_values_created: Result<DynamicArray<DynamicArray<OwnedString>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match rows_created {
+        Ok(rows) => {
+            match values_created {
+                Ok(values) => {
+                    match leaf_created {
+                        Ok(leaf) => {
+                            match text_created {
+                                Ok(text) => {
+                                    match output_values_created {
+                                        Ok(output_values) => {
+                                            if !buffer_append(leaf, text) { result_code = 1 }
+                                            if !buffer_append(values, leaf) { result_code = 2 }
+                                            let row: Row<DynamicArray<OwnedString>> = Row { id: 17, values: values }
+                                            if !buffer_append(rows, row) { result_code = 3 }
+                                            if buffer_length(rows) != 1usize { result_code = 4 }
+                                            let output: Row<DynamicArray<OwnedString>> = Row { id: 0, values: output_values }
+                                            let pop_status: Int32 = buffer_pop_move_into_status(rows, output)
+                                            if pop_status != 0 { result_code = 5 }
+                                            if output.id != 17 { result_code = 6 }
+                                            if buffer_length(output.values) != 1usize { result_code = 7 }
+                                            if buffer_length(output.values[0]) != 1usize { result_code = 8 }
+                                            if string_owned_length(output.values[0][0]) != 8usize { result_code = 9 }
+                                            if buffer_length(rows) != 0usize { result_code = 10 }
+                                            if !buffer_clear_move(output.values) { result_code = 11 }
+                                            if !buffer_clear_move(rows) { result_code = 12 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

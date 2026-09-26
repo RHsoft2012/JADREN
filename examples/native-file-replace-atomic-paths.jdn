@@ -1,0 +1,40 @@
+module examples.native_file_replace_atomic_paths
+
+// Publishes a flushed temporary export over a caller-owned target path. Both
+// paths can be built from native file-dialog bytes without String conversion.
+fn main() -> Int32 {
+    var source: [UInt8; 30] = [116u8, 97u8, 114u8, 103u8, 101u8, 116u8, 47u8,
+        106u8, 97u8, 100u8, 114u8, 101u8, 110u8, 45u8, 114u8, 101u8,
+        112u8, 108u8, 97u8, 99u8, 101u8, 45u8, 112u8, 97u8, 116u8, 104u8,
+        46u8, 116u8, 109u8, 112u8]
+    var target: [UInt8; 30] = [116u8, 97u8, 114u8, 103u8, 101u8, 116u8, 47u8,
+        106u8, 97u8, 100u8, 114u8, 101u8, 110u8, 45u8, 114u8, 101u8,
+        112u8, 108u8, 97u8, 99u8, 101u8, 45u8, 112u8, 97u8, 116u8, 104u8,
+        46u8, 98u8, 105u8, 110u8]
+    var input: [UInt8; 3] = [65u8, 66u8, 67u8]
+    var output: [UInt8; 3] = [0u8, 0u8, 0u8]
+
+    if file_write_prefix_path(source, 30usize, input, 3usize) != 3usize { return 1 }
+    if !file_flush_path(source, 30usize) { return 2 }
+
+    if file_replace_atomic_paths(source, 31usize, target, 30usize) { return 3 }
+    if file_read_at_path(target, 30usize, 0usize, output) != 3usize { return 4 }
+    if output[0] != 79u8 { return 5 }
+    if output[1] != 76u8 { return 6 }
+    if output[2] != 68u8 { return 7 }
+
+    if file_replace_atomic_paths(source, 30usize, target, 31usize) { return 8 }
+    if file_read_at_path(target, 30usize, 0usize, output) != 3usize { return 9 }
+    if output[0] != 79u8 { return 10 }
+    if output[1] != 76u8 { return 11 }
+    if output[2] != 68u8 { return 12 }
+
+    if !file_replace_atomic_paths(source, 30usize, target, 30usize) { return 13 }
+    if !file_flush_path(target, 30usize) { return 14 }
+    if file_read_at_path(target, 30usize, 0usize, output) != 3usize { return 15 }
+    if output[0] != 65u8 { return 16 }
+    if output[1] != 66u8 { return 17 }
+    if output[2] != 67u8 { return 18 }
+    if file_size_path(source, 30usize) != 0usize { return 19 }
+    return 0
+}

@@ -1,0 +1,13 @@
+module selfhost.typed_statement_assignment_int32_four_locals_cross_local
+
+fn local_value() -> Int32 {
+    let first: Int32 = 10;
+    let second: Int32 = 20;
+    let third: Int32 = 30;
+    let fourth: Int32 = 40;
+    first = first + 1;
+    second = first - 2;
+    third = second * 3;
+    fourth = third + second;
+    return fourth;
+}

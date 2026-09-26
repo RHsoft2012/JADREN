@@ -1,0 +1,164 @@
+module examples.network_cookie_persistence_project
+
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.exists
+import jadren.app.fs.read_bytes_exact
+import jadren.app.fs.write_atomic_durable
+import jadren.app.fs.write_text
+import jadren.network.cookies.clear
+import jadren.network.cookies.get
+import jadren.network.cookies.put
+import jadren.network.cookies.snapshot_length
+import jadren.network.cookies.snapshot_load_exact
+import jadren.network.cookies.snapshot_write_exact
+import jadren.network.cookies.write_request_header
+
+// Standalone native restart fixture: the JCK1 cookie snapshot crosses an
+// explicit durable file boundary; no global jar or hidden storage is used.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    let directory: String = "target/jadren/network-cookie-persistence"
+    let snapshot_path: String = "target/jadren/network-cookie-persistence/cookies.jck"
+    let snapshot_temporary: String = "target/jadren/network-cookie-persistence/cookies.jck.tmp"
+    let corrupt_path: String = "target/jadren/network-cookie-persistence/cookies.corrupt.jck"
+    let corrupt_temporary: String = "target/jadren/network-cookie-persistence/cookies.corrupt.jck.tmp"
+    let missing_path: String = "target/jadren/network-cookie-persistence/missing.jck"
+    let marker_path: String = "target/jadren/network-cookie-persistence.result"
+
+    dir_create(directory)
+    delete(snapshot_temporary)
+    delete(corrupt_path)
+    delete(corrupt_temporary)
+    delete(missing_path)
+
+    let slot_count: UIntSize = 2usize
+    let name_width: UIntSize = 8usize
+    let value_width: UIntSize = 16usize
+    if snapshot_length(slot_count, name_width, value_width) != 235usize {
+        return 1
+    }
+
+    var names: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var values: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var name_lengths: [UIntSize; 2] = [0usize, 0usize]
+    var value_lengths: [UIntSize; 2] = [0usize, 0usize]
+    var expires_at: [Int64; 2] = [0i64, 0i64]
+    var flags: [UInt32; 2] = [0u32, 0u32]
+    var snapshot: [UInt8; 256] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var snapshot_length_output: [UIntSize; 1] = [999usize]
+    var sid_name: [UInt8; 3] = [115u8, 105u8, 100u8]
+    var sid_value: [UInt8; 3] = [120u8, 121u8, 122u8]
+    var theme_name: [UInt8; 5] = [116u8, 104u8, 101u8, 109u8, 101u8]
+    var theme_value: [UInt8; 4] = [100u8, 97u8, 114u8, 107u8]
+    var output: [UInt8; 64] = [165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8]
+
+    if !exists(snapshot_path) {
+        if !clear(slot_count, name_width, value_width, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) {
+            return 2
+        }
+        if put(sid_name, 3usize, 3usize, sid_value, 3usize, 3usize, 160i64, 1u32, slot_count, name_width, value_width, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) != 0 {
+            return 3
+        }
+        if put(theme_name, 5usize, 5usize, theme_value, 4usize, 4usize, 0i64, 0u32, slot_count, name_width, value_width, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) != 1 {
+            return 4
+        }
+        if !snapshot_write_exact(names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, slot_count, name_width, value_width, snapshot, 256usize, snapshot_length_output) {
+            return 5
+        }
+        if snapshot_length_output[0] != 235usize {
+            return 6
+        }
+        if !write_atomic_durable(snapshot_temporary, snapshot_path, directory, snapshot, snapshot_length_output[0]) {
+            return 7
+        }
+        if write_text(marker_path, "cookie-persistence:seed\n") == 0usize {
+            return 8
+        }
+        return 0
+    }
+
+    var loaded_length: [UIntSize; 1] = [999usize]
+    if !read_bytes_exact(snapshot_path, snapshot, loaded_length) {
+        return 9
+    }
+    if loaded_length[0] != 235usize {
+        return 10
+    }
+    if !snapshot_load_exact(snapshot, loaded_length[0], names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, slot_count, name_width, value_width) {
+        return 11
+    }
+    if get(sid_name, 3usize, 3usize, 100i64, slot_count, name_width, value_width, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, output, 64usize) != 3 {
+        return 12
+    }
+    if output[0] != 120u8 { return 13 }
+    if output[2] != 122u8 { return 14 }
+    if flags[0] != 1u32 { return 15 }
+    if expires_at[0] != 160i64 { return 16 }
+    if get(theme_name, 5usize, 5usize, 100i64, slot_count, name_width, value_width, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, output, 64usize) != 4 {
+        return 17
+    }
+    if output[0] != 100u8 { return 18 }
+    if output[3] != 107u8 { return 19 }
+    if write_request_header(100i64, false, slot_count, name_width, value_width, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, output, 64usize) != 20 {
+        return 20
+    }
+    if write_request_header(100i64, true, slot_count, name_width, value_width, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, output, 64usize) != 29 {
+        return 21
+    }
+
+    var missing_length: [UIntSize; 1] = [444usize]
+    if read_bytes_exact(missing_path, snapshot, missing_length) {
+        return 22
+    }
+    if missing_length[0] != 444usize {
+        return 23
+    }
+
+    snapshot[0] = 88u8
+    if !write_atomic_durable(corrupt_temporary, corrupt_path, directory, snapshot, loaded_length[0]) {
+        return 24
+    }
+    snapshot[0] = 74u8
+    if !read_bytes_exact(corrupt_path, snapshot, loaded_length) {
+        return 25
+    }
+    if snapshot[0] != 88u8 {
+        return 26
+    }
+    names[0] = 165u8
+    values[0] = 165u8
+    name_lengths[0] = 77usize
+    value_lengths[0] = 77usize
+    expires_at[0] = 77i64
+    flags[0] = 1u32
+    if snapshot_load_exact(snapshot, loaded_length[0], names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, slot_count, name_width, value_width) {
+        return 27
+    }
+    if names[0] != 165u8 { return 28 }
+    if values[0] != 165u8 { return 29 }
+    if name_lengths[0] != 77usize { return 30 }
+    if value_lengths[0] != 77usize { return 31 }
+    if expires_at[0] != 77i64 { return 32 }
+    if flags[0] != 1u32 { return 33 }
+    delete(corrupt_path)
+    delete(corrupt_temporary)
+
+    if !read_bytes_exact(snapshot_path, snapshot, loaded_length) {
+        return 34
+    }
+    if !snapshot_load_exact(snapshot, loaded_length[0], names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, slot_count, name_width, value_width) {
+        return 35
+    }
+    if get(sid_name, 3usize, 3usize, 100i64, slot_count, name_width, value_width, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, output, 64usize) != 3 {
+        return 36
+    }
+    if write_text(marker_path, "cookie-persistence:restore\n") == 0usize {
+        return 37
+    }
+    return 0
+}

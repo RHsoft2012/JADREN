@@ -1,0 +1,48 @@
+module examples.windows_desktop_list_exact
+
+// Independent native list read-back smoke. The exact API reports a valid
+// empty item and covers both the retained node and legacy event-id entry
+// points. The type/JIR tests cover the caller-owned write-slice contract.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    ui_list(20, 0, 0, 260, 120, 0x111827u32, 0xFFFFFFu32)
+    ui_list_item(20, "Focus")
+    ui_list_item(20, "")
+
+    var output: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var length: [UIntSize; 1] = [99usize]
+    let first: Bool = ui_list_read_item_exact(20, 0, output, length)
+    if !first { return 1 }
+    if length[0] != 5usize { return 2 }
+    if output[0] != 70u8 { return 3 }
+
+    let empty: Bool = ui_list_read_item_exact(20, 1, output, length)
+    if !empty { return 4 }
+    if length[0] != 0usize { return 5 }
+
+    app_list_clear(0)
+    if !app_list_push_text(0, "Focus") { return 6 }
+
+    let root: Int32 = ui_app_begin("Jadren exact list", 520, 320, 0xF6F8FCu32)
+    if root == 0 { return 7 }
+    let panel: Int32 = ui_app_panel(root, 480, 240, 0xFFFFFFu32, 12, 10, 8, 0, 1)
+    if panel == 0 { return 8 }
+    let retained: Int32 = ui_app_list(panel, 30, 360, 120,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if retained == 0 { return 9 }
+    if !ui_app_list_bind_app(retained, 0) { return 10 }
+    let retained_ok: Bool = ui_app_list_read_item_exact(retained, 0, output, length)
+    if !retained_ok { return 11 }
+    if length[0] != 5usize { return 12 }
+    if output[0] != 70u8 { return 12 }
+    if !ui_app_end(panel) { return 13 }
+    if !ui_app_end(root) { return 14 }
+    return 0
+}

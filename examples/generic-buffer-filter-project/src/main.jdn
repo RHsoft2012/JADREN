@@ -1,0 +1,118 @@
+module generic_buffer_filter.main
+
+import jadren.core.collections.append
+import jadren.core.collections.capacity
+import jadren.core.collections.create
+import jadren.core.collections.filter
+import jadren.core.collections.filter_i32
+import jadren.core.collections.length
+
+fn keep_positive(value: Int32) -> Bool {
+    return value > 0
+}
+
+fn keep_even(value: Int32) -> Bool {
+    return value % 2 == 0
+}
+
+fn keep_nonzero(value: Float32) -> Bool {
+    return value != 0.0f32
+}
+
+fn keep_true(value: Bool) -> Bool {
+    return value
+}
+
+fn keep_letter_a(value: Char) -> Bool {
+    return value == 'a'
+}
+
+fn main() -> Int32 {
+    var result_code: Int32 = 0
+
+    let integers: Result<Buffer<Int32>, Int32> = create(6usize)
+    match integers {
+        Ok(values) => {
+            if ! append(values, -2) { result_code = 1 }
+            if ! append(values, 4) { result_code = 2 }
+            if ! append(values, 0) { result_code = 3 }
+            if ! append(values, 7) { result_code = 4 }
+            if ! append(values, -1) { result_code = 5 }
+            let initial_capacity: UIntSize = capacity(values)
+            if ! filter(values, keep_positive) { result_code = 6 }
+            if length(values) != 2usize { result_code = 7 }
+            if values[0] != 4 {
+                result_code = 8
+            } else {
+                if values[1] != 7 { result_code = 8 }
+            }
+            if capacity(values) != initial_capacity { result_code = 9 }
+            if ! filter_i32(values, keep_even) { result_code = 10 }
+            if length(values) != 1usize {
+                result_code = 11
+            } else {
+                if values[0] != 4 { result_code = 11 }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let floats: Result<Buffer<Float32>, Int32> = create(4usize)
+    match floats {
+        Ok(values) => {
+            if ! append(values, 0.0f32) { result_code = 12 }
+            if ! append(values, 1.5f32) { result_code = 13 }
+            if ! append(values, -2.0f32) { result_code = 14 }
+            if ! filter(values, keep_nonzero) { result_code = 15 }
+            if length(values) != 2usize { result_code = 16 }
+            if values[0] != 1.5f32 {
+                result_code = 17
+            } else {
+                if values[1] != -2.0f32 { result_code = 17 }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let empty: Result<Buffer<Int32>, Int32> = create(0usize)
+    match empty {
+        Ok(values) => {
+            if ! filter_i32(values, keep_positive) { result_code = 18 }
+            if length(values) != 0usize { result_code = 19 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let booleans: Result<Buffer<Bool>, Int32> = create(4usize)
+    match booleans {
+        Ok(values) => {
+            if ! append(values, true) { result_code = 20 }
+            if ! append(values, false) { result_code = 21 }
+            if ! append(values, true) { result_code = 22 }
+            let initial_capacity: UIntSize = capacity(values)
+            if ! filter(values, keep_true) { result_code = 23 }
+            if length(values) != 2usize { result_code = 24 }
+            if ! values[0] { result_code = 25 }
+            if ! values[1] { result_code = 26 }
+            if capacity(values) != initial_capacity { result_code = 27 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let chars: Result<Buffer<Char>, Int32> = create(4usize)
+    match chars {
+        Ok(values) => {
+            if ! append(values, 'b') { result_code = 28 }
+            if ! append(values, 'a') { result_code = 29 }
+            if ! append(values, 'c') { result_code = 30 }
+            let initial_capacity: UIntSize = capacity(values)
+            if ! filter(values, keep_letter_a) { result_code = 31 }
+            if length(values) != 1usize { result_code = 32 }
+            if values[0] != 'a' { result_code = 33 }
+            if capacity(values) != initial_capacity { result_code = 34 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

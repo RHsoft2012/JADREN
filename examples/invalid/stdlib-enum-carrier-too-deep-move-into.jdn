@@ -1,0 +1,20 @@
+module invalid.stdlib_enum_carrier_too_deep_move_into
+
+// Eight total tags (the named enum plus seven nested carriers) are outside
+// the bounded field-table ABI and must be rejected before JIR/native lowering.
+@repr(C) enum Event {
+    Idle,
+    Text([Option<Option<Option<Option<Option<Option<Option<OwnedString>>>>>>>; 2]),
+    Done
+}
+
+fn mutate(values: write Buffer<Event>, output: write Event) {
+    let removed: Bool = buffer_remove_move_into(values, 0usize, output)
+    let removed_status: Int32 = buffer_remove_move_into_status(values, 99usize, output)
+    let popped: Bool = buffer_pop_move_into(values, output)
+    let pop_status: Int32 = buffer_pop_move_into_status(values, output)
+    if !removed { }
+    if removed_status == 0 { }
+    if !popped { }
+    if pop_status == 0 { }
+}

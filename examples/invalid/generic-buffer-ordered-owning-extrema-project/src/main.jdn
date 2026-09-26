@@ -1,0 +1,17 @@
+module generic_buffer_ordered_owning_extrema.main
+
+import jadren.core.collections.max_index
+
+fn max_ordered<T: Ordered>(values: read Buffer<T>) -> Int32 {
+    return max_index(values)
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => { result_code = max_ordered(values) }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

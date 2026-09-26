@@ -1,0 +1,13 @@
+module examples.selfhost.typed_statement_assignment_float64_three_locals
+
+// The Stage-2 source-driver keeps three mutable Float64 locals homogeneous,
+// reads each earlier slot from a later assignment, and returns the last slot.
+fn local_value() -> Float64 {
+    let first: Float64 = 1.5f64;
+    let second: Float64 = 2.5f64;
+    let third: Float64 = 3.5f64;
+    first = first + 0.5f64;
+    second = first - 0.5f64;
+    third = second * 2.0f64;
+    return third;
+}

@@ -1,9 +1,32 @@
 module app_input_binding_project.main
 
+import jadren.app.data.revision
 import jadren.app.event.AppEvent
 import jadren.app.event.checked_changed
 import jadren.app.event.click
 import jadren.app.event.read_text
+import jadren.app.event.read_text_if_model_revision
+import jadren.app.event.read_text_buffer_if_model_revision
+import jadren.app.event.read_list_item_if_model_revision
+import jadren.app.event.read_list_item_buffer_if_model_revision
+import jadren.app.event.read_table_cell_if_model_revision
+import jadren.app.event.read_table_cell_buffer_if_model_revision
+import jadren.app.event.read_checked_if_model_revision
+import jadren.app.event.read_select_index_if_model_revision
+import jadren.app.event.read_list_index_if_model_revision
+import jadren.app.event.read_list_count_if_model_revision
+import jadren.app.event.read_table_selected_row_if_model_revision
+import jadren.app.event.read_table_row_count_if_model_revision
+import jadren.app.event.refresh_text_if_model_revision
+import jadren.app.event.commit_text_if_model_revision
+import jadren.app.event.refresh_checked_if_model_revision
+import jadren.app.event.commit_checked_if_model_revision
+import jadren.app.event.refresh_select_if_model_revision
+import jadren.app.event.commit_select_if_model_revision
+import jadren.app.event.refresh_list_if_model_revision
+import jadren.app.event.commit_list_if_model_revision
+import jadren.app.event.refresh_table_if_model_revision
+import jadren.app.event.commit_table_if_model_revision
 import jadren.app.event.checked_value
 import jadren.app.event.list_changed
 import jadren.app.event.list_index_value
@@ -19,30 +42,75 @@ import jadren.app.event.window_resized
 import jadren.app.event.window_width_value
 import jadren.app.input.bind_state
 import jadren.app.input.bind_checkbox_state
+import jadren.app.input.bind_switch_state
 import jadren.app.input.bind_select_state
+import jadren.app.input.bind_list_state
+import jadren.app.input.bind_table_state
 import jadren.app.input.checked
+import jadren.app.input.checked_if_model_revision
+import jadren.app.input.commit_state_if_model_revision
+import jadren.app.input.refresh_state_if_model_revision
+import jadren.app.input.commit_checkbox_state_if_model_revision
+import jadren.app.input.commit_switch_state_if_model_revision
+import jadren.app.input.commit_switch_state_if_revision
+import jadren.app.input.refresh_checkbox_state_if_model_revision
+import jadren.app.input.refresh_switch_state
+import jadren.app.input.refresh_switch_state_exact
+import jadren.app.input.refresh_switch_state_if_model_revision
+import jadren.app.input.refresh_switch_state_if_revision
+import jadren.app.input.commit_select_state_if_model_revision
+import jadren.app.input.refresh_select_state_if_model_revision
+import jadren.app.input.commit_list_state_if_model_revision
+import jadren.app.input.refresh_list_state_if_model_revision
+import jadren.app.input.commit_table_state_if_model_revision
+import jadren.app.input.refresh_table_state_if_model_revision
 import jadren.app.input
 import jadren.app.input.refresh_checkbox_state
 import jadren.app.input.refresh_all
+import jadren.app.input.refresh_all_if_model_revision
 import jadren.app.input.refresh_select_state
 import jadren.app.input.refresh_state
 import jadren.app.input.read_text_exact
+import jadren.app.input.read_text_exact_if_model_revision
+import jadren.app.input.read_text_exact_buffer_if_model_revision
+import jadren.app.input.read_list_item_exact_if_model_revision
+import jadren.app.input.read_list_item_exact_buffer_if_model_revision
+import jadren.app.input.read_table_cell_exact_if_model_revision
+import jadren.app.input.read_table_cell_exact_buffer_if_model_revision
 import jadren.app.input.select_index
+import jadren.app.input.select_index_if_model_revision
 import jadren.app.input.set_checked
 import jadren.app.input.set_enabled
 import jadren.app.input.set_select_index
+import jadren.app.input.set_list_index
+import jadren.app.input.set_table_selected_row
+import jadren.app.input.list_index
+import jadren.app.input.list_index_if_model_revision
+import jadren.app.input.list_count_if_model_revision
+import jadren.app.input.table_selected_row
+import jadren.app.input.table_selected_row_if_model_revision
+import jadren.app.input.table_row_count_if_model_revision
 import jadren.app.input.set_value
 import jadren.app.input.text_length
 import jadren.app.state.clear
+import jadren.app.state.get_bool
+import jadren.app.state.get_int
 import jadren.app.state.set_bool
 import jadren.app.state.set_int
 import jadren.app.state.set_text
 import jadren.app.ui.begin
 import jadren.app.ui.checkbox
+import jadren.app.ui.switch
 import jadren.app.ui.finish
+import jadren.app.ui.list
+import jadren.app.ui.list_item
 import jadren.app.ui.panel
 import jadren.app.ui.select
 import jadren.app.ui.select_option
+import jadren.app.ui.table
+import jadren.app.ui.table_cell
+import jadren.app.ui.table_column
+import jadren.app.ui.table_insert_row
 import jadren.app.ui.text_input
 import jadren.app.ui.on_close
 import jadren.app.ui.on_resize
@@ -73,11 +141,26 @@ fn main() -> Int32 {
     let checkbox_node: Int32 = checkbox(panel_node, "Enabled", 12, 180, 34,
                                         0x111827u32, 0x168EF5u32, 8, 0, 0)
     if checkbox_node == 0 { return 7 }
+    let switch_node: Int32 = switch(panel_node, "Dark mode", 16, 180, 34,
+                                    0x111827u32, 0x168EF5u32, 8, 0, 0)
+    if switch_node == 0 { return 224 }
     let select_node: Int32 = select(panel_node, 13, 240, 34,
                                     0x111827u32, 0xFFFFFFu32, 8, 0)
     if select_node == 0 { return 8 }
     if !select_option(select_node, "First") { return 9 }
     if !select_option(select_node, "Second") { return 10 }
+    let list_node: Int32 = list(panel_node, 14, 200, 72,
+                                0x111827u32, 0xFFFFFFu32, 8, 0)
+    if list_node == 0 { return 60 }
+    if !list_item(list_node, "List first") { return 61 }
+    let table_node: Int32 = table(panel_node, 15, 200, 72,
+                                  0x111827u32, 0xFFFFFFu32, 8, 0)
+    if table_node == 0 { return 62 }
+    if !table_column(table_node, 0, "Value", 160) { return 63 }
+    if !table_insert_row(table_node, 0) { return 64 }
+    if !table_cell(table_node, 0, 0, "Table first") { return 65 }
+    if !bind_list_state(14, "selected_item") { return 66 }
+    if !bind_table_state(15, "selected_row") { return 67 }
 
     // The input facade addresses the explicit event ID, while the retained
     // UI facade uses input_node for node-oriented bindings.
@@ -90,6 +173,33 @@ fn main() -> Int32 {
     if !set_bool("enabled", true) { return 14 }
     refresh_checkbox_state(12)
     if checked(12) != 1 { return 15 }
+    if !bind_switch_state(16, "dark_mode") { return 225 }
+    if !set_bool("dark_mode", true) { return 226 }
+    refresh_switch_state(16)
+    if checked(16) != 1 { return 227 }
+    if !set_bool("dark_mode", false) { return 228 }
+    if !refresh_switch_state_exact(16) { return 229 }
+    if checked(16) != 0 { return 230 }
+    let stale_switch_refresh_revision: UInt64 = revision()
+    if !set_bool("dark_mode", true) { return 231 }
+    if refresh_switch_state_if_revision(16, stale_switch_refresh_revision) { return 232 }
+    if checked(16) != 0 { return 233 }
+    let switch_refresh_revision: UInt64 = revision()
+    if !refresh_switch_state_if_model_revision(16, switch_refresh_revision) { return 234 }
+    if checked(16) != 1 { return 235 }
+    set_checked(16, 0)
+    let switch_commit_revision: UInt64 = revision()
+    if !commit_switch_state_if_revision(16, switch_commit_revision) { return 236 }
+    if get_bool("dark_mode") { return 237 }
+    if !set_bool("dark_mode", true) { return 238 }
+    if !refresh_switch_state_exact(16) { return 239 }
+    let stale_switch_commit_revision: UInt64 = revision()
+    if !set_bool("dark_mode", false) { return 240 }
+    if commit_switch_state_if_revision(16, stale_switch_commit_revision) { return 241 }
+    if get_bool("dark_mode") { return 242 }
+    let switch_model_commit_revision: UInt64 = revision()
+    if !commit_switch_state_if_model_revision(16, switch_model_commit_revision) { return 243 }
+    if !get_bool("dark_mode") { return 244 }
     if !set_int("choice", 1i64) { return 16 }
     refresh_select_state(13)
     if select_index(13) != 1 { return 17 }
@@ -108,6 +218,114 @@ fn main() -> Int32 {
     if !read_text_exact(11, output, exact_length) { return 21 }
     if exact_length[0] != 11usize { return 22 }
 
+    // The complete model revision must reject a stale input read after a
+    // list mutation, even though the text state itself did not change.
+    let stale_model_revision: UInt64 = revision()
+    if !app_list_push_text(0, "model-change") { return 23 }
+    output[0] = 201u8
+    exact_length[0] = 777usize
+    if read_text_exact_if_model_revision(11, output, exact_length, stale_model_revision) { return 24 }
+    if output[0] != 201u8 { return 25 }
+    if exact_length[0] != 777usize { return 26 }
+    let current_model_revision: UInt64 = revision()
+    if !read_text_exact_if_model_revision(11, output, exact_length, current_model_revision) { return 27 }
+    if exact_length[0] != 11usize { return 28 }
+    if output[0] != 66u8 { return 29 }
+
+    // Repeat the same complete-model guard through a caller-owned Buffer.
+    let model_buffer_result: Result<Buffer<UInt8>, Int32> = buffer_create(32usize)
+    var model_buffer_status: Int32 = 0
+    match model_buffer_result {
+        Error(error) => { model_buffer_status = error }
+        Ok(model_buffer) => {
+            if !buffer_resize(model_buffer, 32usize) { model_buffer_status = 31 }
+            if model_buffer_status == 0 {
+                model_buffer[0] = 202u8
+                let stale_buffer_revision: UInt64 = revision()
+                if !app_list_push_text(0, "model-change-buffer") { model_buffer_status = 32 }
+                if model_buffer_status == 0 {
+                    exact_length[0] = 778usize
+                    if read_text_exact_buffer_if_model_revision(11, model_buffer, 32usize, exact_length, stale_buffer_revision) { model_buffer_status = 33 }
+                    if model_buffer[0] != 202u8 { model_buffer_status = 34 }
+                    if exact_length[0] != 778usize { model_buffer_status = 35 }
+                }
+                if model_buffer_status == 0 {
+                    let current_buffer_revision: UInt64 = revision()
+                    if !read_text_exact_buffer_if_model_revision(11, model_buffer, 32usize, exact_length, current_buffer_revision) { model_buffer_status = 36 }
+                    if exact_length[0] != 11usize { model_buffer_status = 37 }
+                    if model_buffer[0] != 66u8 { model_buffer_status = 38 }
+                }
+            }
+        }
+    }
+    if model_buffer_status != 0 { return model_buffer_status }
+
+    // The same complete-model guard applies to event-ID list and table
+    // projections, so a collection mutation invalidates their read snapshot.
+    var collection_output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                                         0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                                         0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                                         0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var collection_length: [UIntSize; 1] = [0usize]
+    let stale_list_revision: UInt64 = revision()
+    if !app_list_push_text(0, "list-model-change") { return 65 }
+    collection_output[0] = 211u8
+    collection_length[0] = 779usize
+    if read_list_item_exact_if_model_revision(14, 0, collection_output, collection_length, stale_list_revision) { return 66 }
+    if collection_output[0] != 211u8 { return 67 }
+    if collection_length[0] != 779usize { return 68 }
+    let current_list_revision: UInt64 = revision()
+    if !read_list_item_exact_if_model_revision(14, 0, collection_output, collection_length, current_list_revision) { return 69 }
+    if collection_length[0] != 10usize { return 70 }
+    if collection_output[0] != 76u8 { return 71 }
+
+    let collection_buffer_result: Result<Buffer<UInt8>, Int32> = buffer_create(32usize)
+    var collection_buffer_status: Int32 = 0
+    match collection_buffer_result {
+        Error(error) => { collection_buffer_status = error }
+        Ok(collection_buffer) => {
+            if !buffer_resize(collection_buffer, 32usize) { collection_buffer_status = 73 }
+            if collection_buffer_status == 0 {
+                collection_buffer[0] = 212u8
+                let stale_list_buffer_revision: UInt64 = revision()
+                if !app_table_set_column_name(0, 0, "ModelValue") { collection_buffer_status = 74 }
+                if collection_buffer_status == 0 {
+                    collection_length[0] = 780usize
+                    if read_list_item_exact_buffer_if_model_revision(14, 0, collection_buffer, 32usize, collection_length, stale_list_buffer_revision) { collection_buffer_status = 75 }
+                    if collection_buffer[0] != 212u8 { collection_buffer_status = 76 }
+                    if collection_length[0] != 780usize { collection_buffer_status = 77 }
+                }
+                if collection_buffer_status == 0 {
+                    let current_list_buffer_revision: UInt64 = revision()
+                    if !read_list_item_exact_buffer_if_model_revision(14, 0, collection_buffer, 32usize, collection_length, current_list_buffer_revision) { collection_buffer_status = 78 }
+                    if collection_length[0] != 10usize { collection_buffer_status = 79 }
+                    if collection_buffer[0] != 76u8 { collection_buffer_status = 80 }
+                }
+                if collection_buffer_status == 0 {
+                    collection_buffer[0] = 212u8
+                    let stale_table_revision: UInt64 = revision()
+                    if !read_table_cell_exact_buffer_if_model_revision(15, 0, 0, collection_buffer, 32usize, collection_length, stale_table_revision) { collection_buffer_status = 81 }
+                    if collection_length[0] != 11usize { collection_buffer_status = 82 }
+                    if collection_buffer[0] != 84u8 { collection_buffer_status = 83 }
+                }
+            }
+        }
+    }
+    if collection_buffer_status != 0 { return collection_buffer_status }
+
+    // Verify the Slice table path as well after a list mutation.
+    let stale_table_slice_revision: UInt64 = revision()
+    if !app_list_push_text(0, "table-model-change") { return 84 }
+    collection_output[0] = 213u8
+    collection_length[0] = 781usize
+    if read_table_cell_exact_if_model_revision(15, 0, 0, collection_output, collection_length, stale_table_slice_revision) { return 85 }
+    if collection_output[0] != 213u8 { return 86 }
+    if collection_length[0] != 781usize { return 87 }
+    let current_table_slice_revision: UInt64 = revision()
+    if !read_table_cell_exact_if_model_revision(15, 0, 0, collection_output, collection_length, current_table_slice_revision) { return 88 }
+    if collection_length[0] != 11usize { return 89 }
+    if collection_output[0] != 84u8 { return 90 }
+
     // A typed TextChanged event can carry the explicit input ID through a
     // reducer/controller boundary and still read into caller-owned storage.
     let event: AppEvent = text_changed(11, 11i64)
@@ -120,6 +338,323 @@ fn main() -> Int32 {
     if event_length[0] != 11usize { return 26 }
     if event_output[0] != 66u8 { return 26 }
     if event_output[1] != 111u8 { return 26 }
+
+    // Typed events use the same complete-model revision boundary as the
+    // event-ID facade. This exercises current and stale Slice reads first.
+    var event_model_output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                                           0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                                           0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                                           0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var event_model_length: [UIntSize; 1] = [0usize]
+    let event_text_revision: UInt64 = revision()
+    if !read_text_if_model_revision(text_changed(11, 11i64),
+                                    event_model_output,
+                                    event_model_length,
+                                    event_text_revision) { return 100 }
+    if event_model_length[0] != 11usize { return 101 }
+    if event_model_output[0] != 66u8 { return 102 }
+    let stale_event_text_revision: UInt64 = revision()
+    if !app_list_push_text(0, "event-text-stale") { return 103 }
+    event_model_output[0] = 221u8
+    event_model_length[0] = 782usize
+    if read_text_if_model_revision(text_changed(11, 11i64),
+                                   event_model_output,
+                                   event_model_length,
+                                   stale_event_text_revision) { return 104 }
+    if event_model_output[0] != 221u8 { return 105 }
+    if event_model_length[0] != 782usize { return 106 }
+    let current_event_text_revision: UInt64 = revision()
+    if !read_text_if_model_revision(text_changed(11, 11i64),
+                                    event_model_output,
+                                    event_model_length,
+                                    current_event_text_revision) { return 107 }
+    if event_model_length[0] != 11usize { return 108 }
+
+    // Repeat the text event path through a dynamic Buffer, including its
+    // no-mutation stale branch.
+    let event_buffer_result: Result<Buffer<UInt8>, Int32> = buffer_create(32usize)
+    var event_buffer_status: Int32 = 0
+    match event_buffer_result {
+        Error(error) => { event_buffer_status = error }
+        Ok(event_buffer) => {
+            if !buffer_resize(event_buffer, 32usize) { event_buffer_status = 110 }
+            if event_buffer_status == 0 {
+                event_buffer[0] = 222u8
+                let current_event_buffer_revision: UInt64 = revision()
+                event_model_length[0] = 0usize
+                if !read_text_buffer_if_model_revision(text_changed(11, 11i64),
+                                                       event_buffer,
+                                                       32usize,
+                                                       event_model_length,
+                                                       current_event_buffer_revision) { event_buffer_status = 111 }
+                if event_buffer[0] != 66u8 { event_buffer_status = 112 }
+                if event_model_length[0] != 11usize { event_buffer_status = 113 }
+            }
+            if event_buffer_status == 0 {
+                event_buffer[0] = 223u8
+                let stale_event_buffer_revision: UInt64 = revision()
+                if !app_table_set_column_name(0, 0, "EventValue") { event_buffer_status = 114 }
+                if event_buffer_status == 0 {
+                    event_model_length[0] = 783usize
+                    if read_text_buffer_if_model_revision(text_changed(11, 11i64),
+                                                          event_buffer,
+                                                          32usize,
+                                                          event_model_length,
+                                                          stale_event_buffer_revision) { event_buffer_status = 115 }
+                    if event_buffer[0] != 223u8 { event_buffer_status = 116 }
+                    if event_model_length[0] != 783usize { event_buffer_status = 117 }
+                }
+            }
+        }
+    }
+    if event_buffer_status != 0 { return event_buffer_status }
+
+    // List and table typed events expose their bounded collection read-back
+    // through both caller-owned Slice and dynamic Buffer forms.
+    let current_event_list_revision: UInt64 = revision()
+    event_model_output[0] = 224u8
+    event_model_length[0] = 0usize
+    if !read_list_item_if_model_revision(list_changed(14, 0),
+                                         0,
+                                         event_model_output,
+                                         event_model_length,
+                                         current_event_list_revision) { return 120 }
+    if event_model_length[0] != 10usize { return 121 }
+    if event_model_output[0] != 76u8 { return 122 }
+    let stale_event_list_revision: UInt64 = revision()
+    if !app_table_set_column_name(0, 0, "EventValueAgain") { return 123 }
+    event_model_output[0] = 225u8
+    event_model_length[0] = 784usize
+    if read_list_item_if_model_revision(list_changed(14, 0),
+                                        0,
+                                        event_model_output,
+                                        event_model_length,
+                                        stale_event_list_revision) { return 124 }
+    if event_model_output[0] != 225u8 { return 125 }
+    if event_model_length[0] != 784usize { return 126 }
+
+    let event_collection_buffer_result: Result<Buffer<UInt8>, Int32> = buffer_create(32usize)
+    var event_collection_buffer_status: Int32 = 0
+    match event_collection_buffer_result {
+        Error(error) => { event_collection_buffer_status = error }
+        Ok(event_collection_buffer) => {
+            if !buffer_resize(event_collection_buffer, 32usize) { event_collection_buffer_status = 128 }
+            if event_collection_buffer_status == 0 {
+                event_collection_buffer[0] = 226u8
+                let current_event_list_buffer_revision: UInt64 = revision()
+                event_model_length[0] = 0usize
+                if !read_list_item_buffer_if_model_revision(list_changed(14, 0),
+                                                            0,
+                                                            event_collection_buffer,
+                                                            32usize,
+                                                            event_model_length,
+                                                            current_event_list_buffer_revision) { event_collection_buffer_status = 129 }
+                if event_collection_buffer[0] != 76u8 { event_collection_buffer_status = 130 }
+                if event_model_length[0] != 10usize { event_collection_buffer_status = 131 }
+            }
+            if event_collection_buffer_status == 0 {
+                event_collection_buffer[0] = 227u8
+                let stale_event_list_buffer_revision: UInt64 = revision()
+                if !app_table_set_column_name(0, 0, "EventValueFinal") { event_collection_buffer_status = 132 }
+                if event_collection_buffer_status == 0 {
+                    event_model_length[0] = 785usize
+                    if read_list_item_buffer_if_model_revision(list_changed(14, 0),
+                                                               0,
+                                                               event_collection_buffer,
+                                                               32usize,
+                                                               event_model_length,
+                                                               stale_event_list_buffer_revision) { event_collection_buffer_status = 133 }
+                    if event_collection_buffer[0] != 227u8 { event_collection_buffer_status = 134 }
+                    if event_model_length[0] != 785usize { event_collection_buffer_status = 135 }
+                }
+            }
+            if event_collection_buffer_status == 0 {
+                event_collection_buffer[0] = 228u8
+                let current_event_table_buffer_revision: UInt64 = revision()
+                event_model_length[0] = 0usize
+                if !read_table_cell_buffer_if_model_revision(table_changed(15, 0),
+                                                             0,
+                                                             0,
+                                                             event_collection_buffer,
+                                                             32usize,
+                                                             event_model_length,
+                                                             current_event_table_buffer_revision) { event_collection_buffer_status = 136 }
+                if event_collection_buffer[0] != 84u8 { event_collection_buffer_status = 137 }
+                if event_model_length[0] != 11usize { event_collection_buffer_status = 138 }
+            }
+        }
+    }
+    if event_collection_buffer_status != 0 { return event_collection_buffer_status }
+
+    let current_event_table_revision: UInt64 = revision()
+    event_model_output[0] = 229u8
+    event_model_length[0] = 0usize
+    if !read_table_cell_if_model_revision(table_changed(15, 0),
+                                          0,
+                                          0,
+                                          event_model_output,
+                                          event_model_length,
+                                          current_event_table_revision) { return 140 }
+    if event_model_length[0] != 11usize { return 141 }
+    if event_model_output[0] != 84u8 { return 142 }
+    let stale_event_table_revision: UInt64 = revision()
+    if !app_list_push_text(0, "event-table-stale") { return 143 }
+    event_model_output[0] = 230u8
+    event_model_length[0] = 786usize
+    if read_table_cell_if_model_revision(table_changed(15, 0),
+                                         0,
+                                         0,
+                                         event_model_output,
+                                         event_model_length,
+                                         stale_event_table_revision) { return 144 }
+    if event_model_output[0] != 230u8 { return 145 }
+    if event_model_length[0] != 786usize { return 146 }
+
+    // Scalar input reads use the same complete-model revision boundary as
+    // text/list/table byte read-back. Set deterministic selections first so
+    // the valid branch and every stale sentinel are observable.
+    set_checked(12, 1)
+    set_select_index(13, 1)
+    set_list_index(14, 0)
+    set_table_selected_row(15, 0)
+    let scalar_revision: UInt64 = revision()
+    if checked_if_model_revision(12, scalar_revision) != 1 { return 150 }
+    if select_index_if_model_revision(13, scalar_revision) != 1 { return 151 }
+    if list_index_if_model_revision(14, scalar_revision) != 0 { return 152 }
+    if list_count_if_model_revision(14, scalar_revision) < 1 { return 153 }
+    if table_selected_row_if_model_revision(15, scalar_revision) != 0 { return 154 }
+    if table_row_count_if_model_revision(15, scalar_revision) < 1 { return 155 }
+
+    // Typed AppEvent scalar helpers validate the event kind before delegating
+    // to the same event-ID read. A collection mutation invalidates every
+    // scalar snapshot, including controls whose own value did not change.
+    if read_checked_if_model_revision(checked_changed(12, true), scalar_revision) != 1 { return 156 }
+    if read_select_index_if_model_revision(select_changed(13, 1), scalar_revision) != 1 { return 157 }
+    if read_list_index_if_model_revision(list_changed(14, 0), scalar_revision) != 0 { return 158 }
+    if read_list_count_if_model_revision(list_changed(14, 0), scalar_revision) < 1 { return 159 }
+    if read_table_selected_row_if_model_revision(table_changed(15, 0), scalar_revision) != 0 { return 160 }
+    if read_table_row_count_if_model_revision(table_changed(15, 0), scalar_revision) < 1 { return 161 }
+    if read_checked_if_model_revision(click(7), scalar_revision) != -2 { return 162 }
+
+    let stale_scalar_revision: UInt64 = revision()
+    if !app_list_push_text(0, "scalar-model-change") { return 163 }
+    if checked_if_model_revision(12, stale_scalar_revision) != -2 { return 164 }
+    if select_index_if_model_revision(13, stale_scalar_revision) != -2 { return 165 }
+    if list_index_if_model_revision(14, stale_scalar_revision) != -2 { return 166 }
+    if list_count_if_model_revision(14, stale_scalar_revision) != -1 { return 167 }
+    if table_selected_row_if_model_revision(15, stale_scalar_revision) != -2 { return 168 }
+    if table_row_count_if_model_revision(15, stale_scalar_revision) != -1 { return 169 }
+    if read_checked_if_model_revision(checked_changed(12, true), stale_scalar_revision) != -2 { return 170 }
+    if read_select_index_if_model_revision(select_changed(13, 1), stale_scalar_revision) != -2 { return 171 }
+    if read_list_index_if_model_revision(list_changed(14, 0), stale_scalar_revision) != -2 { return 172 }
+    if read_list_count_if_model_revision(list_changed(14, 0), stale_scalar_revision) != -1 { return 173 }
+    if read_table_selected_row_if_model_revision(table_changed(15, 0), stale_scalar_revision) != -2 { return 174 }
+    if read_table_row_count_if_model_revision(table_changed(15, 0), stale_scalar_revision) != -1 { return 175 }
+
+    // The same whole-model boundary is available for two-way bindings. A
+    // typed event commits the current native projection, while a later typed
+    // refresh restores the model value without introducing another event loop.
+    set_value(11, "Typed commit")
+    let text_commit_revision: UInt64 = revision()
+    if !commit_text_if_model_revision(text_changed(11, 12i64), text_commit_revision) { return 180 }
+    set_value(11, "Control drift")
+    if !set_text("name", "Typed commit") { return 181 }
+    let text_refresh_revision: UInt64 = revision()
+    if !refresh_text_if_model_revision(text_changed(11, 12i64), text_refresh_revision) { return 182 }
+    exact_length[0] = 0usize
+    if !read_text_exact(11, output, exact_length) { return 183 }
+    if exact_length[0] != 12usize { return 184 }
+    if output[0] != 84u8 { return 185 }
+    if output[1] != 121u8 { return 186 }
+
+    set_checked(12, 0)
+    let checked_commit_revision: UInt64 = revision()
+    if !commit_checked_if_model_revision(checked_changed(12, false), checked_commit_revision) { return 187 }
+    if get_bool("enabled") { return 188 }
+    set_select_index(13, 0)
+    let select_commit_revision: UInt64 = revision()
+    if !commit_select_if_model_revision(select_changed(13, 0), select_commit_revision) { return 189 }
+    if get_int("choice") != 0i64 { return 190 }
+    set_list_index(14, 0)
+    let list_commit_revision: UInt64 = revision()
+    if !commit_list_if_model_revision(list_changed(14, 0), list_commit_revision) { return 191 }
+    if get_int("selected_item") != 0i64 { return 192 }
+    set_table_selected_row(15, 0)
+    let table_commit_revision: UInt64 = revision()
+    if !commit_table_if_model_revision(table_changed(15, 0), table_commit_revision) { return 193 }
+    if get_int("selected_row") != 0i64 { return 194 }
+
+    // Refresh each bound projection from its model value through the typed
+    // event boundary. The native control is deliberately moved first so the
+    // successful refresh is observable.
+    set_checked(12, 0)
+    if !set_bool("enabled", true) { return 195 }
+    let checked_refresh_revision: UInt64 = revision()
+    if !refresh_checked_if_model_revision(checked_changed(12, true), checked_refresh_revision) { return 196 }
+    if checked(12) != 1 { return 197 }
+    set_select_index(13, 0)
+    if !set_int("choice", 1i64) { return 198 }
+    let select_refresh_revision: UInt64 = revision()
+    if !refresh_select_if_model_revision(select_changed(13, 1), select_refresh_revision) { return 200 }
+    if select_index(13) != 1 { return 201 }
+    set_list_index(14, -1)
+    if !set_int("selected_item", 0i64) { return 202 }
+    let list_refresh_revision: UInt64 = revision()
+    if !refresh_list_if_model_revision(list_changed(14, 0), list_refresh_revision) { return 203 }
+    if list_index(14) != 0 { return 204 }
+    set_table_selected_row(15, -1)
+    if !set_int("selected_row", 0i64) { return 205 }
+    let table_refresh_revision: UInt64 = revision()
+    if !refresh_table_if_model_revision(table_changed(15, 0), table_refresh_revision) { return 206 }
+    if table_selected_row(15) != 0 { return 207 }
+
+    // The batch facade uses one complete model snapshot for every bound
+    // projection and must not leave a partial refresh behind a stale token.
+    set_value(11, "Batch drift")
+    set_checked(12, 0)
+    set_select_index(13, 0)
+    set_list_index(14, -1)
+    set_table_selected_row(15, -1)
+    if !set_text("name", "Batch model") { return 208 }
+    if !set_bool("enabled", true) { return 209 }
+    if !set_int("choice", 1i64) { return 210 }
+    if !set_int("selected_item", 0i64) { return 211 }
+    if !set_int("selected_row", 0i64) { return 212 }
+    let batch_revision: UInt64 = revision()
+    if !refresh_all_if_model_revision(batch_revision) { return 213 }
+    if text_length(11) != 11usize { return 214 }
+    if checked(12) != 1 { return 215 }
+    if select_index(13) != 1 { return 216 }
+    if list_index(14) != 0 { return 217 }
+    if table_selected_row(15) != 0 { return 218 }
+    let stale_batch_revision: UInt64 = revision()
+    if !set_text("name", "Batch newer") { return 219 }
+    if refresh_all_if_model_revision(stale_batch_revision) { return 220 }
+    if text_length(11) != 11usize { return 221 }
+
+    // A model change after the caller snapshot rejects every typed commit and
+    // refresh without overwriting the newer model or the deliberately drifted
+    // control projection.
+    set_value(11, "Keep UI")
+    let stale_binding_revision: UInt64 = revision()
+    if !set_text("name", "New model") { return 222 }
+    if refresh_text_if_model_revision(text_changed(11, 9i64), stale_binding_revision) { return 223 }
+    exact_length[0] = 208usize
+    if !read_text_exact(11, output, exact_length) { return 209 }
+    if exact_length[0] != 7usize { return 210 }
+    if output[0] != 75u8 { return 211 }
+    set_checked(12, 0)
+    set_select_index(13, 0)
+    set_list_index(14, 0)
+    set_table_selected_row(15, 0)
+    let stale_commit_binding_revision: UInt64 = revision()
+    if !set_text("name", "Newer model") { return 212 }
+    if commit_text_if_model_revision(text_changed(11, 12i64), stale_commit_binding_revision) { return 213 }
+    if commit_checked_if_model_revision(checked_changed(12, false), stale_commit_binding_revision) { return 214 }
+    if commit_select_if_model_revision(select_changed(13, 0), stale_commit_binding_revision) { return 215 }
+    if commit_list_if_model_revision(list_changed(14, 0), stale_commit_binding_revision) { return 216 }
+    if commit_table_if_model_revision(table_changed(15, 0), stale_commit_binding_revision) { return 217 }
+    if refresh_text_if_model_revision(click(7), revision()) { return 218 }
 
     // Rejected event kinds and IDs must leave caller-owned outputs untouched.
     event_output[0] = 90u8

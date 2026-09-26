@@ -1,0 +1,100 @@
+module app_state_scalar_buffer_write_project.main
+
+import jadren.app.state.clear
+import jadren.app.state.read_bool
+import jadren.app.state.read_float
+import jadren.app.state.read_int
+import jadren.app.state.read_uint
+import jadren.app.state.revision
+import jadren.app.state.set_bool_buffer
+import jadren.app.state.set_bool_buffer_if_revision
+import jadren.app.state.set_float_buffer
+import jadren.app.state.set_float_buffer_if_revision
+import jadren.app.state.set_int_buffer
+import jadren.app.state.set_int_buffer_if_revision
+import jadren.app.state.set_uint_buffer
+import jadren.app.state.set_uint_buffer_if_revision
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear()
+    let signed_created: Result<Buffer<Int64>, Int32> = buffer_create(1usize)
+    let unsigned_created: Result<Buffer<UInt64>, Int32> = buffer_create(1usize)
+    let float_created: Result<Buffer<Float64>, Int32> = buffer_create(1usize)
+    let bool_created: Result<Buffer<Bool>, Int32> = buffer_create(1usize)
+    let empty_created: Result<Buffer<Int64>, Int32> = buffer_create(1usize)
+    var status: Int32 = 0
+
+    match signed_created {
+        Error(error) => { status = error }
+        Ok(signed) => {
+            if !buffer_resize(signed, 1usize) { status = 1 }
+            if status == 0 { signed[0] = -42i64 }
+            if status == 0 { if !set_int_buffer("signed", signed) { status = 2 } }
+            let expected: UInt64 = revision()
+            if status == 0 { signed[0] = -77i64 }
+            if status == 0 { if !set_int_buffer_if_revision("signed", signed, expected) { status = 3 } }
+            if status == 0 { signed[0] = -99i64 }
+            if status == 0 { if set_int_buffer_if_revision("signed", signed, expected) { status = 4 } }
+            var output: [Int64; 1] = [0i64]
+            if status == 0 { if !read_int("signed", output) { status = 5 } }
+            if status == 0 { if output[0] != -77i64 { status = 6 } }
+        }
+    }
+
+    match unsigned_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(unsigned) => {
+            if status == 0 { if !buffer_resize(unsigned, 1usize) { status = 7 } }
+            if status == 0 { unsigned[0] = 42u64 }
+            if status == 0 { if !set_uint_buffer("unsigned", unsigned) { status = 8 } }
+            var output: [UInt64; 1] = [0u64]
+            if status == 0 { if !read_uint("unsigned", output) { status = 9 } }
+            if status == 0 { if output[0] != 42u64 { status = 10 } }
+        }
+    }
+
+    match float_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(value) => {
+            if status == 0 { if !buffer_resize(value, 1usize) { status = 11 } }
+            if status == 0 { value[0] = 1.25f64 }
+            if status == 0 { if !set_float_buffer("ratio", value) { status = 12 } }
+            let expected: UInt64 = revision()
+            if status == 0 { value[0] = 2.5f64 }
+            if status == 0 { if !set_float_buffer_if_revision("ratio", value, expected) { status = 13 } }
+            var output: [Float64; 1] = [0.0f64]
+            if status == 0 { if !read_float("ratio", output) { status = 14 } }
+            if status == 0 { if output[0] != 2.5f64 { status = 15 } }
+        }
+    }
+
+    match bool_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(value) => {
+            if status == 0 { if !buffer_resize(value, 1usize) { status = 16 } }
+            if status == 0 { value[0] = true }
+            if status == 0 { if !set_bool_buffer("enabled", value) { status = 17 } }
+            var output: [Bool; 1] = [false]
+            if status == 0 { if !read_bool("enabled", output) { status = 18 } }
+            if status == 0 { if !output[0] { status = 19 } }
+        }
+    }
+
+    match empty_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(empty) => {
+            if status == 0 { if set_int_buffer("signed", empty) { status = 20 } }
+            var output: [Int64; 1] = [0i64]
+            if status == 0 { if !read_int("signed", output) { status = 21 } }
+            if status == 0 { if output[0] != -77i64 { status = 22 } }
+        }
+    }
+
+    clear()
+    return status
+}

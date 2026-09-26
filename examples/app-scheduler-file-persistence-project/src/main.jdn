@@ -1,0 +1,124 @@
+module app_scheduler_file_persistence.main
+
+import jadren.app.scheduler.clear
+import jadren.app.scheduler.count
+import jadren.app.scheduler.load_file
+import jadren.app.scheduler.load_exact
+import jadren.app.scheduler.next_due_exact
+import jadren.app.scheduler.save_atomic_durable
+import jadren.app.scheduler.set
+import jadren.app.fs.delete
+import jadren.app.fs.exists
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear()
+    if !set(7, 300i64, 60u64) { return 1 }
+    if !set(2, 100i64, 0u64) { return 2 }
+    if !set(5, 100i64, 20u64) { return 3 }
+
+    var snapshot: [UInt8; 68] = [
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8
+    ]
+    if !save_atomic_durable(
+        "target/app-scheduler-file-persistence-smoke/scheduler.tmp",
+        "target/app-scheduler-file-persistence-smoke/scheduler.jds",
+        "target/app-scheduler-file-persistence-smoke",
+        snapshot,
+    ) { return 4 }
+    if !exists("target/app-scheduler-file-persistence-smoke/scheduler.jds") { return 5 }
+
+    clear()
+    if count() != 0usize { return 6 }
+    if !load_file(
+        "target/app-scheduler-file-persistence-smoke/scheduler.jds",
+        snapshot,
+    ) { return 7 }
+    if count() != 3usize { return 8 }
+
+    var next_due: [Int64; 1] = [0i64]
+    var has_due: [Bool; 1] = [false]
+    if !next_due_exact(next_due, has_due) { return 9 }
+    if !has_due[0] { return 10 }
+    if next_due[0] != 100i64 { return 11 }
+
+    snapshot[0] = 88u8
+    if load_exact(snapshot, 68usize) { return 12 }
+    if count() != 3usize { return 13 }
+
+    clear()
+    if !delete("target/app-scheduler-file-persistence-smoke/scheduler.jds") { return 14 }
+    if exists("target/app-scheduler-file-persistence-smoke/scheduler.jds") { return 15 }
+    return 0
+}

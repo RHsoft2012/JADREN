@@ -21,6 +21,37 @@ pub use verifier::{VerificationError, verify, verify_gpu};
 /// Current stable text format version.
 pub const JIR_TEXT_VERSION: &str = "0.1";
 
+/// Marker used in [`CarrierDropField::payload_variant`] when a named enum
+/// field also contains an inline `Option`/`Result` carrier. The upper 30 bits
+/// carry the outer enum tag and the lower 32 bits carry the inner tag; the
+/// all-ones inner value denotes a direct field with no second tag. Reserving
+/// the next bit distinguishes this legacy path from the two-level encoding.
+pub const ENUM_CARRIER_FIELD_NESTED_TAG_MARKER: u64 = 1u64 << 63;
+/// Inner-tag sentinel for a direct owning field inside a named enum variant.
+pub const ENUM_CARRIER_FIELD_NO_INNER_TAG: u32 = u32::MAX;
+/// Marker for a bounded two-level carrier path inside a named enum field.
+///
+/// Bits 63..62 identify the compact path encoding; bits 60..41, 40..21 and
+/// 20..1 carry the outer enum, first carrier and second carrier tags. The
+/// unused low bit keeps the encoding unambiguous and preserves the existing
+/// five-word field ABI. Each tag is therefore bounded to 20 bits.
+pub const ENUM_CARRIER_FIELD_MULTI_TAG_MARKER: u64 = 3u64 << 62;
+/// Maximum tag value representable by the bounded multi-tag field encoding.
+pub const ENUM_CARRIER_FIELD_MULTI_TAG_MASK: u32 = (1u32 << 20) - 1;
+/// Marker base for the general bounded tag-path encoding. The low nibble of
+/// the top byte stores the total tag count (outer enum plus carriers), while
+/// the remaining seven bytes carry one 8-bit tag each.
+pub const ENUM_CARRIER_FIELD_PATH_MARKER_BASE: u64 = 0xe0u64 << 56;
+/// Maximum total tag count representable by the bounded path encoding.
+pub const ENUM_CARRIER_FIELD_PATH_MAX_TAGS: usize = 7;
+/// Marker for a named enum carrier embedded as a field of a `repr(C)` record.
+/// Bits 61..32 store the distance in eight-byte words from the owning
+/// descriptor back to the enum tag; bits 31..0 store the enum variant.  The
+/// bounded distance keeps the existing five-word record field ABI intact.
+pub const RECORD_FIELD_NAMED_ENUM_TAG_MARKER: u64 = 1u64 << 62;
+/// Maximum eight-byte tag distance representable by the record enum marker.
+pub const RECORD_FIELD_NAMED_ENUM_TAG_DISTANCE_MASK: u64 = (1u64 << 30) - 1;
+
 macro_rules! dense_id {
     ($name:ident, $description:literal) => {
         #[doc = $description]
@@ -106,11 +137,14 @@ pub enum Type {
     Array { element: TypeId, length: u64 },
     /// Anonymous aggregate with stable field order.
     Struct { fields: Vec<TypeId> },
-    /// Identity-preserving nominal record/component layout.
+    /// Identity-preserving nominal record/component layout. Generic
+    /// instantiations carry a stable monomorphization identity so distinct
+    /// source types remain distinct even when their physical fields coincide.
     NominalStruct { identity: u64, fields: Vec<TypeId> },
     /// Tagged alternatives with ordered payload fields per variant.
     Enum { variants: Vec<Vec<TypeId>> },
-    /// Identity-preserving nominal enum layout.
+    /// Identity-preserving nominal enum layout. Generic instantiations use
+    /// the same stable monomorphization identity rule as nominal records.
     NominalEnum {
         identity: u64,
         variants: Vec<Vec<TypeId>>,
@@ -426,6 +460,28 @@ pub enum InstructionKind {
         depth: u32,
         status_result: bool,
     },
+    /// Removes one nested owning Buffer element whose leaf is copy-safe.
+    /// The selected descriptor chain is destroyed before later outer
+    /// descriptors are move-compacted; no ownership is returned.
+    BufferRemoveDropNestedBuffer {
+        descriptor: ValueId,
+        index: ValueId,
+        element: TypeId,
+        leaf_element: TypeId,
+        depth: u32,
+        status_result: bool,
+    },
+    /// Removes one nested owning Buffer element whose final leaf is an
+    /// `OwnedString`. The selected descriptor chain is destroyed before
+    /// later outer descriptors are move-compacted.
+    BufferRemoveDropNestedOwnedString {
+        descriptor: ValueId,
+        index: ValueId,
+        element: TypeId,
+        string_element: TypeId,
+        depth: u32,
+        status_result: bool,
+    },
     /// One tag-selected owning payload descriptor for a named `@repr(C)` enum.
     /// The descriptor table is used when the enum has multiple owning
     /// variants; copy-only variants simply have no branch entry.
@@ -578,8 +634,9 @@ pub struct CarrierDropBranch {
 /// Target-independent metadata for one owning Buffer field in a named enum.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CarrierDropField {
-    /// Zero-based enum discriminant selecting this field.
-    pub payload_variant: u32,
+    /// Zero-based enum discriminant selecting this field, or the packed
+    /// outer/inner value marked by [`ENUM_CARRIER_FIELD_NESTED_TAG_MARKER`].
+    pub payload_variant: u64,
     /// Byte offset from the beginning of the enum value to the Buffer
     /// descriptor.
     pub payload_offset: u64,
@@ -591,10 +648,12 @@ pub struct CarrierDropField {
 
 /// Target-independent metadata for one owning Buffer or OwnedString field in
 /// a `@repr(C)` record. `payload_variant == u64::MAX` denotes an unconditional
-/// field; other values select the active `Option`/`Result` carrier variant.
+/// field; other values select the active `Option`/`Result` carrier variant or
+/// the bounded named-enum record marker.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RecordDropField {
-    /// Carrier discriminant, or `u64::MAX` for a direct Buffer field.
+    /// Carrier discriminant, the named-enum record marker, or `u64::MAX`
+    /// for a direct Buffer field.
     pub payload_variant: u64,
     /// Byte offset from the beginning of the record value to the Buffer
     /// descriptor.
@@ -876,6 +935,34 @@ fn write_function(output: &mut String, function: &Function) {
     output.push_str("}\n");
 }
 
+fn write_enum_carrier_field_variant(output: &mut String, variant: u64) {
+    let path_prefix_mask = 0xf0u64 << 56;
+    if variant & path_prefix_mask == ENUM_CARRIER_FIELD_PATH_MARKER_BASE {
+        let tag_count = ((variant >> 56) & 0x0f) as usize;
+        write!(output, "variant").expect("writing to String cannot fail");
+        for index in 0..tag_count {
+            let shift = 8 * (tag_count - index - 1);
+            let tag = (variant >> shift) & 0xff;
+            write!(output, "/{tag}").expect("writing to String cannot fail");
+        }
+    } else if variant & (3u64 << 62) == ENUM_CARRIER_FIELD_MULTI_TAG_MARKER {
+        let mask = u64::from(ENUM_CARRIER_FIELD_MULTI_TAG_MASK);
+        let outer = (variant >> 41) & mask;
+        let first = (variant >> 21) & mask;
+        let second = (variant >> 1) & mask;
+        write!(output, "variant {outer}/{first}/{second}").expect("writing to String cannot fail");
+    } else if variant & ENUM_CARRIER_FIELD_NESTED_TAG_MARKER != 0 {
+        let outer = (variant >> 32) & 0x7fff_ffff;
+        let inner = variant & u64::from(u32::MAX);
+        write!(output, "variant {outer}").expect("writing to String cannot fail");
+        if inner != u64::from(ENUM_CARRIER_FIELD_NO_INNER_TAG) {
+            write!(output, "/{inner}").expect("writing to String cannot fail");
+        }
+    } else {
+        write!(output, "variant {variant}").expect("writing to String cannot fail");
+    }
+}
+
 fn write_instruction(output: &mut String, instruction: &InstructionKind) {
     match instruction {
         InstructionKind::Constant(constant) => {
@@ -1096,10 +1183,10 @@ fn write_instruction(output: &mut String, instruction: &InstructionKind) {
                 if index != 0 {
                     output.push_str(", ");
                 }
+                write_enum_carrier_field_variant(output, field.payload_variant);
                 write!(
                     output,
-                    "variant {}, offset {}, %t{}, depth {}",
-                    field.payload_variant,
+                    ", offset {}, %t{}, depth {}",
                     field.payload_offset,
                     field.leaf_element.index(),
                     field.depth
@@ -1132,10 +1219,10 @@ fn write_instruction(output: &mut String, instruction: &InstructionKind) {
                 if index != 0 {
                     output.push_str(", ");
                 }
+                write_enum_carrier_field_variant(output, field.payload_variant);
                 write!(
                     output,
-                    "variant {}, offset {}, %t{}, depth {}",
-                    field.payload_variant,
+                    ", offset {}, %t{}, depth {}",
                     field.payload_offset,
                     field.leaf_element.index(),
                     field.depth
@@ -1226,6 +1313,42 @@ fn write_instruction(output: &mut String, instruction: &InstructionKind) {
             }
             output.push(']');
         }
+        InstructionKind::BufferRemoveDropNestedBuffer {
+            descriptor,
+            index,
+            element,
+            leaf_element,
+            depth,
+            status_result,
+        } => write!(
+            output,
+            "buffer_remove_drop_nested_buffer %v{}, %v{}, %t{}, %t{}, depth {}, result {}",
+            descriptor.index(),
+            index.index(),
+            element.index(),
+            leaf_element.index(),
+            depth,
+            if *status_result { "status" } else { "bool" }
+        )
+        .expect("writing to String cannot fail"),
+        InstructionKind::BufferRemoveDropNestedOwnedString {
+            descriptor,
+            index,
+            element,
+            string_element,
+            depth,
+            status_result,
+        } => write!(
+            output,
+            "buffer_remove_drop_nested_owned_string %v{}, %v{}, %t{}, %t{}, depth {}, result {}",
+            descriptor.index(),
+            index.index(),
+            element.index(),
+            string_element.index(),
+            depth,
+            if *status_result { "status" } else { "bool" }
+        )
+        .expect("writing to String cannot fail"),
         InstructionKind::EnumCarrierBufferDrop {
             value,
             element,
@@ -1300,10 +1423,10 @@ fn write_instruction(output: &mut String, instruction: &InstructionKind) {
                 if index != 0 {
                     output.push_str(", ");
                 }
+                write_enum_carrier_field_variant(output, field.payload_variant);
                 write!(
                     output,
-                    "variant {}, offset {}, %t{}, depth {}",
-                    field.payload_variant,
+                    ", offset {}, %t{}, depth {}",
                     field.payload_offset,
                     field.leaf_element.index(),
                     field.depth
@@ -1328,10 +1451,10 @@ fn write_instruction(output: &mut String, instruction: &InstructionKind) {
                 if index != 0 {
                     output.push_str(", ");
                 }
+                write_enum_carrier_field_variant(output, field.payload_variant);
                 write!(
                     output,
-                    "variant {}, offset {}, %t{}, depth {}",
-                    field.payload_variant,
+                    ", offset {}, %t{}, depth {}",
                     field.payload_offset,
                     field.leaf_element.index(),
                     field.depth

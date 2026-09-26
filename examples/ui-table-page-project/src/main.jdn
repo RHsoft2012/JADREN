@@ -1,0 +1,822 @@
+module ui_table_page_project.main
+import jadren.app.data.revision
+import jadren.app.table.append_row
+import jadren.app.table.clear
+import jadren.app.table.read_cell_exact
+import jadren.app.table.row_count
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.panel
+import jadren.app.ui.table
+import jadren.app.ui.table_bind
+import jadren.app.ui.table_page
+import jadren.app.ui.table_page_if_revision
+import jadren.app.ui.table_page_if_model_revision
+import jadren.app.ui.table_filter_text_if_revision
+import jadren.app.ui.table_filter_int_if_revision
+import jadren.app.ui.table_filter_uint_if_revision
+import jadren.app.ui.table_filter_float_if_revision
+import jadren.app.ui.table_filter_bool_if_revision
+import jadren.app.ui.table_filter_text_if_model_revision
+import jadren.app.ui.table_filter_int_if_model_revision
+import jadren.app.ui.table_filter_uint_if_model_revision
+import jadren.app.ui.table_filter_float_if_model_revision
+import jadren.app.ui.table_filter_bool_if_model_revision
+import jadren.app.ui.table_sort_text_if_revision
+import jadren.app.ui.table_sort_int_if_revision
+import jadren.app.ui.table_sort_uint_if_revision
+import jadren.app.ui.table_sort_float_if_revision
+import jadren.app.ui.table_sort_bool_if_revision
+import jadren.app.ui.table_sort_text_if_model_revision
+import jadren.app.ui.table_sort_int_if_model_revision
+import jadren.app.ui.table_sort_uint_if_model_revision
+import jadren.app.ui.table_sort_float_if_model_revision
+import jadren.app.ui.table_sort_bool_if_model_revision
+import jadren.app.ui.table_read_cell_exact
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear(0)
+    clear(1)
+    if ! set_column_type(0,
+    0,
+    0) {
+        return 1
+    }
+    if ! set_column_name(0,
+    0,
+    "Name") {
+        return 2
+    }
+    if ! append_row(0) {
+        return 3
+    }
+    if ! append_row(0) {
+        return 4
+    }
+    if ! append_row(0) {
+        return 5
+    }
+    if ! set_cell(0,
+    0,
+    0,
+    "Alpha") {
+        return 6
+    }
+    if ! set_cell(0,
+    1,
+    0,
+    "Beta") {
+        return 7
+    }
+    if ! set_cell(0,
+    2,
+    0,
+    "Gamma") {
+        return 8
+    }
+    clear(2)
+    clear(3)
+    if ! set_column_type(2,
+    0,
+    1) {
+        return 49
+    }
+    if ! set_column_type(2,
+    1,
+    2) {
+        return 50
+    }
+    if ! set_column_type(2,
+    2,
+    4) {
+        return 51
+    }
+    if ! set_column_type(2,
+    3,
+    3) {
+        return 52
+    }
+    if ! set_column_name(2,
+    0,
+    "Signed") {
+        return 53
+    }
+    if ! set_column_name(2,
+    1,
+    "Unsigned") {
+        return 54
+    }
+    if ! set_column_name(2,
+    2,
+    "Ratio") {
+        return 55
+    }
+    if ! set_column_name(2,
+    3,
+    "Enabled") {
+        return 56
+    }
+    if ! append_row(2) {
+        return 57
+    }
+    if ! append_row(2) {
+        return 58
+    }
+    if ! append_row(2) {
+        return 59
+    }
+    if ! set_cell(2,
+    0,
+    0,
+    "7") {
+        return 60
+    }
+    if ! set_cell(2,
+    0,
+    1,
+    "11") {
+        return 61
+    }
+    if ! set_cell(2,
+    0,
+    2,
+    "1.5") {
+        return 62
+    }
+    if ! set_cell(2,
+    0,
+    3,
+    "true") {
+        return 63
+    }
+    if ! set_cell(2,
+    1,
+    0,
+    "1") {
+        return 64
+    }
+    if ! set_cell(2,
+    1,
+    1,
+    "2") {
+        return 65
+    }
+    if ! set_cell(2,
+    1,
+    2,
+    "0.5") {
+        return 66
+    }
+    if ! set_cell(2,
+    1,
+    3,
+    "false") {
+        return 67
+    }
+    if ! set_cell(2,
+    2,
+    0,
+    "2") {
+        return 68
+    }
+    if ! set_cell(2,
+    2,
+    1,
+    "3") {
+        return 69
+    }
+    if ! set_cell(2,
+    2,
+    2,
+    "1.0") {
+        return 70
+    }
+    if ! set_cell(2,
+    2,
+    3,
+    "true") {
+        return 71
+    }
+    if ! set_column_type(3,
+    0,
+    1) {
+        return 62
+    }
+    if ! set_column_type(3,
+    1,
+    2) {
+        return 63
+    }
+    if ! set_column_type(3,
+    2,
+    4) {
+        return 64
+    }
+    if ! set_column_type(3,
+    3,
+    3) {
+        return 65
+    }
+    if ! append_row(3) {
+        return 66
+    }
+    if ! set_cell(3,
+    0,
+    0,
+    "0") {
+        return 67
+    }
+    let root: Int32 = begin("Jadren table page",
+    720,
+    480,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 9
+    }
+    let panel_node: Int32 = panel(root,
+    660,
+    340,
+    0xFFFFFFu32,
+    16,
+    12,
+    8,
+    0,
+    1)
+    if panel_node == 0 {
+        return 10
+    }
+    let source_node: Int32 = table(panel_node,
+    10,
+    600,
+    120,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    let destination_node: Int32 = table(panel_node,
+    11,
+    600,
+    120,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    let typed_source_node: Int32 = table(panel_node,
+    12,
+    600,
+    120,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    let typed_destination_node: Int32 = table(panel_node,
+    13,
+    600,
+    120,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if source_node == 0 {
+        return 11
+    }
+    if destination_node == 0 {
+        return 11
+    }
+    if typed_source_node == 0 {
+        return 72
+    }
+    if typed_destination_node == 0 {
+        return 72
+    }
+    if ! table_bind(source_node,
+    0,
+    1) {
+        return 12
+    }
+    if ! table_bind(destination_node,
+    1,
+    1) {
+        return 13
+    }
+    if ! table_bind(typed_source_node,
+    2,
+    4) {
+        return 73
+    }
+    if ! table_bind(typed_destination_node,
+    3,
+    4) {
+        return 74
+    }
+    if ! table_page(source_node,
+    1,
+    1,
+    2) {
+        return 14
+    }
+    if row_count(1) != 2 {
+        return 15
+    }
+    var output:[UInt8;
+    16] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var length:[UIntSize;
+    1] =[99usize]
+    if ! table_read_cell_exact(destination_node,
+    0,
+    0,
+    output,
+    length) {
+        return 16
+    }
+    if length[0] != 4usize {
+        return 17
+    }
+    if output[0] != 66u8 {
+        return 17
+    }
+    if output[1] != 101u8 {
+        return 17
+    }
+    if ! table_read_cell_exact(destination_node,
+    1,
+    0,
+    output,
+    length) {
+        return 18
+    }
+    if length[0] != 5usize {
+        return 19
+    }
+    if output[0] != 71u8 {
+        return 19
+    }
+    if output[1] != 97u8 {
+        return 19
+    }
+    // A stale model snapshot must not replace the retained destination.
+    let stale: UInt64 = revision()
+    if ! set_cell(0,
+    0,
+    0,
+    "Alpha-updated") {
+        return 20
+    }
+    if table_page_if_model_revision(source_node,
+    1,
+    0,
+    1,
+    stale) {
+        return 21
+    }
+    if row_count(1) != 2 {
+        return 22
+    }
+    if ! table_read_cell_exact(destination_node,
+    0,
+    0,
+    output,
+    length) {
+        return 23
+    }
+    if length[0] != 4usize {
+        return 24
+    }
+    if output[0] != 66u8 {
+        return 25
+    }
+    let current: UInt64 = revision()
+    if ! table_page_if_model_revision(source_node,
+    1,
+    0,
+    1,
+    current) {
+        return 26
+    }
+    if row_count(1) != 1 {
+        return 27
+    }
+    if ! table_read_cell_exact(destination_node,
+    0,
+    0,
+    output,
+    length) {
+        return 28
+    }
+    if length[0] != 13usize {
+        return 29
+    }
+    if output[0] != 65u8 {
+        return 30
+    }
+    // Filtering uses the same snapshot boundary and must preserve a stale
+    // retained destination before accepting the current revision.
+    let filter_stale: UInt64 = revision()
+    if ! set_cell(0,
+    1,
+    0,
+    "Beta-open") {
+        return 31
+    }
+    if table_filter_text_if_model_revision(source_node,
+    1,
+    0,
+    "Beta",
+    filter_stale) {
+        return 32
+    }
+    if row_count(1) != 1 {
+        return 33
+    }
+    if ! table_read_cell_exact(destination_node,
+    0,
+    0,
+    output,
+    length) {
+        return 34
+    }
+    if length[0] != 13usize {
+        return 35
+    }
+    if output[0] != 65u8 {
+        return 36
+    }
+    let filter_current: UInt64 = revision()
+    if ! table_filter_text_if_model_revision(source_node,
+    1,
+    0,
+    "Beta",
+    filter_current) {
+        return 37
+    }
+    if row_count(1) != 1 {
+        return 38
+    }
+    if ! table_read_cell_exact(destination_node,
+    0,
+    0,
+    output,
+    length) {
+        return 39
+    }
+    if length[0] != 9usize {
+        return 40
+    }
+    if output[0] != 66u8 {
+        return 41
+    }
+    // Typed retained filters share the same stale/current guard.
+    let typed_int_stale: UInt64 = revision()
+    if ! set_cell(2,
+    0,
+    0,
+    "99") {
+        return 71
+    }
+    if table_filter_int_if_model_revision(typed_source_node,
+    3,
+    0,
+    99 as Int64,
+    typed_int_stale) {
+        return 72
+    }
+    if row_count(3) != 1 {
+        return 73
+    }
+    let typed_int_current: UInt64 = revision()
+    if ! table_filter_int_if_model_revision(typed_source_node,
+    3,
+    0,
+    99 as Int64,
+    typed_int_current) {
+        return 74
+    }
+    let typed_uint_stale: UInt64 = revision()
+    if ! set_cell(2,
+    0,
+    1,
+    "77") {
+        return 75
+    }
+    if table_filter_uint_if_model_revision(typed_source_node,
+    3,
+    1,
+    77u64,
+    typed_uint_stale) {
+        return 76
+    }
+    let typed_uint_current: UInt64 = revision()
+    if ! table_filter_uint_if_model_revision(typed_source_node,
+    3,
+    1,
+    77u64,
+    typed_uint_current) {
+        return 77
+    }
+    let typed_float_stale: UInt64 = revision()
+    if ! set_cell(2,
+    0,
+    2,
+    "9.5") {
+        return 78
+    }
+    if table_filter_float_if_model_revision(typed_source_node,
+    3,
+    2,
+    9.5f64,
+    typed_float_stale) {
+        return 79
+    }
+    let typed_float_current: UInt64 = revision()
+    if ! table_filter_float_if_model_revision(typed_source_node,
+    3,
+    2,
+    9.5f64,
+    typed_float_current) {
+        return 80
+    }
+    let typed_bool_stale: UInt64 = revision()
+    if ! set_cell(2,
+    0,
+    3,
+    "false") {
+        return 81
+    }
+    if table_filter_bool_if_model_revision(typed_source_node,
+    3,
+    3,
+    false,
+    typed_bool_stale) {
+        return 82
+    }
+    let typed_bool_current: UInt64 = revision()
+    if ! table_filter_bool_if_model_revision(typed_source_node,
+    3,
+    3,
+    false,
+    typed_bool_current) {
+        return 83
+    }
+    // Retained typed and text sorts reject stale model snapshots before
+    // refreshing any bound view, then accept the current revision.
+    let sort_text_stale: UInt64 = revision()
+    if ! set_cell(0,
+    0,
+    0,
+    "Zulu") {
+        return 84
+    }
+    if table_sort_text_if_model_revision(source_node,
+    0,
+    false,
+    sort_text_stale) {
+        return 85
+    }
+    if ! read_cell_exact(0,
+    0,
+    0,
+    output,
+    length) {
+        return 86
+    }
+    if length[0] != 4usize {
+        return 87
+    }
+    if output[0] != 90u8 {
+        return 88
+    }
+    let sort_text_current: UInt64 = revision()
+    if ! table_sort_text_if_model_revision(source_node,
+    0,
+    false,
+    sort_text_current) {
+        return 89
+    }
+    if ! read_cell_exact(0,
+    0,
+    0,
+    output,
+    length) {
+        return 90
+    }
+    if length[0] != 5usize {
+        return 91
+    }
+    if output[0] != 65u8 {
+        return 92
+    }
+    let sort_int_stale: UInt64 = revision()
+    if ! set_cell(2,
+    0,
+    0,
+    "88") {
+        return 93
+    }
+    if table_sort_int_if_model_revision(typed_source_node,
+    0,
+    false,
+    sort_int_stale) {
+        return 94
+    }
+    if ! read_cell_exact(2,
+    0,
+    0,
+    output,
+    length) {
+        return 95
+    }
+    if output[0] != 56u8 {
+        return 96
+    }
+    let sort_int_current: UInt64 = revision()
+    if ! table_sort_int_if_model_revision(typed_source_node,
+    0,
+    false,
+    sort_int_current) {
+        return 97
+    }
+    if ! read_cell_exact(2,
+    0,
+    0,
+    output,
+    length) {
+        return 98
+    }
+    if output[0] != 49u8 {
+        return 99
+    }
+    let sort_uint_stale: UInt64 = revision()
+    if ! set_cell(2,
+    0,
+    1,
+    "88") {
+        return 100
+    }
+    if table_sort_uint_if_model_revision(typed_source_node,
+    1,
+    false,
+    sort_uint_stale) {
+        return 101
+    }
+    if ! read_cell_exact(2,
+    0,
+    1,
+    output,
+    length) {
+        return 102
+    }
+    if output[0] != 56u8 {
+        return 103
+    }
+    let sort_uint_current: UInt64 = revision()
+    if ! table_sort_uint_if_model_revision(typed_source_node,
+    1,
+    false,
+    sort_uint_current) {
+        return 104
+    }
+    if ! read_cell_exact(2,
+    0,
+    1,
+    output,
+    length) {
+        return 105
+    }
+    if output[0] != 50u8 {
+        return 106
+    }
+    let sort_float_stale: UInt64 = revision()
+    if ! set_cell(2,
+    0,
+    2,
+    "88.0") {
+        return 107
+    }
+    if table_sort_float_if_model_revision(typed_source_node,
+    2,
+    false,
+    sort_float_stale) {
+        return 108
+    }
+    if ! read_cell_exact(2,
+    0,
+    2,
+    output,
+    length) {
+        return 109
+    }
+    if output[0] != 56u8 {
+        return 110
+    }
+    let sort_float_current: UInt64 = revision()
+    if ! table_sort_float_if_model_revision(typed_source_node,
+    2,
+    false,
+    sort_float_current) {
+        return 111
+    }
+    if ! read_cell_exact(2,
+    0,
+    2,
+    output,
+    length) {
+        return 112
+    }
+    if output[0] != 48u8 {
+        return 113
+    }
+    let sort_bool_stale: UInt64 = revision()
+    if ! set_cell(2,
+    1,
+    3,
+    "true") {
+        return 114
+    }
+    if table_sort_bool_if_model_revision(typed_source_node,
+    3,
+    true,
+    sort_bool_stale) {
+        return 115
+    }
+    if ! read_cell_exact(2,
+    0,
+    3,
+    output,
+    length) {
+        return 116
+    }
+    if output[0] != 102u8 {
+        return 117
+    }
+    let sort_bool_current: UInt64 = revision()
+    if ! table_sort_bool_if_model_revision(typed_source_node,
+    3,
+    true,
+    sort_bool_current) {
+        return 118
+    }
+    if ! read_cell_exact(2,
+    0,
+    3,
+    output,
+    length) {
+        return 119
+    }
+    if output[0] != 116u8 {
+        return 120
+    }
+    // start_row == row_count is a valid empty page.
+    if ! table_page(source_node,
+    1,
+    3,
+    2) {
+        return 42
+    }
+    if row_count(1) != 0 {
+        return 43
+    }
+    // Out-of-range and same-source requests are rejected without mutation.
+    if ! table_page(source_node,
+    1,
+    0,
+    1) {
+        return 44
+    }
+    if row_count(1) != 1 {
+        return 45
+    }
+    if table_page(source_node,
+    0,
+    0,
+    1) {
+        return 46
+    }
+    if ! finish(panel_node) {
+        return 47
+    }
+    if ! finish(root) {
+        return 48
+    }
+    return 0
+}

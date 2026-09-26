@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 /// First incompatible-change generation of the native runtime ABI.
 pub const RUNTIME_ABI_MAJOR: u32 = 0;
 /// Backward-compatible feature generation of the native runtime ABI.
-pub const RUNTIME_ABI_MINOR: u32 = 21;
+pub const RUNTIME_ABI_MINOR: u32 = 22;
 /// Deterministic identity of this runtime build and ABI contract.
 pub const RUNTIME_BUILD_ID: u64 = runtime_build_id();
 
@@ -211,6 +211,23 @@ pub struct CarrierDropFieldAbi {
 const RECORD_FIELD_UNCONDITIONAL: u64 = u64::MAX;
 /// Reserved field-table depth marker for a direct OwnedString descriptor.
 const RECORD_FIELD_OWNED_STRING: u64 = u32::MAX as u64;
+/// High-bit marker for a packed outer-enum/inner-carrier field discriminant.
+const ENUM_FIELD_NESTED_TAG_MARKER: u64 = 1u64 << 63;
+/// Low-word sentinel for a direct owning field with no inner carrier tag.
+const ENUM_FIELD_NO_INNER_TAG: u64 = u32::MAX as u64;
+/// Marker for a bounded outer-enum/two-carrier field discriminant.
+const ENUM_FIELD_MULTI_TAG_MARKER: u64 = 3u64 << 62;
+/// Mask for each tag in the compact multi-tag discriminant.
+const ENUM_FIELD_MULTI_TAG_MASK: u64 = (1u64 << 20) - 1;
+/// Marker for a named enum carrier embedded in a record field.  Bits 61..32
+/// carry the eight-byte distance from the descriptor back to the enum tag;
+/// bits 31..0 carry the enum variant.
+const RECORD_FIELD_NAMED_ENUM_TAG_MARKER: u64 = 1u64 << 62;
+const RECORD_FIELD_NAMED_ENUM_TAG_DISTANCE_MASK: u64 = (1u64 << 30) - 1;
+/// Top-byte marker base for the general bounded tag-path discriminant.
+const ENUM_FIELD_PATH_MARKER_BASE: u64 = 0xe0u64 << 56;
+/// Maximum total tag count in the general path discriminant.
+const ENUM_FIELD_PATH_MAX_TAGS: u64 = 7;
 
 impl Buffer {
     const EMPTY: Self = Self {
@@ -863,6 +880,15 @@ unsafe fn validate_enum_carrier_fields(
         {
             return Err(BufferStatus::InvalidSize);
         }
+        let path_byte = field.payload_variant >> 56;
+        let is_path = path_byte & 0xf0 == ENUM_FIELD_PATH_MARKER_BASE >> 56;
+        if field.payload_variant != RECORD_FIELD_UNCONDITIONAL
+            && !is_path
+            && field.payload_variant & ENUM_FIELD_MULTI_TAG_MARKER == ENUM_FIELD_MULTI_TAG_MARKER
+            && field.payload_offset < 24
+        {
+            return Err(BufferStatus::InvalidAlignment);
+        }
         let Some(payload_end) = field.payload_offset.checked_add(size_of::<Buffer>() as u64) else {
             return Err(BufferStatus::InvalidAlignment);
         };
@@ -893,6 +919,72 @@ unsafe fn record_field_is_active(
     if field.payload_variant == RECORD_FIELD_UNCONDITIONAL {
         return Ok(true);
     }
+    if field.payload_variant & RECORD_FIELD_NAMED_ENUM_TAG_MARKER != 0
+        && field.payload_variant & ENUM_FIELD_MULTI_TAG_MARKER != ENUM_FIELD_MULTI_TAG_MARKER
+    {
+        let distance_words =
+            (field.payload_variant >> 32) & RECORD_FIELD_NAMED_ENUM_TAG_DISTANCE_MASK;
+        if distance_words == 0 {
+            return Err(BufferStatus::InvalidAlignment);
+        }
+        let distance = distance_words
+            .checked_mul(8)
+            .ok_or(BufferStatus::InvalidAlignment)?;
+        if distance > field.payload_offset {
+            return Err(BufferStatus::InvalidAlignment);
+        }
+        let tag = unsafe {
+            record
+                .add((field.payload_offset - distance) as usize)
+                .cast::<u32>()
+                .read_unaligned()
+        } as u64;
+        return Ok(tag == (field.payload_variant & u64::from(u32::MAX)));
+    }
+    let path_byte = field.payload_variant >> 56;
+    if path_byte & 0xf0 == ENUM_FIELD_PATH_MARKER_BASE >> 56 {
+        let tag_count = path_byte & 0x0f;
+        if !(2..=ENUM_FIELD_PATH_MAX_TAGS).contains(&tag_count)
+            || field.payload_offset < tag_count * 8
+        {
+            return Err(BufferStatus::InvalidAlignment);
+        }
+        for index in 0..tag_count {
+            let shift = 8 * (tag_count - index - 1);
+            let expected = (field.payload_variant >> shift) & 0xff;
+            let actual = unsafe {
+                record
+                    .add((field.payload_offset - 8 * (tag_count - index)) as usize)
+                    .cast::<u32>()
+                    .read_unaligned()
+            } as u64;
+            if actual != expected {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+    if field.payload_variant & ENUM_FIELD_NESTED_TAG_MARKER != 0 {
+        if field.payload_offset < 8 {
+            return Err(BufferStatus::InvalidAlignment);
+        }
+        let outer_variant = (field.payload_variant >> 32) & 0x7fff_ffff;
+        let outer_tag = unsafe { record.cast::<u32>().read_unaligned() } as u64;
+        if outer_tag != outer_variant {
+            return Ok(false);
+        }
+        let inner_variant = field.payload_variant & u64::from(u32::MAX);
+        if inner_variant == ENUM_FIELD_NO_INNER_TAG {
+            return Ok(true);
+        }
+        let inner_tag = unsafe {
+            record
+                .add((field.payload_offset - 8) as usize)
+                .cast::<u32>()
+                .read_unaligned()
+        } as u64;
+        return Ok(inner_tag == inner_variant);
+    }
     if field.payload_offset < 8 {
         return Err(BufferStatus::InvalidAlignment);
     }
@@ -905,6 +997,90 @@ unsafe fn record_field_is_active(
             .read_unaligned()
     };
     Ok(u64::from(tag) == field.payload_variant)
+}
+
+/// Returns whether one named enum field is active. Plain legacy entries use
+/// the enum tag at byte zero. Packed entries additionally compare the inner
+/// Option/Result tag immediately before the owning payload descriptor.
+#[allow(unsafe_code)]
+unsafe fn enum_carrier_field_is_active(
+    carrier: *const u8,
+    field: CarrierDropFieldAbi,
+) -> Result<bool, BufferStatus> {
+    let path_byte = field.payload_variant >> 56;
+    if path_byte & 0xf0 == ENUM_FIELD_PATH_MARKER_BASE >> 56 {
+        let tag_count = path_byte & 0x0f;
+        if !(3..=ENUM_FIELD_PATH_MAX_TAGS).contains(&tag_count)
+            || field.payload_offset < tag_count * 8
+        {
+            return Err(BufferStatus::InvalidAlignment);
+        }
+        for index in 0..tag_count {
+            let shift = 8 * (tag_count - index - 1);
+            let expected = (field.payload_variant >> shift) & 0xff;
+            let actual = unsafe {
+                carrier
+                    .add((field.payload_offset - 8 * (tag_count - index)) as usize)
+                    .cast::<u32>()
+                    .read_unaligned()
+            } as u64;
+            if actual != expected {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+    if field.payload_variant & ENUM_FIELD_MULTI_TAG_MARKER == ENUM_FIELD_MULTI_TAG_MARKER {
+        if field.payload_offset < 24 || field.payload_variant & 1 != 0 {
+            return Err(BufferStatus::InvalidAlignment);
+        }
+        let outer_variant = (field.payload_variant >> 41) & ENUM_FIELD_MULTI_TAG_MASK;
+        let first_variant = (field.payload_variant >> 21) & ENUM_FIELD_MULTI_TAG_MASK;
+        let second_variant = (field.payload_variant >> 1) & ENUM_FIELD_MULTI_TAG_MASK;
+        let outer_tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
+        if outer_tag != outer_variant {
+            return Ok(false);
+        }
+        let first_tag = unsafe {
+            carrier
+                .add((field.payload_offset - 16) as usize)
+                .cast::<u32>()
+                .read_unaligned()
+        } as u64;
+        if first_tag != first_variant {
+            return Ok(false);
+        }
+        let second_tag = unsafe {
+            carrier
+                .add((field.payload_offset - 8) as usize)
+                .cast::<u32>()
+                .read_unaligned()
+        } as u64;
+        return Ok(second_tag == second_variant);
+    }
+    if field.payload_variant & ENUM_FIELD_NESTED_TAG_MARKER != 0 {
+        if field.payload_offset < 8 {
+            return Err(BufferStatus::InvalidAlignment);
+        }
+        let outer_variant = (field.payload_variant >> 32) & 0x7fff_ffff;
+        let outer_tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
+        if outer_tag != outer_variant {
+            return Ok(false);
+        }
+        let inner_variant = field.payload_variant & u64::from(u32::MAX);
+        if inner_variant == ENUM_FIELD_NO_INNER_TAG {
+            return Ok(true);
+        }
+        let inner_tag = unsafe {
+            carrier
+                .add((field.payload_offset - 8) as usize)
+                .cast::<u32>()
+                .read_unaligned()
+        } as u64;
+        return Ok(inner_tag == inner_variant);
+    }
+    let tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
+    Ok(tag == field.payload_variant)
 }
 
 /// Destroys one already-validated record field. The field-table ABI uses the
@@ -2178,7 +2354,21 @@ pub unsafe fn carrier_destroy_buffer(
     if tag == payload_variant {
         // SAFETY: payload offset was validated against the carrier layout.
         let nested = unsafe { carrier.add(payload_offset as usize).cast::<Buffer>() };
-        let status = if depth == 1 {
+        let status = if depth == RECORD_FIELD_OWNED_STRING {
+            // SAFETY: the reserved depth marker identifies a direct
+            // OwnedString descriptor in the carrier payload.
+            let status = unsafe { string_destroy(nested.cast::<Utf8String>()) };
+            match status {
+                StringStatus::Ok => BufferStatus::Ok,
+                StringStatus::RuntimeNotInitialized => BufferStatus::RuntimeNotInitialized,
+                StringStatus::NullPointer => BufferStatus::NullPointer,
+                StringStatus::InvalidSize => BufferStatus::InvalidSize,
+                StringStatus::InvalidAlignment => BufferStatus::InvalidAlignment,
+                StringStatus::SizeOverflow => BufferStatus::SizeOverflow,
+                StringStatus::OutOfMemory => BufferStatus::OutOfMemory,
+                _ => BufferStatus::InvalidBuffer,
+            }
+        } else if depth == 1 {
             // SAFETY: selected payload is a live owning Buffer.
             unsafe { buffer_destroy(nested, leaf_element_size, leaf_alignment) }
         } else {
@@ -2628,11 +2818,14 @@ pub unsafe fn buffer_destroy_enum_carrier_fields(
         // SAFETY: descriptor validity and carrier layout checks keep this
         // offset within the initialized carrier allocation.
         let carrier = unsafe { buffer.pointer.cast::<u8>().add(slot_offset as usize) };
-        let tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
         for field_index in 0..field_count {
             // SAFETY: validation established the table bounds.
             let field = unsafe { fields.add(field_index as usize).read_unaligned() };
-            if field.payload_variant != tag {
+            let active = match unsafe { enum_carrier_field_is_active(carrier, field) } {
+                Ok(active) => active,
+                Err(status) => return status,
+            };
+            if !active {
                 continue;
             }
             // SAFETY: field offset and descriptor layout were validated
@@ -2683,11 +2876,14 @@ pub unsafe fn carrier_destroy_enum_fields(
     {
         return status;
     }
-    let tag = unsafe { carrier.cast::<u32>().read_unaligned() } as u64;
     for field_index in 0..field_count {
         // SAFETY: validation established the table bounds.
         let field = unsafe { fields.add(field_index as usize).read_unaligned() };
-        if field.payload_variant != tag {
+        let active = match unsafe { enum_carrier_field_is_active(carrier, field) } {
+            Ok(active) => active,
+            Err(status) => return status,
+        };
+        if !active {
             continue;
         }
         // SAFETY: field offset and descriptor layout were validated against
@@ -3023,6 +3219,88 @@ pub unsafe fn buffer_remove_drop_nested_record_fields(
     BufferStatus::Ok
 }
 
+/// Removes one nested owning Buffer element whose final leaf is copy-safe.
+/// The selected descriptor chain is destroyed before later outer descriptors
+/// are moved left, preserving exactly one owner per chain.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive outer header. `element_size` and
+/// `alignment` describe the nested Buffer descriptor layout, while the leaf
+/// layout must match every initialized final allocation.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_remove_drop_nested_buffer(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if depth == 0 {
+        return BufferStatus::InvalidSize;
+    }
+    if element_size != size_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    if let Err(status) = validate_element_layout(leaf_element_size, leaf_alignment) {
+        return status;
+    }
+    // SAFETY: caller guarantees a live exclusive outer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    if index >= buffer.length {
+        return BufferStatus::OutOfBounds;
+    }
+    // SAFETY: the outer layout makes the selected slot a valid Buffer
+    // descriptor and the nested destroy routine consumes its ownership.
+    let base = buffer.pointer.cast::<Buffer>();
+    let selected = unsafe { base.add(index as usize) };
+    let status = if depth == 1 {
+        // SAFETY: the selected descriptor is the final Buffer<leaf> level.
+        unsafe { buffer_destroy(selected, leaf_element_size, leaf_alignment) }
+    } else {
+        // SAFETY: the selected descriptor remains an owning Buffer chain.
+        unsafe {
+            buffer_destroy_nested_buffer_recursive(
+                selected,
+                element_size,
+                alignment,
+                depth - 1,
+                leaf_element_size,
+                leaf_alignment,
+            )
+        }
+    };
+    if status != BufferStatus::Ok {
+        return status;
+    }
+    for current_index in index..(buffer.length - 1) {
+        let current = unsafe { base.add(current_index as usize) };
+        let next = unsafe { base.add((current_index + 1) as usize) };
+        // SAFETY: selected was reset to EMPTY and later descriptors are moved
+        // exactly once, so ownership is not duplicated.
+        let moved = unsafe { ptr::read(next) };
+        unsafe { ptr::write(current, moved) };
+        unsafe { ptr::write(next, Buffer::EMPTY) };
+    }
+    buffer.length -= 1;
+    BufferStatus::Ok
+}
+
 /// Removes one copy-safe element without returning it.  This is the generic
 /// byte-compaction path used when no owning field table is required.
 ///
@@ -3163,6 +3441,90 @@ pub unsafe fn buffer_remove_drop_owned_string(
             ptr::write(current, moved);
             ptr::write(next, Utf8String::EMPTY);
         }
+    }
+    buffer.length -= 1;
+    BufferStatus::Ok
+}
+
+/// Removes one nested owning Buffer element whose final leaf is `OwnedString`.
+/// Each leaf descriptor is destroyed before later outer descriptors are
+/// moved left, preserving exactly one owner per UTF-8 allocation.
+///
+/// # Safety
+///
+/// `buffer` must be a live exclusive outer header. The descriptor depth and
+/// supplied layouts must match every initialized nested string buffer.
+#[must_use]
+#[allow(unsafe_code)]
+pub unsafe fn buffer_remove_drop_nested_owned_string(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    string_element_size: u64,
+    string_alignment: u64,
+) -> BufferStatus {
+    if runtime_state() != RuntimeState::Initialized {
+        return BufferStatus::RuntimeNotInitialized;
+    }
+    if buffer.is_null() {
+        return BufferStatus::NullPointer;
+    }
+    if depth == 0 {
+        return BufferStatus::InvalidSize;
+    }
+    if element_size != size_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if alignment != align_of::<Buffer>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    if string_element_size != size_of::<Utf8String>() as u64 {
+        return BufferStatus::InvalidSize;
+    }
+    if string_alignment != align_of::<Utf8String>() as u64 {
+        return BufferStatus::InvalidAlignment;
+    }
+    // SAFETY: caller guarantees a live exclusive outer header.
+    let buffer = unsafe { &mut *buffer };
+    if let Err(status) = validate_buffer(buffer) {
+        return status;
+    }
+    if index >= buffer.length {
+        return BufferStatus::OutOfBounds;
+    }
+    // SAFETY: the outer layout makes the selected slot a valid Buffer
+    // descriptor and the nested string destroy routine consumes its owner.
+    let base = buffer.pointer.cast::<Buffer>();
+    let selected = unsafe { base.add(index as usize) };
+    let status = if depth == 1 {
+        // SAFETY: the selected descriptor is the final Buffer<OwnedString>.
+        unsafe { buffer_destroy_owned_string(selected, string_element_size, string_alignment) }
+    } else {
+        // SAFETY: the selected descriptor remains a nested string buffer.
+        unsafe {
+            buffer_destroy_nested_owned_string(
+                selected,
+                element_size,
+                alignment,
+                depth - 1,
+                string_element_size,
+                string_alignment,
+            )
+        }
+    };
+    if status != BufferStatus::Ok {
+        return status;
+    }
+    for current_index in index..(buffer.length - 1) {
+        let current = unsafe { base.add(current_index as usize) };
+        let next = unsafe { base.add((current_index + 1) as usize) };
+        // SAFETY: selected was reset to EMPTY and later descriptors are moved
+        // exactly once, so UTF-8 ownership is not duplicated.
+        let moved = unsafe { ptr::read(next) };
+        unsafe { ptr::write(current, moved) };
+        unsafe { ptr::write(next, Buffer::EMPTY) };
     }
     buffer.length -= 1;
     BufferStatus::Ok
@@ -5520,6 +5882,67 @@ pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_nested_record_fields(
     i32::from(status == BufferStatus::Ok.code())
 }
 
+/// Removes one nested owning Buffer element whose leaf is copy-safe across
+/// the C ABI.
+///
+/// # Safety
+///
+/// The arguments must satisfy the safety contract of the status wrapper.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_nested_buffer_status(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> i32 {
+    unsafe {
+        buffer_remove_drop_nested_buffer(
+            buffer,
+            index,
+            element_size,
+            alignment,
+            depth,
+            leaf_element_size,
+            leaf_alignment,
+        )
+    }
+    .code()
+}
+
+/// Boolean convenience wrapper for nested owning Buffer removal.
+///
+/// # Safety
+///
+/// The arguments must satisfy the safety contract of the status wrapper.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_nested_buffer(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    leaf_element_size: u64,
+    leaf_alignment: u64,
+) -> i32 {
+    let status = unsafe {
+        jadren_rt_buffer_remove_drop_nested_buffer_status(
+            buffer,
+            index,
+            element_size,
+            alignment,
+            depth,
+            leaf_element_size,
+            leaf_alignment,
+        )
+    };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
 /// Removes one copy-safe element from a Buffer without returning it across
 /// the C ABI.
 ///
@@ -5591,6 +6014,66 @@ pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_owned_string(
 ) -> i32 {
     let status = unsafe {
         jadren_rt_buffer_remove_drop_owned_string_status(buffer, index, element_size, alignment)
+    };
+    i32::from(status == BufferStatus::Ok.code())
+}
+
+/// Removes one nested owning string buffer element across the C ABI.
+///
+/// # Safety
+///
+/// The arguments must satisfy the safety contract of the status wrapper.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_nested_owned_string_status(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    string_element_size: u64,
+    string_alignment: u64,
+) -> i32 {
+    unsafe {
+        buffer_remove_drop_nested_owned_string(
+            buffer,
+            index,
+            element_size,
+            alignment,
+            depth,
+            string_element_size,
+            string_alignment,
+        )
+    }
+    .code()
+}
+
+/// Boolean convenience wrapper for nested owning string removal.
+///
+/// # Safety
+///
+/// The arguments must satisfy the safety contract of the status wrapper.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jadren_rt_buffer_remove_drop_nested_owned_string(
+    buffer: *mut Buffer,
+    index: u64,
+    element_size: u64,
+    alignment: u64,
+    depth: u64,
+    string_element_size: u64,
+    string_alignment: u64,
+) -> i32 {
+    let status = unsafe {
+        jadren_rt_buffer_remove_drop_nested_owned_string_status(
+            buffer,
+            index,
+            element_size,
+            alignment,
+            depth,
+            string_element_size,
+            string_alignment,
+        )
     };
     i32::from(status == BufferStatus::Ok.code())
 }
@@ -6061,32 +6544,34 @@ mod tests {
 
     use super::{
         AbiVersion, AllocatorStatus, Buffer, BufferStatus, CallbackStatus, CarrierDropBranchAbi,
-        CarrierDropFieldAbi, Float2, Float3, Float4, Float8, LogLevel, Matrix4, PanicCode,
-        Quaternion, RUNTIME_ABI_MAJOR, RUNTIME_ABI_MINOR, RUNTIME_BUILD_ID, RUNTIME_STATE,
-        RuntimeState, RuntimeStatus, STATE_UNINITIALIZED, StringStatus, Utf8String,
-        bounds_panic_info, buffer_clear_move_nested_owned_string, buffer_clear_move_owned_string,
-        buffer_create, buffer_destroy, buffer_destroy_carrier_buffer,
-        buffer_destroy_enum_carrier_buffer, buffer_destroy_enum_carrier_fields,
-        buffer_destroy_multi_carrier_buffer, buffer_destroy_nested_buffer,
-        buffer_destroy_nested_buffer_recursive, buffer_destroy_nested_owned_string,
-        buffer_destroy_nested_record_fields, buffer_destroy_owned_string,
-        buffer_destroy_record_fields, buffer_insert_move_from, buffer_pop, buffer_pop_move_into,
-        buffer_remove_drop_nested_record_fields, buffer_remove_drop_owned_string,
-        buffer_remove_drop_record_fields, buffer_remove_move, buffer_remove_move_into,
-        buffer_reserve, buffer_resize, buffer_resize_move, buffer_resize_move_nested_owned_string,
-        buffer_resize_move_nested_record_fields, buffer_resize_move_owned_string,
-        buffer_resize_move_record_fields, buffer_slice, carrier_destroy_buffer,
-        carrier_destroy_enum_buffer, carrier_destroy_enum_fields, carrier_destroy_multi_buffer,
-        carrier_destroy_record_fields, float2_add, float3_add, float3_dot, float4_add, float8_add,
-        initialize, jadren_rt_abi_version, jadren_rt_build_id, jadren_rt_initialize,
-        jadren_rt_is_initialized, jadren_rt_region_allocate, jadren_rt_region_create,
-        jadren_rt_region_destroy, log, math_abs_f32, math_abs_f64, math_acos_f32, math_ceil_f32,
-        math_ceil_f64, math_cos_f32, math_floor_f32, math_floor_f64, math_sin_f32, math_sqrt_f32,
-        math_sqrt_f64, matrix4_identity, profiler_begin_sample, profiler_counter,
-        profiler_end_sample, quaternion_identity, quaternion_slerp_unclamped, region_allocate,
-        region_create, region_destroy, runtime_state, set_callbacks, slice_subslice,
-        string_append_utf8, string_clear, string_create, string_destroy, string_from_utf8,
-        string_reserve, system_allocate, system_deallocate, system_reallocate,
+        CarrierDropFieldAbi, ENUM_FIELD_MULTI_TAG_MARKER, ENUM_FIELD_MULTI_TAG_MASK,
+        ENUM_FIELD_NESTED_TAG_MARKER, ENUM_FIELD_PATH_MARKER_BASE, Float2, Float3, Float4, Float8,
+        LogLevel, Matrix4, PanicCode, Quaternion, RECORD_FIELD_NAMED_ENUM_TAG_MARKER,
+        RUNTIME_ABI_MAJOR, RUNTIME_ABI_MINOR, RUNTIME_BUILD_ID, RUNTIME_STATE, RuntimeState,
+        RuntimeStatus, STATE_UNINITIALIZED, StringStatus, Utf8String, bounds_panic_info,
+        buffer_clear_move_nested_owned_string, buffer_clear_move_owned_string, buffer_create,
+        buffer_destroy, buffer_destroy_carrier_buffer, buffer_destroy_enum_carrier_buffer,
+        buffer_destroy_enum_carrier_fields, buffer_destroy_multi_carrier_buffer,
+        buffer_destroy_nested_buffer, buffer_destroy_nested_buffer_recursive,
+        buffer_destroy_nested_owned_string, buffer_destroy_nested_record_fields,
+        buffer_destroy_owned_string, buffer_destroy_record_fields, buffer_insert_move_from,
+        buffer_pop, buffer_pop_move_into, buffer_remove_drop_nested_buffer,
+        buffer_remove_drop_nested_owned_string, buffer_remove_drop_nested_record_fields,
+        buffer_remove_drop_owned_string, buffer_remove_drop_record_fields, buffer_remove_move,
+        buffer_remove_move_into, buffer_reserve, buffer_resize, buffer_resize_move,
+        buffer_resize_move_nested_owned_string, buffer_resize_move_nested_record_fields,
+        buffer_resize_move_owned_string, buffer_resize_move_record_fields, buffer_slice,
+        carrier_destroy_buffer, carrier_destroy_enum_buffer, carrier_destroy_enum_fields,
+        carrier_destroy_multi_buffer, carrier_destroy_record_fields, float2_add, float3_add,
+        float3_dot, float4_add, float8_add, initialize, jadren_rt_abi_version, jadren_rt_build_id,
+        jadren_rt_initialize, jadren_rt_is_initialized, jadren_rt_region_allocate,
+        jadren_rt_region_create, jadren_rt_region_destroy, log, math_abs_f32, math_abs_f64,
+        math_acos_f32, math_ceil_f32, math_ceil_f64, math_cos_f32, math_floor_f32, math_floor_f64,
+        math_sin_f32, math_sqrt_f32, math_sqrt_f64, matrix4_identity, profiler_begin_sample,
+        profiler_counter, profiler_end_sample, quaternion_identity, quaternion_slerp_unclamped,
+        region_allocate, region_create, region_destroy, runtime_state, set_callbacks,
+        slice_subslice, string_append_utf8, string_clear, string_create, string_destroy,
+        string_from_utf8, string_reserve, system_allocate, system_deallocate, system_reallocate,
     };
 
     static TEST_RUNTIME_LOCK: Mutex<()> = Mutex::new(());
@@ -6407,6 +6892,75 @@ mod tests {
 
     #[test]
     #[allow(unsafe_code)]
+    fn generic_reserve_preserves_owning_record_descriptors() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        #[repr(C)]
+        struct OwningEntry {
+            id: i32,
+            values: Buffer,
+        }
+
+        let inner_result = buffer_create(4, 4, 1);
+        assert_eq!(inner_result.status, BufferStatus::Ok.code());
+        let inner = inner_result.buffer;
+        // SAFETY: the inner buffer owns one initialized four-byte element.
+        unsafe { inner.pointer.cast::<i32>().write(17) };
+
+        let mut outer = buffer_create(
+            size_of::<OwningEntry>() as u64,
+            align_of::<OwningEntry>() as u64,
+            1,
+        )
+        .buffer;
+        // SAFETY: the outer allocation has one correctly aligned entry slot.
+        unsafe {
+            outer.pointer.cast::<OwningEntry>().write(OwningEntry {
+                id: 7,
+                values: inner,
+            });
+        }
+        outer.length = 1;
+
+        assert_eq!(
+            unsafe {
+                buffer_reserve(
+                    &mut outer,
+                    size_of::<OwningEntry>() as u64,
+                    align_of::<OwningEntry>() as u64,
+                    4,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.capacity, 4);
+        // SAFETY: reserve preserves the initialized record bytes.
+        let entry = unsafe { &*outer.pointer.cast::<OwningEntry>() };
+        assert_eq!(entry.id, 7);
+        assert_eq!(entry.values.length, 0);
+        assert_eq!(entry.values.capacity, 1);
+        assert!(!entry.values.pointer.is_null());
+
+        // SAFETY: destroy the nested descriptor using its original leaf
+        // layout before releasing the outer record storage.
+        unsafe {
+            let entry = &mut *outer.pointer.cast::<OwningEntry>();
+            assert_eq!(buffer_destroy(&mut entry.values, 4, 4), BufferStatus::Ok);
+            assert_eq!(
+                buffer_destroy(
+                    &mut outer,
+                    size_of::<OwningEntry>() as u64,
+                    align_of::<OwningEntry>() as u64,
+                ),
+                BufferStatus::Ok
+            );
+        }
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
     fn nested_buffer_destroy_releases_initialized_inner_descriptors() {
         let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
         RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
@@ -6478,6 +7032,148 @@ mod tests {
             BufferStatus::Ok
         );
         assert_eq!(outer, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn nested_owned_string_remove_drop_destroys_chain_and_compacts() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let make_inner = |text: &[u8]| {
+            let string = unsafe { string_from_utf8(text.as_ptr(), text.len() as u64) };
+            assert_eq!(string.status, StringStatus::Ok.code());
+            let result = buffer_create(
+                size_of::<Utf8String>() as u64,
+                align_of::<Utf8String>() as u64,
+                1,
+            );
+            assert_eq!(result.status, BufferStatus::Ok.code());
+            let mut inner = result.buffer;
+            unsafe { inner.pointer.cast::<Utf8String>().write(string.string) };
+            inner.length = 1;
+            inner
+        };
+        let first = make_inner(b"first");
+        let second = make_inner(b"second");
+        let third = make_inner(b"third");
+        let outer_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 3);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        unsafe {
+            let slots = outer.pointer.cast::<Buffer>();
+            slots.write(first);
+            slots.add(1).write(second);
+            slots.add(2).write(third);
+        }
+        outer.length = 3;
+
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_nested_owned_string(
+                    &mut outer,
+                    1,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 2);
+        unsafe {
+            let slots = outer.pointer.cast::<Buffer>();
+            assert_eq!(
+                (*slots)
+                    .pointer
+                    .cast::<Utf8String>()
+                    .as_ref()
+                    .unwrap()
+                    .length,
+                5
+            );
+            assert_eq!(
+                (*slots.add(1))
+                    .pointer
+                    .cast::<Utf8String>()
+                    .as_ref()
+                    .unwrap()
+                    .length,
+                5
+            );
+        }
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_nested_owned_string(
+                    &mut outer,
+                    99,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::OutOfBounds
+        );
+        assert_eq!(
+            unsafe {
+                buffer_destroy_nested_owned_string(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        let leaf = make_inner(b"depth-two");
+        let middle_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 1);
+        assert_eq!(middle_result.status, BufferStatus::Ok.code());
+        let mut middle = middle_result.buffer;
+        unsafe { middle.pointer.cast::<Buffer>().write(leaf) };
+        middle.length = 1;
+        let outer_two_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 1);
+        assert_eq!(outer_two_result.status, BufferStatus::Ok.code());
+        let mut outer_two = outer_two_result.buffer;
+        unsafe { outer_two.pointer.cast::<Buffer>().write(middle) };
+        outer_two.length = 1;
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_nested_owned_string(
+                    &mut outer_two,
+                    0,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    2,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer_two.length, 0);
+        assert_eq!(
+            unsafe {
+                buffer_destroy_nested_owned_string(
+                    &mut outer_two,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    2,
+                    size_of::<Utf8String>() as u64,
+                    align_of::<Utf8String>() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
     }
 
     #[test]
@@ -7044,6 +7740,540 @@ mod tests {
 
     #[test]
     #[allow(unsafe_code)]
+    fn enum_carrier_field_table_drops_inline_owned_string_array() {
+        #[repr(C, align(8))]
+        struct CarrierBytes([u8; 56]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first_a = unsafe { string_from_utf8(b"first-a".as_ptr(), 7) };
+        let first_b = unsafe { string_from_utf8(b"first-b".as_ptr(), 7) };
+        let second_a = unsafe { string_from_utf8(b"second-a".as_ptr(), 8) };
+        let second_b = unsafe { string_from_utf8(b"second-b".as_ptr(), 8) };
+        assert_eq!(first_a.status, StringStatus::Ok.code());
+        assert_eq!(first_b.status, StringStatus::Ok.code());
+        assert_eq!(second_a.status, StringStatus::Ok.code());
+        assert_eq!(second_b.status, StringStatus::Ok.code());
+
+        let outer_result = buffer_create(size_of::<CarrierBytes>() as u64, 8, 2);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        unsafe {
+            let first = outer.pointer.cast::<u8>();
+            first.cast::<u32>().write(1);
+            first.add(8).cast::<Utf8String>().write(first_a.string);
+            first.add(32).cast::<Utf8String>().write(first_b.string);
+            let second = first.add(size_of::<CarrierBytes>());
+            second.cast::<u32>().write(1);
+            second.add(8).cast::<Utf8String>().write(second_a.string);
+            second.add(32).cast::<Utf8String>().write(second_b.string);
+        }
+        outer.length = 2;
+        let fields = [
+            CarrierDropFieldAbi {
+                payload_variant: 1,
+                payload_offset: 8,
+                depth: u64::from(u32::MAX),
+                leaf_element_size: size_of::<Utf8String>() as u64,
+                leaf_alignment: align_of::<Utf8String>() as u64,
+            },
+            CarrierDropFieldAbi {
+                payload_variant: 1,
+                payload_offset: 32,
+                depth: u64::from(u32::MAX),
+                leaf_element_size: size_of::<Utf8String>() as u64,
+                leaf_alignment: align_of::<Utf8String>() as u64,
+            },
+        ];
+
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_record_fields(
+                    &mut outer,
+                    0,
+                    size_of::<CarrierBytes>() as u64,
+                    align_of::<CarrierBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 1);
+        unsafe {
+            let moved = outer.pointer.cast::<u8>();
+            assert_eq!(
+                moved.add(8).cast::<Utf8String>().as_ref().unwrap().length,
+                8
+            );
+            assert_eq!(
+                moved.add(32).cast::<Utf8String>().as_ref().unwrap().length,
+                8
+            );
+        }
+        assert_eq!(
+            unsafe {
+                buffer_destroy_record_fields(
+                    &mut outer,
+                    size_of::<CarrierBytes>() as u64,
+                    align_of::<CarrierBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn enum_carrier_field_table_selects_packed_inner_option_tags() {
+        #[repr(C, align(8))]
+        struct CarrierBytes([u8; 72]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first = unsafe { string_from_utf8(b"first".as_ptr(), 5) };
+        let second = unsafe { string_from_utf8(b"second".as_ptr(), 6) };
+        assert_eq!(first.status, StringStatus::Ok.code());
+        assert_eq!(second.status, StringStatus::Ok.code());
+
+        let outer_result = buffer_create(size_of::<CarrierBytes>() as u64, 8, 2);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        unsafe {
+            let first_event = outer.pointer.cast::<u8>();
+            first_event.cast::<u32>().write(1);
+            first_event.add(8).cast::<u32>().write(1);
+            first_event.add(16).cast::<Utf8String>().write(first.string);
+            first_event.add(40).cast::<u32>().write(0);
+
+            let second_event = first_event.add(size_of::<CarrierBytes>());
+            second_event.cast::<u32>().write(1);
+            second_event.add(8).cast::<u32>().write(0);
+            second_event.add(40).cast::<u32>().write(1);
+            second_event
+                .add(48)
+                .cast::<Utf8String>()
+                .write(second.string);
+        }
+        outer.length = 2;
+        let packed_variant = ENUM_FIELD_NESTED_TAG_MARKER | (1u64 << 32) | 1;
+        let fields = [
+            CarrierDropFieldAbi {
+                payload_variant: packed_variant,
+                payload_offset: 16,
+                depth: u64::from(u32::MAX),
+                leaf_element_size: size_of::<Utf8String>() as u64,
+                leaf_alignment: align_of::<Utf8String>() as u64,
+            },
+            CarrierDropFieldAbi {
+                payload_variant: packed_variant,
+                payload_offset: 48,
+                depth: u64::from(u32::MAX),
+                leaf_element_size: size_of::<Utf8String>() as u64,
+                leaf_alignment: align_of::<Utf8String>() as u64,
+            },
+        ];
+
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_record_fields(
+                    &mut outer,
+                    0,
+                    size_of::<CarrierBytes>() as u64,
+                    align_of::<CarrierBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 1);
+        assert_eq!(
+            unsafe {
+                buffer_destroy_record_fields(
+                    &mut outer,
+                    size_of::<CarrierBytes>() as u64,
+                    align_of::<CarrierBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer, Buffer::EMPTY);
+
+        let standalone_result = buffer_create(size_of::<CarrierBytes>() as u64, 8, 1);
+        assert_eq!(standalone_result.status, BufferStatus::Ok.code());
+        let mut standalone = standalone_result.buffer;
+        let text = unsafe { string_from_utf8(b"standalone".as_ptr(), 10) };
+        assert_eq!(text.status, StringStatus::Ok.code());
+        unsafe {
+            let event = standalone.pointer.cast::<u8>();
+            event.cast::<u32>().write(1);
+            event.add(8).cast::<u32>().write(0);
+            event.add(40).cast::<u32>().write(1);
+            event.add(48).cast::<Utf8String>().write(text.string);
+        }
+        standalone.length = 1;
+        assert_eq!(
+            unsafe {
+                buffer_destroy_enum_carrier_fields(
+                    &mut standalone,
+                    size_of::<CarrierBytes>() as u64,
+                    align_of::<CarrierBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(standalone, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn enum_carrier_field_table_selects_two_nested_option_tags() {
+        #[repr(C, align(8))]
+        struct CarrierBytes([u8; 88]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first = unsafe { string_from_utf8(b"first".as_ptr(), 5) };
+        let second = unsafe { string_from_utf8(b"second".as_ptr(), 6) };
+        assert_eq!(first.status, StringStatus::Ok.code());
+        assert_eq!(second.status, StringStatus::Ok.code());
+
+        let mut carrier = CarrierBytes([0; 88]);
+        unsafe {
+            let bytes = carrier.0.as_mut_ptr();
+            bytes.cast::<u32>().write(1);
+            bytes.add(8).cast::<u32>().write(1);
+            bytes.add(16).cast::<u32>().write(1);
+            bytes.add(24).cast::<Utf8String>().write(first.string);
+            bytes.add(48).cast::<u32>().write(1);
+            bytes.add(56).cast::<u32>().write(1);
+            bytes.add(64).cast::<Utf8String>().write(second.string);
+        }
+        let packed_variant =
+            ENUM_FIELD_MULTI_TAG_MARKER | (1u64 << 41) | (1u64 << 21) | (1u64 << 1);
+        let fields = [
+            CarrierDropFieldAbi {
+                payload_variant: packed_variant,
+                payload_offset: 24,
+                depth: u64::from(u32::MAX),
+                leaf_element_size: size_of::<Utf8String>() as u64,
+                leaf_alignment: align_of::<Utf8String>() as u64,
+            },
+            CarrierDropFieldAbi {
+                payload_variant: packed_variant,
+                payload_offset: 64,
+                depth: u64::from(u32::MAX),
+                leaf_element_size: size_of::<Utf8String>() as u64,
+                leaf_alignment: align_of::<Utf8String>() as u64,
+            },
+        ];
+
+        assert_eq!(
+            unsafe {
+                carrier_destroy_enum_fields(
+                    carrier.0.as_mut_ptr(),
+                    size_of::<CarrierBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert!(carrier.0.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn enum_carrier_field_table_preserves_full_twenty_bit_tags() {
+        #[repr(C, align(8))]
+        struct CarrierBytes([u8; 48]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let text = unsafe { string_from_utf8(b"wide".as_ptr(), 4) };
+        assert_eq!(text.status, StringStatus::Ok.code());
+
+        let outer_tag = 1u64;
+        let first_tag = 1u64 << 19;
+        let second_tag = ENUM_FIELD_MULTI_TAG_MASK;
+        let mut carrier = CarrierBytes([0; 48]);
+        unsafe {
+            let bytes = carrier.0.as_mut_ptr();
+            bytes.cast::<u32>().write(outer_tag as u32);
+            bytes.add(8).cast::<u32>().write(first_tag as u32);
+            bytes.add(16).cast::<u32>().write(second_tag as u32);
+            bytes.add(24).cast::<Utf8String>().write(text.string);
+        }
+        let packed_variant =
+            ENUM_FIELD_MULTI_TAG_MARKER | (outer_tag << 41) | (first_tag << 21) | (second_tag << 1);
+        let fields = [CarrierDropFieldAbi {
+            payload_variant: packed_variant,
+            payload_offset: 24,
+            depth: u64::from(u32::MAX),
+            leaf_element_size: size_of::<Utf8String>() as u64,
+            leaf_alignment: align_of::<Utf8String>() as u64,
+        }];
+
+        assert_eq!(
+            unsafe {
+                carrier_destroy_enum_fields(
+                    carrier.0.as_mut_ptr(),
+                    size_of::<CarrierBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert!(carrier.0.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn enum_carrier_field_table_selects_general_path_tags() {
+        #[repr(C, align(8))]
+        struct CarrierBytes([u8; 104]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first = unsafe { string_from_utf8(b"first".as_ptr(), 5) };
+        let second = unsafe { string_from_utf8(b"second".as_ptr(), 6) };
+        assert_eq!(first.status, StringStatus::Ok.code());
+        assert_eq!(second.status, StringStatus::Ok.code());
+
+        let mut carrier = CarrierBytes([0; 104]);
+        unsafe {
+            let bytes = carrier.0.as_mut_ptr();
+            bytes.cast::<u32>().write(1);
+            bytes.add(8).cast::<u32>().write(1);
+            bytes.add(16).cast::<u32>().write(1);
+            bytes.add(24).cast::<u32>().write(1);
+            bytes.add(32).cast::<Utf8String>().write(first.string);
+            bytes.add(56).cast::<u32>().write(1);
+            bytes.add(64).cast::<u32>().write(1);
+            bytes.add(72).cast::<u32>().write(1);
+            bytes.add(80).cast::<Utf8String>().write(second.string);
+        }
+        let packed_variant = ENUM_FIELD_PATH_MARKER_BASE
+            | (4u64 << 56)
+            | (1u64 << 24)
+            | (1u64 << 16)
+            | (1u64 << 8)
+            | 1;
+        let fields = [
+            CarrierDropFieldAbi {
+                payload_variant: packed_variant,
+                payload_offset: 32,
+                depth: u64::from(u32::MAX),
+                leaf_element_size: size_of::<Utf8String>() as u64,
+                leaf_alignment: align_of::<Utf8String>() as u64,
+            },
+            CarrierDropFieldAbi {
+                payload_variant: packed_variant,
+                payload_offset: 80,
+                depth: u64::from(u32::MAX),
+                leaf_element_size: size_of::<Utf8String>() as u64,
+                leaf_alignment: align_of::<Utf8String>() as u64,
+            },
+        ];
+
+        assert_eq!(
+            unsafe {
+                carrier_destroy_enum_fields(
+                    carrier.0.as_mut_ptr(),
+                    size_of::<CarrierBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert!(carrier.0.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn record_field_table_selects_general_path_tags() {
+        #[repr(C, align(8))]
+        struct CarrierBytes([u8; 104]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let string = unsafe { string_from_utf8(b"deep".as_ptr(), 4) };
+        assert_eq!(string.status, StringStatus::Ok.code());
+        let result = buffer_create(size_of::<CarrierBytes>() as u64, 8, 1);
+        assert_eq!(result.status, BufferStatus::Ok.code());
+        let mut values = result.buffer;
+        unsafe {
+            let bytes = values.pointer.cast::<u8>();
+            bytes.cast::<u32>().write(1);
+            bytes.add(8).cast::<u32>().write(1);
+            bytes.add(16).cast::<u32>().write(1);
+            bytes.add(24).cast::<u32>().write(1);
+            bytes.add(32).cast::<Utf8String>().write(string.string);
+        }
+        values.length = 1;
+        let packed_variant = ENUM_FIELD_PATH_MARKER_BASE
+            | (4u64 << 56)
+            | (1u64 << 24)
+            | (1u64 << 16)
+            | (1u64 << 8)
+            | 1;
+        let fields = [CarrierDropFieldAbi {
+            payload_variant: packed_variant,
+            payload_offset: 32,
+            depth: u64::from(u32::MAX),
+            leaf_element_size: size_of::<Utf8String>() as u64,
+            leaf_alignment: align_of::<Utf8String>() as u64,
+        }];
+
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_record_fields(
+                    &mut values,
+                    0,
+                    size_of::<CarrierBytes>() as u64,
+                    align_of::<CarrierBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(values.length, 0);
+        assert_eq!(
+            unsafe {
+                buffer_destroy_record_fields(
+                    &mut values,
+                    size_of::<CarrierBytes>() as u64,
+                    align_of::<CarrierBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(values, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn record_field_table_selects_two_tag_named_enum_path() {
+        #[repr(C, align(8))]
+        struct RecordBytes([u8; 40]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let child_result = buffer_create(4, 4, 1);
+        assert_eq!(child_result.status, BufferStatus::Ok.code());
+        let child = child_result.buffer;
+        let result = buffer_create(size_of::<RecordBytes>() as u64, 8, 1);
+        assert_eq!(result.status, BufferStatus::Ok.code());
+        let mut values = result.buffer;
+        unsafe {
+            let bytes = values.pointer.cast::<u8>();
+            // Record layout: outer tag at 0, inner tag at 8, descriptor at
+            // 16. The path marker must select both tags before destroying.
+            bytes.cast::<u32>().write(1);
+            bytes.add(8).cast::<u32>().write(1);
+            bytes.add(16).cast::<Buffer>().write(child);
+        }
+        values.length = 1;
+        let marker = ENUM_FIELD_PATH_MARKER_BASE | (2u64 << 56) | (1u64 << 8) | 1;
+        let fields = [CarrierDropFieldAbi {
+            payload_variant: marker,
+            payload_offset: 16,
+            depth: 1,
+            leaf_element_size: 4,
+            leaf_alignment: 4,
+        }];
+
+        assert_eq!(
+            unsafe {
+                buffer_destroy_record_fields(
+                    &mut values,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(values, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn record_field_table_selects_embedded_named_enum_tag_by_offset() {
+        #[repr(C, align(8))]
+        struct RecordBytes([u8; 48]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let child_result = buffer_create(4, 4, 1);
+        assert_eq!(child_result.status, BufferStatus::Ok.code());
+        let child = child_result.buffer;
+        let result = buffer_create(size_of::<RecordBytes>() as u64, 8, 1);
+        assert_eq!(result.status, BufferStatus::Ok.code());
+        let mut values = result.buffer;
+        unsafe {
+            let bytes = values.pointer.cast::<u8>();
+            // Record layout: scalar at 0, named-enum tag at 8, descriptor at
+            // 16. The marker therefore walks one eight-byte word back.
+            bytes.add(8).cast::<u32>().write(1);
+            bytes.add(16).cast::<Buffer>().write(child);
+        }
+        values.length = 1;
+        let marker = RECORD_FIELD_NAMED_ENUM_TAG_MARKER | (1u64 << 32) | 1;
+        let fields = [CarrierDropFieldAbi {
+            payload_variant: marker,
+            payload_offset: 16,
+            depth: 1,
+            leaf_element_size: 4,
+            leaf_alignment: 4,
+        }];
+
+        assert_eq!(
+            unsafe {
+                buffer_destroy_record_fields(
+                    &mut values,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(values, Buffer::EMPTY);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
     fn record_field_table_drops_direct_and_nested_buffer_fields() {
         #[repr(C, align(8))]
         struct RecordBytes([u8; 64]);
@@ -7134,6 +8364,85 @@ mod tests {
             BufferStatus::Ok
         );
         assert!(record.0.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn record_field_table_selects_inline_option_array_offsets() {
+        #[repr(C, align(8))]
+        struct CarrierBytes([u8; 64]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first = unsafe { string_from_utf8(b"first".as_ptr(), 5) };
+        let second = unsafe { string_from_utf8(b"second".as_ptr(), 6) };
+        assert_eq!(first.status, StringStatus::Ok.code());
+        assert_eq!(second.status, StringStatus::Ok.code());
+
+        let result = buffer_create(size_of::<CarrierBytes>() as u64, 8, 2);
+        assert_eq!(result.status, BufferStatus::Ok.code());
+        let mut values = result.buffer;
+        unsafe {
+            let first_item = values.pointer.cast::<u8>();
+            first_item.cast::<u32>().write(1);
+            first_item.add(8).cast::<Utf8String>().write(first.string);
+            first_item.add(32).cast::<u32>().write(0);
+
+            let second_item = first_item.add(size_of::<CarrierBytes>());
+            second_item.cast::<u32>().write(0);
+            second_item.add(32).cast::<u32>().write(1);
+            second_item
+                .add(40)
+                .cast::<Utf8String>()
+                .write(second.string);
+        }
+        values.length = 2;
+        let fields = [
+            CarrierDropFieldAbi {
+                payload_variant: 1,
+                payload_offset: 8,
+                depth: u64::from(u32::MAX),
+                leaf_element_size: size_of::<Utf8String>() as u64,
+                leaf_alignment: align_of::<Utf8String>() as u64,
+            },
+            CarrierDropFieldAbi {
+                payload_variant: 1,
+                payload_offset: 40,
+                depth: u64::from(u32::MAX),
+                leaf_element_size: size_of::<Utf8String>() as u64,
+                leaf_alignment: align_of::<Utf8String>() as u64,
+            },
+        ];
+
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_record_fields(
+                    &mut values,
+                    0,
+                    size_of::<CarrierBytes>() as u64,
+                    align_of::<CarrierBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(values.length, 1);
+        assert_eq!(
+            unsafe {
+                buffer_destroy_record_fields(
+                    &mut values,
+                    size_of::<CarrierBytes>() as u64,
+                    align_of::<CarrierBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(values, Buffer::EMPTY);
     }
 
     #[test]
@@ -7467,6 +8776,171 @@ mod tests {
                     align_of::<RecordBytes>() as u64,
                     fields.as_ptr(),
                     fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn buffer_remove_drop_record_fields_destroys_inline_owned_string_array() {
+        #[repr(C, align(8))]
+        struct RecordBytes([u8; 48]);
+
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let first_a = unsafe { string_from_utf8(b"first-a".as_ptr(), 7) };
+        let first_b = unsafe { string_from_utf8(b"first-b".as_ptr(), 7) };
+        let second_a = unsafe { string_from_utf8(b"second-a".as_ptr(), 8) };
+        let second_b = unsafe { string_from_utf8(b"second-b".as_ptr(), 8) };
+        assert_eq!(first_a.status, StringStatus::Ok.code());
+        assert_eq!(first_b.status, StringStatus::Ok.code());
+        assert_eq!(second_a.status, StringStatus::Ok.code());
+        assert_eq!(second_b.status, StringStatus::Ok.code());
+
+        let outer_result = buffer_create(size_of::<RecordBytes>() as u64, 8, 2);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        unsafe {
+            let first_record = outer.pointer.cast::<u8>();
+            first_record.cast::<Utf8String>().write(first_a.string);
+            first_record
+                .add(size_of::<Utf8String>())
+                .cast::<Utf8String>()
+                .write(first_b.string);
+            let second_record = first_record.add(size_of::<RecordBytes>());
+            second_record.cast::<Utf8String>().write(second_a.string);
+            second_record
+                .add(size_of::<Utf8String>())
+                .cast::<Utf8String>()
+                .write(second_b.string);
+        }
+        outer.length = 2;
+        let fields = [
+            CarrierDropFieldAbi {
+                payload_variant: u64::MAX,
+                payload_offset: 0,
+                depth: u64::from(u32::MAX),
+                leaf_element_size: size_of::<Utf8String>() as u64,
+                leaf_alignment: align_of::<Utf8String>() as u64,
+            },
+            CarrierDropFieldAbi {
+                payload_variant: u64::MAX,
+                payload_offset: size_of::<Utf8String>() as u64,
+                depth: u64::from(u32::MAX),
+                leaf_element_size: size_of::<Utf8String>() as u64,
+                leaf_alignment: align_of::<Utf8String>() as u64,
+            },
+        ];
+
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_record_fields(
+                    &mut outer,
+                    0,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 1);
+        unsafe {
+            let moved = outer.pointer.cast::<Utf8String>();
+            assert_eq!(moved.as_ref().unwrap().length, 8);
+            assert_eq!(moved.add(1).as_ref().unwrap().length, 8);
+        }
+        assert_eq!(
+            unsafe {
+                buffer_destroy_record_fields(
+                    &mut outer,
+                    size_of::<RecordBytes>() as u64,
+                    align_of::<RecordBytes>() as u64,
+                    fields.as_ptr(),
+                    fields.len() as u64,
+                )
+            },
+            BufferStatus::Ok
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn buffer_remove_drop_nested_buffer_destroys_chain_and_compacts() {
+        let _guard = TEST_RUNTIME_LOCK.lock().expect("runtime test lock");
+        RUNTIME_STATE.store(STATE_UNINITIALIZED, Ordering::Release);
+        assert_eq!(initialize(AbiVersion::CURRENT), RuntimeStatus::Initialized);
+
+        let make_inner = |value: u32| {
+            let result = buffer_create(4, 4, 1);
+            assert_eq!(result.status, BufferStatus::Ok.code());
+            let mut inner = result.buffer;
+            assert_eq!(unsafe { buffer_resize(&mut inner, 1) }, BufferStatus::Ok);
+            unsafe { inner.pointer.cast::<u32>().write(value) };
+            inner
+        };
+        let first = make_inner(11);
+        let second = make_inner(22);
+        let third = make_inner(33);
+        let outer_result =
+            buffer_create(size_of::<Buffer>() as u64, align_of::<Buffer>() as u64, 3);
+        assert_eq!(outer_result.status, BufferStatus::Ok.code());
+        let mut outer = outer_result.buffer;
+        unsafe {
+            outer.pointer.cast::<Buffer>().write(first);
+            outer.pointer.cast::<Buffer>().add(1).write(second);
+            outer.pointer.cast::<Buffer>().add(2).write(third);
+        }
+        outer.length = 3;
+
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_nested_buffer(
+                    &mut outer,
+                    1,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    4,
+                    4,
+                )
+            },
+            BufferStatus::Ok
+        );
+        assert_eq!(outer.length, 2);
+        unsafe {
+            let base = outer.pointer.cast::<Buffer>();
+            assert_eq!(base.read().pointer.cast::<u32>().read(), 11);
+            assert_eq!(base.add(1).read().pointer.cast::<u32>().read(), 33);
+        }
+        assert_eq!(
+            unsafe {
+                buffer_remove_drop_nested_buffer(
+                    &mut outer,
+                    99,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    4,
+                    4,
+                )
+            },
+            BufferStatus::OutOfBounds
+        );
+        assert_eq!(
+            unsafe {
+                buffer_destroy_nested_buffer_recursive(
+                    &mut outer,
+                    size_of::<Buffer>() as u64,
+                    align_of::<Buffer>() as u64,
+                    1,
+                    4,
+                    4,
                 )
             },
             BufferStatus::Ok

@@ -1,0 +1,60 @@
+module app_list_sort_if_revision_project.main
+
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.find_text
+import jadren.app.list.push_text
+import jadren.app.list.sort_callback_if_model_revision
+import jadren.app.list.sort_text_if_model_revision
+import jadren.app.list.sort_text_if_revision
+
+fn reverse_by_source_index(source: Int32, left: Int32, right: Int32) -> Int32 {
+    return right - left
+}
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    if ! push_text(0, "Zulu") { return 1 }
+    if ! push_text(0, "Alpha") { return 2 }
+
+    let stale: UInt64 = revision()
+    if ! push_text(0, "Bravo") { return 3 }
+    if sort_text_if_revision(0, false, stale) { return 4 }
+    if find_text(0, "Zulu", 0) != 0 { return 5 }
+
+    let current: UInt64 = revision()
+    if ! sort_text_if_revision(0, false, current) { return 6 }
+    if find_text(0, "Alpha", 0) != 0 { return 7 }
+    if find_text(0, "Bravo", 1) != 1 { return 8 }
+    if find_text(0, "Zulu", 2) != 2 { return 9 }
+    if revision() == current { return 10 }
+
+    if sort_text_if_revision(99, false, revision()) { return 11 }
+
+    if ! push_text(0, "Charlie") { return 12 }
+    let model_stale: UInt64 = revision()
+    if ! push_text(0, "Delta") { return 13 }
+    if sort_text_if_model_revision(0, false, model_stale) { return 14 }
+    if find_text(0, "Alpha", 0) != 0 { return 15 }
+
+    let model_current: UInt64 = revision()
+    if ! sort_text_if_model_revision(0, false, model_current) { return 16 }
+    if find_text(0, "Alpha", 0) != 0 { return 17 }
+    if find_text(0, "Delta", 3) != 3 { return 18 }
+
+    let callback_stale: UInt64 = revision()
+    if ! push_text(0, "Echo") { return 19 }
+    if sort_callback_if_model_revision(0, reverse_by_source_index, callback_stale) { return 20 }
+    if find_text(0, "Alpha", 0) != 0 { return 21 }
+
+    let callback_current: UInt64 = revision()
+    if ! sort_callback_if_model_revision(0, reverse_by_source_index, callback_current) { return 22 }
+    if find_text(0, "Echo", 0) != 0 { return 23 }
+    if sort_text_if_model_revision(99, false, revision()) { return 24 }
+    return 0
+}

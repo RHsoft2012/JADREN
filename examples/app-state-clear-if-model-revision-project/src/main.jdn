@@ -1,0 +1,37 @@
+module examples.app_state_clear_if_model_revision_project.main
+
+import jadren.app.state.clear
+import jadren.app.state.clear_if_model_revision
+import jadren.app.state.count
+import jadren.app.data.revision
+import jadren.app.state.set_int
+import jadren.app.state.set_text
+import jadren.app.state.exists
+import jadren.app.list.push_text
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+// Complete-model guarded clear for scalar state. A list/table mutation would
+// also invalidate the token because the guard uses app_data_revision().
+fn main() -> Int32 {
+    clear()
+    if ! set_int("minutes", 25i64) { return 1 }
+    if ! set_text("name", "Focus") { return 2 }
+
+    let stale: UInt64 = revision()
+    if ! push_text(0i32, "Task") { return 3 }
+    if clear_if_model_revision(stale) { return 4 }
+    if count() != 2 { return 5 }
+    if ! exists("name") { return 6 }
+    if app_list_count(0i32) != 1i32 { return 7 }
+
+    let current: UInt64 = revision()
+    if ! clear_if_model_revision(current) { return 8 }
+    if count() != 0 { return 9 }
+    if exists("minutes") { return 10 }
+    if app_list_count(0i32) != 1i32 { return 11 }
+    return 0
+}

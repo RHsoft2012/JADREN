@@ -1,0 +1,59 @@
+module generic_buffer_any.main
+
+import jadren.core.collections.any
+import jadren.core.collections.append
+import jadren.core.collections.capacity
+import jadren.core.collections.create
+import jadren.core.collections.length
+import jadren.core.collections.none
+
+fn main() -> Int32 {
+    var result_code: Int32 = 0
+
+    let integers: Result<Buffer<Int32>, Int32> = create(6usize)
+    match integers {
+        Ok(values) => {
+            if ! append(values, 7) { result_code = 1 }
+            if ! append(values, 3) { result_code = 2 }
+            if ! append(values, 7) { result_code = 3 }
+            let initial_capacity: UIntSize = capacity(values)
+            if ! any(values, 7, 0usize) { result_code = 4 }
+            if ! any(values, 7, 2usize) { result_code = 5 }
+            if any(values, 3, 2usize) { result_code = 6 }
+            if ! none(values, 3, 2usize) { result_code = 7 }
+            if none(values, 7, 0usize) { result_code = 8 }
+            if ! none(values, 99, 0usize) { result_code = 9 }
+            if ! none(values, 7, 3usize) { result_code = 10 }
+            if length(values) != 3usize { result_code = 11 }
+            if capacity(values) != initial_capacity { result_code = 12 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let bools: Result<Buffer<Bool>, Int32> = create(4usize)
+    match bools {
+        Ok(values) => {
+            if ! append(values, true) { result_code = 13 }
+            if ! append(values, false) { result_code = 14 }
+            if ! any(values, true, 0usize) { result_code = 15 }
+            if any(values, true, 1usize) { result_code = 16 }
+            if ! none(values, true, 1usize) { result_code = 17 }
+            if ! any(values, false, 1usize) { result_code = 18 }
+            if ! none(values, false, 2usize) { result_code = 19 }
+            if length(values) != 2usize { result_code = 20 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let empty: Result<Buffer<Int32>, Int32> = create(0usize)
+    match empty {
+        Ok(values) => {
+            if any(values, 1, 0usize) { result_code = 21 }
+            if ! none(values, 1, 0usize) { result_code = 22 }
+            if ! none(values, 1, 8usize) { result_code = 23 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

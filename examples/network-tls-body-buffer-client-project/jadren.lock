@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "2fbbf6b05e5146e9"
+
+[package]
+name = "network-tls-body-buffer-client-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

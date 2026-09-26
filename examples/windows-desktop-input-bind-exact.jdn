@@ -1,0 +1,46 @@
+module examples.windows_desktop_input_bind_exact
+
+// Exact text-input binding reports invalid controls/keys and keeps an existing
+// binding intact when a later binding attempt fails.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    ui_text_input("Draft", 10, 0, 0, 300, 36,
+                  0x111827u32, 0xFFFFFFu32, 8)
+
+    let initial: Bool = ui_input_bind_app_state_exact(10, "note")
+    if !initial { return 1 }
+    let invalid_event: Bool = ui_input_bind_app_state_exact(99, "other")
+    if invalid_event { return 2 }
+    let invalid_key: Bool = ui_input_bind_app_state_exact(10, "")
+    if invalid_key { return 3 }
+    let unsafe_key: Bool = ui_input_bind_app_state_exact(10, "bad\\key")
+    if unsafe_key { return 4 }
+
+    // The failed calls above must not replace the original "note" binding.
+    ui_set_input_text(10, "Done")
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let copied: UIntSize = app_state_read_text("note", output)
+    if copied != 4usize { return 5 }
+    if output[0] != 68u8 { return 6 }
+    if output[3] != 101u8 { return 7 }
+
+    let empty_state: Bool = app_state_set_text("note", "")
+    if !empty_state { return 8 }
+    let empty_refresh: Bool = ui_input_refresh_app_state_exact(10)
+    if !empty_refresh { return 9 }
+    if ui_input_length(10) != 0usize { return 10 }
+
+    let wrong_kind: Bool = app_state_set_int("note", 7 as Int64)
+    if !wrong_kind { return 11 }
+    let failed_refresh: Bool = ui_input_refresh_app_state_exact(10)
+    if failed_refresh { return 12 }
+    if ui_input_length(10) != 0usize { return 13 }
+
+    app_state_clear()
+    return 0
+}

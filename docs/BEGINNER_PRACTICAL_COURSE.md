@@ -125,11 +125,68 @@ After the calculator works, extend the same model deliberately:
 4. Save through an explicit atomic checkpoint.
 5. Send or serve HTTP only through caller-owned request and response buffers.
 
+For a dynamic `Buffer<UInt8>` boundary, the HTTP parser also exposes checked
+header/body read-back helpers for normal and chunked frames. They validate the
+logical input prefix and output capacity before writing, so incomplete frames
+and short outputs do not partially modify caller-owned storage. The standalone
+[HTTP parser buffer fixture](https://github.com/RHsoft2012/JADREN/tree/main/examples/network-http-buffer-parsing-project)
+can be checked with:
+
+```text
+cargo run -p jadren-cli -- check examples/network-http-buffer-parsing-project --warnings-as-errors
+```
+
 The public [Language overview](LANGUAGE_OVERVIEW.md) explains the ownership
 model behind these steps. The public [Compiler and platforms]
 (COMPILER_AND_PLATFORMS.md) describes which native paths are currently
 validated. For the full visual learning path, start from
 [Jadren Lessons](https://jadren.rhsoft.eu/lessons.html).
+
+For query, form, and multipart fields, continue with the dynamic Buffer
+facades `query_param_exact_buffer`, `form_param_exact_prefix_buffer`, and
+`multipart_part_exact_prefix_buffer`. They preflight the explicit input prefix
+and output capacity before parsing, so short or incomplete input leaves
+caller-owned data unchanged. The standalone
+[HTTP field parser fixture](https://github.com/RHsoft2012/JADREN/tree/main/examples/network-http-buffer-field-project)
+and its PowerShell gate verify this offline native boundary; it is not a
+production socket or TLS test.
+
+For a direct TCP server or client, use `tcp.send_buffer`,
+`tcp.send_prefix_buffer`, `tcp.send_all_buffer`,
+`tcp.send_all_prefix_buffer`, and `tcp.receive_buffer`. Resize the Buffer to
+an explicit logical I/O window before transport; the received byte count then
+defines the prefix you can parse next. The loopback pair
+[network-tcp-buffer-server-project](https://github.com/RHsoft2012/JADREN/tree/main/examples/network-tcp-buffer-server-project)
+and `network-tcp-buffer-client-project` verifies these send/receive boundaries
+without a public bind, TLS, or production hosting claim.
+
+For response routing without manually rebuilding slice views, use
+`router.respond_buffer`, `router.respond_prefix_buffer`,
+`router.respond_chunked_buffer`, or `router.respond_chunked_prefix_buffer`.
+Each facade works with caller-owned dynamic Buffers, preflights the request
+prefix and output capacity, and leaves a short output unchanged. The standalone
+[HTTP router Buffer fixture](https://github.com/RHsoft2012/JADREN/tree/main/examples/network-http-router-buffer-project)
+and its PowerShell gate verify exact/prefix plus regular/chunked responses in a
+native Windows build; this is not a socket, TLS, keep-alive, or production-hosting claim.
+
+The complete short server lifecycle can use dynamic Buffers through
+`api.serve_once_buffers` and `api.serve_once_chunked_buffers`. The request is
+received into an explicitly resized window, the response is serialized only
+for its valid prefix, and the helper closes both sockets after one exchange.
+The [dynamic Buffer server/client pair](https://github.com/RHsoft2012/JADREN/tree/main/examples/network-api-buffer-server-project)
+and its PowerShell smoke run regular and chunked localhost exchanges; public
+bind, TLS, keep-alive, and production deployment remain outside this lesson.
+
+For multiple sequential exchanges on one caller-owned socket, continue with
+`client.request_buffer` and `client.request_exact_buffer`. Body, request,
+response, and exact-output storage are dynamic Buffers with explicit
+capacities; `connection_mode` selects `keep-alive` or final `close`, and an
+invalid prefix is rejected before I/O. The standalone
+[dynamic keep-alive client fixture](https://github.com/RHsoft2012/JADREN/tree/main/examples/network-client-keep-alive-buffer-project)
+and its PowerShell gate verify two real exchanges, exact JSON body read-back,
+short-prefix no-partial-write, and a reproducible native release. This remains
+a sequential localhost contract without TLS, retry, pooling, streaming, or
+production hosting.
 
 ## Practice checklist
 

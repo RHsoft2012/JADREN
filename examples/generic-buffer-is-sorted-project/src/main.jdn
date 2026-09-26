@@ -1,0 +1,84 @@
+module generic_buffer_is_sorted.main
+
+import jadren.core.collections.append
+import jadren.core.collections.is_sorted
+import jadren.core.collections.length
+
+fn main() -> Int32 {
+    var result_code: Int32 = 0
+
+    let integers: Result<Buffer<Int32>, Int32> = buffer_create(8usize)
+    match integers {
+        Ok(values) => {
+            if ! append(values, 1) { result_code = 1 }
+            if ! append(values, 3) { result_code = 2 }
+            if ! append(values, 3) { result_code = 3 }
+            if ! append(values, 9) { result_code = 4 }
+            let initial_capacity: UIntSize = buffer_capacity(values)
+            if ! is_sorted(values, false) { result_code = 5 }
+            if is_sorted(values, true) { result_code = 6 }
+            if length(values) != 4usize { result_code = 7 }
+            if buffer_capacity(values) != initial_capacity { result_code = 8 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let descending: Result<Buffer<Int32>, Int32> = buffer_create(5usize)
+    match descending {
+        Ok(values) => {
+            if ! append(values, 9) { result_code = 9 }
+            if ! append(values, 3) { result_code = 10 }
+            if ! append(values, 3) { result_code = 11 }
+            if ! append(values, 1) { result_code = 12 }
+            if is_sorted(values, false) { result_code = 13 }
+            if ! is_sorted(values, true) { result_code = 14 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let unsorted: Result<Buffer<Int32>, Int32> = buffer_create(4usize)
+    match unsorted {
+        Ok(values) => {
+            if ! append(values, 1) { result_code = 15 }
+            if ! append(values, 5) { result_code = 16 }
+            if ! append(values, 3) { result_code = 17 }
+            if is_sorted(values, false) { result_code = 18 }
+            if is_sorted(values, true) { result_code = 19 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let floats: Result<Buffer<Float64>, Int32> = buffer_create(6usize)
+    match floats {
+        Ok(values) => {
+            if ! append(values, -2.0f64) { result_code = 20 }
+            if ! append(values, 0.5f64) { result_code = 21 }
+            if ! append(values, 8.0f64) { result_code = 22 }
+            if ! is_sorted(values, false) { result_code = 23 }
+            if is_sorted(values, true) { result_code = 24 }
+            if length(values) != 3usize { result_code = 25 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let empty: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    match empty {
+        Ok(values) => {
+            if ! is_sorted(values, false) { result_code = 26 }
+            if ! is_sorted(values, true) { result_code = 27 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let single: Result<Buffer<Int32>, Int32> = buffer_create(1usize)
+    match single {
+        Ok(values) => {
+            if ! append(values, 42) { result_code = 28 }
+            if ! is_sorted(values, false) { result_code = 29 }
+            if ! is_sorted(values, true) { result_code = 30 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

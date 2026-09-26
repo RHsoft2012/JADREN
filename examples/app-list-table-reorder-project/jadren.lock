@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "d388ba0c2a637ad0"
+
+[package]
+name = "app-list-table-reorder-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

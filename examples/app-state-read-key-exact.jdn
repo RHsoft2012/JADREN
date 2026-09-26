@@ -1,0 +1,35 @@
+module examples.app_state_read_key_exact
+
+// Exact key enumeration keeps the output buffer and length untouched on error.
+fn main() -> Int32 {
+    app_state_clear()
+    let first_set: Bool = app_state_set_text("minutes", "42")
+    let second_set: Bool = app_state_set_bool("done", true)
+    if !first_set { return 1 }
+    if !second_set { return 2 }
+
+    var output: [UInt8; 16] = [77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8]
+    var length: [UIntSize; 1] = [99usize]
+    let valid: Bool = app_state_read_key_exact(0, output, length)
+    if !valid { return 3 }
+    if length[0] != 7usize { return 4 }
+    if output[0] != 109u8 { return 5 }
+    if output[6] != 115u8 { return 6 }
+
+    var short_output: [UInt8; 4] = [88u8, 88u8, 88u8, 88u8]
+    var short_length: [UIntSize; 1] = [123usize]
+    let short_ok: Bool = app_state_read_key_exact(0, short_output, short_length)
+    if short_ok { return 7 }
+    if short_output[0] != 88u8 { return 8 }
+    if short_length[0] != 123usize { return 9 }
+
+    var missing_output: [UInt8; 8] = [66u8, 66u8, 66u8, 66u8, 66u8, 66u8, 66u8, 66u8]
+    var missing_length: [UIntSize; 1] = [321usize]
+    let missing_ok: Bool = app_state_read_key_exact(99, missing_output, missing_length)
+    if missing_ok { return 10 }
+    if missing_output[0] != 66u8 { return 11 }
+    if missing_length[0] != 321usize { return 12 }
+
+    app_state_clear()
+    return 0
+}

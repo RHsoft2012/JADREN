@@ -1,0 +1,19 @@
+module generic_buffer_equatable_filter.main
+
+import jadren.core.collections.filter
+
+fn keep_owned(value: OwnedString) -> Bool {
+    return true
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            if filter(values, keep_owned) { result_code = 1 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

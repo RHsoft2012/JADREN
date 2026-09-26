@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "81cb6d99b97d179e"
+
+[package]
+name = "network-http-facade-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

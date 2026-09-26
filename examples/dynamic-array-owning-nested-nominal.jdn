@@ -1,0 +1,149 @@
+module examples.dynamic_array_owning_nested_nominal
+
+// A row can own a dynamic child collection.  This is the application-shaped
+// list/table case: moving or dropping the outer row must retain ownership of
+// the nested Buffer descriptor without duplicating it.
+@repr(C)
+struct Row<T> {
+    id: Int32,
+    values: DynamicArray<T>
+}
+
+fn run_owned_text_rows() -> Int32 {
+    let rows_created: Result<DynamicArray<Row<OwnedString>>, Int32> = buffer_create(0usize)
+    let values_created: Result<DynamicArray<OwnedString>, Int32> = buffer_create(0usize)
+    let text_created: Result<OwnedString, Int32> = string_owned_from("nested")
+    var result_code: Int32 = 0
+
+    match rows_created {
+        Ok(rows) => {
+            match values_created {
+                Ok(values) => {
+                    match text_created {
+                        Ok(text) => {
+                            if !buffer_append(values, text) { result_code = 20 }
+                            let row: Row<OwnedString> = Row { id: 8, values: values }
+                            if !buffer_append(rows, row) { result_code = 21 }
+                            if buffer_length(rows) != 1usize { result_code = 22 }
+                            if rows[0].id != 8 { result_code = 23 }
+                            if buffer_length(rows[0].values) != 1usize { result_code = 24 }
+                            if string_owned_length(rows[0].values[0]) != 6usize { result_code = 25 }
+                            if !buffer_reserve(rows, 3usize) { result_code = 26 }
+                            if buffer_capacity(rows) < 3usize { result_code = 27 }
+                            if string_owned_length(rows[0].values[0]) != 6usize { result_code = 28 }
+                            if !buffer_remove_drop(rows, 0usize) { result_code = 29 }
+                            if buffer_length(rows) != 0usize { result_code = 30 }
+                            if !buffer_clear_move(rows) { result_code = 31 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}
+
+fn run_deep_owned_rows() -> Int32 {
+    let rows_created: Result<DynamicArray<Row<DynamicArray<OwnedString>>>, Int32> = buffer_create(0usize)
+    let values_created: Result<DynamicArray<DynamicArray<OwnedString>>, Int32> = buffer_create(0usize)
+    let leaf_created: Result<DynamicArray<OwnedString>, Int32> = buffer_create(0usize)
+    let text_created: Result<OwnedString, Int32> = string_owned_from("deep")
+    let output_values_created: Result<DynamicArray<DynamicArray<OwnedString>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 40
+
+    match rows_created {
+        Ok(rows) => {
+            match values_created {
+                Ok(values) => {
+                    match leaf_created {
+                        Ok(leaf) => {
+                            match text_created {
+                                Ok(text) => {
+                                    match output_values_created {
+                                        Ok(output_values) => {
+                                            if !buffer_append(leaf, text) { result_code = 41 }
+                                            if !buffer_append(values, leaf) { result_code = 42 }
+                                            let row: Row<DynamicArray<OwnedString>> = Row { id: 9, values: values }
+                                            if !buffer_append(rows, row) { result_code = 43 }
+                                            if buffer_length(rows) != 1usize { result_code = 44 }
+                                            if rows[0].id != 9 { result_code = 45 }
+                                            if buffer_length(rows[0].values) != 1usize { result_code = 46 }
+                                            if buffer_length(rows[0].values[0]) != 1usize { result_code = 47 }
+                                            if string_owned_length(rows[0].values[0][0]) != 4usize { result_code = 48 }
+                                            let grown_status: Int32 = buffer_resize_move_status(rows, 3usize)
+                                            if grown_status != 0 { result_code = 49 }
+                                            if buffer_length(rows) != 3usize { result_code = 50 }
+                                            if string_owned_length(rows[0].values[0][0]) != 4usize { result_code = 51 }
+                                            let shrunk_status: Int32 = buffer_resize_move_status(rows, 1usize)
+                                            if shrunk_status != 0 { result_code = 52 }
+                                            if buffer_length(rows) != 1usize { result_code = 53 }
+                                            if string_owned_length(rows[0].values[0][0]) != 4usize { result_code = 54 }
+                                            if !buffer_reserve(rows, 3usize) { result_code = 55 }
+                                            if buffer_capacity(rows) < 3usize { result_code = 56 }
+                                            if string_owned_length(rows[0].values[0][0]) != 4usize { result_code = 57 }
+                                            let output: Row<DynamicArray<OwnedString>> = Row { id: 0, values: output_values }
+                                            let move_status: Int32 = buffer_remove_move_into_status(rows, 0usize, output)
+                                            if move_status != 0 { result_code = 58 }
+                                            if output.id != 9 { result_code = 59 }
+                                            if buffer_length(output.values) != 1usize { result_code = 60 }
+                                            if buffer_length(output.values[0]) != 1usize { result_code = 61 }
+                                            if string_owned_length(output.values[0][0]) != 4usize { result_code = 62 }
+                                            if !buffer_clear_move(output.values) { result_code = 63 }
+                                            if buffer_length(rows) != 0usize { result_code = 64 }
+                                            if !buffer_clear_move(rows) { result_code = 65 }
+                                            result_code = 0
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}
+
+fn main() -> Int32 {
+    let rows_created: Result<DynamicArray<Row<Int32>>, Int32> = buffer_create(0usize)
+    let values_created: Result<DynamicArray<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match rows_created {
+        Ok(rows) => {
+            match values_created {
+                Ok(values) => {
+                    if !buffer_append(values, 11) { result_code = 1 }
+                    if !buffer_append(values, 22) { result_code = 2 }
+                    let row: Row<Int32> = Row { id: 7, values: values }
+                    if !buffer_append(rows, row) { result_code = 3 }
+                    if buffer_length(rows) != 1usize { result_code = 4 }
+                    if rows[0].id != 7 { result_code = 5 }
+                    if buffer_length(rows[0].values) != 2usize { result_code = 6 }
+                    if rows[0].values[1] != 22 { result_code = 7 }
+                    if !buffer_reserve(rows, 4usize) { result_code = 8 }
+                    if buffer_capacity(rows) < 4usize { result_code = 9 }
+                    if rows[0].values[0] != 11 { result_code = 10 }
+                    if !buffer_remove_drop(rows, 0usize) { result_code = 11 }
+                    if buffer_length(rows) != 0usize { result_code = 12 }
+                    if !buffer_clear_move(rows) { result_code = 13 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    if result_code != 0 { return result_code }
+    result_code = run_owned_text_rows()
+    if result_code != 0 { return result_code }
+    return run_deep_owned_rows()
+}

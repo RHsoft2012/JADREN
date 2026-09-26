@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "e97d40e45aaf29f9"
+
+[package]
+name = "network-http-router-buffer-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

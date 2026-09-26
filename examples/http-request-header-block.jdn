@@ -30,5 +30,36 @@ fn main() -> Int32 {
     if output[0] != 77u8 { return 9 }
     if http_request_write_header_block("GET", "/health", "localhost", "X-Trace: ready\r\n", body, output) != 0usize { return 10 }
     if output[0] != 77u8 { return 11 }
+    let keep_alive_written: UIntSize = http_request_write_header_ex(
+        "GET", "/health", "localhost", "Authorization", "Bearer secret-42",
+        1u32, body, output
+    )
+    if keep_alive_written == 0usize { return 12 }
+    if output[0] != 71u8 { return 13 }
+    let close_written: UIntSize = http_request_write_header_ex(
+        "GET", "/health", "localhost", "Authorization", "Bearer secret-42",
+        0u32, body, output
+    )
+    if close_written == 0usize { return 14 }
+    output[0] = 77u8
+    if http_request_write_header_ex(
+        "GET", "/health", "localhost", "Content-Length", "99", 1u32, body, output
+    ) != 0usize { return 15 }
+    if output[0] != 77u8 { return 16 }
+    let block_keep_alive_written: UIntSize = http_request_write_header_block_ex(
+        "GET", "/health", "localhost", "Authorization: Bearer secret-42\r\nX-Trace: ready",
+        1u32, body, output
+    )
+    if block_keep_alive_written == 0usize { return 17 }
+    if output[0] != 71u8 { return 18 }
+    output[0] = 77u8
+    if http_request_write_header_block_ex(
+        "GET", "/health", "localhost", "Connection: close", 1u32, body, output
+    ) != 0usize { return 19 }
+    if output[0] != 77u8 { return 20 }
+    if http_request_write_header_block_ex(
+        "GET", "/health", "localhost", "X-Trace: ready\r\n", 1u32, body, output
+    ) != 0usize { return 21 }
+    if output[0] != 77u8 { return 22 }
     return 0
 }

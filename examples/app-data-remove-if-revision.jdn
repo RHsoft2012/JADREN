@@ -1,0 +1,40 @@
+module app_data_remove_if_revision.main
+
+// Equality-only guarded deletion for the bounded dynamic list and table model.
+// A stale snapshot must not mutate either container; a current snapshot removes
+// exactly one item/row and produces a new model revision.
+fn main() -> Int32 {
+    app_list_clear(0)
+    app_table_clear(0)
+    if ! app_list_push_text(0, "first") { return 1 }
+    if ! app_list_push_text(0, "second") { return 2 }
+    if ! app_table_append_row(0) { return 3 }
+    if ! app_table_append_row(0) { return 4 }
+    if ! app_table_set_cell(0, 0, 0, "row-a") { return 5 }
+    if ! app_table_set_cell(0, 1, 0, "row-b") { return 6 }
+
+    let stale: UInt64 = app_data_revision()
+    if ! app_list_push_text(0, "third") { return 7 }
+    if app_list_remove_if_revision(0, 0, stale) { return 8 }
+    if app_table_remove_row_if_revision(0, 0, stale) { return 9 }
+    if app_list_count(0) != 3 { return 10 }
+    if app_table_row_count(0) != 2 { return 11 }
+
+    let current: UInt64 = app_data_revision()
+    if ! app_list_remove_if_revision(0, 0, current) { return 12 }
+    if app_list_count(0) != 2 { return 13 }
+    if app_list_find_text(0, "first", 0) >= 0 { return 14 }
+    if app_list_remove_if_revision(0, 99, app_data_revision()) { return 15 }
+    if app_list_count(0) != 2 { return 16 }
+
+    let table_current: UInt64 = app_data_revision()
+    if ! app_table_remove_row_if_revision(0, 0, table_current) { return 17 }
+    if app_table_row_count(0) != 1 { return 18 }
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if app_table_read_cell(0, 0, 0, output) != 5usize { return 19 }
+    if output[0] != 114u8 { return 20 }
+    if app_table_remove_row_if_revision(0, 99, app_data_revision()) { return 21 }
+    if app_table_row_count(0) != 1 { return 22 }
+    return 0
+}

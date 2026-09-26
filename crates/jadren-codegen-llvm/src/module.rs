@@ -10,7 +10,7 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::{Linkage as LlvmLinkage, Module as LlvmModule};
 use inkwell::targets::TargetTriple;
-use inkwell::types::BasicTypeEnum;
+use inkwell::types::{AsTypeRef, BasicTypeEnum};
 use inkwell::values::{
     AggregateValueEnum, BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue,
     InstructionValue, MetadataValue, PhiValue, UnnamedAddress,
@@ -157,12 +157,28 @@ fn declare_functions<'ctx>(
     types: &LoweredTypeTable<'ctx>,
 ) -> Result<Vec<FunctionValue<'ctx>>, CodegenError> {
     let mut names = BTreeSet::new();
+    let mut imports: BTreeMap<String, FunctionValue<'ctx>> = BTreeMap::new();
     let mut functions = Vec::with_capacity(jir.functions.len());
     for function in &jir.functions {
         let name = llvm_name(function);
         validate_name(&name)?;
         if name == BOUNDS_PANIC_SYMBOL {
             return Err(CodegenError::DuplicateSymbol(name));
+        }
+        let function_type = types.function_type(function)?;
+        if function.linkage == Linkage::Import
+            && let Some(existing) = imports.get(&name)
+        {
+            // Generic runtime builtins intentionally share one C symbol
+            // while their source-level Buffer/Slice element types vary.
+            // LLVM's opaque pointers make those declarations ABI-identical;
+            // reuse the first declaration instead of manufacturing a
+            // duplicate symbol. Incompatible imports remain an error.
+            if existing.get_type().as_type_ref() != function_type.as_type_ref() {
+                return Err(CodegenError::DuplicateSymbol(name));
+            }
+            functions.push(*existing);
+            continue;
         }
         if !names.insert(name.clone()) {
             return Err(CodegenError::DuplicateSymbol(name));
@@ -171,7 +187,11 @@ fn declare_functions<'ctx>(
             Linkage::Internal => LlvmLinkage::Internal,
             Linkage::Export | Linkage::Import => LlvmLinkage::External,
         };
-        functions.push(llvm.add_function(&name, types.function_type(function)?, Some(linkage)));
+        let value = llvm.add_function(&name, function_type, Some(linkage));
+        if function.linkage == Linkage::Import {
+            imports.insert(name, value);
+        }
+        functions.push(value);
     }
     Ok(functions)
 }
@@ -591,7 +611,7 @@ fn build_carrier_field_table<'ctx>(
         let leaf_size = types.target_data().get_store_size(&leaf_type);
         let leaf_alignment = u64::from(types.target_data().get_abi_alignment(&leaf_type));
         let values = [
-            u64_type.const_int(u64::from(field.payload_variant), false),
+            u64_type.const_int(field.payload_variant, false),
             u64_type.const_int(field.payload_offset, false),
             u64_type.const_int(u64::from(field.depth), false),
             u64_type.const_int(leaf_size, false),
@@ -1975,6 +1995,164 @@ fn lower_instruction<'ctx>(
                 Some(success.into())
             }
         }
+        InstructionKind::BufferRemoveDropNestedBuffer {
+            descriptor,
+            index,
+            element,
+            leaf_element,
+            depth,
+            status_result,
+        } => {
+            let descriptor = required_value(values, *descriptor)?;
+            let index = required_value(values, *index)?;
+            let element_type = basic_type(types, *element)?;
+            let leaf_element_type = basic_type(types, *leaf_element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let leaf_element_size = types.target_data().get_store_size(&leaf_element_type);
+            let leaf_alignment =
+                u64::from(types.target_data().get_abi_alignment(&leaf_element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let remove_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let symbol = if *status_result {
+                "jadren_rt_buffer_remove_drop_nested_buffer_status"
+            } else {
+                "jadren_rt_buffer_remove_drop_nested_buffer"
+            };
+            let remove = llvm.get_function(symbol).unwrap_or_else(|| {
+                llvm.add_function(symbol, remove_type, Some(LlvmLinkage::External))
+            });
+            let call = builder
+                .build_call(
+                    remove,
+                    &[
+                        descriptor.into(),
+                        index.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        u64_type.const_int(u64::from(*depth), false).into(),
+                        u64_type.const_int(leaf_element_size, false).into(),
+                        u64_type.const_int(leaf_alignment, false).into(),
+                    ],
+                    &format!("{name}.remove_drop_nested_buffer_call"),
+                )
+                .map_err(builder_error)?;
+            let raw = call
+                .try_as_basic_value()
+                .basic()
+                .ok_or(CodegenError::ValueKind(
+                    "nested buffer remove drop runtime call has no result",
+                ))?;
+            if *status_result {
+                Some(raw)
+            } else {
+                let BasicValueEnum::IntValue(raw) = raw else {
+                    return Err(CodegenError::ValueKind(
+                        "nested buffer remove drop bool result is not integer",
+                    ));
+                };
+                let success = builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        raw,
+                        context.i32_type().const_zero(),
+                        &format!("{name}.remove_drop_nested_buffer_ok"),
+                    )
+                    .map_err(builder_error)?;
+                Some(success.into())
+            }
+        }
+        InstructionKind::BufferRemoveDropNestedOwnedString {
+            descriptor,
+            index,
+            element,
+            string_element,
+            depth,
+            status_result,
+        } => {
+            let descriptor = required_value(values, *descriptor)?;
+            let index = required_value(values, *index)?;
+            let element_type = basic_type(types, *element)?;
+            let string_element_type = basic_type(types, *string_element)?;
+            let element_size = types.target_data().get_store_size(&element_type);
+            let alignment = u64::from(types.target_data().get_abi_alignment(&element_type));
+            let string_element_size = types.target_data().get_store_size(&string_element_type);
+            let string_alignment =
+                u64::from(types.target_data().get_abi_alignment(&string_element_type));
+            let pointer_type = context.ptr_type(inkwell::AddressSpace::default());
+            let u64_type = context.i64_type();
+            let remove_type = context.i32_type().fn_type(
+                &[
+                    pointer_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                    u64_type.into(),
+                ],
+                false,
+            );
+            let symbol = if *status_result {
+                "jadren_rt_buffer_remove_drop_nested_owned_string_status"
+            } else {
+                "jadren_rt_buffer_remove_drop_nested_owned_string"
+            };
+            let remove = llvm.get_function(symbol).unwrap_or_else(|| {
+                llvm.add_function(symbol, remove_type, Some(LlvmLinkage::External))
+            });
+            let call = builder
+                .build_call(
+                    remove,
+                    &[
+                        descriptor.into(),
+                        index.into(),
+                        u64_type.const_int(element_size, false).into(),
+                        u64_type.const_int(alignment, false).into(),
+                        u64_type.const_int(u64::from(*depth), false).into(),
+                        u64_type.const_int(string_element_size, false).into(),
+                        u64_type.const_int(string_alignment, false).into(),
+                    ],
+                    &format!("{name}.remove_drop_nested_owned_string_call"),
+                )
+                .map_err(builder_error)?;
+            let raw = call
+                .try_as_basic_value()
+                .basic()
+                .ok_or(CodegenError::ValueKind(
+                    "nested owned string remove drop runtime call has no result",
+                ))?;
+            if *status_result {
+                Some(raw)
+            } else {
+                let BasicValueEnum::IntValue(raw) = raw else {
+                    return Err(CodegenError::ValueKind(
+                        "nested owned string remove drop bool result is not integer",
+                    ));
+                };
+                let success = builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        raw,
+                        context.i32_type().const_zero(),
+                        &format!("{name}.remove_drop_nested_owned_string_ok"),
+                    )
+                    .map_err(builder_error)?;
+                Some(success.into())
+            }
+        }
         InstructionKind::EnumCarrierFieldsDrop {
             value,
             element,
@@ -3023,16 +3201,27 @@ fn lower_offset<'ctx>(
             }
         }
         Some(Type::Array { .. }) => {
-            if !matches!(jir.types.get(pointee.index()), Some(Type::Array { element, .. }) if *element == result_pointee)
-            {
+            // An array-typed pointee has two distinct valid offset shapes:
+            // `ptr<array> -> ptr<array>` is pointer arithmetic over elements
+            // of an outer Buffer whose element happens to be an array, while
+            // `ptr<array> -> ptr<element>` projects into that inline array.
+            // Keep the former indices as-is; prepend the leading zero only
+            // for the latter so LLVM GEP addresses the array member.
+            if result_pointee == pointee {
+                build_verified_gep(builder, llvm_pointee, base, &indices, name)?
+            } else if matches!(
+                jir.types.get(pointee.index()),
+                Some(Type::Array { element, .. }) if *element == result_pointee
+            ) {
+                let mut llvm_indices = Vec::with_capacity(indices.len() + 1);
+                llvm_indices.push(context.i32_type().const_zero());
+                llvm_indices.extend(indices);
+                build_verified_gep(builder, llvm_pointee, base, &llvm_indices, name)?
+            } else {
                 return Err(CodegenError::ValueKind(
-                    "array offset result pointee differs from element type",
+                    "array offset result pointee differs from array or element type",
                 ));
             }
-            let mut llvm_indices = Vec::with_capacity(indices.len() + 1);
-            llvm_indices.push(context.i32_type().const_zero());
-            llvm_indices.extend(indices);
-            build_verified_gep(builder, llvm_pointee, base, &llvm_indices, name)?
         }
         Some(_) => {
             if pointee != result_pointee {
@@ -4118,6 +4307,138 @@ mod tests {
         .expect("ownership-only aggregate drop lowers");
         let text = llvm.print_to_string().to_string();
         assert!(text.contains("define void @drop_aggregate"), "{text}");
+        assert!(llvm.verify().is_ok());
+    }
+
+    #[test]
+    fn reuses_abi_compatible_generic_import_symbols() {
+        let jir = Module {
+            types: vec![
+                Type::Unit,
+                Type::Integer {
+                    signed: true,
+                    bits: 64,
+                },
+                Type::Integer {
+                    signed: false,
+                    bits: 64,
+                },
+                Type::Pointer {
+                    pointee: TypeId::new(1),
+                    address_space: AddressSpace::Generic,
+                },
+                Type::Pointer {
+                    pointee: TypeId::new(2),
+                    address_space: AddressSpace::Generic,
+                },
+                Type::Struct {
+                    fields: vec![TypeId::new(3), TypeId::new(2)],
+                },
+                Type::Struct {
+                    fields: vec![TypeId::new(4), TypeId::new(2)],
+                },
+            ],
+            functions: vec![
+                Function {
+                    id: FunctionId::new(0),
+                    name: "buffer_slice_write".to_owned(),
+                    linkage: Linkage::Import,
+                    parameters: vec![
+                        Parameter {
+                            value: ValueId::new(0),
+                            ty: TypeId::new(3),
+                            name: None,
+                        },
+                        Parameter {
+                            value: ValueId::new(1),
+                            ty: TypeId::new(2),
+                            name: None,
+                        },
+                    ],
+                    result: TypeId::new(5),
+                    blocks: Vec::new(),
+                    span: None,
+                },
+                Function {
+                    id: FunctionId::new(1),
+                    name: "buffer_slice_write".to_owned(),
+                    linkage: Linkage::Import,
+                    parameters: vec![
+                        Parameter {
+                            value: ValueId::new(0),
+                            ty: TypeId::new(4),
+                            name: None,
+                        },
+                        Parameter {
+                            value: ValueId::new(1),
+                            ty: TypeId::new(2),
+                            name: None,
+                        },
+                    ],
+                    result: TypeId::new(6),
+                    blocks: Vec::new(),
+                    span: None,
+                },
+                Function {
+                    id: FunctionId::new(2),
+                    name: "generic_import_probe".to_owned(),
+                    linkage: Linkage::Export,
+                    parameters: vec![
+                        Parameter {
+                            value: ValueId::new(0),
+                            ty: TypeId::new(3),
+                            name: Some("signed".to_owned()),
+                        },
+                        Parameter {
+                            value: ValueId::new(1),
+                            ty: TypeId::new(4),
+                            name: Some("unsigned".to_owned()),
+                        },
+                    ],
+                    result: TypeId::new(0),
+                    blocks: vec![Block {
+                        id: BlockId::new(0),
+                        parameters: Vec::new(),
+                        instructions: vec![
+                            value_instruction(
+                                2,
+                                2,
+                                InstructionKind::Constant(Constant::Integer { value: 0 }),
+                            ),
+                            value_instruction(
+                                3,
+                                5,
+                                InstructionKind::Call {
+                                    function: FunctionId::new(0),
+                                    arguments: vec![ValueId::new(0), ValueId::new(2)],
+                                },
+                            ),
+                            value_instruction(
+                                4,
+                                6,
+                                InstructionKind::Call {
+                                    function: FunctionId::new(1),
+                                    arguments: vec![ValueId::new(1), ValueId::new(2)],
+                                },
+                            ),
+                        ],
+                        terminator: Terminator::Return { value: None },
+                        span: None,
+                    }],
+                    span: None,
+                },
+            ],
+        };
+        let context = Context::create();
+        let llvm = lower_module(
+            &context,
+            &jir,
+            "generic_import_probe",
+            &TypeLoweringConfig::default(),
+        )
+        .expect("ABI-compatible generic imports lower once");
+        let text = llvm.print_to_string().to_string();
+        assert_eq!(text.matches("@buffer_slice_write").count(), 3, "{text}");
         assert!(llvm.verify().is_ok());
     }
 
@@ -5306,6 +5627,18 @@ mod tests {
                                 op: BinaryOp::Add,
                                 left: ValueId::new(4),
                                 right: ValueId::new(8),
+                            },
+                        ),
+                        // A Buffer whose element is an inline array performs
+                        // pointer arithmetic over complete array elements.
+                        // This must keep the array pointee instead of being
+                        // mistaken for an inline-array member projection.
+                        value_instruction(
+                            10,
+                            4,
+                            InstructionKind::Offset {
+                                base: ValueId::new(2),
+                                indices: vec![ValueId::new(0)],
                             },
                         ),
                     ],

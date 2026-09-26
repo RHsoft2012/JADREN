@@ -1,0 +1,105 @@
+module app_table_typed_buffer_read_project.main
+
+import jadren.app.table.append_row
+import jadren.app.table.read_bool_exact_buffer
+import jadren.app.table.read_float_exact_buffer
+import jadren.app.table.read_int_exact_buffer
+import jadren.app.table.read_named_bool_exact_buffer
+import jadren.app.table.read_named_float_exact_buffer
+import jadren.app.table.read_named_int_exact_buffer
+import jadren.app.table.read_named_uint_exact_buffer
+import jadren.app.table.read_uint_exact_buffer
+import jadren.app.table.set_bool
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+import jadren.app.table.set_float
+import jadren.app.table.set_int
+import jadren.app.table.set_uint
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !set_column_type(0, 0, 1) { return 1 }
+    if !set_column_type(0, 1, 2) { return 2 }
+    if !set_column_type(0, 2, 4) { return 3 }
+    if !set_column_type(0, 3, 3) { return 4 }
+    if !set_column_name(0, 0, "id") { return 5 }
+    if !set_column_name(0, 1, "total") { return 6 }
+    if !set_column_name(0, 2, "rate") { return 7 }
+    if !set_column_name(0, 3, "done") { return 8 }
+    if !append_row(0) { return 9 }
+    if !set_int(0, 0, 0, -7i64) { return 10 }
+    if !set_uint(0, 0, 1, 0u64) { return 11 }
+    if !set_float(0, 0, 2, 1.5f64) { return 12 }
+    if !set_bool(0, 0, 3, false) { return 13 }
+
+    let signed_created: Result<Buffer<Int64>, Int32> = buffer_create(1usize)
+    let unsigned_created: Result<Buffer<UInt64>, Int32> = buffer_create(1usize)
+    let float_created: Result<Buffer<Float64>, Int32> = buffer_create(1usize)
+    let bool_created: Result<Buffer<Bool>, Int32> = buffer_create(1usize)
+    var status: Int32 = 0
+
+    match signed_created {
+        Error(error) => { status = error }
+        Ok(signed) => {
+            if !buffer_resize(signed, 1usize) { status = 14 }
+            if status == 0 { if !read_int_exact_buffer(0, 0, 0, signed, 1usize) { status = 15 } }
+            if status == 0 { if signed[0] != -7i64 { status = 16 } }
+            if status == 0 { if !read_named_int_exact_buffer(0, 0, "id", signed, 1usize) { status = 17 } }
+            if status == 0 { if signed[0] != -7i64 { status = 18 } }
+            if status == 0 {
+                signed[0] = 99i64
+                if read_int_exact_buffer(0, 0, 0, signed, 0usize) { status = 19 }
+            }
+            if status == 0 { if signed[0] != 99i64 { status = 20 } }
+            if status == 0 {
+                if read_named_int_exact_buffer(0, 0, "id", signed, 2usize) { status = 21 }
+            }
+            if status == 0 { if signed[0] != 99i64 { status = 22 } }
+            if status == 0 {
+                if read_named_int_exact_buffer(0, 0, "rate", signed, 1usize) { status = 23 }
+            }
+            if status == 0 { if signed[0] != 99i64 { status = 24 } }
+        }
+    }
+
+    match unsigned_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(unsigned) => {
+            if status == 0 { if !buffer_resize(unsigned, 1usize) { status = 25 } }
+            if status == 0 { if !read_uint_exact_buffer(0, 0, 1, unsigned, 1usize) { status = 26 } }
+            if status == 0 { if unsigned[0] != 0u64 { status = 27 } }
+            if status == 0 { if !read_named_uint_exact_buffer(0, 0, "total", unsigned, 1usize) { status = 28 } }
+            if status == 0 { if unsigned[0] != 0u64 { status = 29 } }
+        }
+    }
+
+    match float_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(value) => {
+            if status == 0 { if !buffer_resize(value, 1usize) { status = 30 } }
+            if status == 0 { if !read_float_exact_buffer(0, 0, 2, value, 1usize) { status = 31 } }
+            if status == 0 { if value[0] != 1.5f64 { status = 32 } }
+            if status == 0 { if !read_named_float_exact_buffer(0, 0, "rate", value, 1usize) { status = 33 } }
+            if status == 0 { if value[0] != 1.5f64 { status = 34 } }
+        }
+    }
+
+    match bool_created {
+        Error(error) => { if status == 0 { status = error } }
+        Ok(value) => {
+            if status == 0 { if !buffer_resize(value, 1usize) { status = 35 } }
+            if status == 0 { if !read_bool_exact_buffer(0, 0, 3, value, 1usize) { status = 36 } }
+            if status == 0 { if value[0] { status = 37 } }
+            if status == 0 { if !read_named_bool_exact_buffer(0, 0, "done", value, 1usize) { status = 38 } }
+            if status == 0 { if value[0] { status = 39 } }
+        }
+    }
+
+    app_table_clear(0)
+    return status
+}

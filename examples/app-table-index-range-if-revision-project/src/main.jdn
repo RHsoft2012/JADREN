@@ -1,0 +1,179 @@
+module app_table_index_range_if_revision_project.main
+
+import jadren.app.data.revision
+import jadren.app.table.append_row
+import jadren.app.table.clear
+import jadren.app.table.index_build_float
+import jadren.app.table.index_build_int
+import jadren.app.table.index_build_uint
+import jadren.app.table.index_collect_float_range_if_revision
+import jadren.app.table.index_collect_float_range_buffer
+import jadren.app.table.index_collect_float_range_buffer_if_revision
+import jadren.app.table.index_collect_float_range_buffer_if_model_revision
+import jadren.app.table.index_collect_int_range_if_revision
+import jadren.app.table.index_collect_int_range_buffer
+import jadren.app.table.index_collect_int_range_buffer_if_revision
+import jadren.app.table.index_collect_int_range_buffer_if_model_revision
+import jadren.app.table.index_collect_uint_range_if_revision
+import jadren.app.table.index_collect_uint_range_buffer
+import jadren.app.table.index_collect_uint_range_buffer_if_revision
+import jadren.app.table.index_collect_uint_range_buffer_if_model_revision
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_type
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    if ! set_column_type(0, 0, 1) { return 1 }
+    if ! set_column_type(0, 1, 2) { return 2 }
+    if ! set_column_type(0, 2, 4) { return 3 }
+    if ! append_row(0) { return 4 }
+    if ! append_row(0) { return 5 }
+    if ! append_row(0) { return 6 }
+    if ! append_row(0) { return 7 }
+
+    if ! set_cell(0, 0, 0, "30") { return 8 }
+    if ! set_cell(0, 1, 0, "10") { return 9 }
+    if ! set_cell(0, 2, 0, "20") { return 10 }
+    if ! set_cell(0, 3, 0, "40") { return 11 }
+    if ! set_cell(0, 0, 1, "300") { return 12 }
+    if ! set_cell(0, 1, 1, "100") { return 13 }
+    if ! set_cell(0, 2, 1, "200") { return 14 }
+    if ! set_cell(0, 3, 1, "400") { return 15 }
+    if ! set_cell(0, 0, 2, "3.0") { return 16 }
+    if ! set_cell(0, 1, 2, "1.0") { return 17 }
+    if ! set_cell(0, 2, 2, "2.0") { return 18 }
+    if ! set_cell(0, 3, 2, "4.0") { return 19 }
+
+    var output: [Int32; 4] = [77, 77, 77, 77]
+
+    if ! index_build_int(0, 0) { return 20 }
+    let int_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "35") { return 21 }
+    if index_collect_int_range_if_revision(0, 0, 10 as Int64, 30 as Int64, output, int_stale) != 0usize { return 22 }
+    if output[0] != 77 { return 23 }
+    if output[1] != 77 { return 23 }
+    if output[2] != 77 { return 23 }
+    if output[3] != 77 { return 23 }
+    if ! set_cell(0, 0, 0, "30") { return 24 }
+    if ! index_build_int(0, 0) { return 25 }
+    let int_current: UInt64 = revision()
+    let int_count: UIntSize = index_collect_int_range_if_revision(0, 0, 10 as Int64, 30 as Int64, output, int_current)
+    if int_count != 3usize { return 26 }
+    if output[0] != 1 { return 26 }
+    if output[1] != 2 { return 26 }
+    if output[2] != 0 { return 26 }
+
+    if ! index_build_uint(0, 1) { return 27 }
+    let uint_stale: UInt64 = revision()
+    if ! set_cell(0, 1, 1, "150") { return 28 }
+    if index_collect_uint_range_if_revision(0, 1, 100u64, 300u64, output, uint_stale) != 0usize { return 29 }
+    if output[0] != 1 { return 30 }
+    if output[1] != 2 { return 30 }
+    if output[2] != 0 { return 30 }
+    if ! set_cell(0, 1, 1, "100") { return 31 }
+    if ! index_build_uint(0, 1) { return 32 }
+    let uint_current: UInt64 = revision()
+    let uint_count: UIntSize = index_collect_uint_range_if_revision(0, 1, 100u64, 300u64, output, uint_current)
+    if uint_count != 3usize { return 33 }
+    if output[0] != 1 { return 33 }
+    if output[1] != 2 { return 33 }
+    if output[2] != 0 { return 33 }
+
+    if ! index_build_float(0, 2) { return 34 }
+    let float_stale: UInt64 = revision()
+    if ! set_cell(0, 2, 2, "2.5") { return 35 }
+    if index_collect_float_range_if_revision(0, 2, 1.0f64, 3.0f64, output, float_stale) != 0usize { return 36 }
+    if output[0] != 1 { return 37 }
+    if output[1] != 2 { return 37 }
+    if output[2] != 0 { return 37 }
+    if ! set_cell(0, 2, 2, "2.0") { return 38 }
+    if ! index_build_float(0, 2) { return 39 }
+    let float_current: UInt64 = revision()
+    let float_count: UIntSize = index_collect_float_range_if_revision(0, 2, 1.0f64, 3.0f64, output, float_current)
+    if float_count != 3usize { return 40 }
+    if output[0] != 1 { return 40 }
+    if output[1] != 2 { return 40 }
+    if output[2] != 0 { return 40 }
+
+    let dynamic_created: Result<Buffer<Int32>, Int32> = buffer_create(4usize)
+    var dynamic_status: Int32 = 0
+    match dynamic_created {
+        Error(status) => { dynamic_status = status }
+        Ok(dynamic) => {
+            if !buffer_resize(dynamic, 4usize) { return 41 }
+            dynamic[0] = 77
+            dynamic[1] = 77
+            dynamic[2] = 77
+            dynamic[3] = 77
+
+            let dynamic_int_stale: UInt64 = revision()
+            if ! set_cell(0, 0, 0, "35") { return 42 }
+            if index_collect_int_range_buffer_if_revision(0, 0, 10 as Int64, 30 as Int64, dynamic, 4usize, dynamic_int_stale) != 0usize { return 43 }
+            if index_collect_int_range_buffer_if_model_revision(0, 0, 10 as Int64, 30 as Int64, dynamic, 4usize, dynamic_int_stale) != 0usize { return 68 }
+            if dynamic[0] != 77 { return 44 }
+            if dynamic[1] != 77 { return 44 }
+            if dynamic[2] != 77 { return 44 }
+            if dynamic[3] != 77 { return 44 }
+
+            if ! set_cell(0, 0, 0, "30") { return 45 }
+            if ! index_build_int(0, 0) { return 46 }
+            let dynamic_int_current: UInt64 = revision()
+            if index_collect_int_range_buffer_if_revision(0, 0, 10 as Int64, 30 as Int64, dynamic, 4usize, dynamic_int_current) != 3usize { return 47 }
+            if index_collect_int_range_buffer_if_model_revision(0, 0, 10 as Int64, 30 as Int64, dynamic, 4usize, dynamic_int_current) != 3usize { return 69 }
+            if dynamic[0] != 1 { return 48 }
+            if dynamic[1] != 2 { return 48 }
+            if dynamic[2] != 0 { return 48 }
+            if index_collect_int_range_buffer(0, 0, 10 as Int64, 30 as Int64, dynamic, 4usize) != 3usize { return 49 }
+            if index_collect_int_range_buffer(0, 0, 10 as Int64, 30 as Int64, dynamic, 5usize) != 0usize { return 50 }
+            if dynamic[0] != 1 { return 51 }
+            if dynamic[1] != 2 { return 51 }
+            if dynamic[2] != 0 { return 51 }
+
+            let dynamic_uint_stale: UInt64 = revision()
+            if ! set_cell(0, 1, 1, "150") { return 52 }
+            if index_collect_uint_range_buffer_if_revision(0, 1, 100u64, 300u64, dynamic, 4usize, dynamic_uint_stale) != 0usize { return 53 }
+            if index_collect_uint_range_buffer_if_model_revision(0, 1, 100u64, 300u64, dynamic, 4usize, dynamic_uint_stale) != 0usize { return 70 }
+            if dynamic[0] != 1 { return 54 }
+            if dynamic[1] != 2 { return 54 }
+            if dynamic[2] != 0 { return 54 }
+            if ! set_cell(0, 1, 1, "100") { return 55 }
+            if ! index_build_uint(0, 1) { return 56 }
+            let dynamic_uint_current: UInt64 = revision()
+            if index_collect_uint_range_buffer_if_revision(0, 1, 100u64, 300u64, dynamic, 4usize, dynamic_uint_current) != 3usize { return 57 }
+            if index_collect_uint_range_buffer_if_model_revision(0, 1, 100u64, 300u64, dynamic, 4usize, dynamic_uint_current) != 3usize { return 71 }
+            if dynamic[0] != 1 { return 58 }
+            if dynamic[1] != 2 { return 58 }
+            if dynamic[2] != 0 { return 58 }
+            if index_collect_uint_range_buffer(0, 1, 100u64, 300u64, dynamic, 4usize) != 3usize { return 59 }
+
+            let dynamic_float_stale: UInt64 = revision()
+            if ! set_cell(0, 2, 2, "2.5") { return 60 }
+            if index_collect_float_range_buffer_if_revision(0, 2, 1.0f64, 3.0f64, dynamic, 4usize, dynamic_float_stale) != 0usize { return 61 }
+            if index_collect_float_range_buffer_if_model_revision(0, 2, 1.0f64, 3.0f64, dynamic, 4usize, dynamic_float_stale) != 0usize { return 72 }
+            if dynamic[0] != 1 { return 62 }
+            if dynamic[1] != 2 { return 62 }
+            if dynamic[2] != 0 { return 62 }
+            if ! set_cell(0, 2, 2, "2.0") { return 63 }
+            if ! index_build_float(0, 2) { return 64 }
+            let dynamic_float_current: UInt64 = revision()
+            if index_collect_float_range_buffer_if_revision(0, 2, 1.0f64, 3.0f64, dynamic, 4usize, dynamic_float_current) != 3usize { return 65 }
+            if index_collect_float_range_buffer_if_model_revision(0, 2, 1.0f64, 3.0f64, dynamic, 4usize, dynamic_float_current) != 3usize { return 73 }
+            if dynamic[0] != 1 { return 66 }
+            if dynamic[1] != 2 { return 66 }
+            if dynamic[2] != 0 { return 66 }
+            if index_collect_float_range_buffer(0, 2, 1.0f64, 3.0f64, dynamic, 4usize) != 3usize { return 67 }
+            let invalid_index_revision: UInt64 = revision()
+            if index_collect_int_range_buffer_if_model_revision(99, 0, 10 as Int64, 30 as Int64, dynamic, 4usize, invalid_index_revision) != 0usize { return 74 }
+            if index_collect_uint_range_buffer_if_model_revision(-1, 1, 100u64, 300u64, dynamic, 4usize, invalid_index_revision) != 0usize { return 75 }
+            if index_collect_float_range_buffer_if_model_revision(99, 2, 1.0f64, 3.0f64, dynamic, 4usize, invalid_index_revision) != 0usize { return 76 }
+        }
+    }
+    if dynamic_status != 0 { return dynamic_status }
+
+    return 0
+}

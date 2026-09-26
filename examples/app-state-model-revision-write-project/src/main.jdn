@@ -1,0 +1,354 @@
+module app_state_model_revision_write_project.main
+import jadren.app.data.revision
+import jadren.app.state.clear
+import jadren.app.state.clear_if_model_revision
+import jadren.app.state.add_float_if_model_revision
+import jadren.app.state.add_int_if_model_revision
+import jadren.app.state.add_uint_if_model_revision
+import jadren.app.state.get_bool
+import jadren.app.state.get_float
+import jadren.app.state.get_int
+import jadren.app.state.get_uint
+import jadren.app.state.read_text_exact_if_model_revision
+import jadren.app.state.remove_if_model_revision
+import jadren.app.state.set_bool_buffer_if_model_revision
+import jadren.app.state.set_bool_if_model_revision
+import jadren.app.state.set_float_buffer_if_model_revision
+import jadren.app.state.set_float_if_model_revision
+import jadren.app.state.set_int_buffer_if_model_revision
+import jadren.app.state.set_int_if_model_revision
+import jadren.app.state.set_text_bytes_if_model_revision
+import jadren.app.state.set_text_if_model_revision
+import jadren.app.state.set_uint_buffer_if_model_revision
+import jadren.app.state.set_uint_if_model_revision
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    let initial: UInt64 = revision()
+    if ! set_int_if_model_revision("signed",
+    - 4i64,
+    initial) {
+        return 1
+    }
+    let after_int: UInt64 = revision()
+    if ! add_int_if_model_revision("signed",
+    6i64,
+    after_int) {
+        return 2
+    }
+    if get_int("signed") != 2i64 {
+        return 3
+    }
+    let after_add_int: UInt64 = revision()
+    if ! set_uint_if_model_revision("unsigned",
+    7u64,
+    after_add_int) {
+        return 4
+    }
+    let after_uint: UInt64 = revision()
+    if ! add_uint_if_model_revision("unsigned",
+    5u64,
+    after_uint) {
+        return 5
+    }
+    if get_uint("unsigned") != 12u64 {
+        return 6
+    }
+    let after_add_uint: UInt64 = revision()
+    if ! set_float_if_model_revision("ratio",
+    1.5f64,
+    after_add_uint) {
+        return 7
+    }
+    let after_float: UInt64 = revision()
+    if ! add_float_if_model_revision("ratio",
+    0.5f64,
+    after_float) {
+        return 8
+    }
+    if get_float("ratio") != 2.0f64 {
+        return 9
+    }
+    let after_add_float: UInt64 = revision()
+    if ! set_bool_if_model_revision("enabled",
+    true,
+    after_add_float) {
+        return 10
+    }
+    if ! get_bool("enabled") {
+        return 11
+    }
+    let signed_buffer_result: Result<Buffer<Int64>,
+    Int32> = buffer_create(1usize)
+    var status: Int32 = 0
+    match signed_buffer_result {
+        Error(error) => {
+            status = error
+        }
+        Ok(buffer) => {
+            if status == 0 {
+                if ! buffer_resize(buffer,
+                1usize) {
+                    status = 12
+                }
+            }
+            if status == 0 {
+                buffer[0] = 44i64
+            }
+            let token: UInt64 = revision()
+            if status == 0 {
+                if ! set_int_buffer_if_model_revision("signed_buffer",
+                buffer,
+                token) {
+                    status = 13
+                }
+            }
+            if status == 0 {
+                if get_int("signed_buffer") != 44i64 {
+                    status = 14
+                }
+            }
+        }
+    }
+    let unsigned_buffer_result: Result<Buffer<UInt64>,
+    Int32> = buffer_create(1usize)
+    match unsigned_buffer_result {
+        Error(error) => {
+            if status == 0 {
+                status = error
+            }
+        }
+        Ok(buffer) => {
+            if status == 0 {
+                if ! buffer_resize(buffer,
+                1usize) {
+                    status = 15
+                }
+            }
+            if status == 0 {
+                buffer[0] = 55u64
+            }
+            let token: UInt64 = revision()
+            if status == 0 {
+                if ! set_uint_buffer_if_model_revision("unsigned_buffer",
+                buffer,
+                token) {
+                    status = 16
+                }
+            }
+            if status == 0 {
+                if get_uint("unsigned_buffer") != 55u64 {
+                    status = 17
+                }
+            }
+        }
+    }
+    let float_buffer_result: Result<Buffer<Float64>,
+    Int32> = buffer_create(1usize)
+    match float_buffer_result {
+        Error(error) => {
+            if status == 0 {
+                status = error
+            }
+        }
+        Ok(buffer) => {
+            if status == 0 {
+                if ! buffer_resize(buffer,
+                1usize) {
+                    status = 18
+                }
+            }
+            if status == 0 {
+                buffer[0] = 6.25f64
+            }
+            let token: UInt64 = revision()
+            if status == 0 {
+                if ! set_float_buffer_if_model_revision("float_buffer",
+                buffer,
+                token) {
+                    status = 19
+                }
+            }
+            if status == 0 {
+                if get_float("float_buffer") != 6.25f64 {
+                    status = 20
+                }
+            }
+        }
+    }
+    let bool_buffer_result: Result<Buffer<Bool>,
+    Int32> = buffer_create(1usize)
+    match bool_buffer_result {
+        Error(error) => {
+            if status == 0 {
+                status = error
+            }
+        }
+        Ok(buffer) => {
+            if status == 0 {
+                if ! buffer_resize(buffer,
+                1usize) {
+                    status = 21
+                }
+            }
+            if status == 0 {
+                buffer[0] = false
+            }
+            let token: UInt64 = revision()
+            if status == 0 {
+                if ! set_bool_buffer_if_model_revision("bool_buffer",
+                buffer,
+                token) {
+                    status = 22
+                }
+            }
+            if status == 0 {
+                if get_bool("bool_buffer") {
+                    status = 23
+                }
+            }
+        }
+    }
+    if status != 0 {
+        return status
+    }
+    var bytes:[UInt8;
+    7] =[74u8,
+    97u8,
+    100u8,
+    114u8,
+    101u8,
+    110u8,
+    33u8]
+    let text_token: UInt64 = revision()
+    if ! set_text_bytes_if_model_revision("message",
+    bytes,
+    6usize,
+    text_token) {
+        return 24
+    }
+    var text_output:[UInt8;
+    16] =[201u8,
+    201u8,
+    201u8,
+    201u8,
+    201u8,
+    201u8,
+    201u8,
+    201u8,
+    201u8,
+    201u8,
+    201u8,
+    201u8,
+    201u8,
+    201u8,
+    201u8,
+    201u8]
+    var text_length:[UIntSize;
+    1] =[901usize]
+    let read_token: UInt64 = revision()
+    if ! read_text_exact_if_model_revision("message",
+    text_output,
+    text_length,
+    read_token) {
+        return 25
+    }
+    if text_length[0] != 6usize {
+        return 26
+    }
+    if text_output[0] != 74u8 {
+        return 27
+    }
+    if text_output[5] != 110u8 {
+        return 28
+    }
+    let stale_write: UInt64 = revision()
+    if ! app_list_push_text(0,
+    "list mutation") {
+        return 29
+    }
+    if set_text_if_model_revision("message",
+    "rejected",
+    stale_write) {
+        return 30
+    }
+    if ! read_text_exact_if_model_revision("message",
+    text_output,
+    text_length,
+    revision()) {
+        return 42
+    }
+    if text_length[0] != 6usize {
+        return 43
+    }
+    if text_output[0] != 74u8 {
+        return 44
+    }
+    if get_int("signed") != 2i64 {
+        return 31
+    }
+    if app_list_count(0) != 1 {
+        return 32
+    }
+    if ! set_text_if_model_revision("message",
+    "accepted",
+    revision()) {
+        return 33
+    }
+    let stale_remove: UInt64 = revision()
+    if ! app_table_append_row(0) {
+        return 34
+    }
+    if remove_if_model_revision("message",
+    stale_remove) {
+        return 35
+    }
+    if ! read_text_exact_if_model_revision("message",
+    text_output,
+    text_length,
+    revision()) {
+        return 45
+    }
+    if text_length[0] != 8usize {
+        return 46
+    }
+    if text_output[0] != 97u8 {
+        return 47
+    }
+    if ! set_text_if_model_revision("message",
+    "kept",
+    revision()) {
+        return 36
+    }
+    let stale_clear: UInt64 = revision()
+    if ! app_table_set_cell(0,
+    0,
+    0,
+    "table mutation") {
+        return 37
+    }
+    if clear_if_model_revision(stale_clear) {
+        return 38
+    }
+    if ! get_bool("enabled") {
+        return 39
+    }
+    if ! remove_if_model_revision("message",
+    revision()) {
+        return 40
+    }
+    if ! set_text_if_model_revision("message",
+    "final",
+    revision()) {
+        return 41
+    }
+    clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    return 0
+}

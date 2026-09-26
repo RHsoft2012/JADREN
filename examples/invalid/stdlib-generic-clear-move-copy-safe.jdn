@@ -1,0 +1,15 @@
+module invalid.stdlib_generic_clear_move_copy_safe
+
+fn clear_move_status_for<T>(values: write Buffer<T>) -> Int32 {
+    return buffer_clear_move_status(values)
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => { result_code = clear_move_status_for(values) }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

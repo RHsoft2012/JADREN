@@ -1,0 +1,219 @@
+module app_filter_bytes_if_revision_project.main
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.count
+import jadren.app.list.filter_bytes_if_revision
+import jadren.app.list.push_text
+import jadren.app.table.append_row
+import jadren.app.table.filter_text_bytes_if_revision
+import jadren.app.table.read_cell_exact
+import jadren.app.table.row_count
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+// Caller-owned byte filters must retain the same stale/current boundary as
+// their String counterparts. A rejected prefix or stale revision must not
+// append rows to the destination projection.
+fn main() -> Int32 {
+    clear(0)
+    clear(1)
+    if ! push_text(0,
+    "Focus") {
+        return 1
+    }
+    if ! push_text(0,
+    "Open") {
+        return 2
+    }
+    if ! push_text(0,
+    "Refocus") {
+        return 3
+    }
+    if ! push_text(1,
+    "Sentinel") {
+        return 4
+    }
+    var query:[UInt8;
+    8] =[70u8,
+    79u8,
+    67u8,
+    85u8,
+    83u8,
+    0u8,
+    0u8,
+    0u8]
+    let stale_list: UInt64 = revision()
+    if ! push_text(0,
+    "Later") {
+        return 5
+    }
+    if filter_bytes_if_revision(0,
+    1,
+    query,
+    5usize,
+    5,
+    stale_list) {
+        return 6
+    }
+    if count(1) != 1 {
+        return 7
+    }
+    let current_list: UInt64 = revision()
+    if ! filter_bytes_if_revision(0,
+    1,
+    query,
+    5usize,
+    5,
+    current_list) {
+        return 8
+    }
+    if count(1) != 2 {
+        return 9
+    }
+    let unchanged_list: UInt64 = revision()
+    if filter_bytes_if_revision(0,
+    1,
+    query,
+    9usize,
+    5,
+    unchanged_list) {
+        return 10
+    }
+    if count(1) != 2 {
+        return 11
+    }
+    app_table_clear(2)
+    app_table_clear(3)
+    if ! set_column_type(2,
+    0,
+    0) {
+        return 12
+    }
+    if ! set_column_type(3,
+    0,
+    0) {
+        return 13
+    }
+    if ! set_column_name(2,
+    0,
+    "Title") {
+        return 30
+    }
+    if ! set_column_name(3,
+    0,
+    "Title") {
+        return 31
+    }
+    if ! append_row(2) {
+        return 14
+    }
+    if ! append_row(2) {
+        return 15
+    }
+    if ! set_cell(2,
+    0,
+    0,
+    "Focus") {
+        return 16
+    }
+    if ! set_cell(2,
+    1,
+    0,
+    "Focus") {
+        return 17
+    }
+    if ! append_row(3) {
+        return 18
+    }
+    if ! set_cell(3,
+    0,
+    0,
+    "Sentinel") {
+        return 19
+    }
+    let stale_table: UInt64 = revision()
+    if ! set_cell(2,
+    0,
+    0,
+    "Focus2") {
+        return 20
+    }
+    if filter_text_bytes_if_revision(2,
+    3,
+    0,
+    query,
+    5usize,
+    5,
+    stale_table) {
+        return 21
+    }
+    if row_count(3) != 1 {
+        return 22
+    }
+    let current_table: UInt64 = revision()
+    if ! filter_text_bytes_if_revision(2,
+    3,
+    0,
+    query,
+    5usize,
+    5,
+    current_table) {
+        return 23
+    }
+    if row_count(3) != 2 {
+        return 24
+    }
+    var output:[UInt8;
+    16] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var length:[UIntSize;
+    1] =[99usize]
+    if ! read_cell_exact(3,
+    1,
+    0,
+    output,
+    length) {
+        return 25
+    }
+    if length[0] != 5usize {
+        return 26
+    }
+    if output[0] != 70u8 {
+        return 27
+    }
+    if output[4] != 115u8 {
+        return 27
+    }
+    let unchanged_table: UInt64 = revision()
+    if filter_text_bytes_if_revision(2,
+    3,
+    99,
+    query,
+    5usize,
+    5,
+    unchanged_table) {
+        return 28
+    }
+    if row_count(3) != 2 {
+        return 29
+    }
+    return 0
+}

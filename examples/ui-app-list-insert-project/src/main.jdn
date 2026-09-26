@@ -1,0 +1,73 @@
+module ui_app_list_insert_project.main
+
+import jadren.app.state.clear
+import jadren.app.state.set_text
+import jadren.app.data.revision
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.panel
+import jadren.app.ui.list
+import jadren.app.ui.list_item
+import jadren.app.ui.list_insert_item
+import jadren.app.ui.list_insert_item_if_revision
+import jadren.app.ui.list_read_item_exact_if_revision
+import jadren.app.ui.list_set_item
+import jadren.app.ui.list_count
+import jadren.app.ui.list_index
+import jadren.app.ui.list_set_index
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear()
+    if !set_text("revision_seed", "ready") { return 1 }
+
+    let root: Int32 = begin("Retained list insertion", 640, 420, 0xF6F8FCu32)
+    if root == 0 { return 2 }
+    let panel_node: Int32 = panel(root, 580, 320, 0xFFFFFFu32, 12, 12, 8, 0, 1)
+    if panel_node == 0 { return 3 }
+    let list_node: Int32 = list(panel_node, 71, 520, 180, 0x111827u32, 0xFFFFFFu32, 8, 1)
+    if list_node == 0 { return 4 }
+    if !list_item(list_node, "Alpha") { return 5 }
+    if !list_item(list_node, "Gamma") { return 6 }
+    if !list_set_index(list_node, 1) { return 7 }
+
+    let current: UInt64 = revision()
+    if !list_insert_item_if_revision(list_node, 1, "", current) { return 8 }
+    if list_count(list_node) != 3 { return 9 }
+    if list_index(list_node) != 2 { return 10 }
+
+    var bytes: [UInt8; 32] = [90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8]
+    var length: [UIntSize; 1] = [77usize]
+    if !list_read_item_exact_if_revision(list_node, 1, bytes, length, current) { return 11 }
+    if length[0] != 0usize { return 12 }
+    if !list_set_item(list_node, 1, "Beta") { return 13 }
+    if !list_insert_item(list_node, list_count(list_node), "Omega") { return 14 }
+    if list_count(list_node) != 4 { return 15 }
+    if list_index(list_node) != 2 { return 16 }
+
+    if list_insert_item(list_node, -1, "Invalid") { return 17 }
+    if list_insert_item(list_node, 99, "Invalid") { return 18 }
+    if list_count(list_node) != 4 { return 19 }
+
+    let stale: UInt64 = revision()
+    if !set_text("revision_seed", "changed") { return 20 }
+    if list_insert_item_if_revision(list_node, 0, "Stale", stale) { return 21 }
+    if list_count(list_node) != 4 { return 22 }
+
+    let current_after_change: UInt64 = revision()
+    if !list_insert_item_if_revision(list_node, 0, "Start", current_after_change) { return 23 }
+    if list_count(list_node) != 5 { return 24 }
+    if list_index(list_node) != 3 { return 25 }
+
+    if !finish(panel_node) { return 26 }
+    if !finish(root) { return 27 }
+    clear()
+    return 0
+}

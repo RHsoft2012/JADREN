@@ -1,0 +1,72 @@
+module examples.stdlib_buffer_nested_owning_array
+
+// An outer buffer may own an inner buffer whose leaf is a fixed array of
+// owning buffers.  The path-aware field table must walk both descriptor
+// levels and both array slots during resize, remove and clear.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<[Buffer<OwnedString>; 2]>>, Int32> = buffer_create(0usize)
+    let inner_created: Result<Buffer<[Buffer<OwnedString>; 2]>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match inner_created {
+                Ok(inner) => {
+                    match first_created {
+                        Ok(first) => {
+                            match second_created {
+                                Ok(second) => {
+                                    let first_text: Result<OwnedString, Int32> = string_owned_from("first")
+                                    let second_text: Result<OwnedString, Int32> = string_owned_from("second")
+                                    match first_text {
+                                        Ok(first_value) => {
+                                            match second_text {
+                                                Ok(second_value) => {
+                                                    if !buffer_append(first, first_value) { result_code = 1 }
+                                                    if !buffer_append(second, second_value) { result_code = 2 }
+                                                    let item: [Buffer<OwnedString>; 2] = [first, second]
+                                                    if !buffer_append(inner, item) { result_code = 3 }
+                                                    if !buffer_append_move(outer, inner) { result_code = 4 }
+                                                    if buffer_length(outer) != 1usize { result_code = 5 }
+                                                    let grown: Int32 = buffer_resize_move_status(outer, 2usize)
+                                                    if grown != 0 { result_code = 6 }
+                                                    if buffer_length(outer) != 2usize { result_code = 7 }
+                                                    let moved: Result<Buffer<[Buffer<OwnedString>; 2]>, Int32> = buffer_remove_move(outer, 0usize)
+                                                    match moved {
+                                                        Ok(output) => {
+                                                            if buffer_length(output) != 1usize { result_code = 8 }
+                                                            if buffer_length(output[0][0]) != 1usize { result_code = 9 }
+                                                            if buffer_length(output[0][1]) != 1usize { result_code = 10 }
+                                                            if !buffer_clear_move(output[0][0]) { result_code = 11 }
+                                                            if !buffer_clear_move(output[0][1]) { result_code = 12 }
+                                                        }
+                                                        Error(status) => { result_code = status }
+                                                    }
+                                                    if buffer_length(outer) != 1usize { result_code = 13 }
+                                                    if !buffer_clear_move(outer) { result_code = 14 }
+                                                    if buffer_length(outer) != 0usize { result_code = 15 }
+                                                    let status: Int32 = buffer_remove_drop_status(outer, 0usize)
+                                                    if status != -20 { result_code = 16 }
+                                                }
+                                                Error(status) => { result_code = status }
+                                            }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

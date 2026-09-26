@@ -1,0 +1,118 @@
+module examples.network_cookie_origin_project
+
+import jadren.network.policy.cookie_scope_matches
+import jadren.network.cookies.clear
+import jadren.network.cookies.put
+import jadren.network.cookies.read_response_cookie_scope
+import jadren.network.cookies.write_request_header_scoped
+import jadren.network.http.write_response_cookie_policy
+
+fn main() -> Int32 {
+    var host_exact: [UInt8; 16] = [65u8, 80u8, 73u8, 46u8, 69u8, 120u8, 97u8, 109u8, 112u8, 108u8, 101u8, 46u8, 84u8, 101u8, 115u8, 116u8]
+    var host_subdomain: [UInt8; 16] = [97u8, 112u8, 105u8, 46u8, 101u8, 120u8, 97u8, 109u8, 112u8, 108u8, 101u8, 46u8, 116u8, 101u8, 115u8, 116u8]
+    var host_bad_boundary: [UInt8; 15] = [98u8, 97u8, 100u8, 101u8, 120u8, 97u8, 109u8, 112u8, 108u8, 101u8, 46u8, 116u8, 101u8, 115u8, 116u8]
+    var domain: [UInt8; 12] = [101u8, 120u8, 97u8, 109u8, 112u8, 108u8, 101u8, 46u8, 116u8, 101u8, 115u8, 116u8]
+    var invalid_domain: [UInt8; 13] = [46u8, 101u8, 120u8, 97u8, 109u8, 112u8, 108u8, 101u8, 46u8, 116u8, 101u8, 115u8, 116u8]
+    var path_app: [UInt8; 4] = [47u8, 97u8, 112u8, 112u8]
+    var path_report: [UInt8; 11] = [47u8, 97u8, 112u8, 112u8, 47u8, 114u8, 101u8, 112u8, 111u8, 114u8, 116u8]
+    var path_apple: [UInt8; 6] = [47u8, 97u8, 112u8, 112u8, 108u8, 101u8]
+    var path_root: [UInt8; 1] = [47u8]
+    var names: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var values: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var name_lengths: [UIntSize; 2] = [0usize, 0usize]
+    var value_lengths: [UIntSize; 2] = [0usize, 0usize]
+    var expires_at: [Int64; 2] = [0i64, 0i64]
+    var flags: [UInt32; 2] = [0u32, 0u32]
+    var domains: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var paths: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var domain_lengths: [UIntSize; 2] = [0usize, 0usize]
+    var path_lengths: [UIntSize; 2] = [0usize, 0usize]
+    var parsed_name: [UInt8; 8] = [165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8]
+    var parsed_value: [UInt8; 16] = [165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8]
+    var parsed_domain: [UInt8; 32] = [165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8]
+    var parsed_path: [UInt8; 32] = [165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8]
+    var parsed_name_length: [UIntSize; 1] = [99usize]
+    var parsed_value_length: [UIntSize; 1] = [99usize]
+    var parsed_domain_length: [UIntSize; 1] = [99usize]
+    var parsed_path_length: [UIntSize; 1] = [99usize]
+    var parsed_max_age: [Int64; 1] = [99i64]
+    var parsed_flags: [UInt32; 1] = [99u32]
+    var response_body: [UInt8; 2] = [79u8, 75u8]
+    var response: [UInt8; 256] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var response_scratch: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var scoped_output: [UInt8; 32] = [165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8, 165u8]
+    var sid_name: [UInt8; 3] = [115u8, 105u8, 100u8]
+    var sid_value: [UInt8; 3] = [97u8, 98u8, 99u8]
+    var theme_name: [UInt8; 5] = [116u8, 104u8, 101u8, 109u8, 101u8]
+    var theme_value: [UInt8; 4] = [100u8, 97u8, 114u8, 107u8]
+
+    if !cookie_scope_matches(host_exact, 16usize, path_report, 11usize, domain, 12usize, path_app, 4usize, true, true) { return 1 }
+    if !cookie_scope_matches(host_subdomain, 16usize, path_app, 4usize, domain, 12usize, path_app, 4usize, true, false) { return 2 }
+    if cookie_scope_matches(host_bad_boundary, 15usize, path_app, 4usize, domain, 12usize, path_app, 4usize, true, false) { return 3 }
+    if cookie_scope_matches(host_subdomain, 16usize, path_apple, 6usize, domain, 12usize, path_app, 4usize, true, false) { return 4 }
+    if cookie_scope_matches(host_subdomain, 16usize, path_app, 4usize, domain, 12usize, path_app, 4usize, false, true) { return 5 }
+    if !cookie_scope_matches(host_subdomain, 16usize, path_report, 11usize, domain, 12usize, path_root, 1usize, false, false) { return 6 }
+    if cookie_scope_matches(host_subdomain, 17usize, path_app, 4usize, domain, 12usize, path_app, 4usize, true, false) { return 7 }
+    if cookie_scope_matches(host_subdomain, 16usize, path_app, 4usize, invalid_domain, 13usize, path_app, 4usize, true, false) { return 8 }
+
+    let response_length: UIntSize = write_response_cookie_policy(200u16, "text/plain", "sid", "abc", "/app", "example.test", 60i64, 0u32, 1u32, response_body, false, response)
+    if response_length == 0usize { return 9 }
+    if !read_response_cookie_scope(response, response_length, parsed_name, 8usize, parsed_value, 16usize, parsed_domain, 32usize, parsed_path, 32usize, parsed_name_length, parsed_value_length, parsed_domain_length, parsed_path_length, parsed_max_age, parsed_flags, response_scratch) { return 10 }
+    if parsed_name_length[0] != 3usize { return 11 }
+    if parsed_value_length[0] != 3usize { return 12 }
+    if parsed_domain_length[0] != 12usize { return 13 }
+    if parsed_path_length[0] != 4usize { return 14 }
+    if parsed_domain[0] != 101u8 { return 15 }
+    if parsed_domain[11] != 116u8 { return 16 }
+    if parsed_path[0] != 47u8 { return 17 }
+    if parsed_path[3] != 112u8 { return 18 }
+    if parsed_max_age[0] != 60i64 { return 19 }
+    if parsed_flags[0] != 1u32 { return 20 }
+
+    if !clear(2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) { return 21 }
+    if put(sid_name, 3usize, 3usize, sid_value, 3usize, 3usize, 0i64, 0u32, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) != 0 { return 22 }
+    if put(theme_name, 5usize, 5usize, theme_value, 4usize, 4usize, 0i64, 1u32, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) != 1 { return 23 }
+    domains[0] = 101u8
+    domains[1] = 120u8
+    domains[2] = 97u8
+    domains[3] = 109u8
+    domains[4] = 112u8
+    domains[5] = 108u8
+    domains[6] = 101u8
+    domains[7] = 46u8
+    domains[8] = 116u8
+    domains[9] = 101u8
+    domains[10] = 115u8
+    domains[11] = 116u8
+    domains[16] = 111u8
+    domains[17] = 116u8
+    domains[18] = 104u8
+    domains[19] = 101u8
+    domains[20] = 114u8
+    domains[21] = 46u8
+    domains[22] = 116u8
+    domains[23] = 101u8
+    domains[24] = 115u8
+    domains[25] = 116u8
+    paths[0] = 47u8
+    paths[1] = 97u8
+    paths[2] = 112u8
+    paths[3] = 112u8
+    paths[16] = 47u8
+    domain_lengths[0] = 12usize
+    domain_lengths[1] = 10usize
+    path_lengths[0] = 4usize
+    path_lengths[1] = 1usize
+    let scoped_length = write_request_header_scoped(100i64, true, host_subdomain, 16usize, path_report, 11usize, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, 16usize, 16usize, domains, 32usize, paths, 32usize, domain_lengths, 2usize, path_lengths, 2usize, scoped_output, 32usize)
+    if scoped_length != 17 { return 24 }
+    if scoped_output[8] != 115u8 { return 25 }
+    if scoped_output[12] != 97u8 { return 26 }
+    scoped_output[0] = 165u8
+    if write_request_header_scoped(100i64, true, host_subdomain, 16usize, path_apple, 6usize, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, 16usize, 16usize, domains, 32usize, paths, 32usize, domain_lengths, 2usize, path_lengths, 2usize, scoped_output, 32usize) != -2 { return 27 }
+    if scoped_output[0] != 165u8 { return 28 }
+    path_lengths[0] = 0usize
+    if write_request_header_scoped(100i64, true, host_subdomain, 16usize, path_report, 11usize, 2usize, 8usize, 16usize, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize, 16usize, 16usize, domains, 32usize, paths, 32usize, domain_lengths, 2usize, path_lengths, 2usize, scoped_output, 32usize) != -4 { return 29 }
+    if file_write_text("target/jadren/network-cookie-origin.ok", "exact=1\nsubdomain=1\npath_boundary=1\nsecure_filter=1\ninvalid_lengths=1\njar_scope=1\nparsed_scope=1\n") == 0usize { return 30 }
+    print("network cookie origin policy accepted bounded scope cases")
+    return 0
+}

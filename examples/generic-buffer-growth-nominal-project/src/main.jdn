@@ -1,0 +1,63 @@
+module generic_buffer_growth_nominal.main
+
+import jadren.core.collections.append_move_grow
+import jadren.core.collections.capacity
+import jadren.core.collections.clear_move
+import jadren.core.collections.create
+import jadren.core.collections.insert_move_from_grow
+import jadren.core.collections.length
+
+@repr(C)
+struct Row<T> {
+    id: Int32,
+    value: T
+}
+
+fn main() -> Int32 {
+    let created: Result<DynamicArray<Row<OwnedString>>, Int32> = create(1usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(rows) => {
+            let first_created: Result<OwnedString, Int32> = string_owned_from("first")
+            let second_created: Result<OwnedString, Int32> = string_owned_from("second")
+            let middle_created: Result<OwnedString, Int32> = string_owned_from("middle")
+            match first_created {
+                Ok(first_value) => {
+                    let first: Row<OwnedString> = Row { id: 1, value: first_value }
+                    if !append_move_grow(rows, first) { result_code = 1 }
+                }
+                Error(status) => { result_code = status }
+            }
+            match second_created {
+                Ok(second_value) => {
+                    let second: Row<OwnedString> = Row { id: 2, value: second_value }
+                    let initial_capacity: UIntSize = capacity(rows)
+                    if !append_move_grow(rows, second) { result_code = 2 }
+                    if capacity(rows) <= initial_capacity { result_code = 3 }
+                }
+                Error(status) => { result_code = status }
+            }
+            if length(rows) != 2usize { result_code = 4 }
+            if rows[0].id != 1 { result_code = 5 }
+            if rows[1].id != 2 { result_code = 6 }
+            if string_owned_length(rows[0].value) != 5usize { result_code = 7 }
+            if string_owned_length(rows[1].value) != 6usize { result_code = 8 }
+            match middle_created {
+                Ok(middle_value) => {
+                    let middle: Row<OwnedString> = Row { id: 3, value: middle_value }
+                    if !insert_move_from_grow(rows, 1usize, middle) { result_code = 9 }
+                }
+                Error(status) => { result_code = status }
+            }
+            if length(rows) != 3usize { result_code = 10 }
+            if rows[0].id != 1 { result_code = 11 }
+            if rows[1].id != 3 { result_code = 12 }
+            if rows[2].id != 2 { result_code = 13 }
+            if string_owned_length(rows[1].value) != 6usize { result_code = 14 }
+            if !clear_move(rows) { result_code = 15 }
+            if length(rows) != 0usize { result_code = 16 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

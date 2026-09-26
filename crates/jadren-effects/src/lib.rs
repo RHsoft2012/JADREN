@@ -602,40 +602,70 @@ impl Collector<'_> {
             | "net_reactor_event_operation"
             | "net_reactor_event_bytes"
             | "http_session_open"
+            | "http_session_open_chunked"
             | "http_session_open_tls"
+            | "http_session_open_tls_chunked"
+            | "http_session_accept"
+            | "http_session_receive_request"
+            | "http_session_send"
+            | "http_session_send_prefix"
+            | "http_session_close_connection"
             | "http_session_step"
             | "http_session_close"
             | "net_tls_open_client"
             | "net_tls_open_server"
+            | "net_tls_open_server_paths"
             | "net_tls_step"
             | "net_tls_state"
             | "net_tls_error"
             | "net_tls_send"
+            | "net_tls_send_prefix"
+            | "net_tls_send_all_prefix"
             | "net_tls_receive"
             | "net_tls_close"
             | "file_exists"
+            | "file_exists_path"
+            | "file_path_valid"
             | "file_size"
+            | "file_size_path"
+            | "file_mtime_unix_nanos_path"
             | "file_read"
             | "file_read_at"
             | "file_read_text"
             | "file_read_exact"
             | "file_read_text_exact"
             | "file_write_at"
+            | "file_write_prefix"
+            | "file_write_prefix_path"
             | "file_write"
             | "file_write_text"
             | "file_append_text"
             | "file_append"
             | "file_delete"
+            | "file_delete_path"
             | "file_flush"
+            | "file_flush_path"
+            | "directory_flush"
             | "file_lock"
+            | "file_lock_path"
+            | "file_lock_path_retry"
             | "file_unlock"
             | "file_replace_atomic"
+            | "file_replace_atomic_paths"
+            | "file_write_atomic"
+            | "file_write_atomic_durable"
             | "file_copy"
             | "directory_exists"
             | "directory_create"
             | "directory_delete"
             | "directory_list"
-            | "directory_list_ex" => {
+            | "directory_list_ex"
+            | "directory_list_ex_exact"
+            | "ui_file_open_exact"
+            | "ui_file_open_extension_exact"
+            | "ui_file_save_exact"
+            | "ui_file_save_suggested_exact"
+            | "ui_file_save_extension_exact" => {
                 // Socket operations are explicit blocking I/O. They are not
                 // allowed to masquerade as pure calls in realtime/noalloc
                 // paths; callers can isolate them behind an application task.
@@ -647,10 +677,34 @@ impl Collector<'_> {
             | "app_scheduler_set"
             | "app_scheduler_cancel"
             | "app_scheduler_poll"
+            | "app_scheduler_poll_exact"
+            | "app_scheduler_next_due_exact"
+            | "app_scheduler_write_exact"
+            | "app_scheduler_load_exact"
             | "app_scheduler_count" => {
                 // The application timer queue is a fixed-size, caller-driven
                 // runtime object. It mutates bounded state but never allocates,
                 // blocks, starts a worker or crosses an unknown FFI boundary.
+                self.effects.insert(EffectKind::Write);
+                return;
+            }
+            "ui_event_queue_clear"
+            | "ui_event_queue_count"
+            | "ui_event_queue_capacity"
+            | "ui_event_queue_dropped"
+            | "ui_event_queue_peek_exact"
+            | "ui_event_queue_poll_exact"
+            | "ui_event_queue_poll_batch_exact" => {
+                // The native UI event FIFO is fixed-size and caller-driven.
+                // Polling consumes only after a complete capacity preflight;
+                // no allocation, worker or hidden reactive loop is involved.
+                self.effects.insert(EffectKind::Write);
+                return;
+            }
+            "app_data_snapshot_length" | "app_data_snapshot_length_if_revision" => {
+                // Sizing serializes the bounded model into native scratch
+                // storage but does not mutate the live state or caller-owned
+                // memory. Keep it explicit and allocation-free.
                 self.effects.insert(EffectKind::Write);
                 return;
             }
@@ -662,8 +716,16 @@ impl Collector<'_> {
             | "http_router_remove_prefix"
             | "http_router_respond"
             | "http_router_respond_prefix"
+            | "http_router_respond_chunked"
+            | "http_router_respond_chunked_prefix"
             | "http_router_count"
+            | "http_response_write_chunked"
+            | "http_response_write_chunked_prefix"
+            | "http_response_write_chunked_header"
+            | "http_response_write_chunk"
+            | "http_response_write_chunk_prefix"
             | "http_response_write_ex"
+            | "http_response_write_prefix_ex"
             | "http_response_write_header"
             | "http_response_write_header_ex"
             | "http_response_write_cookie"
@@ -683,6 +745,40 @@ impl Collector<'_> {
                 self.effects.insert(EffectKind::Write);
                 return;
             }
+            "app_state_read_key_exact" => {
+                // Key enumeration is a bounded read from process-local state;
+                // the exact form writes only caller-owned output slices.
+                self.effects.insert(EffectKind::Write);
+                return;
+            }
+            "ui_input_bind_app_state_exact" => {
+                // Exact input binding mutates only the bounded retained UI
+                // binding and its process-local app_state value. It does not
+                // allocate, block or perform file/network I/O.
+                self.effects.insert(EffectKind::Write);
+                return;
+            }
+            "ui_input_refresh_app_state_exact" => {
+                // Exact refresh reads bounded app_state and mutates only the
+                // retained input projection; no allocation or blocking I/O.
+                self.effects.insert(EffectKind::Write);
+                return;
+            }
+            "ui_checkbox_refresh_app_state_exact"
+            | "ui_select_refresh_app_state_exact"
+            | "ui_list_refresh_app_state_exact"
+            | "ui_table_refresh_app_state_exact" => {
+                // Exact refresh reads one typed app_state slot and mutates
+                // only the retained projection after the read succeeds.
+                self.effects.insert(EffectKind::Write);
+                return;
+            }
+            "ui_app_bind_app_state_exact" | "ui_app_refresh_app_state_exact" => {
+                // Exact retained binding/refresh performs only bounded
+                // app_state reads and retained-projection/binding writes.
+                self.effects.insert(EffectKind::Write);
+                return;
+            }
             "http_request_consume_prefix" => {
                 // Consuming a parsed frame shifts only the remaining bytes in
                 // the caller-owned request buffer; it never performs I/O or allocation.
@@ -692,6 +788,9 @@ impl Collector<'_> {
             "http_request_is_complete_prefix"
             | "http_request_frame_length_prefix"
             | "http_request_keep_alive"
+            | "http_request_target_decode_exact"
+            | "http_form_param_exact_prefix"
+            | "http_multipart_part_exact_prefix"
             | "http_route_match_prefix"
             | "http_response_status"
             | "http_response_status_prefix"
@@ -704,16 +803,28 @@ impl Collector<'_> {
                 // bounded contract and have no I/O or mutable runtime state.
                 return;
             }
-            "app_table_export_csv" => {
-                // CSV generation reads the bounded process-local table and
+            "app_list_export_csv"
+            | "app_list_export_csv_exact"
+            | "app_list_export_json_exact"
+            | "app_table_export_csv"
+            | "app_table_export_csv_exact"
+            | "app_table_export_json_exact" => {
+                // Bounded CSV/JSON generation reads the process-local list/table and
                 // writes only the caller-owned output slice. It performs no
                 // file I/O, allocation, blocking, or unknown FFI.
                 self.effects.insert(EffectKind::Write);
                 return;
             }
-            "app_table_import_csv" => {
-                // CSV parsing reads only the caller-owned input slice and
-                // replaces one bounded process-local table after validation.
+            "app_table_import_csv"
+            | "app_table_import_csv_if_revision"
+            | "app_list_import_csv"
+            | "app_list_import_csv_if_revision"
+            | "app_list_import_json_exact"
+            | "app_list_import_json_exact_if_revision"
+            | "app_table_import_json_exact"
+            | "app_table_import_json_exact_if_revision" => {
+                // Bounded parsing reads only the caller-owned input slice and
+                // replaces one bounded process-local collection after validation.
                 // It performs no file I/O, allocation, blocking, or unknown FFI.
                 self.effects.insert(EffectKind::Read);
                 self.effects.insert(EffectKind::Write);
@@ -721,14 +832,37 @@ impl Collector<'_> {
             }
             "app_state_save"
             | "app_state_save_atomic"
+            | "app_state_save_atomic_durable"
+            | "app_state_save_atomic_durable_if_revision"
             | "app_state_load"
             | "app_list_save"
             | "app_list_save_atomic"
+            | "app_list_export_csv_file_durable"
+            | "app_list_export_csv_file_durable_if_revision"
+            | "app_list_export_json_file_durable"
+            | "app_list_export_json_file_durable_if_revision"
             | "app_list_load"
+            | "app_list_import_json_file"
+            | "app_list_import_json_file_if_revision"
+            | "app_list_import_csv_file"
+            | "app_list_import_csv_file_if_revision"
             | "app_table_save"
             | "app_table_save_atomic"
+            | "app_table_export_csv_file_durable"
+            | "app_table_export_csv_file_durable_if_revision"
+            | "app_table_export_json_file_durable"
+            | "app_table_export_json_file_durable_if_revision"
             | "app_table_load"
+            | "app_table_import_csv_file"
+            | "app_table_import_csv_file_if_revision"
+            | "app_table_import_json_file"
+            | "app_table_import_json_file_if_revision"
             | "app_data_tx_commit_durable"
+            | "app_data_tx_commit_durable_retry"
+            | "app_data_tx_commit_durable_retry_if_revision"
+            | "app_data_tx_commit_durable_if_revision"
+            | "app_data_tx_commit_durable_directory"
+            | "app_data_tx_commit_durable_directory_if_revision"
             | "app_data_journal_append"
             | "app_data_journal_append_durable"
             | "app_data_journal_recover"
@@ -931,7 +1065,7 @@ mod tests {
         let id = sources
             .add(
                 "http-session-effects.jdn",
-                "module test; fn server() -> Bool { let listener: UIntSize = net_tcp_listen(38125u16); let session: UIntSize = http_session_open(listener, 2u32, 1024u32, 1024u32); let tls_session: UIntSize = http_session_open_tls(listener, 2u32, 1024u32, 1024u32, \"cert.pem\", \"key.pem\"); let _state: UInt32 = http_session_step(session, 1u32); let closed: Bool = http_session_close(session); let tls_closed: Bool = http_session_close(tls_session); return closed && tls_closed }",
+                "module test; fn server() -> Bool { let listener: UIntSize = net_tcp_listen(38125u16); let session: UIntSize = http_session_open(listener, 2u32, 1024u32, 1024u32); let chunked_session: UIntSize = http_session_open_chunked(listener, 2u32, 1024u32, 1024u32); let tls_session: UIntSize = http_session_open_tls(listener, 2u32, 1024u32, 1024u32, \"cert.pem\", \"key.pem\"); let tls_chunked_session: UIntSize = http_session_open_tls_chunked(listener, 2u32, 1024u32, 1024u32, \"cert.pem\", \"key.pem\"); let _state: UInt32 = http_session_step(session, 1u32); let closed: Bool = http_session_close(session); let chunked_closed: Bool = http_session_close(chunked_session); let tls_closed: Bool = http_session_close(tls_session); let tls_chunked_closed: Bool = http_session_close(tls_chunked_session); return closed && chunked_closed && tls_closed && tls_chunked_closed }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -1047,7 +1181,7 @@ mod tests {
         let id = sources
             .add(
                 "app-list-effects.jdn",
-                "module test; fn persist() -> Bool { return app_list_save_atomic(0, \"target/list.tmp\", \"target/list.json\") }",
+                "module test; fn persist() -> Bool { let saved: Bool = app_list_save_atomic(0, \"target/list.tmp\", \"target/list.json\"); let list_csv: Bool = app_list_export_csv_file_durable(0, \"target/list.csv\", \"target/list.csv.tmp\"); let list_csv_guarded: Bool = app_list_export_csv_file_durable_if_revision(0, \"target/list.csv\", \"target/list.csv.tmp\", 0u64); let list_json_guarded: Bool = app_list_export_json_file_durable_if_revision(0, \"target/list.json\", \"target/list.json.tmp\", 0u64); let table_csv: Bool = app_table_export_csv_file_durable(0, \"target/table.csv\", \"target/table.csv.tmp\"); let table_csv_guarded: Bool = app_table_export_csv_file_durable_if_revision(0, \"target/table.csv\", \"target/table.csv.tmp\", 0u64); let table_json_guarded: Bool = app_table_export_json_file_durable_if_revision(0, \"target/table.json\", \"target/table.json.tmp\", 0u64); let list_import: Bool = app_list_import_json_file_if_revision(0, \"target/list.json\", 0u64); let list_csv_import: Bool = app_list_import_csv_file_if_revision(0, \"target/list.csv\", 0u64); let table_import: Bool = app_table_import_json_file_if_revision(0, \"target/table.json\", 0u64); let durable: Bool = app_data_tx_commit_durable_if_revision(\"target/data.tmp\", \"target/data.json\", \"target/data.lock\", 0u64); let retry: Bool = app_data_tx_commit_durable_retry(\"target/data.retry.tmp\", \"target/data.retry.json\", \"target/data.retry.lock\", 3usize, 20usize); let retry_revision: Bool = app_data_tx_commit_durable_retry_if_revision(\"target/data.retry-revision.tmp\", \"target/data.retry-revision.json\", \"target/data.retry-revision.lock\", 0u64, 3usize, 20usize); return saved && list_csv && list_csv_guarded && list_json_guarded && table_csv && table_csv_guarded && table_json_guarded && list_import && list_csv_import && table_import && durable && retry && retry_revision }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -1076,7 +1210,7 @@ mod tests {
         let id = sources
             .add(
                 "file-directory-effects.jdn",
-                "module test; fn persist() -> Bool { var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; file_read_at(\"target/source\", 0usize, output); file_write_at(\"target/source\", 0usize, output); file_copy(\"target/source\", \"target/target\"); let lock: UIntSize = file_lock(\"target/cache.lock\"); let unlocked: Bool = file_unlock(lock); directory_create(\"target/cache\") }",
+                "module test; fn persist() -> Bool { var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; var target: [UInt8; 6] = [116u8, 97u8, 114u8, 103u8, 101u8, 116u8]; file_read_at(\"target/source\", 0usize, output); let modified: UInt64 = file_mtime_unix_nanos_path(path, 4usize); let prefix_written: UIntSize = file_write_prefix_path(path, 4usize, output, 4usize); let flushed: Bool = file_flush_path(path, 4usize); let replaced: Bool = file_replace_atomic_paths(path, 4usize, target, 6usize); file_write_at(\"target/source\", 0usize, output); file_copy(\"target/source\", \"target/target\"); let lock: UIntSize = file_lock(\"target/cache.lock\"); let path_lock: UIntSize = file_lock_path(path, 4usize); let retry_lock: UIntSize = file_lock_path_retry(path, 4usize, 2usize, 1usize); let path_unlocked: Bool = file_unlock(path_lock); let retry_unlocked: Bool = file_unlock(retry_lock); let unlocked: Bool = file_unlock(lock); directory_create(\"target/cache\"); if modified == 0u64 || prefix_written != 4usize || !flushed || !replaced || !path_unlocked || !retry_unlocked { return false } directory_flush(\"target/cache\") }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -1139,7 +1273,7 @@ mod tests {
         let id = sources
             .add(
                 "app-table-csv-import-effects.jdn",
-                "module test; @noalloc @realtime fn probe(input: read Slice<UInt8>, length: UIntSize) { app_table_import_csv(0, input, length) }",
+                "module test; @noalloc @realtime fn probe(input: read Slice<UInt8>, length: UIntSize) { app_table_import_csv(0, input, length); app_table_import_csv_if_revision(0, input, length, 0u64) }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -1204,7 +1338,7 @@ mod tests {
         let id = sources
             .add(
                 "scheduler-effects.jdn",
-                "module test; @noalloc @realtime fn probe(now: Int64, output: write Slice<Int32>) { app_scheduler_set(7, now, 60u64); app_scheduler_poll(now, output); app_scheduler_cancel(7) }",
+                "module test; @noalloc @realtime fn probe(now: Int64, output: write Slice<Int32>, length: write Slice<UIntSize>, next_due: write Slice<Int64>, has_due: write Slice<Bool>, snapshot: write Slice<UInt8>, snapshot_length: write Slice<UIntSize>, input: read Slice<UInt8>) { app_scheduler_set(7, now, 60u64); app_scheduler_poll(now, output); app_scheduler_poll_exact(now, output, length); app_scheduler_next_due_exact(next_due, has_due); app_scheduler_write_exact(snapshot, snapshot_length); app_scheduler_load_exact(input, 0usize); app_scheduler_cancel(7) }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -1232,12 +1366,78 @@ mod tests {
     }
 
     #[test]
+    fn bounded_ui_event_queue_is_nonblocking_for_noalloc_and_realtime() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "ui-event-queue-effects.jdn",
+                "module test; @noalloc @realtime fn probe(output: write Slice<Int32>, length: write Slice<UIntSize>) { ui_event_queue_clear(); ui_event_queue_count(); ui_event_queue_capacity(); ui_event_queue_dropped(); ui_event_queue_peek_exact(output, length); ui_event_queue_poll_exact(output, length); ui_event_queue_poll_batch_exact(output, 1usize, length) }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
+        let resolution = resolve(source, &parsed.file);
+        assert!(!resolution.has_errors(), "{:?}", resolution.diagnostics);
+        let checked = check_types(source, &parsed.file, &resolution);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let lowered = lower_hir(source, &parsed.file, &resolution, &checked);
+        assert!(lowered.diagnostics.is_empty(), "{:?}", lowered.diagnostics);
+        let effects = infer_effects(&lowered.module, &resolution, &checked.types);
+        let errors = check_effect_constraints(&lowered.module, &effects);
+        assert!(errors.is_empty(), "{:?}", errors);
+        let probe = effects
+            .functions
+            .iter()
+            .find(|function| function.name == "probe")
+            .expect("event queue effect summary");
+        assert!(probe.inferred.contains(EffectKind::Write));
+        assert!(!probe.inferred.contains(EffectKind::Allocate));
+        assert!(!probe.inferred.contains(EffectKind::Blocking));
+        assert!(!probe.inferred.contains(EffectKind::Unsafe));
+    }
+
+    #[test]
+    fn bounded_app_data_snapshot_sizing_is_nonblocking_for_noalloc_and_realtime() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "app-data-snapshot-length-effects.jdn",
+                "module test; @noalloc @realtime fn probe(revision: UInt64) -> UIntSize { let current: UIntSize = app_data_snapshot_length(); let guarded: UIntSize = app_data_snapshot_length_if_revision(revision); return current + guarded }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
+        let resolution = resolve(source, &parsed.file);
+        assert!(!resolution.has_errors(), "{:?}", resolution.diagnostics);
+        let checked = check_types(source, &parsed.file, &resolution);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let lowered = lower_hir(source, &parsed.file, &resolution, &checked);
+        assert!(lowered.diagnostics.is_empty(), "{:?}", lowered.diagnostics);
+        let effects = infer_effects(&lowered.module, &resolution, &checked.types);
+        let errors = check_effect_constraints(&lowered.module, &effects);
+        assert!(errors.is_empty(), "{:?}", errors);
+        let probe = effects
+            .functions
+            .iter()
+            .find(|function| function.name == "probe")
+            .expect("app-data snapshot sizing effect summary");
+        assert!(probe.inferred.contains(EffectKind::Write));
+        assert!(!probe.inferred.contains(EffectKind::Allocate));
+        assert!(!probe.inferred.contains(EffectKind::Blocking));
+        assert!(!probe.inferred.contains(EffectKind::Unsafe));
+    }
+
+    #[test]
     fn bounded_http_router_is_nonblocking_for_noalloc_and_realtime() {
         let mut sources = SourceManager::new();
         let id = sources
             .add(
                 "http-router-effects.jdn",
-                "module test; @noalloc @realtime fn probe(input: read Slice<UInt8>, output: write Slice<UInt8>) { http_router_clear(); http_router_add(\"GET\", \"/\", 200u16, \"text/plain\", input); http_router_add_exact(\"GET\", \"/exact\", 200u16, \"text/plain\", input, 1usize); http_router_add_prefix(\"GET\", \"/api/\", 200u16, \"text/plain\", input); http_router_remove(\"GET\", \"/\"); http_router_remove_prefix(\"GET\", \"/api/\"); http_router_respond(input, output); http_router_respond_prefix(input, 1usize, output); http_response_write_ex(200u16, \"text/plain\", input, true, output); http_request_keep_alive(input); http_response_status(input); http_response_status_prefix(input, 1usize); http_response_header(input, \"Content-Type\", output); http_response_header_prefix(input, 1usize, \"Content-Type\", output); http_response_body(input, output); http_response_body_prefix(input, 1usize, output); http_router_count() }",
+                "module test; @noalloc @realtime fn probe(input: read Slice<UInt8>, output: write Slice<UInt8>) { http_router_clear(); http_router_add(\"GET\", \"/\", 200u16, \"text/plain\", input); http_router_add_exact(\"GET\", \"/exact\", 200u16, \"text/plain\", input, 1usize); http_router_add_prefix(\"GET\", \"/api/\", 200u16, \"text/plain\", input); http_router_remove(\"GET\", \"/\"); http_router_remove_prefix(\"GET\", \"/api/\"); http_router_respond(input, output); http_router_respond_prefix(input, 1usize, output); http_router_respond_chunked(input, output); http_router_respond_chunked_prefix(input, 1usize, output); http_response_write_ex(200u16, \"text/plain\", input, true, output); http_response_write_prefix_ex(200u16, \"text/plain\", input, 1usize, true, output); http_response_write_chunked_header(200u16, \"text/plain\", output); http_response_write_chunk(input, true, output); http_response_write_chunk_prefix(input, 1usize, true, output); http_request_keep_alive(input); http_response_status(input); http_response_status_prefix(input, 1usize); http_response_header(input, \"Content-Type\", output); http_response_header_prefix(input, 1usize, \"Content-Type\", output); http_response_body(input, output); http_response_body_prefix(input, 1usize, output); http_router_count() }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");

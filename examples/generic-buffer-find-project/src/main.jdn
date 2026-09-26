@@ -1,0 +1,98 @@
+module generic_buffer_find.main
+import jadren.core.collections.append
+import jadren.core.collections.count
+import jadren.core.collections.contains
+import jadren.core.collections.create
+import jadren.core.collections.find
+import jadren.core.collections.length
+
+fn main() -> Int32 {
+    let created: Result<Buffer<Int32>, Int32> = create(4usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            if ! append(values, 7) {
+                result_code = 1
+            }
+            if ! append(values, 3) {
+                result_code = 2
+            }
+            if ! append(values, 7) {
+                result_code = 3
+            }
+            if find(values, 7, 0usize) != 0 {
+                result_code = 4
+            }
+            if find(values, 7, 1usize) != 2 {
+                result_code = 5
+            }
+            if find(values, 7, 3usize) != -1 {
+                result_code = 6
+            }
+            if find(values, 99, 0usize) != -1 {
+                result_code = 7
+            }
+            if count(values, 7, 0usize) != 2usize {
+                result_code = 13
+            }
+            if count(values, 7, 1usize) != 1usize {
+                result_code = 14
+            }
+            if count(values, 7, 3usize) != 0usize {
+                result_code = 15
+            }
+            if ! contains(values, 7, 0usize) {
+                result_code = 18
+            }
+            if ! contains(values, 7, 1usize) {
+                result_code = 19
+            }
+            if contains(values, 3, 3usize) {
+                result_code = 20
+            }
+            if contains(values, 99, 0usize) {
+                result_code = 21
+            }
+            if length(values) != 3usize {
+                result_code = 8
+            }
+        }
+        Error(status) => {
+            result_code = status
+        }
+    }
+
+    let bools: Result<Buffer<Bool>, Int32> = create(3usize)
+    match bools {
+        Ok(values) => {
+            if ! append(values, false) {
+                result_code = 9
+            }
+            if ! append(values, true) {
+                result_code = 10
+            }
+            if find(values, true, 0usize) != 1 {
+                result_code = 11
+            }
+            if find(values, false, 1usize) != -1 {
+                result_code = 12
+            }
+            if count(values, true, 0usize) != 1usize {
+                result_code = 16
+            }
+            if count(values, false, 1usize) != 0usize {
+                result_code = 17
+            }
+            if ! contains(values, true, 0usize) {
+                result_code = 22
+            }
+            if contains(values, false, 1usize) {
+                result_code = 23
+            }
+        }
+        Error(status) => {
+            result_code = status
+        }
+    }
+    return result_code
+}

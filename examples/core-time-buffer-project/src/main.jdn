@@ -1,0 +1,41 @@
+module core_time_buffer.main
+import jadren.core.time.utc_offset_parts_buffer
+import jadren.core.time.utc_parts_buffer
+fn main() -> Int32 {
+    var status: Int32 = 0
+    let created: Result<Buffer<Int32>,
+    Int32> = buffer_create(6usize)
+    match created {
+        Error(_) => {
+            status = 1
+        }
+        Ok(output) => {
+            if ! buffer_resize(output,
+            6usize) {
+                status = 2
+            } else if utc_parts_buffer(0i64,
+            output,
+            5usize) {
+                status = 3
+            } else if ! utc_parts_buffer(0i64,
+            output,
+            6usize) {
+                status = 4
+            } else if output[0] != 1970 {
+                status = 5
+            } else if output[1] != 1 {
+                status = 5
+            } else if output[2] != 1 {
+                status = 5
+            } else if ! utc_offset_parts_buffer(0i64,
+            60,
+            output,
+            6usize) {
+                status = 6
+            } else if output[3] != 1 {
+                status = 7
+            }
+        }
+    }
+    return status
+}

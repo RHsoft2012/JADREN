@@ -1,0 +1,82 @@
+module app_table_schema_buffer_read_project.main
+
+import jadren.app.table.append_row
+import jadren.app.table.read_column_name_exact_buffer
+import jadren.app.table.read_named_cell_exact_buffer
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_table_clear(0)
+    let output_created: Result<Buffer<UInt8>, Int32> = buffer_create(32usize)
+    var status: Int32 = 0
+    match output_created {
+        Error(error) => { status = error }
+        Ok(output) => {
+            if !buffer_resize(output, 32usize) { status = 1 }
+            if status == 0 { if !set_column_name(0, 0, "title") { status = 2 } }
+            if status == 0 { if !set_column_type(0, 0, 0) { status = 3 } }
+            if status == 0 { if !append_row(0) { status = 4 } }
+            if status == 0 { if !set_cell(0, 0, 0, "Jadren") { status = 5 } }
+
+            var length: [UIntSize; 1] = [700usize]
+            if status == 0 {
+                if !read_column_name_exact_buffer(0, 0, output, 32usize, length) { status = 6 }
+            }
+            if status == 0 { if length[0] != 5usize { status = 7 } }
+            if status == 0 { if output[0] != 116u8 { status = 8 } }
+            if status == 0 { if output[4] != 101u8 { status = 9 } }
+
+            if status == 0 {
+                length[0] = 701usize
+                if !read_named_cell_exact_buffer(0, 0, "title", output, 32usize, length) { status = 10 }
+            }
+            if status == 0 { if length[0] != 6usize { status = 11 } }
+            if status == 0 { if output[0] != 74u8 { status = 12 } }
+            if status == 0 { if output[5] != 110u8 { status = 13 } }
+
+            if status == 0 {
+                if !buffer_resize(output, 4usize) { status = 14 }
+            }
+            if status == 0 {
+                output[0] = 211u8
+                output[1] = 212u8
+                output[2] = 213u8
+                output[3] = 214u8
+                length[0] = 702usize
+                if read_named_cell_exact_buffer(0, 0, "title", output, 4usize, length) { status = 15 }
+            }
+            if status == 0 { if length[0] != 702usize { status = 16 } }
+            if status == 0 { if output[0] != 211u8 { status = 17 } }
+            if status == 0 { if output[3] != 214u8 { status = 18 } }
+
+            if status == 0 {
+                length[0] = 703usize
+                if read_column_name_exact_buffer(0, 0, output, 8usize, length) { status = 19 }
+            }
+            if status == 0 { if length[0] != 703usize { status = 20 } }
+            if status == 0 { if output[1] != 212u8 { status = 21 } }
+
+            if status == 0 {
+                if !buffer_resize(output, 32usize) { status = 22 }
+            }
+            if status == 0 {
+                output[0] = 221u8
+                output[1] = 222u8
+                length[0] = 704usize
+                if read_named_cell_exact_buffer(0, 0, "missing", output, 32usize, length) { status = 23 }
+            }
+            if status == 0 { if length[0] != 704usize { status = 24 } }
+            if status == 0 { if output[0] != 221u8 { status = 25 } }
+            if status == 0 { if output[1] != 222u8 { status = 26 } }
+        }
+    }
+    app_table_clear(0)
+    return status
+}

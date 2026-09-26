@@ -1,0 +1,50 @@
+module buffer_slice_view
+
+fn inspect(values: read Buffer<UInt8>) -> Int32 {
+    let view: read Slice<UInt8> = buffer_slice(values, 1usize, 2usize)
+    var status: Int32 = 0
+    var view_count: UIntSize = 0usize
+    for index in view.indices {
+        if index == 0usize {
+            if view[index] != 20u8 { status = 5 }
+        }
+        if index == 1usize {
+            if view[index] != 30u8 { status = 6 }
+        }
+        view_count = view_count + 1usize
+    }
+    if view_count != 2usize { status = 4 }
+    return status
+}
+
+fn inspect_invalid(other: read Buffer<UInt8>) -> Int32 {
+    let invalid: read Slice<UInt8> = buffer_slice(other, 1usize, 3usize)
+    var invalid_count: UIntSize = 0usize
+    for _index in invalid.indices { invalid_count = invalid_count + 1usize }
+    if invalid_count != 0usize { return 8 }
+    return 0
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(4usize)
+    var status: Int32 = 0
+    match created {
+        Ok(values) => {
+            if !buffer_append(values, 10u8) { status = 1 }
+            if !buffer_append(values, 20u8) { status = 2 }
+            if !buffer_append(values, 30u8) { status = 3 }
+            status = inspect(values)
+            let invalid_created: Result<Buffer<UInt8>, Int32> = buffer_create(3usize)
+            match invalid_created {
+                Ok(other) => {
+                    if !buffer_append(other, 1u8) { status = 7 }
+                    let invalid_status: Int32 = inspect_invalid(other)
+                    if invalid_status != 0 { status = invalid_status }
+                }
+                Error(error) => { status = error }
+            }
+        }
+        Error(error) => { status = error }
+    }
+    return status
+}

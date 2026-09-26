@@ -1,6 +1,5 @@
 module app_event_reducer_project.view
 
-import app_event_reducer_project.controller.handle
 import jadren.app.input.bind_checkbox_state
 import jadren.app.input.bind_select_state
 import jadren.app.input.bind_state
@@ -13,6 +12,7 @@ import jadren.app.ui.menu
 import jadren.app.ui.menu_item
 import jadren.app.ui.select
 import jadren.app.ui.select_option
+import jadren.app.ui.switch
 import jadren.app.ui.table
 import jadren.app.ui.table_cell
 import jadren.app.ui.table_column
@@ -21,7 +21,9 @@ import jadren.app.ui.text_input
 
 @export(name: "jadren_ui_on_click", abi: "C")
 pub fn on_click(event_id: Int32) -> Int32 {
-    return handle(event_id)
+    // The native callback only publishes the numeric event into the runtime
+    // FIFO.  The application owns batching and typed reduction explicitly.
+    return event_id
 }
 
 pub fn build(parent: Int32) -> Bool {
@@ -34,6 +36,9 @@ pub fn build(parent: Int32) -> Bool {
               0xFFFFFFu32, 0x168EF5u32, 8, 0) == 0 { return false }
     if checkbox(parent, "Completed", 8, 160, 36,
                 0x111827u32, 0x18C964u32, 8, 0, 0) == 0 { return false }
+    let compact_switch: Int32 = switch(parent, "Dark mode", 15, 160, 36,
+                                       0xF9FAFBu32, 0x2563EBu32, 18, 0, 0)
+    if compact_switch == 0 { return false }
     if text_input(parent, "Name", 9, 240, 36,
                   0x111827u32, 0xFFFFFFu32, 8, 1) == 0 { return false }
     let select_node: Int32 = select(parent, 10, 180, 36,

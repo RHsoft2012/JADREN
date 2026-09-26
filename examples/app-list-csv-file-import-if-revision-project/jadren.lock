@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "a7a962e985c5587b"
+
+[package]
+name = "app-list-csv-file-import-if-revision-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

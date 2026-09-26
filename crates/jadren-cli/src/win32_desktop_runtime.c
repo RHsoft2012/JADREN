@@ -18,6 +18,7 @@
 
 typedef unsigned int UINT;
 typedef unsigned long DWORD;
+typedef unsigned short WORD;
 typedef unsigned __int64 UINT_PTR;
 typedef int BOOL;
 typedef long LONG;
@@ -39,6 +40,9 @@ typedef HANDLE HRGN;
 typedef HANDLE GpImage;
 typedef HANDLE GpGraphics;
 typedef const wchar_t *LPCWSTR;
+typedef wchar_t *LPWSTR;
+
+#define JADREN_MAX_INPUT_APP_BINDINGS 16
 
 typedef struct JadrenString {
     const char *data;
@@ -111,6 +115,43 @@ typedef struct WNDCLASSEXW {
     LPCWSTR lpszClassName;
     HICON hIconSm;
 } WNDCLASSEXW;
+
+typedef struct OPENFILENAMEW {
+    DWORD lStructSize;
+    HWND hwndOwner;
+    HINSTANCE hInstance;
+    LPCWSTR lpstrFilter;
+    LPWSTR lpstrCustomFilter;
+    DWORD nMaxCustFilter;
+    DWORD nFilterIndex;
+    LPWSTR lpstrFile;
+    DWORD nMaxFile;
+    LPWSTR lpstrFileTitle;
+    DWORD nMaxFileTitle;
+    LPCWSTR lpstrInitialDir;
+    LPCWSTR lpstrTitle;
+    DWORD Flags;
+    WORD nFileOffset;
+    WORD nFileExtension;
+    LPCWSTR lpstrDefExt;
+    LPARAM lCustData;
+    void *lpfnHook;
+    LPCWSTR lpTemplateName;
+    void *pvReserved;
+    DWORD dwReserved;
+    DWORD FlagsEx;
+} OPENFILENAMEW;
+
+typedef struct BROWSEINFOW {
+    HWND hwndOwner;
+    const void *pidlRoot;
+    LPWSTR pszDisplayName;
+    LPCWSTR lpszTitle;
+    UINT ulFlags;
+    void *lpfn;
+    LPARAM lParam;
+    int iImage;
+} BROWSEINFOW;
 
 typedef struct INITCOMMONCONTROLSEX {
     DWORD dwSize;
@@ -246,6 +287,16 @@ typedef struct LayoutNode {
     LayoutChild children[24];
     int child_count;
 } LayoutNode;
+
+typedef struct ScrollInfo {
+    UINT cbSize;
+    UINT fMask;
+    int nMin;
+    int nMax;
+    UINT nPage;
+    int nPos;
+    int nTrackPos;
+} ScrollInfo;
 
 typedef struct InputSpec {
     wchar_t text[384];
@@ -480,7 +531,7 @@ typedef struct DesktopSpec {
     int list_count;
     TableSpec tables[4];
     int table_count;
-    InputAppBinding input_app_bindings[12];
+    InputAppBinding input_app_bindings[JADREN_MAX_INPUT_APP_BINDINGS];
     int input_app_binding_count;
     MenuSpec menus[8];
     int menu_count;
@@ -492,10 +543,23 @@ typedef struct DesktopSpec {
     wchar_t state_text[32][256];
     StateBinding state_bindings[64];
     int state_binding_count;
-    LayoutNode layouts[16];
+    /* Keep layout-node storage bounded, but large enough for a realistic
+     * settings panel with nested rows, route editors and lifecycle actions. */
+    LayoutNode layouts[32];
     int layout_count;
     int layout_stack[16];
     int layout_depth;
+    /* Retained application layouts may be taller than the native client
+     * area.  The runtime owns one deterministic vertical viewport for the
+     * root layout; controls remain ordinary child windows and are moved by
+     * the same layout pass when the offset changes. */
+    int scroll_offset_y;
+    int scroll_max_y;
+    int scroll_page_y;
+    int layout_extent_bottom;
+    int layout_origin_x;
+    int layout_origin_y;
+    BOOL layout_origin_set;
     /* Child creation can emit WM_COMMAND. Do not call Jadren before the
      * complete control tree exists and its source function has returned. */
     BOOL events_ready;
@@ -532,42 +596,143 @@ extern int app_list_count(int list_id);
 extern unsigned __int64 app_list_read_text(int list_id, int item_index,
                                            unsigned char *output_data,
                                            unsigned __int64 output_length);
+extern int app_list_filter_text(int source_list_id, int destination_list_id,
+                                const char *query_data,
+                                unsigned __int64 query_length);
+extern int app_list_filter_text_ex(int source_list_id, int destination_list_id,
+                                   const char *query_data,
+                                   unsigned __int64 query_length, int mode);
+extern int app_list_filter_text_if_revision(
+    int source_list_id, int destination_list_id, const char *query_data,
+    unsigned __int64 query_length, unsigned __int64 expected_revision);
+extern int app_list_filter_text_ex_if_revision(
+    int source_list_id, int destination_list_id, const char *query_data,
+    unsigned __int64 query_length, int mode,
+    unsigned __int64 expected_revision);
+extern int app_list_filter_callback(
+    int source_list_id, int destination_list_id,
+    unsigned char (*predicate)(int, int));
+extern int app_list_filter_callback_if_revision(
+    int source_list_id, int destination_list_id,
+    unsigned char (*predicate)(int, int), unsigned __int64 expected_revision);
+extern int app_list_page(int source_list_id, int destination_list_id,
+                         int start_index, int page_size);
+extern int app_list_page_if_revision(int source_list_id, int destination_list_id,
+                                     int start_index, int page_size,
+                                     unsigned __int64 expected_revision);
+extern int app_list_sort_text(int list_id, int descending);
 extern int app_table_row_count(int table_id);
 extern unsigned __int64 app_table_read_cell(int table_id, int row_index,
                                             int column_index,
                                             unsigned char *output_data,
                                             unsigned __int64 output_length);
+extern int app_table_page(int source_table_id, int destination_table_id,
+                          int start_row, int page_size);
+extern int app_table_page_if_revision(int source_table_id, int destination_table_id,
+                                      int start_row, int page_size,
+                                      unsigned __int64 expected_revision);
+extern int app_table_index_find_pair_text_if_revision(
+    int table_id, int first_column_index, int second_column_index,
+    const char *first_data, unsigned __int64 first_length,
+    const char *second_data, unsigned __int64 second_length,
+    unsigned __int64 expected_revision);
+extern int app_table_index_find_int_if_revision(
+    int table_id, int column_index, long long query,
+    unsigned __int64 expected_revision);
+extern int app_table_index_find_uint_if_revision(
+    int table_id, int column_index, unsigned __int64 query,
+    unsigned __int64 expected_revision);
+extern int app_table_index_find_float_if_revision(
+    int table_id, int column_index, double query,
+    unsigned __int64 expected_revision);
+extern int app_table_index_find_bool_if_revision(
+    int table_id, int column_index, unsigned char query,
+    unsigned __int64 expected_revision);
 extern int app_table_sort_text(int table_id, int column_index, int descending);
 extern int app_table_sort_int(int table_id, int column_index, int descending);
 extern int app_table_sort_uint(int table_id, int column_index, int descending);
 extern int app_table_sort_float(int table_id, int column_index, int descending);
 extern int app_table_sort_bool(int table_id, int column_index, int descending);
+extern int app_table_sort_text_if_revision(int table_id, int column_index,
+                                           int descending,
+                                           unsigned __int64 expected_revision);
+extern int app_table_sort_int_if_revision(int table_id, int column_index,
+                                          int descending,
+                                          unsigned __int64 expected_revision);
+extern int app_table_sort_uint_if_revision(int table_id, int column_index,
+                                           int descending,
+                                           unsigned __int64 expected_revision);
+extern int app_table_sort_float_if_revision(int table_id, int column_index,
+                                            int descending,
+                                            unsigned __int64 expected_revision);
+extern int app_table_sort_bool_if_revision(int table_id, int column_index,
+                                           int descending,
+                                           unsigned __int64 expected_revision);
 extern int app_table_filter_text(int source_table_id, int destination_table_id,
                                  int column_index, const char *query_data,
                                  unsigned __int64 query_length);
+extern int app_table_filter_text_if_revision(int source_table_id, int destination_table_id,
+                                             int column_index, const char *query_data,
+                                             unsigned __int64 query_length,
+                                             unsigned __int64 expected_revision);
 extern int app_table_filter_text_ex(int source_table_id, int destination_table_id,
                                     int column_index, const char *query_data,
                                     unsigned __int64 query_length, int mode);
+extern int app_table_filter_text_ex_if_revision(
+    int source_table_id, int destination_table_id, int column_index,
+    const char *query_data, unsigned __int64 query_length, int mode,
+    unsigned __int64 expected_revision);
 extern int app_table_filter_int(int source_table_id, int destination_table_id,
                                 int column_index, long long query);
+extern int app_table_filter_int_if_revision(int source_table_id, int destination_table_id,
+                                            int column_index, long long query,
+                                            unsigned __int64 expected_revision);
 extern int app_table_filter_uint(int source_table_id, int destination_table_id,
                                  int column_index, unsigned __int64 query);
+extern int app_table_filter_uint_if_revision(int source_table_id, int destination_table_id,
+                                             int column_index, unsigned __int64 query,
+                                             unsigned __int64 expected_revision);
 extern int app_table_filter_float(int source_table_id, int destination_table_id,
                                   int column_index, double query);
+extern int app_table_filter_float_if_revision(int source_table_id, int destination_table_id,
+                                              int column_index, double query,
+                                              unsigned __int64 expected_revision);
 extern int app_table_filter_bool(int source_table_id, int destination_table_id,
                                  int column_index, unsigned char query);
+extern int app_table_filter_bool_if_revision(int source_table_id, int destination_table_id,
+                                             int column_index, unsigned char query,
+                                             unsigned __int64 expected_revision);
+extern int app_table_filter_callback(
+    int source_table_id, int destination_table_id,
+    unsigned char (*predicate)(int, int));
+extern int app_table_filter_callback_if_revision(
+    int source_table_id, int destination_table_id,
+    unsigned char (*predicate)(int, int), unsigned __int64 expected_revision);
 extern int app_state_set_text(const char *key_data, unsigned __int64 key_length,
                               const char *value_data, unsigned __int64 value_length);
 extern unsigned __int64 app_state_read_text(const char *key_data,
                                             unsigned __int64 key_length,
                                             unsigned char *output_data,
                                             unsigned __int64 output_length);
+extern int app_state_read_text_exact(const char *key_data,
+                                     unsigned __int64 key_length,
+                                     unsigned char *output_data,
+                                     unsigned __int64 output_length,
+                                     unsigned __int64 *output_text_length,
+                                     unsigned __int64 output_text_length_capacity);
+extern unsigned __int64 app_data_revision(void);
 extern int app_state_set_bool(const char *key_data, unsigned __int64 key_length,
                               unsigned char value);
 extern int app_state_get_bool(const char *key_data, unsigned __int64 key_length);
+extern int app_state_read_bool(const char *key_data, unsigned __int64 key_length,
+                               unsigned char *output_data,
+                               unsigned __int64 output_length);
 extern int app_state_set_int(const char *key_data, unsigned __int64 key_length,
                              long long value);
 extern long long app_state_get_int(const char *key_data, unsigned __int64 key_length);
+extern int app_state_read_int(const char *key_data, unsigned __int64 key_length,
+                              long long *output_data,
+                              unsigned __int64 output_length);
 #endif
 
 extern int MultiByteToWideChar(UINT code_page, DWORD flags, const char *source,
@@ -575,6 +740,12 @@ extern int MultiByteToWideChar(UINT code_page, DWORD flags, const char *source,
 extern int WideCharToMultiByte(UINT code_page, DWORD flags, const wchar_t *source,
                                int source_length, char *target, int target_length,
                                const char *default_character, BOOL *used_default_character);
+extern DWORD GetFileAttributesW(LPCWSTR path);
+extern BOOL GetOpenFileNameW(OPENFILENAMEW *dialog);
+extern BOOL GetSaveFileNameW(OPENFILENAMEW *dialog);
+extern void *SHBrowseForFolderW(BROWSEINFOW *browse);
+extern BOOL SHGetPathFromIDListW(const void *pidl, LPWSTR path);
+extern void CoTaskMemFree(void *memory);
 extern HCURSOR LoadCursorW(HINSTANCE instance, LPCWSTR cursor_name);
 extern HMENU CreatePopupMenu(void);
 extern BOOL AppendMenuW(HMENU menu, UINT flags, UINT_PTR identifier, LPCWSTR text);
@@ -607,6 +778,8 @@ extern BOOL RedrawWindow(HWND window, const RECT *update_rectangle, HRGN update_
 extern BOOL SetForegroundWindow(HWND window);
 extern BOOL SetWindowPos(HWND window, HWND insert_after, int x, int y,
                          int width, int height, UINT flags);
+extern int SetScrollInfo(HWND window, int bar, const ScrollInfo *info, BOOL redraw);
+extern BOOL ShowScrollBar(HWND window, UINT bar, BOOL show);
 extern BOOL SetWindowTextW(HWND window, LPCWSTR text);
 extern LRESULT SendMessageW(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 extern int SetWindowRgn(HWND window, HRGN region, BOOL redraw);
@@ -655,6 +828,8 @@ static void sync_app_bindings_from_native(void);
 
 enum {
     CP_UTF8 = 65001,
+    FILE_ATTRIBUTE_DIRECTORY = 0x00000010U,
+    INVALID_FILE_ATTRIBUTES = 0xFFFFFFFFU,
     WM_COMMAND = 0x0111,
     WM_NOTIFY = 0x004E,
     WM_CANCELMODE = 0x001F,
@@ -665,6 +840,8 @@ enum {
     WM_DESTROY = 0x0002,
     WM_PAINT = 0x000F,
     WM_DRAWITEM = 0x002B,
+    WM_VSCROLL = 0x0115,
+    WM_MOUSEWHEEL = 0x020A,
     WM_GETMINMAXINFO = 0x0024,
     WM_LBUTTONDOWN = 0x0201,
     WM_LBUTTONUP = 0x0202,
@@ -770,6 +947,20 @@ enum {
     UI_ALIGN_CENTER = 1,
     UI_ALIGN_END = 2,
     SIZE_MINIMIZED = 1,
+    SB_VERT = 1,
+    SB_LINEUP = 0,
+    SB_LINEDOWN = 1,
+    SB_PAGEUP = 2,
+    SB_PAGEDOWN = 3,
+    SB_THUMBPOSITION = 4,
+    SB_THUMBTRACK = 5,
+    SB_TOP = 6,
+    SB_BOTTOM = 7,
+    SIF_RANGE = 0x0001,
+    SIF_PAGE = 0x0002,
+    SIF_POS = 0x0004,
+    SIF_TRACKPOS = 0x0010,
+    WHEEL_DELTA = 120,
     RDW_INVALIDATE = 0x0001,
     RDW_ERASE = 0x0004,
     RDW_ALLCHILDREN = 0x0080,
@@ -803,6 +994,44 @@ static DesktopSpec desktop;
 static int declared_theme_mode = 0;
 static int active_theme_mode = 0;
 static UINT_PTR gdiplus_token = 0;
+#define JADREN_UI_EVENT_QUEUE_CAPACITY 64
+static int jadren_ui_event_queue[JADREN_UI_EVENT_QUEUE_CAPACITY];
+static unsigned int jadren_ui_event_queue_head;
+static unsigned int jadren_ui_event_queue_count;
+static unsigned int jadren_ui_event_queue_dropped;
+
+static void jadren_ui_event_queue_clear_state(void) {
+    jadren_ui_event_queue_head = 0U;
+    jadren_ui_event_queue_count = 0U;
+    jadren_ui_event_queue_dropped = 0U;
+}
+
+static void jadren_enqueue_ui_event(int event_id) {
+    unsigned int tail;
+    if (event_id == 0) {
+        return;
+    }
+    if (jadren_ui_event_queue_count >= JADREN_UI_EVENT_QUEUE_CAPACITY) {
+        if (jadren_ui_event_queue_dropped != 0xFFFFFFFFU) {
+            jadren_ui_event_queue_dropped += 1U;
+        }
+        return;
+    }
+    tail = (jadren_ui_event_queue_head + jadren_ui_event_queue_count) %
+        JADREN_UI_EVENT_QUEUE_CAPACITY;
+    jadren_ui_event_queue[tail] = event_id;
+    jadren_ui_event_queue_count += 1U;
+}
+
+static void jadren_emit_event(int event_id) {
+    if (event_id == 0) {
+        return;
+    }
+    jadren_enqueue_ui_event(event_id);
+#if JADREN_UI_HAS_EVENT_CALLBACK
+    (void)jadren_ui_on_click(event_id);
+#endif
+}
 
 enum {
     UI_THEME_LIGHT = 0,
@@ -1094,6 +1323,434 @@ static unsigned __int64 wide_utf8_length(const wchar_t *value) {
     return bytes > 0 ? (unsigned __int64)bytes : 0;
 }
 
+static int file_filter_extension_is_safe(const char *value,
+                                         unsigned __int64 length) {
+    unsigned __int64 index;
+    unsigned char byte;
+    if (value == 0 || length == 0 || length > 16) return 0;
+    for (index = 0; index < length; index += 1) {
+        byte = (unsigned char)value[index];
+        if (!((byte >= (unsigned char)'a' && byte <= (unsigned char)'z') ||
+              (byte >= (unsigned char)'A' && byte <= (unsigned char)'Z') ||
+              (byte >= (unsigned char)'0' && byte <= (unsigned char)'9'))) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int build_extension_filter(const wchar_t *extension,
+                                  wchar_t *filter,
+                                  int capacity) {
+    static const wchar_t label_prefix[] = L"Allowed files (*.";
+    static const wchar_t pattern_prefix[] = L"*.";
+    int extension_length;
+    int index;
+    int cursor = 0;
+    if (extension == 0 || filter == 0 || capacity <= 0) return 0;
+    extension_length = wide_length(extension);
+    if (extension_length <= 0 ||
+        (int)(sizeof(label_prefix) / sizeof(label_prefix[0])) - 1 +
+                extension_length + 1 + 1 +
+                (int)(sizeof(pattern_prefix) / sizeof(pattern_prefix[0])) - 1 +
+                extension_length + 1 + 1 >
+            capacity) {
+        return 0;
+    }
+    for (index = 0; label_prefix[index] != L'\0'; index += 1) {
+        filter[cursor++] = label_prefix[index];
+    }
+    for (index = 0; index < extension_length; index += 1) {
+        filter[cursor++] = extension[index];
+    }
+    filter[cursor++] = L')';
+    filter[cursor++] = L'\0';
+    for (index = 0; pattern_prefix[index] != L'\0'; index += 1) {
+        filter[cursor++] = pattern_prefix[index];
+    }
+    for (index = 0; index < extension_length; index += 1) {
+        filter[cursor++] = extension[index];
+    }
+    filter[cursor++] = L'\0';
+    filter[cursor] = L'\0';
+    return 1;
+}
+
+static wchar_t lower_ascii_wide(wchar_t value) {
+    if (value >= L'A' && value <= L'Z') {
+        return (wchar_t)(value + (L'a' - L'A'));
+    }
+    return value;
+}
+
+static int wide_path_has_extension(const wchar_t *path,
+                                   const wchar_t *extension) {
+    int path_length;
+    int extension_length;
+    int index;
+    if (path == 0 || extension == 0) return 0;
+    path_length = wide_length(path);
+    extension_length = wide_length(extension);
+    if (path_length <= extension_length + 1 ||
+        path[path_length - extension_length - 1] != L'.') {
+        return 0;
+    }
+    for (index = 0; index < extension_length; index += 1) {
+        if (lower_ascii_wide(path[path_length - extension_length + index]) !=
+            lower_ascii_wide(extension[index])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* The system picker has an explicit blocking/IO effect in Jadren. It never
+ * publishes a partial path: title/caller-owned output are validated first,
+ * GetOpenFileNameW writes only to stack storage, then UTF-8 size is checked
+ * before either caller-owned output changes. Cancellation is deliberately the
+ * same false result as an unavailable/invalid request; no hidden retry or
+ * application-owned path state is introduced. */
+int ui_file_open_exact(const char *title_data, unsigned __int64 title_length,
+                       unsigned char *output_data, unsigned __int64 output_length,
+                       unsigned __int64 *output_path_length,
+                       unsigned __int64 output_path_length_capacity) {
+    wchar_t title[4097];
+    wchar_t file_path[32768];
+    OPENFILENAMEW dialog = {0};
+    int title_wide_length;
+    unsigned __int64 required;
+    if (title_data == 0 || title_length == 0 || title_length > 4096 ||
+        output_data == 0 || output_length == 0 || output_path_length == 0 ||
+        output_path_length_capacity == 0) {
+        return 0;
+    }
+    title_wide_length = MultiByteToWideChar(CP_UTF8, 0, title_data,
+                                             (int)title_length, title, 4096);
+    if (title_wide_length <= 0) return 0;
+    title[title_wide_length] = L'\0';
+    file_path[0] = L'\0';
+    dialog.lStructSize = (DWORD)sizeof(dialog);
+    dialog.hwndOwner = desktop.window;
+    dialog.lpstrFile = file_path;
+    dialog.nMaxFile = 32768;
+    dialog.lpstrTitle = title;
+    dialog.Flags = 0x00000008UL | 0x00000800UL | 0x00001000UL | 0x00080000UL;
+    if (!GetOpenFileNameW(&dialog)) return 0;
+    required = wide_utf8_length(file_path);
+    if (required == 0 || required > output_length) return 0;
+    if (copy_wide_utf8(file_path, output_data, output_length) != required) return 0;
+    output_path_length[0] = required;
+    return 1;
+}
+
+/* Native Windows directory picker. The shell-owned PIDL is released before
+ * publishing the fully validated UTF-8 path; cancellation and short output
+ * leave both caller-owned outputs unchanged. */
+int ui_directory_open_exact(const char *title_data,
+                            unsigned __int64 title_length,
+                            unsigned char *output_data,
+                            unsigned __int64 output_length,
+                            unsigned __int64 *output_path_length,
+                            unsigned __int64 output_path_length_capacity) {
+    wchar_t title[4097];
+    wchar_t display_name[32768];
+    wchar_t directory_path[32768];
+    BROWSEINFOW browse = {0};
+    void *pidl;
+    int title_wide_length;
+    unsigned __int64 required;
+    if (title_data == 0 || title_length == 0 || title_length > 4096 ||
+        output_data == 0 || output_length == 0 || output_path_length == 0 ||
+        output_path_length_capacity == 0) {
+        return 0;
+    }
+    title_wide_length = MultiByteToWideChar(CP_UTF8, 0, title_data,
+                                             (int)title_length, title, 4096);
+    if (title_wide_length <= 0) return 0;
+    title[title_wide_length] = L'\0';
+    display_name[0] = L'\0';
+    directory_path[0] = L'\0';
+    browse.hwndOwner = desktop.window;
+    browse.pszDisplayName = display_name;
+    browse.lpszTitle = title;
+    browse.ulFlags = 0x00000001UL | 0x00000040UL;
+    pidl = SHBrowseForFolderW(&browse);
+    if (pidl == 0) return 0;
+    if (!SHGetPathFromIDListW(pidl, directory_path)) {
+        CoTaskMemFree(pidl);
+        return 0;
+    }
+    CoTaskMemFree(pidl);
+    if (GetFileAttributesW(directory_path) == INVALID_FILE_ATTRIBUTES ||
+        (GetFileAttributesW(directory_path) & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        return 0;
+    }
+    required = wide_utf8_length(directory_path);
+    if (required == 0 || required > output_length) return 0;
+    if (copy_wide_utf8(directory_path, output_data, output_length) != required) {
+        return 0;
+    }
+    output_path_length[0] = required;
+    return 1;
+}
+
+/* Selects one existing native file of an explicitly allowed extension. The
+ * generated common-dialog filter is not the sole security boundary: callers
+ * may still type a path, so the selected result is checked before either
+ * caller-owned output is published. */
+int ui_file_open_extension_exact(const char *title_data,
+                                 unsigned __int64 title_length,
+                                 const char *extension_data,
+                                 unsigned __int64 extension_length,
+                                 unsigned char *output_data,
+                                 unsigned __int64 output_length,
+                                 unsigned __int64 *output_path_length,
+                                 unsigned __int64 output_path_length_capacity) {
+    wchar_t title[4097];
+    wchar_t extension[17];
+    wchar_t filter[64];
+    wchar_t file_path[32768];
+    OPENFILENAMEW dialog = {0};
+    int title_wide_length;
+    int extension_wide_length;
+    unsigned __int64 required;
+    if (title_data == 0 || title_length == 0 || title_length > 4096 ||
+        !file_filter_extension_is_safe(extension_data, extension_length) ||
+        output_data == 0 || output_length == 0 || output_path_length == 0 ||
+        output_path_length_capacity == 0) {
+        return 0;
+    }
+    title_wide_length = MultiByteToWideChar(CP_UTF8, 0, title_data,
+                                             (int)title_length, title, 4096);
+    extension_wide_length = MultiByteToWideChar(
+        CP_UTF8, 0, extension_data, (int)extension_length, extension, 16);
+    if (title_wide_length <= 0 || extension_wide_length <= 0) return 0;
+    title[title_wide_length] = L'\0';
+    extension[extension_wide_length] = L'\0';
+    if (!build_extension_filter(extension, filter, 64)) return 0;
+    file_path[0] = L'\0';
+    dialog.lStructSize = (DWORD)sizeof(dialog);
+    dialog.hwndOwner = desktop.window;
+    dialog.lpstrFilter = filter;
+    dialog.nFilterIndex = 1;
+    dialog.lpstrFile = file_path;
+    dialog.nMaxFile = 32768;
+    dialog.lpstrTitle = title;
+    dialog.Flags = 0x00000008UL | 0x00000800UL | 0x00001000UL | 0x00080000UL;
+    if (!GetOpenFileNameW(&dialog) || !wide_path_has_extension(file_path, extension)) {
+        return 0;
+    }
+    required = wide_utf8_length(file_path);
+    if (required == 0 || required > output_length) return 0;
+    if (copy_wide_utf8(file_path, output_data, output_length) != required) return 0;
+    output_path_length[0] = required;
+    return 1;
+}
+
+/* Save selection keeps the same no-partial-write boundary as file open. The
+ * native common dialog owns only the stack path buffer; it displays its normal
+ * overwrite confirmation before returning a chosen path, but this call itself
+ * does not create, truncate, or otherwise write the target file. */
+int ui_file_save_exact(const char *title_data, unsigned __int64 title_length,
+                       unsigned char *output_data, unsigned __int64 output_length,
+                       unsigned __int64 *output_path_length,
+                       unsigned __int64 output_path_length_capacity) {
+    wchar_t title[4097];
+    wchar_t file_path[32768];
+    OPENFILENAMEW dialog = {0};
+    int title_wide_length;
+    unsigned __int64 required;
+    if (title_data == 0 || title_length == 0 || title_length > 4096 ||
+        output_data == 0 || output_length == 0 || output_path_length == 0 ||
+        output_path_length_capacity == 0) {
+        return 0;
+    }
+    title_wide_length = MultiByteToWideChar(CP_UTF8, 0, title_data,
+                                             (int)title_length, title, 4096);
+    if (title_wide_length <= 0) return 0;
+    title[title_wide_length] = L'\0';
+    file_path[0] = L'\0';
+    dialog.lStructSize = (DWORD)sizeof(dialog);
+    dialog.hwndOwner = desktop.window;
+    dialog.lpstrFile = file_path;
+    dialog.nMaxFile = 32768;
+    dialog.lpstrTitle = title;
+    dialog.Flags = 0x00000002UL | 0x00000008UL | 0x00000800UL | 0x00080000UL;
+    if (!GetSaveFileNameW(&dialog)) return 0;
+    required = wide_utf8_length(file_path);
+    if (required == 0 || required > output_length) return 0;
+    if (copy_wide_utf8(file_path, output_data, output_length) != required) return 0;
+    output_path_length[0] = required;
+    return 1;
+}
+
+static int save_suggested_basename_is_safe(const char *value,
+                                           unsigned __int64 length) {
+    unsigned __int64 index;
+    unsigned char byte;
+    if (value == 0 || length == 0 || length > 255) return 0;
+    for (index = 0; index < length; index += 1) {
+        byte = (unsigned char)value[index];
+        if (byte < 0x20U || byte == (unsigned char)'\\' ||
+            byte == (unsigned char)'/' || byte == (unsigned char)':' ||
+            byte == (unsigned char)'*' || byte == (unsigned char)'?' ||
+            byte == (unsigned char)'"' || byte == (unsigned char)'<' ||
+            byte == (unsigned char)'>' || byte == (unsigned char)'|') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int save_suggested_stem_is_safe(const char *value,
+                                       unsigned __int64 length) {
+    unsigned __int64 index;
+    if (!save_suggested_basename_is_safe(value, length)) return 0;
+    for (index = 0; index < length; index += 1) {
+        if ((unsigned char)value[index] == (unsigned char)'.') return 0;
+    }
+    return 1;
+}
+
+static int save_default_extension_is_safe(const char *value,
+                                          unsigned __int64 length) {
+    unsigned __int64 index;
+    unsigned char byte;
+    if (value == 0 || length == 0 || length > 3) return 0;
+    for (index = 0; index < length; index += 1) {
+        byte = (unsigned char)value[index];
+        if (!((byte >= (unsigned char)'a' && byte <= (unsigned char)'z') ||
+              (byte >= (unsigned char)'A' && byte <= (unsigned char)'Z') ||
+              (byte >= (unsigned char)'0' && byte <= (unsigned char)'9'))) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* This is the bounded export-oriented variant of ui_file_save_exact. The
+ * caller provides a filename only (not a directory) and a short extension
+ * without a dot; Windows owns overwrite confirmation and returns only the
+ * chosen path. No target file is opened or written by this function. */
+int ui_file_save_suggested_exact(const char *title_data,
+                                 unsigned __int64 title_length,
+                                 const char *suggested_name_data,
+                                 unsigned __int64 suggested_name_length,
+                                 const char *default_extension_data,
+                                 unsigned __int64 default_extension_length,
+                                 unsigned char *output_data,
+                                 unsigned __int64 output_length,
+                                 unsigned __int64 *output_path_length,
+                                 unsigned __int64 output_path_length_capacity) {
+    wchar_t title[4097];
+    wchar_t file_path[256];
+    wchar_t default_extension[4];
+    OPENFILENAMEW dialog = {0};
+    int title_wide_length;
+    int suggested_name_wide_length;
+    int default_extension_wide_length;
+    unsigned __int64 required;
+    if (title_data == 0 || title_length == 0 || title_length > 4096 ||
+        !save_suggested_basename_is_safe(suggested_name_data, suggested_name_length) ||
+        !save_default_extension_is_safe(default_extension_data, default_extension_length) ||
+        output_data == 0 || output_length == 0 || output_path_length == 0 ||
+        output_path_length_capacity == 0) {
+        return 0;
+    }
+    title_wide_length = MultiByteToWideChar(CP_UTF8, 0, title_data,
+                                             (int)title_length, title, 4096);
+    suggested_name_wide_length = MultiByteToWideChar(CP_UTF8, 0, suggested_name_data,
+                                                      (int)suggested_name_length,
+                                                      file_path, 255);
+    default_extension_wide_length = MultiByteToWideChar(
+        CP_UTF8, 0, default_extension_data, (int)default_extension_length,
+        default_extension, 3);
+    if (title_wide_length <= 0 || suggested_name_wide_length <= 0 ||
+        default_extension_wide_length <= 0) {
+        return 0;
+    }
+    title[title_wide_length] = L'\0';
+    file_path[suggested_name_wide_length] = L'\0';
+    default_extension[default_extension_wide_length] = L'\0';
+    dialog.lStructSize = (DWORD)sizeof(dialog);
+    dialog.hwndOwner = desktop.window;
+    dialog.lpstrFile = file_path;
+    dialog.nMaxFile = 256;
+    dialog.lpstrTitle = title;
+    dialog.lpstrDefExt = default_extension;
+    dialog.Flags = 0x00000002UL | 0x00000008UL | 0x00000800UL | 0x00080000UL;
+    if (!GetSaveFileNameW(&dialog)) return 0;
+    required = wide_utf8_length(file_path);
+    if (required == 0 || required > output_length) return 0;
+    if (copy_wide_utf8(file_path, output_data, output_length) != required) return 0;
+    output_path_length[0] = required;
+    return 1;
+}
+
+/* Selects one output path for a fixed short extension. `suggested_stem` has no
+ * dot, so Windows owns the final `.extension` append and its overwrite prompt
+ * applies to the same path that this function publishes. A typed mismatching
+ * suffix is rejected before either caller-owned output changes. */
+int ui_file_save_extension_exact(const char *title_data,
+                                 unsigned __int64 title_length,
+                                 const char *suggested_stem_data,
+                                 unsigned __int64 suggested_stem_length,
+                                 const char *extension_data,
+                                 unsigned __int64 extension_length,
+                                 unsigned char *output_data,
+                                 unsigned __int64 output_length,
+                                 unsigned __int64 *output_path_length,
+                                 unsigned __int64 output_path_length_capacity) {
+    wchar_t title[4097];
+    wchar_t file_path[260];
+    wchar_t extension[4];
+    wchar_t filter[64];
+    OPENFILENAMEW dialog = {0};
+    int title_wide_length;
+    int suggested_stem_wide_length;
+    int extension_wide_length;
+    unsigned __int64 required;
+    if (title_data == 0 || title_length == 0 || title_length > 4096 ||
+        !save_suggested_stem_is_safe(suggested_stem_data, suggested_stem_length) ||
+        !save_default_extension_is_safe(extension_data, extension_length) ||
+        output_data == 0 || output_length == 0 || output_path_length == 0 ||
+        output_path_length_capacity == 0) {
+        return 0;
+    }
+    title_wide_length = MultiByteToWideChar(CP_UTF8, 0, title_data,
+                                             (int)title_length, title, 4096);
+    suggested_stem_wide_length = MultiByteToWideChar(
+        CP_UTF8, 0, suggested_stem_data, (int)suggested_stem_length,
+        file_path, 255);
+    extension_wide_length = MultiByteToWideChar(
+        CP_UTF8, 0, extension_data, (int)extension_length, extension, 3);
+    if (title_wide_length <= 0 || suggested_stem_wide_length <= 0 ||
+        extension_wide_length <= 0) {
+        return 0;
+    }
+    title[title_wide_length] = L'\0';
+    file_path[suggested_stem_wide_length] = L'\0';
+    extension[extension_wide_length] = L'\0';
+    if (!build_extension_filter(extension, filter, 64)) return 0;
+    dialog.lStructSize = (DWORD)sizeof(dialog);
+    dialog.hwndOwner = desktop.window;
+    dialog.lpstrFilter = filter;
+    dialog.nFilterIndex = 1;
+    dialog.lpstrFile = file_path;
+    dialog.nMaxFile = 260;
+    dialog.lpstrTitle = title;
+    dialog.lpstrDefExt = extension;
+    dialog.Flags = 0x00000002UL | 0x00000008UL | 0x00000800UL | 0x00080000UL;
+    if (!GetSaveFileNameW(&dialog) || !wide_path_has_extension(file_path, extension)) {
+        return 0;
+    }
+    required = wide_utf8_length(file_path);
+    if (required == 0 || required > output_length) return 0;
+    if (copy_wide_utf8(file_path, output_data, output_length) != required) return 0;
+    output_path_length[0] = required;
+    return 1;
+}
+
 static void copy_wide_text(const wchar_t *source, wchar_t *target, int capacity) {
     int index;
     if (target == 0 || capacity <= 0) return;
@@ -1237,10 +1894,18 @@ static void reset_desktop(void) {
     desktop.state_binding_count = 0;
     desktop.layout_count = 0;
     desktop.layout_depth = 0;
+    desktop.scroll_offset_y = 0;
+    desktop.scroll_max_y = 0;
+    desktop.scroll_page_y = 0;
+    desktop.layout_extent_bottom = 0;
+    desktop.layout_origin_x = 0;
+    desktop.layout_origin_y = 0;
+    desktop.layout_origin_set = 0;
     desktop.events_ready = 0;
     desktop.resize_event_id = 0;
     desktop.close_event_id = 0;
     desktop.close_event_sent = 0;
+    jadren_ui_event_queue_clear_state();
     for (index = 0; index < 32; index += 1) {
         desktop.state_slots[index] = 0;
         desktop.state_text[index][0] = L'\0';
@@ -1584,7 +2249,7 @@ static void show_popup_menu(HWND window, MenuSpec *menu) {
         for (option_index = 0; option_index < menu->option_count; option_index += 1) {
             if (command == (UINT)(MENU_COMMAND_BASE + menu_index * 16 + option_index)) {
                 sync_app_bindings_from_native();
-                jadren_ui_on_click(menu->option_event_ids[option_index]);
+                jadren_emit_event(menu->option_event_ids[option_index]);
                 refresh_app_bindings();
                 break;
             }
@@ -1692,6 +2357,24 @@ int ui_checked(int event_id) {
     return button != 0 && button->active ? 1 : 0;
 }
 
+/* Revision-guarded checkbox read. A stale or invalid event is represented by
+ * -2; a valid unchecked/checked value remains 0/1. */
+int ui_checked_if_revision(int event_id, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    ButtonSpec *button = event_toggle_for_id(event_id);
+    int checked;
+    if (button == 0 || app_data_revision() != expected_revision) {
+        return -2;
+    }
+    checked = button->active ? 1 : 0;
+    return app_data_revision() == expected_revision ? checked : -2;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return -2;
+#endif
+}
+
 void ui_set_checked(int event_id, int checked) {
     ButtonSpec *button = event_toggle_for_id(event_id);
     if (button == 0) {
@@ -1736,6 +2419,19 @@ static InputAppBinding *input_app_binding_for_event_id(int event_id) {
         }
     }
     return 0;
+}
+
+static int ui_input_binding_key_is_safe(const char *key_data,
+                                        unsigned __int64 key_length) {
+    unsigned __int64 index;
+    unsigned char value;
+    if (key_data == 0 || key_length == 0 || key_length > 64) return 0;
+    for (index = 0; index < key_length; index += 1) {
+        value = (unsigned char)key_data[index];
+        if (value < 0x20U || value == (unsigned char)'"' ||
+            value == (unsigned char)'\\') return 0;
+    }
+    return 1;
 }
 
 static void sync_input_app_state(InputSpec *input) {
@@ -1834,6 +2530,13 @@ void ui_set_input_text(int event_id, const char *text_data, unsigned __int64 tex
     sync_state_bindings_for_event(event_id);
 }
 
+int ui_set_input_text_exact(int event_id, const unsigned char *text_data,
+                            unsigned __int64 text_length) {
+    if (text_data == 0 || text_length == 0 || text_length >= 384U) return 0;
+    ui_set_input_text(event_id, (const char *)text_data, text_length);
+    return 1;
+}
+
 void ui_input_bind_app_state(int event_id, const char *key_data,
                              unsigned __int64 key_length) {
     InputAppBinding *binding = input_app_binding_for_event_id(event_id);
@@ -1842,7 +2545,7 @@ void ui_input_bind_app_state(int event_id, const char *key_data,
         return;
     }
     if (binding == 0) {
-        if (desktop.input_app_binding_count >= 12) return;
+        if (desktop.input_app_binding_count >= JADREN_MAX_INPUT_APP_BINDINGS) return;
         binding = &desktop.input_app_bindings[desktop.input_app_binding_count];
         desktop.input_app_binding_count += 1;
     }
@@ -1858,8 +2561,148 @@ void ui_input_bind_app_state(int event_id, const char *key_data,
     }
 }
 
+/* Exact text-input binding. Validation and the optional initial state write
+ * complete before the binding record is published, so a failed call cannot
+ * replace an existing binding. */
+int ui_input_bind_app_state_exact(int event_id, const char *key_data,
+                                  unsigned __int64 key_length) {
+    InputAppBinding *binding = input_app_binding_for_event_id(event_id);
+    InputSpec *input = input_for_event_id(event_id);
+    unsigned char output[256];
+    unsigned __int64 copied;
+    if (input == 0 || !ui_input_binding_key_is_safe(key_data, key_length)) {
+        return 0;
+    }
+    if (binding == 0 &&
+        desktop.input_app_binding_count >= JADREN_MAX_INPUT_APP_BINDINGS) {
+        return 0;
+    }
+    if (!portable_ui_preserve_app_binding) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+        sync_input_text(input);
+        copied = copy_wide_utf8(input->text, output, sizeof(output));
+        if (!app_state_set_text(key_data, key_length,
+                                (const char *)output, copied)) {
+            return 0;
+        }
+#else
+        (void)output;
+        (void)copied;
+#endif
+    }
+    if (binding == 0) {
+        binding = &desktop.input_app_bindings[desktop.input_app_binding_count];
+        desktop.input_app_binding_count += 1;
+    }
+    binding->event_id = event_id;
+    binding->kind = JADREN_APP_BIND_TEXT;
+    binding->key_length = key_length;
+    copy_utf8_bytes(key_data, key_length, binding->key, 65);
+    return 1;
+}
+
 void ui_input_refresh_app_state(int event_id) {
     refresh_input_from_app_state(input_for_event_id(event_id));
+}
+
+/* Exact refresh distinguishes a valid empty text value from a missing or
+ * mismatched app_state key. The native input is changed only after the full
+ * read succeeds. */
+int ui_input_refresh_app_state_exact(int event_id) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    InputSpec *input = input_for_event_id(event_id);
+    InputAppBinding *binding;
+    unsigned char output[256];
+    unsigned __int64 length = 0;
+    if (input == 0) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_TEXT) return 0;
+    if (!app_state_read_text_exact(binding->key, binding->key_length,
+                                   output, sizeof(output), &length, 1)) {
+        return 0;
+    }
+    copy_utf8((JadrenString){(const char *)output, (LONGLONG)length},
+              input->text, 384);
+    if (input->handle != 0) {
+        SendMessageW(input->handle, WM_JADREN_SET_INPUT_TEXT, 0,
+                     (LPARAM)(unsigned __int64)input->text);
+        UpdateWindow(input->handle);
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    return 0;
+#endif
+}
+
+/* Revision-guarded exact refresh. Read the complete bounded model value into
+ * a temporary buffer, re-check the model revision, and only then publish it
+ * to the native control. A stale snapshot therefore cannot partially update
+ * either the control or its caller-visible binding projection. */
+int ui_input_refresh_app_state_if_revision(int event_id,
+                                           unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    InputSpec *input = input_for_event_id(event_id);
+    InputAppBinding *binding;
+    unsigned char output[256];
+    unsigned __int64 length = 0;
+    if (input == 0 || app_data_revision() != expected_revision) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_TEXT) return 0;
+    if (!app_state_read_text_exact(binding->key, binding->key_length,
+                                   output, sizeof(output), &length, 1)) {
+        return 0;
+    }
+    if (app_data_revision() != expected_revision) return 0;
+    copy_utf8((JadrenString){(const char *)output, (LONGLONG)length},
+              input->text, 384);
+    if (input->handle != 0) {
+        SendMessageW(input->handle, WM_JADREN_SET_INPUT_TEXT, 0,
+                     (LPARAM)(unsigned __int64)input->text);
+        UpdateWindow(input->handle);
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Commit the current native EDIT value into its bound model slot only when
+ * the caller's app-data revision is still current. The native value is staged
+ * in a bounded UTF-8 buffer before a final process-local equality check and
+ * model mutation; this is not a cross-thread transaction. */
+int ui_input_commit_app_state_if_revision(
+    int event_id, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    InputSpec *input = input_for_event_id(event_id);
+    InputAppBinding *binding;
+    unsigned char output[256];
+    unsigned __int64 length;
+    if (input == 0 || app_data_revision() != expected_revision) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_TEXT) return 0;
+    sync_input_text(input);
+    length = wide_utf8_length(input->text);
+    if (length > sizeof(output)) return 0;
+    if (length > 0 && copy_wide_utf8(input->text, output, sizeof(output)) != length) {
+        return 0;
+    }
+    if (app_data_revision() != expected_revision) return 0;
+    if (!app_state_set_text(binding->key, binding->key_length,
+                            (const char *)output, length)) {
+        return 0;
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 /* Reads the current native EDIT value into a caller-owned Jadren Buffer.
@@ -1926,6 +2769,45 @@ int ui_input_read_exact(int event_id, unsigned char *output_data,
     }
     output_text_length[0] = (unsigned __int64)required;
     return 1;
+}
+
+/* Revision-guarded exact read-back stages the complete UTF-8 value before
+ * publishing either caller-owned output. A stale revision, invalid event or
+ * short output therefore leaves both output slices unchanged. */
+int ui_input_read_exact_if_revision(
+    int event_id, unsigned char *output_data, unsigned __int64 output_length,
+    unsigned __int64 *output_text_length,
+    unsigned __int64 output_text_length_capacity,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    unsigned char temporary[sizeof(((InputSpec *)0)->text) * 4];
+    unsigned __int64 length = 0;
+    if (app_data_revision() != expected_revision ||
+        !ui_input_read_exact(event_id, temporary, sizeof(temporary), &length,
+                             1)) {
+        return 0;
+    }
+    if (app_data_revision() != expected_revision ||
+        output_text_length == 0 || output_text_length_capacity == 0 ||
+        output_length < length || (length > 0 && output_data == 0)) {
+        return 0;
+    }
+    if (length > 0) {
+        for (unsigned __int64 index = 0; index < length; ++index) {
+            output_data[index] = temporary[index];
+        }
+    }
+    output_text_length[0] = length;
+    return 1;
+#else
+    (void)event_id;
+    (void)output_data;
+    (void)output_length;
+    (void)output_text_length;
+    (void)output_text_length_capacity;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 void ui_set_input_enabled(int event_id, int enabled) {
@@ -2029,7 +2911,7 @@ int ui_checkbox_bind_app_state(int event_id, const char *key_data,
         return 0;
     }
     if (binding == 0) {
-        if (desktop.input_app_binding_count >= 12) return 0;
+        if (desktop.input_app_binding_count >= JADREN_MAX_INPUT_APP_BINDINGS) return 0;
         binding = &desktop.input_app_bindings[desktop.input_app_binding_count];
         desktop.input_app_binding_count += 1;
     }
@@ -2054,6 +2936,88 @@ void ui_checkbox_refresh_app_state(int event_id) {
     refresh_checkbox_from_app_state(event_toggle_for_id(event_id));
 }
 
+/* Exact checkbox refresh rejects a missing or mismatched state slot and only
+ * publishes the projection after the typed read succeeds. */
+int ui_checkbox_refresh_app_state_exact(int event_id) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    ButtonSpec *button = event_toggle_for_id(event_id);
+    InputAppBinding *binding;
+    unsigned char value = 0;
+    if (button == 0) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_BOOL ||
+        !app_state_read_bool(binding->key, binding->key_length, &value, 1)) {
+        return 0;
+    }
+    button->active = value != 0;
+    if (button->handle != 0) {
+        SendMessageW(button->handle, 0x00F1,
+                     (WPARAM)(button->active ? 1 : 0), 0);
+    }
+    sync_state_bindings_for_event(event_id);
+    redraw_button(button);
+    return 1;
+#else
+    (void)event_id;
+    return 0;
+#endif
+}
+
+/* Revision-guarded exact checkbox refresh. The typed value is staged before
+ * the revision is checked again, so a stale model cannot change the control. */
+int ui_checkbox_refresh_app_state_if_revision(
+    int event_id, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    ButtonSpec *button = event_toggle_for_id(event_id);
+    InputAppBinding *binding;
+    unsigned char value = 0;
+    if (button == 0 || app_data_revision() != expected_revision) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_BOOL ||
+        !app_state_read_bool(binding->key, binding->key_length, &value, 1)) {
+        return 0;
+    }
+    if (app_data_revision() != expected_revision) return 0;
+    button->active = value != 0;
+    if (button->handle != 0) {
+        SendMessageW(button->handle, 0x00F1,
+                     (WPARAM)(button->active ? 1 : 0), 0);
+    }
+    sync_state_bindings_for_event(event_id);
+    redraw_button(button);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Commit a checkbox projection with the same process-local app-data revision
+ * guard as the text-input path. */
+int ui_checkbox_commit_app_state_if_revision(
+    int event_id, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    ButtonSpec *button = event_toggle_for_id(event_id);
+    InputAppBinding *binding;
+    if (button == 0 || app_data_revision() != expected_revision) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_BOOL) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    if (!app_state_set_bool(
+            binding->key, binding->key_length,
+            (unsigned char)(button->active ? 1 : 0))) {
+        return 0;
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 int ui_select_bind_app_state(int event_id, const char *key_data,
                              unsigned __int64 key_length) {
     InputAppBinding *binding = input_app_binding_for_event_id(event_id);
@@ -2062,7 +3026,7 @@ int ui_select_bind_app_state(int event_id, const char *key_data,
         return 0;
     }
     if (binding == 0) {
-        if (desktop.input_app_binding_count >= 12) return 0;
+        if (desktop.input_app_binding_count >= JADREN_MAX_INPUT_APP_BINDINGS) return 0;
         binding = &desktop.input_app_bindings[desktop.input_app_binding_count];
         desktop.input_app_binding_count += 1;
     }
@@ -2085,6 +3049,87 @@ int ui_select_bind_app_state(int event_id, const char *key_data,
 
 void ui_select_refresh_app_state(int event_id) {
     refresh_select_from_app_state(select_for_event_id(event_id));
+}
+
+/* Exact select refresh rejects missing, mismatched or out-of-range values so
+ * an existing selection cannot be silently replaced by a sentinel. */
+int ui_select_refresh_app_state_exact(int event_id) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    SelectSpec *select = select_for_event_id(event_id);
+    InputAppBinding *binding;
+    long long value = 0;
+    if (select == 0) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_SELECT ||
+        !app_state_read_int(binding->key, binding->key_length, &value, 1) ||
+        value < -1 || value >= (long long)select->option_count) {
+        return 0;
+    }
+    select->selected_index = (int)value;
+    if (select->handle != 0) {
+        SendMessageW(select->handle, CB_SETCURSEL,
+                     (WPARAM)(unsigned __int64)(value < 0 ? -1 : value), 0);
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    return 0;
+#endif
+}
+
+int ui_select_refresh_app_state_if_revision(
+    int event_id, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    SelectSpec *select = select_for_event_id(event_id);
+    InputAppBinding *binding;
+    long long value = 0;
+    if (select == 0 || app_data_revision() != expected_revision) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_SELECT ||
+        !app_state_read_int(binding->key, binding->key_length, &value, 1) ||
+        value < -1 || value >= (long long)select->option_count) {
+        return 0;
+    }
+    if (app_data_revision() != expected_revision) return 0;
+    select->selected_index = (int)value;
+    if (select->handle != 0) {
+        SendMessageW(select->handle, CB_SETCURSEL,
+                     (WPARAM)(unsigned __int64)(value < 0 ? -1 : value), 0);
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Commit a select index only if it is a valid projection and the model has
+ * not advanced since the caller captured its revision. */
+int ui_select_commit_app_state_if_revision(
+    int event_id, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    SelectSpec *select = select_for_event_id(event_id);
+    InputAppBinding *binding;
+    long long value;
+    if (select == 0 || app_data_revision() != expected_revision) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_SELECT) return 0;
+    value = (long long)select->selected_index;
+    if (value < -1 || value >= (long long)select->option_count) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    if (!app_state_set_int(binding->key, binding->key_length, value)) {
+        return 0;
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 /* For a native COMBOBOX the window height is the *closed field plus the
@@ -2138,6 +3183,25 @@ void ui_select_option(int event_id, const char *text_data, unsigned __int64 text
 int ui_select_index(int event_id) {
     SelectSpec *select = select_for_event_id(event_id);
     return select == 0 ? -1 : select->selected_index;
+}
+
+/* Revision-guarded select read uses -2 for an invalid or stale request; -1
+ * remains the valid "no selection" value. */
+int ui_select_index_if_revision(int event_id,
+                                unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    SelectSpec *select = select_for_event_id(event_id);
+    int selected_index;
+    if (select == 0 || app_data_revision() != expected_revision) {
+        return -2;
+    }
+    selected_index = select->selected_index;
+    return app_data_revision() == expected_revision ? selected_index : -2;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return -2;
+#endif
 }
 
 void ui_select_set_index(int event_id, int selected_index) {
@@ -2300,6 +3364,25 @@ int ui_list_count(int event_id) {
     return list == 0 ? 0 : list->item_count;
 }
 
+/* Revision-guarded list count distinguishes a valid empty projection (0)
+ * from an invalid or stale read (-1). The second revision check keeps the
+ * returned count tied to the caller's snapshot. */
+int ui_list_count_if_revision(int event_id, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    ListSpec *list = list_for_event_id(event_id);
+    int count;
+    if (list == 0 || app_data_revision() != expected_revision) {
+        return -1;
+    }
+    count = list->item_count;
+    return app_data_revision() == expected_revision ? count : -1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return -1;
+#endif
+}
+
 unsigned __int64 ui_list_read_item(int event_id, int item_index,
                                    unsigned char *output_data,
                                    unsigned __int64 output_length) {
@@ -2308,6 +3391,71 @@ unsigned __int64 ui_list_read_item(int event_id, int item_index,
         return 0;
     }
     return copy_wide_utf8(list->items[item_index], output_data, output_length);
+}
+
+/* Exact list read-back follows the input/table contract: a valid empty item
+ * succeeds with length zero, while invalid coordinates or a short output
+ * buffer leave both caller-owned outputs untouched. */
+int ui_list_read_item_exact(int event_id, int item_index,
+                            unsigned char *output_data,
+                            unsigned __int64 output_length,
+                            unsigned __int64 *output_text_length,
+                            unsigned __int64 output_text_length_capacity) {
+    ListSpec *list = list_for_event_id(event_id);
+    unsigned __int64 required;
+    if (list == 0 || item_index < 0 || item_index >= list->item_count ||
+        output_text_length == 0 || output_text_length_capacity == 0) {
+        return 0;
+    }
+    required = wide_utf8_length(list->items[item_index]);
+    if (required > output_length || (required > 0 && output_data == 0)) {
+        return 0;
+    }
+    if (required > 0 &&
+        copy_wide_utf8(list->items[item_index], output_data, output_length) != required) {
+        return 0;
+    }
+    output_text_length[0] = required;
+    return 1;
+}
+
+/* Revision-guarded exact list read keeps caller-owned outputs untouched when
+ * the application model advanced before or during the bounded read. */
+int ui_list_read_item_exact_if_revision(
+    int event_id, int item_index, unsigned char *output_data,
+    unsigned __int64 output_length, unsigned __int64 *output_text_length,
+    unsigned __int64 output_text_length_capacity,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    unsigned char temporary[640];
+    unsigned __int64 temporary_length = 0;
+    unsigned __int64 copy_index;
+    if (app_data_revision() != expected_revision ||
+        !ui_list_read_item_exact(event_id, item_index, temporary,
+                                 sizeof(temporary), &temporary_length, 1) ||
+        app_data_revision() != expected_revision ||
+        output_text_length == 0 || output_text_length_capacity == 0 ||
+        temporary_length > output_length ||
+        (temporary_length > 0 && output_data == 0)) {
+        return 0;
+    }
+    if (temporary_length > 0) {
+        for (copy_index = 0; copy_index < temporary_length; copy_index += 1) {
+            output_data[copy_index] = temporary[copy_index];
+        }
+    }
+    output_text_length[0] = temporary_length;
+    return 1;
+#else
+    (void)event_id;
+    (void)item_index;
+    (void)output_data;
+    (void)output_length;
+    (void)output_text_length;
+    (void)output_text_length_capacity;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 void ui_list_set_item(int event_id, int item_index,
@@ -2322,9 +3470,98 @@ void ui_list_set_item(int event_id, int item_index,
     sync_state_bindings_for_event(event_id);
 }
 
+/* Insert one retained list item without heap allocation.  The inclusive
+ * item_count position appends; rows at or after the insertion point keep
+ * their relative order and the selected index follows the shifted row. */
+static int ui_list_insert_item_impl(int event_id, int item_index,
+                                    const char *text_data,
+                                    unsigned __int64 text_length,
+                                    int sync_selection_state) {
+    ListSpec *list = list_for_event_id(event_id);
+    int index;
+    int character;
+    if (list == 0 || item_index < 0 || item_index > list->item_count ||
+        list->item_count >= 32 || text_data == 0 || text_length > 159) {
+        return 0;
+    }
+    for (index = list->item_count; index > item_index; index -= 1) {
+        for (character = 0; character < 160; character += 1) {
+            list->items[index][character] = list->items[index - 1][character];
+        }
+    }
+    copy_utf8((JadrenString){text_data, (LONGLONG)text_length},
+              list->items[item_index], 160);
+    list->item_count += 1;
+    if (list->selected_index >= item_index) {
+        list->selected_index += 1;
+    }
+    if (sync_selection_state) {
+        sync_list_app_state(list);
+    }
+    refresh_list_control(list);
+    sync_state_bindings_for_event(event_id);
+    return 1;
+}
+
+/* Remove one retained list item and keep the selected index stable.  The
+ * bounded preview runtime owns a fixed 32-item window, so compaction is
+ * explicit and allocation-free. */
+static int ui_list_remove_item_impl(int event_id, int item_index,
+                                    int sync_selection_state) {
+    ListSpec *list = list_for_event_id(event_id);
+    int index;
+    int character;
+    if (list == 0 || item_index < 0 || item_index >= list->item_count) {
+        return 0;
+    }
+    for (index = item_index; index + 1 < list->item_count; index += 1) {
+        for (character = 0; character < 160; character += 1) {
+            list->items[index][character] = list->items[index + 1][character];
+        }
+    }
+    list->item_count -= 1;
+    for (character = 0; character < 160; character += 1) {
+        list->items[list->item_count][character] = 0;
+    }
+    if (list->selected_index == item_index) {
+        list->selected_index = -1;
+    } else if (list->selected_index > item_index) {
+        list->selected_index -= 1;
+    }
+    if (sync_selection_state) {
+        sync_list_app_state(list);
+    }
+    refresh_list_control(list);
+    sync_state_bindings_for_event(event_id);
+    return 1;
+}
+
+int ui_list_remove_item(int event_id, int item_index) {
+    return ui_list_remove_item_impl(event_id, item_index, 1);
+}
+
 int ui_list_index(int event_id) {
     ListSpec *list = list_for_event_id(event_id);
     return list == 0 ? -1 : list->selected_index;
+}
+
+/* Revision-guarded list selection read uses -2 for an invalid or stale
+ * request; -1 remains the valid "no selection" value. */
+int ui_list_index_if_revision(int event_id,
+                              unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    ListSpec *list = list_for_event_id(event_id);
+    int selected_index;
+    if (list == 0 || app_data_revision() != expected_revision) {
+        return -2;
+    }
+    selected_index = list->selected_index;
+    return app_data_revision() == expected_revision ? selected_index : -2;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return -2;
+#endif
 }
 
 void ui_list_set_index(int event_id, int selected_index) {
@@ -2339,6 +3576,26 @@ void ui_list_set_index(int event_id, int selected_index) {
     }
     sync_list_app_state(list);
     sync_state_bindings_for_event(event_id);
+}
+
+int ui_list_set_index_if_revision(int event_id, int selected_index,
+                                  unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    ListSpec *list = list_for_event_id(event_id);
+    if (list == 0 || selected_index < -1 ||
+        selected_index >= list->item_count ||
+        app_data_revision() != expected_revision) {
+        return 0;
+    }
+    ui_list_set_index(event_id, selected_index);
+    return app_data_revision() == expected_revision &&
+           ui_list_index(event_id) == selected_index;
+#else
+    (void)event_id;
+    (void)selected_index;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 void ui_list_bind_app(int event_id, int list_id) {
@@ -2494,6 +3751,49 @@ void ui_table_cell(int event_id, int row_index, int column_index,
     sync_state_bindings_for_event(event_id);
 }
 
+/* Remove one retained table row and compact all declared columns without a
+ * heap allocation.  Selection follows the same rule as a native report view:
+ * the removed row clears selection, later rows shift down by one. */
+static int ui_table_remove_row_impl(int event_id, int row_index,
+                                    int sync_selection_state) {
+    TableSpec *table = table_for_event_id(event_id);
+    int row;
+    int column;
+    int character;
+    if (table == 0 || row_index < 0 || row_index >= table->row_count) {
+        return 0;
+    }
+    for (row = row_index; row + 1 < table->row_count; row += 1) {
+        for (column = 0; column < 8; column += 1) {
+            for (character = 0; character < 160; character += 1) {
+                table->cells[row][column][character] =
+                    table->cells[row + 1][column][character];
+            }
+        }
+    }
+    table->row_count -= 1;
+    for (column = 0; column < 8; column += 1) {
+        for (character = 0; character < 160; character += 1) {
+            table->cells[table->row_count][column][character] = 0;
+        }
+    }
+    if (table->selected_row == row_index) {
+        table->selected_row = -1;
+    } else if (table->selected_row > row_index) {
+        table->selected_row -= 1;
+    }
+    if (sync_selection_state) {
+        sync_table_app_state(table);
+    }
+    refresh_table_control(table);
+    sync_state_bindings_for_event(event_id);
+    return 1;
+}
+
+int ui_table_remove_row(int event_id, int row_index) {
+    return ui_table_remove_row_impl(event_id, row_index, 1);
+}
+
 /* Pull a bounded application table into the native report view. The caller
  * supplies the visible column count because app_table is intentionally a
  * schema-free text matrix. Empty cells are copied as empty strings. */
@@ -2569,6 +3869,86 @@ static int sort_table_from_app(TableSpec *table, int column_index, int descendin
     return sort_table_from_app_kind(table, column_index, descending, 0);
 }
 
+static int sort_table_from_app_kind_if_revision(
+    TableSpec *table, int column_index, int descending, int kind,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int (*sort_function)(int, int, int, unsigned __int64);
+    if (table == 0 || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count) {
+        return 0;
+    }
+    sort_function = app_table_sort_text_if_revision;
+    if (kind == 1) sort_function = app_table_sort_int_if_revision;
+    else if (kind == 2) sort_function = app_table_sort_uint_if_revision;
+    else if (kind == 3) sort_function = app_table_sort_float_if_revision;
+    else if (kind == 4) sort_function = app_table_sort_bool_if_revision;
+    else if (kind != 0) return 0;
+    if (!sort_function(table->app_table_id, column_index, descending,
+                       expected_revision)) {
+        return 0;
+    }
+    refresh_tables_bound_to_app(table->app_table_id);
+    return 1;
+#else
+    (void)table;
+    (void)column_index;
+    (void)descending;
+    (void)kind;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+static int page_table_from_app(TableSpec *table, int destination_table_id,
+                               int start_row, int page_size) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (table == 0 || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id || start_row < 0 ||
+        page_size < 0) {
+        return 0;
+    }
+    if (!app_table_page(table->app_table_id, destination_table_id, start_row,
+                        page_size)) {
+        return 0;
+    }
+    refresh_tables_bound_to_app(destination_table_id);
+    return 1;
+#else
+    (void)table;
+    (void)destination_table_id;
+    (void)start_row;
+    (void)page_size;
+    return 0;
+#endif
+}
+
+static int page_table_from_app_if_revision(TableSpec *table,
+                                           int destination_table_id,
+                                           int start_row, int page_size,
+                                           unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (table == 0 || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id || start_row < 0 ||
+        page_size < 0) {
+        return 0;
+    }
+    if (!app_table_page_if_revision(table->app_table_id, destination_table_id,
+                                    start_row, page_size, expected_revision)) {
+        return 0;
+    }
+    refresh_tables_bound_to_app(destination_table_id);
+    return 1;
+#else
+    (void)table;
+    (void)destination_table_id;
+    (void)start_row;
+    (void)page_size;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 static int filter_table_from_app(TableSpec *table, int destination_table_id,
                                  int column_index, const char *query_data,
                                  unsigned __int64 query_length, int mode) {
@@ -2594,6 +3974,65 @@ static int filter_table_from_app(TableSpec *table, int destination_table_id,
     (void)query_data;
     (void)query_length;
     (void)mode;
+    return 0;
+#endif
+}
+
+static int filter_table_from_app_if_revision(
+    TableSpec *table, int destination_table_id, int column_index,
+    const char *query_data, unsigned __int64 query_length,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int result;
+    if (table == 0 || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id || column_index < 0 ||
+        column_index >= table->app_table_column_count ||
+        (query_data == 0 && query_length > 0)) {
+        return 0;
+    }
+    result = app_table_filter_text_if_revision(
+        table->app_table_id, destination_table_id, column_index, query_data,
+        query_length, expected_revision);
+    if (!result) return 0;
+    refresh_tables_bound_to_app(destination_table_id);
+    return 1;
+#else
+    (void)table;
+    (void)destination_table_id;
+    (void)column_index;
+    (void)query_data;
+    (void)query_length;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+static int filter_table_from_app_ex_if_revision(
+    TableSpec *table, int destination_table_id, int column_index,
+    const char *query_data, unsigned __int64 query_length, int mode,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int result;
+    if (table == 0 || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id || column_index < 0 ||
+        column_index >= table->app_table_column_count ||
+        (query_data == 0 && query_length > 0) || mode < 0 || mode > 7) {
+        return 0;
+    }
+    result = app_table_filter_text_ex_if_revision(
+        table->app_table_id, destination_table_id, column_index, query_data,
+        query_length, mode, expected_revision);
+    if (!result) return 0;
+    refresh_tables_bound_to_app(destination_table_id);
+    return 1;
+#else
+    (void)table;
+    (void)destination_table_id;
+    (void)column_index;
+    (void)query_data;
+    (void)query_length;
+    (void)mode;
+    (void)expected_revision;
     return 0;
 #endif
 }
@@ -2670,6 +4109,89 @@ static int filter_table_from_app_bool(TableSpec *table, int destination_table_id
 #endif
 }
 
+static int filter_table_from_app_kind_if_revision(
+    TableSpec *table, int destination_table_id, int column_index, int kind,
+    long long int_query, unsigned __int64 uint_query, double float_query,
+    unsigned char bool_query, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int result = 0;
+    if (table == 0 || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id || column_index < 0 ||
+        column_index >= table->app_table_column_count) return 0;
+    if (kind == 1) {
+        result = app_table_filter_int_if_revision(
+            table->app_table_id, destination_table_id, column_index, int_query,
+            expected_revision);
+    } else if (kind == 2) {
+        result = app_table_filter_uint_if_revision(
+            table->app_table_id, destination_table_id, column_index, uint_query,
+            expected_revision);
+    } else if (kind == 3) {
+        result = app_table_filter_float_if_revision(
+            table->app_table_id, destination_table_id, column_index, float_query,
+            expected_revision);
+    } else if (kind == 4) {
+        result = app_table_filter_bool_if_revision(
+            table->app_table_id, destination_table_id, column_index, bool_query,
+            expected_revision);
+    }
+    if (!result) return 0;
+    refresh_tables_bound_to_app(destination_table_id);
+    return 1;
+#else
+    (void)table; (void)destination_table_id; (void)column_index; (void)kind;
+    (void)int_query; (void)uint_query; (void)float_query; (void)bool_query;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+static int filter_table_callback_from_app(
+    TableSpec *table, int destination_table_id,
+    unsigned char (*predicate)(int, int)) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (table == 0 || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id || predicate == 0) {
+        return 0;
+    }
+    if (!app_table_filter_callback(table->app_table_id, destination_table_id,
+                                   predicate)) {
+        return 0;
+    }
+    refresh_tables_bound_to_app(destination_table_id);
+    return 1;
+#else
+    (void)table;
+    (void)destination_table_id;
+    (void)predicate;
+    return 0;
+#endif
+}
+
+static int filter_table_callback_from_app_if_revision(
+    TableSpec *table, int destination_table_id,
+    unsigned char (*predicate)(int, int), unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (table == 0 || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id || predicate == 0) {
+        return 0;
+    }
+    if (!app_table_filter_callback_if_revision(
+            table->app_table_id, destination_table_id, predicate,
+            expected_revision)) {
+        return 0;
+    }
+    refresh_tables_bound_to_app(destination_table_id);
+    return 1;
+#else
+    (void)table;
+    (void)destination_table_id;
+    (void)predicate;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 void ui_table_sort_text(int event_id, int column_index, int descending) {
     (void)sort_table_from_app(table_for_event_id(event_id), column_index, descending);
 }
@@ -2692,6 +4214,141 @@ void ui_table_sort_float(int event_id, int column_index, int descending) {
 void ui_table_sort_bool(int event_id, int column_index, int descending) {
     (void)sort_table_from_app_kind(table_for_event_id(event_id), column_index,
                                    descending, 4);
+}
+
+void ui_table_sort_text_if_revision(int event_id, int column_index,
+                                    int descending,
+                                    unsigned __int64 expected_revision) {
+    (void)sort_table_from_app_kind_if_revision(table_for_event_id(event_id),
+                                               column_index, descending, 0,
+                                               expected_revision);
+}
+
+void ui_table_sort_int_if_revision(int event_id, int column_index,
+                                   int descending,
+                                   unsigned __int64 expected_revision) {
+    (void)sort_table_from_app_kind_if_revision(table_for_event_id(event_id),
+                                               column_index, descending, 1,
+                                               expected_revision);
+}
+
+void ui_table_sort_uint_if_revision(int event_id, int column_index,
+                                    int descending,
+                                    unsigned __int64 expected_revision) {
+    (void)sort_table_from_app_kind_if_revision(table_for_event_id(event_id),
+                                               column_index, descending, 2,
+                                               expected_revision);
+}
+
+void ui_table_sort_float_if_revision(int event_id, int column_index,
+                                     int descending,
+                                     unsigned __int64 expected_revision) {
+    (void)sort_table_from_app_kind_if_revision(table_for_event_id(event_id),
+                                               column_index, descending, 3,
+                                               expected_revision);
+}
+
+void ui_table_sort_bool_if_revision(int event_id, int column_index,
+                                    int descending,
+                                    unsigned __int64 expected_revision) {
+    (void)sort_table_from_app_kind_if_revision(table_for_event_id(event_id),
+                                               column_index, descending, 4,
+                                               expected_revision);
+}
+
+int ui_table_index_find_pair_text_if_revision(
+    int event_id, int first_column_index, int second_column_index,
+    const char *first_data, unsigned __int64 first_length,
+    const char *second_data, unsigned __int64 second_length,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(event_id);
+    if (table == 0 || table->app_table_id < 0 || first_column_index < 0 ||
+        second_column_index < 0 ||
+        first_column_index >= table->app_table_column_count ||
+        second_column_index >= table->app_table_column_count ||
+        first_data == 0 || second_data == 0 || first_length > 256 ||
+        second_length > 256) {
+        return -1;
+    }
+    return app_table_index_find_pair_text_if_revision(
+        table->app_table_id, first_column_index, second_column_index,
+        first_data, first_length, second_data, second_length,
+        expected_revision);
+#else
+    (void)event_id; (void)first_column_index; (void)second_column_index;
+    (void)first_data; (void)first_length; (void)second_data;
+    (void)second_length; (void)expected_revision;
+    return -1;
+#endif
+}
+
+int ui_table_index_find_int_if_revision(
+    int event_id, int column_index, long long query,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(event_id);
+    if (table == 0 || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count) {
+        return -1;
+    }
+    return app_table_index_find_int_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+#else
+    (void)event_id; (void)column_index; (void)query; (void)expected_revision;
+    return -1;
+#endif
+}
+
+int ui_table_index_find_uint_if_revision(
+    int event_id, int column_index, unsigned __int64 query,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(event_id);
+    if (table == 0 || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count) {
+        return -1;
+    }
+    return app_table_index_find_uint_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+#else
+    (void)event_id; (void)column_index; (void)query; (void)expected_revision;
+    return -1;
+#endif
+}
+
+int ui_table_index_find_float_if_revision(
+    int event_id, int column_index, double query,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(event_id);
+    if (table == 0 || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count) {
+        return -1;
+    }
+    return app_table_index_find_float_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+#else
+    (void)event_id; (void)column_index; (void)query; (void)expected_revision;
+    return -1;
+#endif
+}
+
+int ui_table_index_find_bool_if_revision(
+    int event_id, int column_index, unsigned char query,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(event_id);
+    if (table == 0 || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count || query > 1) {
+        return -1;
+    }
+    return app_table_index_find_bool_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+#else
+    (void)event_id; (void)column_index; (void)query; (void)expected_revision;
+    return -1;
+#endif
 }
 
 void ui_table_filter_text(int event_id, int destination_table_id, int column_index,
@@ -2804,6 +4461,25 @@ int ui_table_row_count(int event_id) {
     return table == 0 ? 0 : table->row_count;
 }
 
+/* Revision-guarded table row count distinguishes a valid empty projection
+ * (0) from an invalid or stale read (-1). */
+int ui_table_row_count_if_revision(int event_id,
+                                   unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(event_id);
+    int count;
+    if (table == 0 || app_data_revision() != expected_revision) {
+        return -1;
+    }
+    count = table->row_count;
+    return app_data_revision() == expected_revision ? count : -1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return -1;
+#endif
+}
+
 unsigned __int64 ui_table_read_cell(int event_id, int row_index, int column_index,
                                     unsigned char *output_data,
                                     unsigned __int64 output_length) {
@@ -2816,9 +4492,93 @@ unsigned __int64 ui_table_read_cell(int event_id, int row_index, int column_inde
                           output_data, output_length);
 }
 
+int ui_table_read_cell_exact(int event_id, int row_index, int column_index,
+                             unsigned char *output_data,
+                             unsigned __int64 output_length,
+                             unsigned __int64 *output_text_length,
+                             unsigned __int64 output_text_length_capacity) {
+    TableSpec *table = table_for_event_id(event_id);
+    unsigned __int64 required;
+    if (table == 0 || row_index < 0 || row_index >= table->row_count ||
+        column_index < 0 || column_index >= table->column_count ||
+        output_text_length == 0 || output_text_length_capacity == 0) {
+        return 0;
+    }
+    required = wide_utf8_length(table->cells[row_index][column_index]);
+    if (required > output_length || (required > 0 && output_data == 0)) {
+        return 0;
+    }
+    if (required > 0 &&
+        copy_wide_utf8(table->cells[row_index][column_index], output_data,
+                       output_length) != required) {
+        return 0;
+    }
+    output_text_length[0] = required;
+    return 1;
+}
+
+int ui_table_read_cell_exact_if_revision(
+    int event_id, int row_index, int column_index,
+    unsigned char *output_data, unsigned __int64 output_length,
+    unsigned __int64 *output_text_length,
+    unsigned __int64 output_text_length_capacity,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    unsigned char temporary[640];
+    unsigned __int64 temporary_length = 0;
+    unsigned __int64 copy_index;
+    if (app_data_revision() != expected_revision ||
+        !ui_table_read_cell_exact(event_id, row_index, column_index,
+                                  temporary, sizeof(temporary),
+                                  &temporary_length, 1) ||
+        app_data_revision() != expected_revision ||
+        output_text_length == 0 || output_text_length_capacity == 0 ||
+        temporary_length > output_length ||
+        (temporary_length > 0 && output_data == 0)) {
+        return 0;
+    }
+    if (temporary_length > 0) {
+        for (copy_index = 0; copy_index < temporary_length; copy_index += 1) {
+            output_data[copy_index] = temporary[copy_index];
+        }
+    }
+    output_text_length[0] = temporary_length;
+    return 1;
+#else
+    (void)event_id;
+    (void)row_index;
+    (void)column_index;
+    (void)output_data;
+    (void)output_length;
+    (void)output_text_length;
+    (void)output_text_length_capacity;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 int ui_table_selected_row(int event_id) {
     TableSpec *table = table_for_event_id(event_id);
     return table == 0 ? -1 : table->selected_row;
+}
+
+/* Revision-guarded table selection read uses -2 for an invalid or stale
+ * request; -1 remains the valid "no selection" value. */
+int ui_table_selected_row_if_revision(
+    int event_id, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(event_id);
+    int selected_row;
+    if (table == 0 || app_data_revision() != expected_revision) {
+        return -2;
+    }
+    selected_row = table->selected_row;
+    return app_data_revision() == expected_revision ? selected_row : -2;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return -2;
+#endif
 }
 
 void ui_table_set_selected_row(int event_id, int row_index) {
@@ -2844,6 +4604,25 @@ void ui_table_set_selected_row(int event_id, int row_index) {
                  (WPARAM)(unsigned __int64)(row_index >= 0 ? row_index : -1),
                  (LPARAM)&state);
     table->updating = was_updating;
+}
+
+int ui_table_set_selected_row_if_revision(
+    int event_id, int row_index, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(event_id);
+    if (table == 0 || row_index < -1 || row_index >= table->row_count ||
+        app_data_revision() != expected_revision) {
+        return 0;
+    }
+    ui_table_set_selected_row(event_id, row_index);
+    return app_data_revision() == expected_revision &&
+           ui_table_selected_row(event_id) == row_index;
+#else
+    (void)event_id;
+    (void)row_index;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 static void sync_list_app_state(ListSpec *list) {
@@ -2989,7 +4768,7 @@ int ui_list_bind_app_state(int event_id, const char *key_data,
         return 0;
     }
     if (binding == 0) {
-        if (desktop.input_app_binding_count >= 12) return 0;
+        if (desktop.input_app_binding_count >= JADREN_MAX_INPUT_APP_BINDINGS) return 0;
         binding = &desktop.input_app_bindings[desktop.input_app_binding_count];
         desktop.input_app_binding_count += 1;
     }
@@ -3014,6 +4793,83 @@ void ui_list_refresh_app_state(int event_id) {
     refresh_list_from_app_state(list_for_event_id(event_id));
 }
 
+int ui_list_refresh_app_state_exact(int event_id) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    ListSpec *list = list_for_event_id(event_id);
+    InputAppBinding *binding;
+    long long value = 0;
+    if (list == 0) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_LIST ||
+        !app_state_read_int(binding->key, binding->key_length, &value, 1) ||
+        value < -1 || value >= (long long)list->item_count) {
+        return 0;
+    }
+    list->selected_index = (int)value;
+    if (list->handle != 0) {
+        SendMessageW(list->handle, LB_SETCURSEL,
+                     (WPARAM)(unsigned __int64)(value < 0 ? -1 : value), 0);
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    return 0;
+#endif
+}
+
+int ui_list_refresh_app_state_if_revision(
+    int event_id, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    ListSpec *list = list_for_event_id(event_id);
+    InputAppBinding *binding;
+    long long value = 0;
+    if (list == 0 || app_data_revision() != expected_revision) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_LIST ||
+        !app_state_read_int(binding->key, binding->key_length, &value, 1) ||
+        value < -1 || value >= (long long)list->item_count) {
+        return 0;
+    }
+    if (app_data_revision() != expected_revision) return 0;
+    list->selected_index = (int)value;
+    if (list->handle != 0) {
+        SendMessageW(list->handle, LB_SETCURSEL,
+                     (WPARAM)(unsigned __int64)(value < 0 ? -1 : value), 0);
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+int ui_list_commit_app_state_if_revision(
+    int event_id, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    ListSpec *list = list_for_event_id(event_id);
+    InputAppBinding *binding;
+    long long value;
+    if (list == 0 || app_data_revision() != expected_revision) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_LIST) return 0;
+    value = (long long)list->selected_index;
+    if (value < -1 || value >= (long long)list->item_count) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    if (!app_state_set_int(binding->key, binding->key_length, value)) {
+        return 0;
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 int ui_table_bind_app_state(int event_id, const char *key_data,
                             unsigned __int64 key_length) {
     InputAppBinding *binding = input_app_binding_for_event_id(event_id);
@@ -3022,7 +4878,7 @@ int ui_table_bind_app_state(int event_id, const char *key_data,
         return 0;
     }
     if (binding == 0) {
-        if (desktop.input_app_binding_count >= 12) return 0;
+        if (desktop.input_app_binding_count >= JADREN_MAX_INPUT_APP_BINDINGS) return 0;
         binding = &desktop.input_app_bindings[desktop.input_app_binding_count];
         desktop.input_app_binding_count += 1;
     }
@@ -3045,6 +4901,103 @@ int ui_table_bind_app_state(int event_id, const char *key_data,
 
 void ui_table_refresh_app_state(int event_id) {
     refresh_table_from_app_state(table_for_event_id(event_id));
+}
+
+int ui_table_refresh_app_state_exact(int event_id) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(event_id);
+    InputAppBinding *binding;
+    long long value = 0;
+    LVITEMW state = {0};
+    int was_updating;
+    if (table == 0) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_TABLE ||
+        !app_state_read_int(binding->key, binding->key_length, &value, 1) ||
+        value < -1 || value >= (long long)table->row_count) {
+        return 0;
+    }
+    table->selected_row = (int)value;
+    if (table->handle != 0) {
+        was_updating = table->updating;
+        table->updating = 1;
+        state.mask = LVIF_STATE;
+        state.state = value >= 0 ? LVIS_SELECTED : 0;
+        state.stateMask = LVIS_SELECTED;
+        state.iItem = (int)value;
+        SendMessageW(table->handle, LVM_SETITEMSTATE,
+                     (WPARAM)(unsigned __int64)(value >= 0 ? value : -1),
+                     (LPARAM)&state);
+        table->updating = was_updating;
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    return 0;
+#endif
+}
+
+int ui_table_refresh_app_state_if_revision(
+    int event_id, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(event_id);
+    InputAppBinding *binding;
+    long long value = 0;
+    LVITEMW state = {0};
+    int was_updating;
+    if (table == 0 || app_data_revision() != expected_revision) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_TABLE ||
+        !app_state_read_int(binding->key, binding->key_length, &value, 1) ||
+        value < -1 || value >= (long long)table->row_count) {
+        return 0;
+    }
+    if (app_data_revision() != expected_revision) return 0;
+    table->selected_row = (int)value;
+    if (table->handle != 0) {
+        was_updating = table->updating;
+        table->updating = 1;
+        state.mask = LVIF_STATE;
+        state.state = value >= 0 ? LVIS_SELECTED : 0;
+        state.stateMask = LVIS_SELECTED;
+        state.iItem = (int)value;
+        SendMessageW(table->handle, LVM_SETITEMSTATE,
+                     (WPARAM)(unsigned __int64)(value >= 0 ? value : -1),
+                     (LPARAM)&state);
+        table->updating = was_updating;
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+int ui_table_commit_app_state_if_revision(
+    int event_id, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(event_id);
+    InputAppBinding *binding;
+    long long value;
+    if (table == 0 || app_data_revision() != expected_revision) return 0;
+    binding = input_app_binding_for_event_id(event_id);
+    if (binding == 0 || binding->kind != JADREN_APP_BIND_TABLE) return 0;
+    value = (long long)table->selected_row;
+    if (value < -1 || value >= (long long)table->row_count) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    if (!app_state_set_int(binding->key, binding->key_length, value)) {
+        return 0;
+    }
+    sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 /*
@@ -3073,7 +5026,7 @@ static int add_layout_node(int parent, int orientation, int x, int y,
                            int align, int stretch) {
     LayoutNode *node;
     int node_index;
-    if (desktop.layout_count >= 16 || desktop.layout_depth >= 16) {
+    if (desktop.layout_count >= 32 || desktop.layout_depth >= 16) {
         return -1;
     }
     node_index = desktop.layout_count;
@@ -3331,6 +5284,31 @@ static void add_layout_checkbox(const char *label_data,
     add_layout_child(parent, LAYOUT_CHILD_BUTTON, button_index, width, height, stretch);
 }
 
+static void add_layout_switch(const char *label_data,
+                              unsigned __int64 label_length,
+                              int event_id, int width, int height,
+                              UINT text_color, UINT background_color,
+                              int corner_radius, int stretch, int checked) {
+    int parent = active_layout();
+    ButtonSpec *button;
+    int button_index;
+    int before_buttons;
+    if (parent < 0) {
+        return;
+    }
+    before_buttons = desktop.button_count;
+    ui_switch(label_data, label_length, event_id, 0, 0, width, height,
+              text_color, background_color, corner_radius);
+    if (desktop.button_count != before_buttons + 1) {
+        return;
+    }
+    button_index = desktop.button_count - 1;
+    button = &desktop.buttons[button_index];
+    button->layout_managed = 1;
+    button->active = checked != 0;
+    add_layout_child(parent, LAYOUT_CHILD_BUTTON, button_index, width, height, stretch);
+}
+
 static void add_layout_select(int event_id, int width, int height,
                               UINT text_color, UINT background_color,
                               int corner_radius, int stretch) {
@@ -3448,6 +5426,7 @@ static int portable_ui_list_event_ids[128];
 static BOOL portable_ui_list_bound[128];
 static int portable_ui_table_event_ids[128];
 static BOOL portable_ui_table_bound[128];
+static int portable_ui_label_indices[128];
 
 static int portable_ui_parent_is_current(int parent) {
     if (!portable_ui_active || portable_ui_depth <= 0) {
@@ -3461,6 +5440,28 @@ static int portable_ui_event_for_node(int node) {
         return 0;
     }
     return portable_ui_event_ids[node];
+}
+
+/* Tooltip attachment accepts every event-bearing retained control.  Inputs
+ * and buttons share the generic event table; select/list/table nodes keep
+ * type-specific maps so their value APIs can reject a wrong node kind. */
+static int portable_ui_tooltip_event_for_node(int node) {
+    if (node <= 0 || node > 127) {
+        return 0;
+    }
+    if (portable_ui_event_bound[node]) {
+        return portable_ui_event_ids[node];
+    }
+    if (portable_ui_select_bound[node]) {
+        return portable_ui_select_event_ids[node];
+    }
+    if (portable_ui_list_bound[node]) {
+        return portable_ui_list_event_ids[node];
+    }
+    if (portable_ui_table_bound[node]) {
+        return portable_ui_table_event_ids[node];
+    }
+    return 0;
 }
 
 static int portable_ui_bind_event_node(int node, int event_id) {
@@ -3502,6 +5503,7 @@ int ui_app_begin(const char *title_data, unsigned __int64 title_length,
         portable_ui_list_bound[index] = 0;
         portable_ui_table_event_ids[index] = 0;
         portable_ui_table_bound[index] = 0;
+        portable_ui_label_indices[index] = -1;
     }
     ui_window(title_data, title_length, width, height, background_color);
     before_depth = desktop.layout_depth;
@@ -3694,7 +5696,14 @@ int ui_app_label(int parent, const char *text_data, unsigned __int64 text_length
     if (desktop.label_count != before_labels + 1) {
         return 0;
     }
-    return portable_ui_allocate_node();
+    {
+        int node = portable_ui_allocate_node();
+        if (node == 0) {
+            return 0;
+        }
+        portable_ui_label_indices[node] = desktop.label_count - 1;
+        return node;
+    }
 }
 
 int ui_app_status(int parent, const char *text_data, unsigned __int64 text_length,
@@ -3711,7 +5720,34 @@ int ui_app_status(int parent, const char *text_data, unsigned __int64 text_lengt
     if (desktop.label_count != before_labels + 1) {
         return 0;
     }
-    return portable_ui_allocate_node();
+    {
+        int node = portable_ui_allocate_node();
+        if (node == 0) {
+            return 0;
+        }
+        portable_ui_label_indices[node] = desktop.label_count - 1;
+        return node;
+    }
+}
+
+BOOL ui_app_label_set_text(int node, const char *text_data,
+                           unsigned __int64 text_length) {
+    int label_index;
+    LabelSpec *label;
+    if (node <= 0 || node > 127) {
+        return 0;
+    }
+    label_index = portable_ui_label_indices[node];
+    if (label_index < 0 || label_index >= desktop.label_count) {
+        return 0;
+    }
+    label = &desktop.labels[label_index];
+    copy_utf8((JadrenString){text_data, (LONGLONG)text_length}, label->text, 384);
+    if (label->handle != 0) {
+        SetWindowTextW(label->handle, label->text);
+        RedrawWindow(label->handle, 0, 0, RDW_INVALIDATE | RDW_UPDATENOW);
+    }
+    return 1;
 }
 
 int ui_app_text_input(int parent, const char *text_data,
@@ -3731,6 +5767,47 @@ int ui_app_text_input(int parent, const char *text_data,
     }
     node = portable_ui_allocate_node();
     return portable_ui_bind_event_node(node, event_id);
+}
+
+/* Retained text-input read-back translates the returned node id to the same
+ * event-owned input storage used by the portable API. */
+unsigned __int64 ui_app_input_length(int input_node) {
+    return ui_input_length(portable_ui_event_for_node(input_node));
+}
+
+unsigned __int64 ui_app_input_read(int input_node, unsigned char *output_data,
+                                   unsigned __int64 output_length) {
+    return ui_input_read(portable_ui_event_for_node(input_node), output_data,
+                         output_length);
+}
+
+BOOL ui_app_input_read_exact(
+    int input_node, unsigned char *output_data, unsigned __int64 output_length,
+    unsigned __int64 *output_text_length,
+    unsigned __int64 output_text_length_capacity) {
+    return ui_input_read_exact(portable_ui_event_for_node(input_node),
+                               output_data, output_length, output_text_length,
+                               output_text_length_capacity);
+}
+
+BOOL ui_app_input_read_exact_if_revision(
+    int input_node, unsigned char *output_data, unsigned __int64 output_length,
+    unsigned __int64 *output_text_length,
+    unsigned __int64 output_text_length_capacity,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    return ui_input_read_exact_if_revision(
+        portable_ui_event_for_node(input_node), output_data, output_length,
+        output_text_length, output_text_length_capacity, expected_revision);
+#else
+    (void)input_node;
+    (void)output_data;
+    (void)output_length;
+    (void)output_text_length;
+    (void)output_text_length_capacity;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 static int portable_ui_select_event_for_node(int select_node) {
@@ -3780,6 +5857,12 @@ BOOL ui_app_select_option(int select_node, const char *text_data,
 int ui_app_select_index(int select_node) {
     int event_id = portable_ui_select_event_for_node(select_node);
     return ui_select_index(event_id);
+}
+
+int ui_app_select_index_if_revision(
+    int select_node, unsigned __int64 expected_revision) {
+    return ui_select_index_if_revision(
+        portable_ui_select_event_for_node(select_node), expected_revision);
 }
 
 BOOL ui_app_select_set_index(int select_node, int selected_index) {
@@ -3836,6 +5919,168 @@ BOOL ui_app_list_item(int list_node, const char *text_data,
     return list->item_count == before_items + 1;
 }
 
+BOOL ui_app_list_set_item(int list_node, int item_index,
+                          const char *text_data,
+                          unsigned __int64 text_length) {
+    int event_id = portable_ui_list_event_for_node(list_node);
+    ListSpec *list = list_for_event_id(event_id);
+    if (list == 0 || item_index < 0 || item_index >= list->item_count ||
+        text_data == 0 || text_length > 159) {
+        return 0;
+    }
+    ui_list_set_item(event_id, item_index, text_data, text_length);
+    return 1;
+}
+
+BOOL ui_app_list_set_item_if_revision(
+    int list_node, int item_index, const char *text_data,
+    unsigned __int64 text_length, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (app_data_revision() != expected_revision ||
+        !ui_app_list_set_item(list_node, item_index, text_data, text_length)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)list_node;
+    (void)item_index;
+    (void)text_data;
+    (void)text_length;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+BOOL ui_app_list_insert_item(int list_node, int item_index,
+                             const char *text_data,
+                             unsigned __int64 text_length) {
+    return ui_list_insert_item_impl(
+               portable_ui_list_event_for_node(list_node), item_index,
+               text_data, text_length, 1) != 0;
+}
+
+BOOL ui_app_list_insert_item_if_revision(
+    int list_node, int item_index, const char *text_data,
+    unsigned __int64 text_length, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (app_data_revision() != expected_revision ||
+        !ui_list_insert_item_impl(
+            portable_ui_list_event_for_node(list_node), item_index, text_data,
+            text_length, 0)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)list_node;
+    (void)item_index;
+    (void)text_data;
+    (void)text_length;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Move one retained list item to its final zero-based index. The selected
+ * item follows its value and intervening selections shift around it. */
+static int ui_list_move_item_impl(int event_id, int from_index, int to_index,
+                                  int sync_selection_state) {
+    ListSpec *list = list_for_event_id(event_id);
+    wchar_t temporary[160];
+    int index;
+    int selected_index;
+    if (list == 0 || from_index < 0 || to_index < 0 ||
+        from_index >= list->item_count || to_index >= list->item_count) {
+        return 0;
+    }
+    if (from_index == to_index) return 1;
+    for (index = 0; index < 160; index += 1) {
+        temporary[index] = list->items[from_index][index];
+    }
+    if (from_index < to_index) {
+        for (index = from_index; index < to_index; index += 1) {
+            for (int character = 0; character < 160; character += 1) {
+                list->items[index][character] = list->items[index + 1][character];
+            }
+        }
+    } else {
+        for (index = from_index; index > to_index; index -= 1) {
+            for (int character = 0; character < 160; character += 1) {
+                list->items[index][character] = list->items[index - 1][character];
+            }
+        }
+    }
+    for (index = 0; index < 160; index += 1) {
+        list->items[to_index][index] = temporary[index];
+    }
+    selected_index = list->selected_index;
+    if (selected_index == from_index) {
+        list->selected_index = to_index;
+    } else if (from_index < to_index && selected_index > from_index &&
+               selected_index <= to_index) {
+        list->selected_index = selected_index - 1;
+    } else if (from_index > to_index && selected_index >= to_index &&
+               selected_index < from_index) {
+        list->selected_index = selected_index + 1;
+    }
+    if (sync_selection_state) {
+        sync_list_app_state(list);
+    }
+    refresh_list_control(list);
+    sync_state_bindings_for_event(event_id);
+    return 1;
+}
+
+BOOL ui_app_list_move_item(int list_node, int from_index, int to_index) {
+    return ui_list_move_item_impl(
+               portable_ui_list_event_for_node(list_node), from_index,
+               to_index, 1) != 0;
+}
+
+BOOL ui_app_list_move_item_if_revision(
+    int list_node, int from_index, int to_index,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int event_id = portable_ui_list_event_for_node(list_node);
+    if (app_data_revision() != expected_revision ||
+        !ui_list_move_item_impl(event_id, from_index, to_index, 0)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)list_node;
+    (void)from_index;
+    (void)to_index;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+BOOL ui_app_list_remove_item(int list_node, int item_index) {
+    int event_id = portable_ui_list_event_for_node(list_node);
+    ListSpec *list = list_for_event_id(event_id);
+    if (list == 0 || item_index < 0 || item_index >= list->item_count) {
+        return 0;
+    }
+    return ui_list_remove_item(event_id, item_index) != 0;
+}
+
+BOOL ui_app_list_remove_item_if_revision(
+    int list_node, int item_index, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int event_id = portable_ui_list_event_for_node(list_node);
+    if (app_data_revision() != expected_revision ||
+        !ui_list_remove_item_impl(event_id, item_index, 0)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)list_node;
+    (void)item_index;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 BOOL ui_app_list_clear(int list_node) {
     int event_id = portable_ui_list_event_for_node(list_node);
     ListSpec *list = list_for_event_id(event_id);
@@ -3850,6 +6095,12 @@ int ui_app_list_count(int list_node) {
     return ui_list_count(portable_ui_list_event_for_node(list_node));
 }
 
+int ui_app_list_count_if_revision(int list_node,
+                                  unsigned __int64 expected_revision) {
+    return ui_list_count_if_revision(
+        portable_ui_list_event_for_node(list_node), expected_revision);
+}
+
 unsigned __int64 ui_app_list_read_item(int list_node, int item_index,
                                        unsigned char *output_data,
                                        unsigned __int64 output_length) {
@@ -3857,8 +6108,46 @@ unsigned __int64 ui_app_list_read_item(int list_node, int item_index,
                              item_index, output_data, output_length);
 }
 
+int ui_app_list_read_item_exact(int list_node, int item_index,
+                                unsigned char *output_data,
+                                unsigned __int64 output_length,
+                                unsigned __int64 *output_text_length,
+                                unsigned __int64 output_text_length_capacity) {
+    return ui_list_read_item_exact(
+        portable_ui_list_event_for_node(list_node), item_index, output_data,
+        output_length, output_text_length, output_text_length_capacity);
+}
+
+BOOL ui_app_list_read_item_exact_if_revision(
+    int list_node, int item_index, unsigned char *output_data,
+    unsigned __int64 output_length, unsigned __int64 *output_text_length,
+    unsigned __int64 output_text_length_capacity,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    return ui_list_read_item_exact_if_revision(
+               portable_ui_list_event_for_node(list_node), item_index,
+               output_data, output_length, output_text_length,
+               output_text_length_capacity, expected_revision) != 0;
+#else
+    (void)list_node;
+    (void)item_index;
+    (void)output_data;
+    (void)output_length;
+    (void)output_text_length;
+    (void)output_text_length_capacity;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 int ui_app_list_index(int list_node) {
     return ui_list_index(portable_ui_list_event_for_node(list_node));
+}
+
+int ui_app_list_index_if_revision(
+    int list_node, unsigned __int64 expected_revision) {
+    return ui_list_index_if_revision(
+        portable_ui_list_event_for_node(list_node), expected_revision);
 }
 
 BOOL ui_app_list_set_index(int list_node, int selected_index) {
@@ -3869,6 +6158,27 @@ BOOL ui_app_list_set_index(int list_node, int selected_index) {
     }
     ui_list_set_index(event_id, selected_index);
     return ui_list_index(event_id) == selected_index;
+}
+
+BOOL ui_app_list_set_index_if_revision(int list_node, int selected_index,
+                                       unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int event_id = portable_ui_list_event_for_node(list_node);
+    ListSpec *list = list_for_event_id(event_id);
+    if (list == 0 || list->app_list_id < 0 || selected_index < -1 ||
+        selected_index >= list->item_count ||
+        app_data_revision() != expected_revision) {
+        return 0;
+    }
+    ui_list_set_index(event_id, selected_index);
+    return app_data_revision() == expected_revision &&
+           ui_list_index(event_id) == selected_index;
+#else
+    (void)list_node;
+    (void)selected_index;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 BOOL ui_app_list_bind_app(int list_node, int list_id) {
@@ -3891,6 +6201,285 @@ BOOL ui_app_list_refresh(int list_node) {
     return 1;
 }
 
+static void refresh_lists_bound_to_app(int app_list_id) {
+    int index;
+    for (index = 0; index < desktop.list_count; index += 1) {
+        if (desktop.lists[index].app_list_id == app_list_id) {
+            refresh_list_from_app(&desktop.lists[index]);
+        }
+    }
+}
+
+static int filter_list_from_app(ListSpec *list, int destination_list_id,
+                                const char *query_data,
+                                unsigned __int64 query_length, int mode) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int result;
+    if (list == 0 || list->app_list_id < 0 || destination_list_id < 0 ||
+        destination_list_id == list->app_list_id || mode < 0 || mode > 7 ||
+        (query_data == 0 && query_length > 0)) {
+        return 0;
+    }
+    result = app_list_filter_text_ex(list->app_list_id, destination_list_id,
+                                     query_data, query_length, mode);
+    if (!result) return 0;
+    refresh_lists_bound_to_app(destination_list_id);
+    return 1;
+#else
+    (void)list;
+    (void)destination_list_id;
+    (void)query_data;
+    (void)query_length;
+    (void)mode;
+    return 0;
+#endif
+}
+
+static int filter_list_from_app_if_revision(
+    ListSpec *list, int destination_list_id, const char *query_data,
+    unsigned __int64 query_length, int mode,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int result;
+    if (list == 0 || list->app_list_id < 0 || destination_list_id < 0 ||
+        destination_list_id == list->app_list_id || mode < 0 || mode > 7 ||
+        (query_data == 0 && query_length > 0)) {
+        return 0;
+    }
+    if (mode == 0) {
+        result = app_list_filter_text_if_revision(
+            list->app_list_id, destination_list_id, query_data, query_length,
+            expected_revision);
+    } else {
+        result = app_list_filter_text_ex_if_revision(
+            list->app_list_id, destination_list_id, query_data, query_length,
+            mode, expected_revision);
+    }
+    if (!result) return 0;
+    refresh_lists_bound_to_app(destination_list_id);
+    return 1;
+#else
+    (void)list;
+    (void)destination_list_id;
+    (void)query_data;
+    (void)query_length;
+    (void)mode;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+BOOL ui_app_list_filter_text(int list_node, int destination_list_id,
+                             const char *query_data,
+                             unsigned __int64 query_length) {
+    return filter_list_from_app(
+        list_for_event_id(portable_ui_list_event_for_node(list_node)),
+        destination_list_id, query_data, query_length, 0);
+}
+
+BOOL ui_app_list_filter_text_if_revision(
+    int list_node, int destination_list_id, const char *query_data,
+    unsigned __int64 query_length, unsigned __int64 expected_revision) {
+    return filter_list_from_app_if_revision(
+        list_for_event_id(portable_ui_list_event_for_node(list_node)),
+        destination_list_id, query_data, query_length, 0, expected_revision);
+}
+
+BOOL ui_app_list_filter_text_ex(int list_node, int destination_list_id,
+                                const char *query_data,
+                                unsigned __int64 query_length, int mode) {
+    return filter_list_from_app(
+        list_for_event_id(portable_ui_list_event_for_node(list_node)),
+        destination_list_id, query_data, query_length, mode);
+}
+
+BOOL ui_app_list_filter_text_ex_if_revision(
+    int list_node, int destination_list_id, const char *query_data,
+    unsigned __int64 query_length, int mode,
+    unsigned __int64 expected_revision) {
+    return filter_list_from_app_if_revision(
+        list_for_event_id(portable_ui_list_event_for_node(list_node)),
+        destination_list_id, query_data, query_length, mode,
+        expected_revision);
+}
+
+static int filter_list_callback_from_app(
+    ListSpec *list, int destination_list_id,
+    unsigned char (*predicate)(int, int)) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (list == 0 || list->app_list_id < 0 || destination_list_id < 0 ||
+        destination_list_id == list->app_list_id || predicate == 0) {
+        return 0;
+    }
+    if (!app_list_filter_callback(list->app_list_id, destination_list_id,
+                                  predicate)) {
+        return 0;
+    }
+    refresh_lists_bound_to_app(destination_list_id);
+    return 1;
+#else
+    (void)list;
+    (void)destination_list_id;
+    (void)predicate;
+    return 0;
+#endif
+}
+
+static int filter_list_callback_from_app_if_revision(
+    ListSpec *list, int destination_list_id,
+    unsigned char (*predicate)(int, int), unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (list == 0 || list->app_list_id < 0 || destination_list_id < 0 ||
+        destination_list_id == list->app_list_id || predicate == 0) {
+        return 0;
+    }
+    if (!app_list_filter_callback_if_revision(
+            list->app_list_id, destination_list_id, predicate,
+            expected_revision)) {
+        return 0;
+    }
+    refresh_lists_bound_to_app(destination_list_id);
+    return 1;
+#else
+    (void)list;
+    (void)destination_list_id;
+    (void)predicate;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+BOOL ui_app_list_filter_callback(
+    int list_node, int destination_list_id,
+    unsigned char (*predicate)(int, int)) {
+    return filter_list_callback_from_app(
+        list_for_event_id(portable_ui_list_event_for_node(list_node)),
+        destination_list_id, predicate);
+}
+
+BOOL ui_app_list_filter_callback_if_revision(
+    int list_node, int destination_list_id,
+    unsigned char (*predicate)(int, int), unsigned __int64 expected_revision) {
+    return filter_list_callback_from_app_if_revision(
+        list_for_event_id(portable_ui_list_event_for_node(list_node)),
+        destination_list_id, predicate, expected_revision);
+}
+
+static int page_list_from_app(ListSpec *list, int destination_list_id,
+                              int start_index, int page_size) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (list == 0 || list->app_list_id < 0 || destination_list_id < 0 ||
+        destination_list_id == list->app_list_id || start_index < 0 ||
+        page_size < 0) {
+        return 0;
+    }
+    if (!app_list_page(list->app_list_id, destination_list_id, start_index,
+                       page_size)) {
+        return 0;
+    }
+    refresh_lists_bound_to_app(destination_list_id);
+    return 1;
+#else
+    (void)list;
+    (void)destination_list_id;
+    (void)start_index;
+    (void)page_size;
+    return 0;
+#endif
+}
+
+static int page_list_from_app_if_revision(
+    ListSpec *list, int destination_list_id, int start_index, int page_size,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (list == 0 || list->app_list_id < 0 || destination_list_id < 0 ||
+        destination_list_id == list->app_list_id || start_index < 0 ||
+        page_size < 0) {
+        return 0;
+    }
+    if (!app_list_page_if_revision(list->app_list_id, destination_list_id,
+                                   start_index, page_size, expected_revision)) {
+        return 0;
+    }
+    refresh_lists_bound_to_app(destination_list_id);
+    return 1;
+#else
+    (void)list;
+    (void)destination_list_id;
+    (void)start_index;
+    (void)page_size;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+BOOL ui_app_list_page(int list_node, int destination_list_id, int start_index,
+                      int page_size) {
+    return page_list_from_app(
+        list_for_event_id(portable_ui_list_event_for_node(list_node)),
+        destination_list_id, start_index, page_size);
+}
+
+BOOL ui_app_list_page_if_revision(
+    int list_node, int destination_list_id, int start_index, int page_size,
+    unsigned __int64 expected_revision) {
+    return page_list_from_app_if_revision(
+        list_for_event_id(portable_ui_list_event_for_node(list_node)),
+        destination_list_id, start_index, page_size, expected_revision);
+}
+
+static int sort_list_from_app(ListSpec *list, int descending) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (list == 0 || list->app_list_id < 0 ||
+        (descending != 0 && descending != 1)) {
+        return 0;
+    }
+    if (!app_list_sort_text(list->app_list_id, descending)) {
+        return 0;
+    }
+    refresh_lists_bound_to_app(list->app_list_id);
+    return 1;
+#else
+    (void)list;
+    (void)descending;
+    return 0;
+#endif
+}
+
+static int sort_list_from_app_if_revision(
+    ListSpec *list, int descending, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (list == 0 || list->app_list_id < 0 ||
+        (descending != 0 && descending != 1) ||
+        app_data_revision() != expected_revision) {
+        return 0;
+    }
+    if (!app_list_sort_text(list->app_list_id, descending)) {
+        return 0;
+    }
+    refresh_lists_bound_to_app(list->app_list_id);
+    return 1;
+#else
+    (void)list;
+    (void)descending;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+BOOL ui_app_list_sort_text(int list_node, int descending) {
+    return sort_list_from_app(
+        list_for_event_id(portable_ui_list_event_for_node(list_node)),
+        descending);
+}
+
+BOOL ui_app_list_sort_text_if_revision(
+    int list_node, int descending, unsigned __int64 expected_revision) {
+    return sort_list_from_app_if_revision(
+        list_for_event_id(portable_ui_list_event_for_node(list_node)),
+        descending, expected_revision);
+}
+
 static int portable_ui_table_event_for_node(int table_node) {
     if (table_node <= 0 || table_node > 127 ||
         !portable_ui_table_bound[table_node]) {
@@ -3898,6 +6487,8 @@ static int portable_ui_table_event_for_node(int table_node) {
     }
     return portable_ui_table_event_ids[table_node];
 }
+
+int ui_app_refresh_app_state_exact(int node_id);
 
 int ui_app_table(int parent, int event_id, int width, int height,
                  UINT text_color, UINT background_color,
@@ -3950,12 +6541,257 @@ BOOL ui_app_table_cell(int table_node, int row_index, int column_index,
     return 1;
 }
 
+BOOL ui_app_table_cell_if_revision(
+    int table_node, int row_index, int column_index, const char *text_data,
+    unsigned __int64 text_length, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (app_data_revision() != expected_revision ||
+        !ui_app_table_cell(table_node, row_index, column_index, text_data,
+                           text_length)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)table_node;
+    (void)row_index;
+    (void)column_index;
+    (void)text_data;
+    (void)text_length;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Insert one zero-initialized retained table row without heap allocation.
+ * The inclusive row_count position appends. Selection follows the native
+ * report-view rule: rows at or after the insertion point move down by one. */
+static int ui_table_insert_row_impl(int event_id, int row_index,
+                                    int sync_selection_state) {
+    TableSpec *table = table_for_event_id(event_id);
+    int row;
+    int column;
+    int character;
+    if (table == 0 || row_index < 0 || row_index > table->row_count ||
+        table->row_count >= 64) {
+        return 0;
+    }
+    for (row = table->row_count; row > row_index; row -= 1) {
+        for (column = 0; column < 8; column += 1) {
+            for (character = 0; character < 160; character += 1) {
+                table->cells[row][column][character] =
+                    table->cells[row - 1][column][character];
+            }
+        }
+    }
+    for (column = 0; column < 8; column += 1) {
+        for (character = 0; character < 160; character += 1) {
+            table->cells[row_index][column][character] = 0;
+        }
+    }
+    table->row_count += 1;
+    if (table->selected_row >= row_index) {
+        table->selected_row += 1;
+    }
+    if (sync_selection_state) {
+        sync_table_app_state(table);
+    }
+    refresh_table_control(table);
+    sync_state_bindings_for_event(event_id);
+    return 1;
+}
+
+BOOL ui_app_table_insert_row(int table_node, int row_index) {
+    int event_id = portable_ui_table_event_for_node(table_node);
+    return ui_table_insert_row_impl(event_id, row_index, 1) != 0;
+}
+
+BOOL ui_app_table_insert_row_if_revision(
+    int table_node, int row_index, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int event_id = portable_ui_table_event_for_node(table_node);
+    if (app_data_revision() != expected_revision ||
+        !ui_table_insert_row_impl(event_id, row_index, 0)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)table_node;
+    (void)row_index;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Move one retained report-view row as a unit. All eight bounded columns are
+ * staged together so cell associations cannot be split during the move. */
+static int ui_table_move_row_impl(int event_id, int from_index, int to_index,
+                                  int sync_selection_state) {
+    TableSpec *table = table_for_event_id(event_id);
+    wchar_t temporary[8][160];
+    int row;
+    int column;
+    int selected_row;
+    if (table == 0 || from_index < 0 || to_index < 0 ||
+        from_index >= table->row_count || to_index >= table->row_count) {
+        return 0;
+    }
+    if (from_index == to_index) return 1;
+    for (column = 0; column < 8; column += 1) {
+        for (int character = 0; character < 160; character += 1) {
+            temporary[column][character] = table->cells[from_index][column][character];
+        }
+    }
+    if (from_index < to_index) {
+        for (row = from_index; row < to_index; row += 1) {
+            for (column = 0; column < 8; column += 1) {
+                for (int character = 0; character < 160; character += 1) {
+                    table->cells[row][column][character] =
+                        table->cells[row + 1][column][character];
+                }
+            }
+        }
+    } else {
+        for (row = from_index; row > to_index; row -= 1) {
+            for (column = 0; column < 8; column += 1) {
+                for (int character = 0; character < 160; character += 1) {
+                    table->cells[row][column][character] =
+                        table->cells[row - 1][column][character];
+                }
+            }
+        }
+    }
+    for (column = 0; column < 8; column += 1) {
+        for (int character = 0; character < 160; character += 1) {
+            table->cells[to_index][column][character] = temporary[column][character];
+        }
+    }
+    selected_row = table->selected_row;
+    if (selected_row == from_index) {
+        table->selected_row = to_index;
+    } else if (from_index < to_index && selected_row > from_index &&
+               selected_row <= to_index) {
+        table->selected_row = selected_row - 1;
+    } else if (from_index > to_index && selected_row >= to_index &&
+               selected_row < from_index) {
+        table->selected_row = selected_row + 1;
+    }
+    if (sync_selection_state) {
+        sync_table_app_state(table);
+    }
+    refresh_table_control(table);
+    sync_state_bindings_for_event(event_id);
+    return 1;
+}
+
+BOOL ui_app_table_move_row(int table_node, int from_index, int to_index) {
+    return ui_table_move_row_impl(
+               portable_ui_table_event_for_node(table_node), from_index,
+               to_index, 1) != 0;
+}
+
+BOOL ui_app_table_move_row_if_revision(
+    int table_node, int from_index, int to_index,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int event_id = portable_ui_table_event_for_node(table_node);
+    if (app_data_revision() != expected_revision ||
+        !ui_table_move_row_impl(event_id, from_index, to_index, 0)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)table_node;
+    (void)from_index;
+    (void)to_index;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+BOOL ui_app_table_remove_row(int table_node, int row_index) {
+    int event_id = portable_ui_table_event_for_node(table_node);
+    TableSpec *table = table_for_event_id(event_id);
+    if (table == 0 || row_index < 0 || row_index >= table->row_count) {
+        return 0;
+    }
+    return ui_table_remove_row(event_id, row_index) != 0;
+}
+
+BOOL ui_app_table_remove_row_if_revision(
+    int table_node, int row_index, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int event_id = portable_ui_table_event_for_node(table_node);
+    if (app_data_revision() != expected_revision ||
+        !ui_table_remove_row_impl(event_id, row_index, 0)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)table_node;
+    (void)row_index;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 unsigned __int64 ui_app_table_read_cell(int table_node, int row_index,
                                         int column_index,
                                         unsigned char *output_data,
                                         unsigned __int64 output_length) {
     return ui_table_read_cell(portable_ui_table_event_for_node(table_node),
                               row_index, column_index, output_data, output_length);
+}
+
+/* Exact retained-table read follows the list/input contract: valid empty
+ * cells succeed with length zero, while invalid coordinates or a short
+ * caller-owned buffer leave both outputs untouched. */
+int ui_app_table_read_cell_exact(int table_node, int row_index, int column_index,
+                                 unsigned char *output_data,
+                                 unsigned __int64 output_length,
+                                 unsigned __int64 *output_text_length,
+                                 unsigned __int64 output_text_length_capacity) {
+    TableSpec *table = table_for_event_id(portable_ui_table_event_for_node(table_node));
+    unsigned __int64 required;
+    if (table == 0 || row_index < 0 || row_index >= table->row_count ||
+        column_index < 0 || column_index >= table->column_count ||
+        output_text_length == 0 || output_text_length_capacity == 0) {
+        return 0;
+    }
+    required = wide_utf8_length(table->cells[row_index][column_index]);
+    if (required > output_length || (required > 0 && output_data == 0)) {
+        return 0;
+    }
+    if (required > 0 &&
+        copy_wide_utf8(table->cells[row_index][column_index], output_data,
+                       output_length) != required) {
+        return 0;
+    }
+    output_text_length[0] = required;
+    return 1;
+}
+
+BOOL ui_app_table_read_cell_exact_if_revision(
+    int table_node, int row_index, int column_index,
+    unsigned char *output_data, unsigned __int64 output_length,
+    unsigned __int64 *output_text_length,
+    unsigned __int64 output_text_length_capacity,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    return ui_table_read_cell_exact_if_revision(
+               portable_ui_table_event_for_node(table_node), row_index,
+               column_index, output_data, output_length, output_text_length,
+               output_text_length_capacity, expected_revision) != 0;
+#else
+    (void)table_node;
+    (void)row_index;
+    (void)column_index;
+    (void)output_data;
+    (void)output_length;
+    (void)output_text_length;
+    (void)output_text_length_capacity;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 BOOL ui_app_table_bind_app(int table_node, int table_id, int column_count) {
@@ -3967,6 +6803,110 @@ BOOL ui_app_table_bind_app(int table_node, int table_id, int column_count) {
     ui_table_bind_app(event_id, table_id, column_count);
     return table->app_table_id == table_id &&
            table->app_table_column_count == column_count;
+}
+
+int ui_app_table_index_find_pair_text_if_revision(
+    int table_node, int first_column_index, int second_column_index,
+    const char *first_data, unsigned __int64 first_length,
+    const char *second_data, unsigned __int64 second_length,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(
+        portable_ui_table_event_for_node(table_node));
+    if (table == 0 || table->app_table_id < 0 || first_column_index < 0 ||
+        second_column_index < 0 || first_column_index >= table->app_table_column_count ||
+        second_column_index >= table->app_table_column_count ||
+        first_data == 0 || second_data == 0 ||
+        first_length > 256 || second_length > 256) {
+        return -1;
+    }
+    return app_table_index_find_pair_text_if_revision(
+        table->app_table_id, first_column_index, second_column_index,
+        first_data, first_length, second_data, second_length,
+        expected_revision);
+#else
+    (void)table_node;
+    (void)first_column_index;
+    (void)second_column_index;
+    (void)first_data;
+    (void)first_length;
+    (void)second_data;
+    (void)second_length;
+    (void)expected_revision;
+    return -1;
+#endif
+}
+
+int ui_app_table_index_find_int_if_revision(
+    int table_node, int column_index, long long query,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(
+        portable_ui_table_event_for_node(table_node));
+    if (table == 0 || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count) {
+        return -1;
+    }
+    return app_table_index_find_int_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+#else
+    (void)table_node; (void)column_index; (void)query; (void)expected_revision;
+    return -1;
+#endif
+}
+
+int ui_app_table_index_find_uint_if_revision(
+    int table_node, int column_index, unsigned __int64 query,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(
+        portable_ui_table_event_for_node(table_node));
+    if (table == 0 || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count) {
+        return -1;
+    }
+    return app_table_index_find_uint_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+#else
+    (void)table_node; (void)column_index; (void)query; (void)expected_revision;
+    return -1;
+#endif
+}
+
+int ui_app_table_index_find_float_if_revision(
+    int table_node, int column_index, double query,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(
+        portable_ui_table_event_for_node(table_node));
+    if (table == 0 || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count) {
+        return -1;
+    }
+    return app_table_index_find_float_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+#else
+    (void)table_node; (void)column_index; (void)query; (void)expected_revision;
+    return -1;
+#endif
+}
+
+int ui_app_table_index_find_bool_if_revision(
+    int table_node, int column_index, unsigned char query,
+    unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    TableSpec *table = table_for_event_id(
+        portable_ui_table_event_for_node(table_node));
+    if (table == 0 || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count || query > 1) {
+        return -1;
+    }
+    return app_table_index_find_bool_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+#else
+    (void)table_node; (void)column_index; (void)query; (void)expected_revision;
+    return -1;
+#endif
 }
 
 BOOL ui_app_table_sort_text(int table_node, int column_index, int descending) {
@@ -3995,8 +6935,63 @@ BOOL ui_app_table_sort_float(int table_node, int column_index, int descending) {
 
 BOOL ui_app_table_sort_bool(int table_node, int column_index, int descending) {
     return sort_table_from_app_kind(table_for_event_id(
-                                       portable_ui_table_event_for_node(table_node)),
-                                   column_index, descending, 4);
+                                        portable_ui_table_event_for_node(table_node)),
+                                    column_index, descending, 4);
+}
+
+BOOL ui_app_table_sort_text_if_revision(int table_node, int column_index,
+                                        int descending,
+                                        unsigned __int64 expected_revision) {
+    return sort_table_from_app_kind_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        column_index, descending, 0, expected_revision);
+}
+
+BOOL ui_app_table_sort_int_if_revision(int table_node, int column_index,
+                                       int descending,
+                                       unsigned __int64 expected_revision) {
+    return sort_table_from_app_kind_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        column_index, descending, 1, expected_revision);
+}
+
+BOOL ui_app_table_sort_uint_if_revision(int table_node, int column_index,
+                                        int descending,
+                                        unsigned __int64 expected_revision) {
+    return sort_table_from_app_kind_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        column_index, descending, 2, expected_revision);
+}
+
+BOOL ui_app_table_sort_float_if_revision(int table_node, int column_index,
+                                         int descending,
+                                         unsigned __int64 expected_revision) {
+    return sort_table_from_app_kind_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        column_index, descending, 3, expected_revision);
+}
+
+BOOL ui_app_table_sort_bool_if_revision(int table_node, int column_index,
+                                        int descending,
+                                        unsigned __int64 expected_revision) {
+    return sort_table_from_app_kind_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        column_index, descending, 4, expected_revision);
+}
+
+BOOL ui_app_table_page(int table_node, int destination_table_id,
+                       int start_row, int page_size) {
+    return page_table_from_app(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        destination_table_id, start_row, page_size);
+}
+
+BOOL ui_app_table_page_if_revision(int table_node, int destination_table_id,
+                                   int start_row, int page_size,
+                                   unsigned __int64 expected_revision) {
+    return page_table_from_app_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        destination_table_id, start_row, page_size, expected_revision);
 }
 
 BOOL ui_app_table_filter_text(int table_node, int destination_table_id,
@@ -4008,6 +7003,16 @@ BOOL ui_app_table_filter_text(int table_node, int destination_table_id,
                                  query_length, 0);
 }
 
+BOOL ui_app_table_filter_text_if_revision(
+    int table_node, int destination_table_id, int column_index,
+    const char *query_data, unsigned __int64 query_length,
+    unsigned __int64 expected_revision) {
+    return filter_table_from_app_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        destination_table_id, column_index, query_data, query_length,
+        expected_revision);
+}
+
 BOOL ui_app_table_filter_text_ex(int table_node, int destination_table_id,
                                  int column_index, const char *query_data,
                                  unsigned __int64 query_length, int mode) {
@@ -4015,6 +7020,16 @@ BOOL ui_app_table_filter_text_ex(int table_node, int destination_table_id,
                                      portable_ui_table_event_for_node(table_node)),
                                  destination_table_id, column_index, query_data,
                                  query_length, mode);
+}
+
+BOOL ui_app_table_filter_text_ex_if_revision(
+    int table_node, int destination_table_id, int column_index,
+    const char *query_data, unsigned __int64 query_length, int mode,
+    unsigned __int64 expected_revision) {
+    return filter_table_from_app_ex_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        destination_table_id, column_index, query_data, query_length, mode,
+        expected_revision);
 }
 
 BOOL ui_app_table_filter_int(int table_node, int destination_table_id,
@@ -4043,6 +7058,58 @@ BOOL ui_app_table_filter_bool(int table_node, int destination_table_id,
     return filter_table_from_app_bool(table_for_event_id(
                                           portable_ui_table_event_for_node(table_node)),
                                       destination_table_id, column_index, query);
+}
+
+BOOL ui_app_table_filter_int_if_revision(
+    int table_node, int destination_table_id, int column_index, long long query,
+    unsigned __int64 expected_revision) {
+    return filter_table_from_app_kind_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        destination_table_id, column_index, 1, query, 0, 0.0, 0,
+        expected_revision);
+}
+
+BOOL ui_app_table_filter_uint_if_revision(
+    int table_node, int destination_table_id, int column_index,
+    unsigned __int64 query, unsigned __int64 expected_revision) {
+    return filter_table_from_app_kind_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        destination_table_id, column_index, 2, 0, query, 0.0, 0,
+        expected_revision);
+}
+
+BOOL ui_app_table_filter_float_if_revision(
+    int table_node, int destination_table_id, int column_index, double query,
+    unsigned __int64 expected_revision) {
+    return filter_table_from_app_kind_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        destination_table_id, column_index, 3, 0, 0, query, 0,
+        expected_revision);
+}
+
+BOOL ui_app_table_filter_bool_if_revision(
+    int table_node, int destination_table_id, int column_index,
+    unsigned char query, unsigned __int64 expected_revision) {
+    return filter_table_from_app_kind_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        destination_table_id, column_index, 4, 0, 0, 0.0, query,
+        expected_revision);
+}
+
+BOOL ui_app_table_filter_callback(
+    int table_node, int destination_table_id,
+    unsigned char (*predicate)(int, int)) {
+    return filter_table_callback_from_app(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        destination_table_id, predicate);
+}
+
+BOOL ui_app_table_filter_callback_if_revision(
+    int table_node, int destination_table_id,
+    unsigned char (*predicate)(int, int), unsigned __int64 expected_revision) {
+    return filter_table_callback_from_app_if_revision(
+        table_for_event_id(portable_ui_table_event_for_node(table_node)),
+        destination_table_id, predicate, expected_revision);
 }
 
 BOOL ui_app_table_refresh(int table_node) {
@@ -4104,6 +7171,68 @@ int ui_app_bind_app_state(int node_id, const char *key_data,
     return result;
 }
 
+/* Exact retained binding validates the node kind and publishes through the
+ * exact event-id binder. Existing bindings are preserved on every failure. */
+int ui_app_bind_app_state_exact(int node_id, const char *key_data,
+                                unsigned __int64 key_length) {
+    int event_id;
+    int result;
+    if (key_data == 0 || !ui_input_binding_key_is_safe(key_data, key_length)) {
+        return 0;
+    }
+#if !JADREN_UI_HAS_FILE_RUNTIME
+    return 0;
+#else
+    if (node_id > 0 && node_id <= 127 && portable_ui_select_bound[node_id]) {
+        event_id = portable_ui_select_event_ids[node_id];
+        SelectSpec *select = select_for_event_id(event_id);
+        long long value = 0;
+        if (select == 0 || !app_state_read_int(key_data, key_length, &value, 1) ||
+            value < -1 || value >= (long long)select->option_count) return 0;
+    } else if (node_id > 0 && node_id <= 127 && portable_ui_list_bound[node_id]) {
+        event_id = portable_ui_list_event_ids[node_id];
+        ListSpec *list = list_for_event_id(event_id);
+        long long value = 0;
+        if (list == 0 || !app_state_read_int(key_data, key_length, &value, 1) ||
+            value < -1 || value >= (long long)list->item_count) return 0;
+    } else if (node_id > 0 && node_id <= 127 && portable_ui_table_bound[node_id]) {
+        event_id = portable_ui_table_event_ids[node_id];
+        TableSpec *table = table_for_event_id(event_id);
+        long long value = 0;
+        if (table == 0 || !app_state_read_int(key_data, key_length, &value, 1) ||
+            value < -1 || value >= (long long)table->row_count) return 0;
+    } else {
+        event_id = portable_ui_event_for_node(node_id);
+        if (event_id == 0) return 0;
+        if (input_for_event_id(event_id) != 0) {
+            unsigned char output[256];
+            unsigned __int64 length = 0;
+            if (!app_state_read_text_exact(key_data, key_length, output,
+                                           sizeof(output), &length, 1)) return 0;
+        } else {
+            ButtonSpec *button = event_toggle_for_id(event_id);
+            unsigned char value = 0;
+            if (button == 0 ||
+                !app_state_read_bool(key_data, key_length, &value, 1)) return 0;
+        }
+    }
+    portable_ui_preserve_app_binding = 1;
+    if (node_id > 0 && node_id <= 127 && portable_ui_select_bound[node_id]) {
+        result = ui_select_bind_app_state(event_id, key_data, key_length);
+    } else if (node_id > 0 && node_id <= 127 && portable_ui_list_bound[node_id]) {
+        result = ui_list_bind_app_state(event_id, key_data, key_length);
+    } else if (node_id > 0 && node_id <= 127 && portable_ui_table_bound[node_id]) {
+        result = ui_table_bind_app_state(event_id, key_data, key_length);
+    } else if (input_for_event_id(event_id) != 0) {
+        result = ui_input_bind_app_state_exact(event_id, key_data, key_length);
+    } else {
+        result = ui_checkbox_bind_app_state(event_id, key_data, key_length);
+    }
+    portable_ui_preserve_app_binding = 0;
+    return result && ui_app_refresh_app_state_exact(node_id);
+#endif
+}
+
 void ui_app_refresh_app_state(int node_id) {
     int event_id;
     if (node_id > 0 && node_id <= 127 && portable_ui_select_bound[node_id]) {
@@ -4127,6 +7256,234 @@ void ui_app_refresh_app_state(int node_id) {
     }
 }
 
+int ui_app_refresh_app_state_exact(int node_id) {
+#if !JADREN_UI_HAS_FILE_RUNTIME
+    (void)node_id;
+    return 0;
+#else
+    int event_id;
+    if (node_id > 0 && node_id <= 127 && portable_ui_select_bound[node_id]) {
+        return ui_select_refresh_app_state_exact(
+            portable_ui_select_event_ids[node_id]);
+    }
+    if (node_id > 0 && node_id <= 127 && portable_ui_list_bound[node_id]) {
+        return ui_list_refresh_app_state_exact(
+            portable_ui_list_event_ids[node_id]);
+    }
+    if (node_id > 0 && node_id <= 127 && portable_ui_table_bound[node_id]) {
+        return ui_table_refresh_app_state_exact(
+            portable_ui_table_event_ids[node_id]);
+    }
+    event_id = portable_ui_event_for_node(node_id);
+    if (event_id == 0) return 0;
+    if (input_for_event_id(event_id) != 0) {
+        return ui_input_refresh_app_state_exact(event_id);
+    }
+    return ui_checkbox_refresh_app_state_exact(event_id);
+#endif
+}
+
+int ui_app_refresh_app_state_if_revision(
+    int node_id, unsigned __int64 expected_revision) {
+#if !JADREN_UI_HAS_FILE_RUNTIME
+    (void)node_id;
+    (void)expected_revision;
+    return 0;
+#else
+    int event_id;
+    if (app_data_revision() != expected_revision) return 0;
+    if (node_id > 0 && node_id <= 127 && portable_ui_select_bound[node_id]) {
+        return ui_select_refresh_app_state_if_revision(
+            portable_ui_select_event_ids[node_id], expected_revision);
+    }
+    if (node_id > 0 && node_id <= 127 && portable_ui_list_bound[node_id]) {
+        return ui_list_refresh_app_state_if_revision(
+            portable_ui_list_event_ids[node_id], expected_revision);
+    }
+    if (node_id > 0 && node_id <= 127 && portable_ui_table_bound[node_id]) {
+        return ui_table_refresh_app_state_if_revision(
+            portable_ui_table_event_ids[node_id], expected_revision);
+    }
+    event_id = portable_ui_event_for_node(node_id);
+    if (event_id == 0) return 0;
+    if (input_for_event_id(event_id) != 0) {
+        return ui_input_refresh_app_state_if_revision(event_id, expected_revision);
+    }
+    return ui_checkbox_refresh_app_state_if_revision(event_id, expected_revision);
+#endif
+}
+
+/* Commit one retained control's current native value into its bound model
+ * slot.  The node id is translated to the existing event-id implementation,
+ * preserving its bounded pre/post revision guard for every supported control
+ * kind.  This is process-local caller coordination, not a cross-thread
+ * transaction or persistence lock. */
+int ui_app_commit_app_state_if_revision(
+    int node_id, unsigned __int64 expected_revision) {
+#if !JADREN_UI_HAS_FILE_RUNTIME
+    (void)node_id;
+    (void)expected_revision;
+    return 0;
+#else
+    int event_id;
+    if (app_data_revision() != expected_revision) return 0;
+    if (node_id > 0 && node_id <= 127 && portable_ui_select_bound[node_id]) {
+        event_id = portable_ui_select_event_ids[node_id];
+        return ui_select_commit_app_state_if_revision(event_id,
+                                                       expected_revision);
+    }
+    if (node_id > 0 && node_id <= 127 && portable_ui_list_bound[node_id]) {
+        event_id = portable_ui_list_event_ids[node_id];
+        return ui_list_commit_app_state_if_revision(event_id,
+                                                     expected_revision);
+    }
+    if (node_id > 0 && node_id <= 127 && portable_ui_table_bound[node_id]) {
+        event_id = portable_ui_table_event_ids[node_id];
+        return ui_table_commit_app_state_if_revision(event_id,
+                                                      expected_revision);
+    }
+    event_id = portable_ui_event_for_node(node_id);
+    if (event_id == 0) return 0;
+    if (input_for_event_id(event_id) != 0) {
+        return ui_input_commit_app_state_if_revision(event_id,
+                                                     expected_revision);
+    }
+    return ui_checkbox_commit_app_state_if_revision(event_id,
+                                                     expected_revision);
+#endif
+}
+
+/* Validate every bound projection without mutating native controls.  The
+ * second pass in ui_refresh_bindings_if_revision can therefore fail on an
+ * invalid model slot without leaving an earlier control partially refreshed.
+ * This is deliberately process-local: a concurrent writer can still change
+ * the revision between the two passes and is rejected by each guarded write. */
+static int ui_refresh_bindings_preflight(unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int index;
+    unsigned char output[256];
+    unsigned __int64 length;
+    if (app_data_revision() != expected_revision) return 0;
+    for (index = 0; index < desktop.input_count; index += 1) {
+        InputAppBinding *binding = input_app_binding_for_event_id(
+            desktop.inputs[index].event_id);
+        if (binding != 0 && binding->kind == JADREN_APP_BIND_TEXT) {
+            length = 0;
+            if (!app_state_read_text_exact(binding->key, binding->key_length,
+                                           output, sizeof(output), &length, 1)) {
+                return 0;
+            }
+        }
+    }
+    for (index = 0; index < desktop.button_count; index += 1) {
+        ButtonSpec *button = &desktop.buttons[index];
+        InputAppBinding *binding = input_app_binding_for_event_id(button->event_id);
+        unsigned char value = 0;
+        if (binding != 0 && binding->kind == JADREN_APP_BIND_BOOL &&
+            (button->is_checkbox || button->is_switch) &&
+            !app_state_read_bool(binding->key, binding->key_length, &value, 1)) {
+            return 0;
+        }
+    }
+    for (index = 0; index < desktop.select_count; index += 1) {
+        SelectSpec *select = &desktop.selects[index];
+        InputAppBinding *binding = input_app_binding_for_event_id(select->event_id);
+        long long value = 0;
+        if (binding != 0 && binding->kind == JADREN_APP_BIND_SELECT &&
+            (!app_state_read_int(binding->key, binding->key_length, &value, 1) ||
+             value < -1 || value >= (long long)select->option_count)) {
+            return 0;
+        }
+    }
+    for (index = 0; index < desktop.list_count; index += 1) {
+        ListSpec *list = &desktop.lists[index];
+        InputAppBinding *binding = input_app_binding_for_event_id(list->event_id);
+        long long value = 0;
+        if (binding != 0 && binding->kind == JADREN_APP_BIND_LIST &&
+            (!app_state_read_int(binding->key, binding->key_length, &value, 1) ||
+             value < -1 || value >= (long long)list->item_count)) {
+            return 0;
+        }
+    }
+    for (index = 0; index < desktop.table_count; index += 1) {
+        TableSpec *table = &desktop.tables[index];
+        InputAppBinding *binding = input_app_binding_for_event_id(table->event_id);
+        long long value = 0;
+        if (binding != 0 && binding->kind == JADREN_APP_BIND_TABLE &&
+            (!app_state_read_int(binding->key, binding->key_length, &value, 1) ||
+             value < -1 || value >= (long long)table->row_count)) {
+            return 0;
+        }
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Refresh every explicit app-state projection against one caller snapshot.
+ * A read-only preflight runs before the mutating pass, so invalid/mismatched
+ * bindings fail without partial projection updates.  The process-local
+ * revision guard is not a cross-thread transaction or a lock. */
+int ui_refresh_bindings_if_revision(unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int index;
+    if (!ui_refresh_bindings_preflight(expected_revision)) return 0;
+    for (index = 0; index < desktop.input_count; index += 1) {
+        InputAppBinding *binding = input_app_binding_for_event_id(
+            desktop.inputs[index].event_id);
+        if (binding != 0 && binding->kind == JADREN_APP_BIND_TEXT &&
+            !ui_input_refresh_app_state_if_revision(
+                desktop.inputs[index].event_id, expected_revision)) {
+            return 0;
+        }
+    }
+    for (index = 0; index < desktop.button_count; index += 1) {
+        InputAppBinding *binding = input_app_binding_for_event_id(
+            desktop.buttons[index].event_id);
+        if (binding != 0 && binding->kind == JADREN_APP_BIND_BOOL &&
+            (desktop.buttons[index].is_checkbox ||
+             desktop.buttons[index].is_switch) &&
+            !ui_checkbox_refresh_app_state_if_revision(
+                desktop.buttons[index].event_id, expected_revision)) {
+            return 0;
+        }
+    }
+    for (index = 0; index < desktop.select_count; index += 1) {
+        InputAppBinding *binding = input_app_binding_for_event_id(
+            desktop.selects[index].event_id);
+        if (binding != 0 && binding->kind == JADREN_APP_BIND_SELECT &&
+            !ui_select_refresh_app_state_if_revision(
+                desktop.selects[index].event_id, expected_revision)) {
+            return 0;
+        }
+    }
+    for (index = 0; index < desktop.list_count; index += 1) {
+        InputAppBinding *binding = input_app_binding_for_event_id(
+            desktop.lists[index].event_id);
+        if (binding != 0 && binding->kind == JADREN_APP_BIND_LIST &&
+            !ui_list_refresh_app_state_if_revision(
+                desktop.lists[index].event_id, expected_revision)) {
+            return 0;
+        }
+    }
+    for (index = 0; index < desktop.table_count; index += 1) {
+        InputAppBinding *binding = input_app_binding_for_event_id(
+            desktop.tables[index].event_id);
+        if (binding != 0 && binding->kind == JADREN_APP_BIND_TABLE &&
+            !ui_table_refresh_app_state_if_revision(
+                desktop.tables[index].event_id, expected_revision)) {
+            return 0;
+        }
+    }
+    return 1;
+#else
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 BOOL ui_app_table_clear(int table_node) {
     int event_id = portable_ui_table_event_for_node(table_node);
     TableSpec *table = table_for_event_id(event_id);
@@ -4141,8 +7498,20 @@ int ui_app_table_row_count(int table_node) {
     return ui_table_row_count(portable_ui_table_event_for_node(table_node));
 }
 
+int ui_app_table_row_count_if_revision(
+    int table_node, unsigned __int64 expected_revision) {
+    return ui_table_row_count_if_revision(
+        portable_ui_table_event_for_node(table_node), expected_revision);
+}
+
 int ui_app_table_selected_row(int table_node) {
     return ui_table_selected_row(portable_ui_table_event_for_node(table_node));
+}
+
+int ui_app_table_selected_row_if_revision(
+    int table_node, unsigned __int64 expected_revision) {
+    return ui_table_selected_row_if_revision(
+        portable_ui_table_event_for_node(table_node), expected_revision);
 }
 
 BOOL ui_app_table_set_selected_row(int table_node, int row_index) {
@@ -4153,6 +7522,27 @@ BOOL ui_app_table_set_selected_row(int table_node, int row_index) {
     }
     ui_table_set_selected_row(event_id, row_index);
     return table->selected_row == row_index;
+}
+
+BOOL ui_app_table_set_selected_row_if_revision(
+    int table_node, int row_index, unsigned __int64 expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int event_id = portable_ui_table_event_for_node(table_node);
+    TableSpec *table = table_for_event_id(event_id);
+    if (table == 0 || table->app_table_id < 0 || row_index < -1 ||
+        row_index >= table->row_count ||
+        app_data_revision() != expected_revision) {
+        return 0;
+    }
+    ui_table_set_selected_row(event_id, row_index);
+    return app_data_revision() == expected_revision &&
+           ui_table_selected_row(event_id) == row_index;
+#else
+    (void)table_node;
+    (void)row_index;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 int ui_app_checkbox(int parent, const char *label_data,
@@ -4168,6 +7558,25 @@ int ui_app_checkbox(int parent, const char *label_data,
     add_layout_checkbox(label_data, label_length, event_id, width, height,
                         text_color, background_color, corner_radius,
                         stretch, checked);
+    if (desktop.button_count != before_buttons + 1) {
+        return 0;
+    }
+    return portable_ui_bind_event_node(portable_ui_allocate_node(), event_id);
+}
+
+int ui_app_switch(int parent, const char *label_data,
+                  unsigned __int64 label_length, int event_id,
+                  int width, int height, UINT text_color,
+                  UINT background_color, int corner_radius,
+                  int stretch, int checked) {
+    int before_buttons;
+    if (!portable_ui_parent_is_current(parent)) {
+        return 0;
+    }
+    before_buttons = desktop.button_count;
+    add_layout_switch(label_data, label_length, event_id, width, height,
+                      text_color, background_color, corner_radius,
+                      stretch, checked);
     if (desktop.button_count != before_buttons + 1) {
         return 0;
     }
@@ -4195,7 +7604,7 @@ int ui_app_button(int parent, const char *label_data, unsigned __int64 label_len
 BOOL ui_app_tooltip(int node, const char *text_data, unsigned __int64 text_length,
                     int width, int height, UINT text_color,
                     UINT background_color, int corner_radius) {
-    int event_id = portable_ui_event_for_node(node);
+    int event_id = portable_ui_tooltip_event_for_node(node);
     int before_count;
     if (event_id == 0 || text_data == 0) {
         return 0;
@@ -4231,6 +7640,43 @@ static ButtonSpec *event_button_for_id(int event_id) {
         ButtonSpec *button = &desktop.buttons[index];
         if (button->emits_event && button->event_id == event_id) {
             return button;
+        }
+    }
+    return 0;
+}
+
+/* Return the native child that owns an event-bearing retained control.  The
+ * tooltip manager uses the HWND rather than the Jadren event id, so the same
+ * retained tooltip contract can cover EDIT, COMBOBOX, LISTBOX and report-view
+ * controls in addition to owner-drawn buttons. */
+static HWND event_control_handle(int event_id) {
+    int index;
+    ButtonSpec *button = event_button_for_id(event_id);
+    if (button != 0 && button->handle != 0) {
+        return button->handle;
+    }
+    for (index = 0; index < desktop.input_count; index += 1) {
+        if (desktop.inputs[index].event_id == event_id &&
+            desktop.inputs[index].handle != 0) {
+            return desktop.inputs[index].handle;
+        }
+    }
+    for (index = 0; index < desktop.select_count; index += 1) {
+        if (desktop.selects[index].event_id == event_id &&
+            desktop.selects[index].handle != 0) {
+            return desktop.selects[index].handle;
+        }
+    }
+    for (index = 0; index < desktop.list_count; index += 1) {
+        if (desktop.lists[index].event_id == event_id &&
+            desktop.lists[index].handle != 0) {
+            return desktop.lists[index].handle;
+        }
+    }
+    for (index = 0; index < desktop.table_count; index += 1) {
+        if (desktop.tables[index].event_id == event_id &&
+            desktop.tables[index].handle != 0) {
+            return desktop.tables[index].handle;
         }
     }
     return 0;
@@ -4280,13 +7726,111 @@ int ui_dispatch_event(int event_id) {
      * controls after the callback mutates the model. */
     sync_app_bindings_from_native();
     sync_state_bindings_for_event(event_id);
-    jadren_ui_on_click(event_id);
+    jadren_emit_event(event_id);
     refresh_app_bindings();
     return 1;
 #else
     (void)event_id;
     return 0;
 #endif
+}
+
+/* Caller-owned FIFO read-back for native and programmatic UI events. The
+ * queue is fixed at 64 entries, drops only the newest event on overflow, and
+ * keeps the drop count explicit. A short output is rejected before consuming
+ * any queued event or changing either caller-owned output. */
+void ui_event_queue_clear(void) {
+    jadren_ui_event_queue_clear_state();
+}
+
+unsigned __int64 ui_event_queue_count(void) {
+    return (unsigned __int64)jadren_ui_event_queue_count;
+}
+
+unsigned __int64 ui_event_queue_capacity(void) {
+    return (unsigned __int64)JADREN_UI_EVENT_QUEUE_CAPACITY;
+}
+
+unsigned __int64 ui_event_queue_dropped(void) {
+    return (unsigned __int64)jadren_ui_event_queue_dropped;
+}
+
+/* Caller-owned bounded FIFO snapshot. It copies every pending event without
+ * consuming the queue, and preflights output capacity before changing either
+ * caller-owned output. */
+int ui_event_queue_peek_exact(int *output_data,
+                              unsigned __int64 output_length,
+                              unsigned __int64 *event_count_output,
+                              unsigned __int64 event_count_length) {
+    unsigned int index;
+    if (event_count_output == 0 || event_count_length == 0 ||
+        (unsigned __int64)jadren_ui_event_queue_count > output_length ||
+        (jadren_ui_event_queue_count > 0U && output_data == 0)) {
+        return 0;
+    }
+    for (index = 0U; index < jadren_ui_event_queue_count; index += 1U) {
+        output_data[index] = jadren_ui_event_queue[
+            (jadren_ui_event_queue_head + index) %
+            JADREN_UI_EVENT_QUEUE_CAPACITY];
+    }
+    event_count_output[0] = (unsigned __int64)jadren_ui_event_queue_count;
+    return 1;
+}
+
+int ui_event_queue_poll_exact(int *output_data,
+                              unsigned __int64 output_length,
+                              unsigned __int64 *event_count_output,
+                              unsigned __int64 event_count_length) {
+    unsigned int index;
+    if (event_count_output == 0 || event_count_length == 0 ||
+        (unsigned __int64)jadren_ui_event_queue_count > output_length ||
+        (jadren_ui_event_queue_count > 0U && output_data == 0)) {
+        return 0;
+    }
+    for (index = 0U; index < jadren_ui_event_queue_count; index += 1U) {
+        output_data[index] = jadren_ui_event_queue[
+            (jadren_ui_event_queue_head + index) %
+            JADREN_UI_EVENT_QUEUE_CAPACITY];
+    }
+    event_count_output[0] = (unsigned __int64)jadren_ui_event_queue_count;
+    jadren_ui_event_queue_head = 0U;
+    jadren_ui_event_queue_count = 0U;
+    return 1;
+}
+
+/* Caller-owned bounded FIFO batch read. It consumes at most max_events and
+ * leaves any suffix queued for a later tick. The complete requested batch is
+ * preflighted before mutation; zero is a successful no-op. */
+int ui_event_queue_poll_batch_exact(int *output_data,
+                                    unsigned __int64 output_length,
+                                    unsigned __int64 max_events,
+                                    unsigned __int64 *event_count_output,
+                                    unsigned __int64 event_count_length) {
+    unsigned __int64 pending;
+    unsigned __int64 take;
+    unsigned __int64 index;
+    if (event_count_output == 0 || event_count_length == 0) {
+        return 0;
+    }
+    pending = (unsigned __int64)jadren_ui_event_queue_count;
+    take = pending < max_events ? pending : max_events;
+    if (take > output_length || (take > 0 && output_data == 0)) {
+        return 0;
+    }
+    for (index = 0; index < take; index += 1) {
+        output_data[index] = jadren_ui_event_queue[
+            (jadren_ui_event_queue_head + (unsigned int)index) %
+            JADREN_UI_EVENT_QUEUE_CAPACITY];
+    }
+    event_count_output[0] = take;
+    jadren_ui_event_queue_head =
+        (jadren_ui_event_queue_head + (unsigned int)take) %
+        JADREN_UI_EVENT_QUEUE_CAPACITY;
+    jadren_ui_event_queue_count -= (unsigned int)take;
+    if (jadren_ui_event_queue_count == 0U) {
+        jadren_ui_event_queue_head = 0U;
+    }
+    return 1;
 }
 
 static void redraw_button(ButtonSpec *button);
@@ -4702,7 +8246,7 @@ static LRESULT desktop_input_proc(HWND window, UINT message, WPARAM wparam, LPAR
         }
 #endif
         sync_state_bindings_for_event(input->event_id);
-        jadren_ui_on_click(input->event_id);
+        jadren_emit_event(input->event_id);
         refresh_app_bindings();
         return result;
     }
@@ -4712,7 +8256,7 @@ static LRESULT desktop_input_proc(HWND window, UINT message, WPARAM wparam, LPAR
         sync_input_text(input);
         sync_input_app_state(input);
         sync_state_bindings_for_event(input->event_id);
-        jadren_ui_on_click(input->event_id);
+        jadren_emit_event(input->event_id);
         refresh_app_bindings();
     }
 #endif
@@ -4960,6 +8504,24 @@ static void move_layout_table(int index, int x, int y, int width, int height) {
     apply_corner_radius(table->handle, width, height, table->corner_radius);
 }
 
+static void update_root_scrollbar(HWND window, int client_height) {
+    ScrollInfo info = {0};
+    int range_max;
+    if (client_height < 1) {
+        return;
+    }
+    desktop.scroll_page_y = client_height;
+    range_max = desktop.scroll_max_y + client_height - 1;
+    info.cbSize = (UINT)sizeof(ScrollInfo);
+    info.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    info.nMin = 0;
+    info.nMax = range_max;
+    info.nPage = (UINT)client_height;
+    info.nPos = desktop.scroll_offset_y;
+    SetScrollInfo(window, SB_VERT, &info, 1);
+    ShowScrollBar(window, SB_VERT, desktop.scroll_max_y > 0);
+}
+
 static void layout_node(int node_index, int x, int y, int width, int height) {
     LayoutNode *node;
     int content_x;
@@ -4977,6 +8539,9 @@ static void layout_node(int node_index, int x, int y, int width, int height) {
     node->y = y;
     node->width = width;
     node->height = height;
+    if (y + height > desktop.layout_extent_bottom) {
+        desktop.layout_extent_bottom = y + height;
+    }
     if (node->panel_label >= 0) {
         move_layout_label(node->panel_label, x, y, width, height);
     }
@@ -5031,6 +8596,9 @@ static void layout_node(int node_index, int x, int y, int width, int height) {
             move_layout_table(child->index, child_x, child_y, child_width, child_height);
         } else if (child->kind == LAYOUT_CHILD_NODE) {
             layout_node(child->index, child_x, child_y, child_width, child_height);
+        }
+        if (child_y + child_height > desktop.layout_extent_bottom) {
+            desktop.layout_extent_bottom = child_y + child_height;
         }
     }
 }
@@ -5120,7 +8688,30 @@ static void layout_controls(HWND window) {
             int width = node->stretch
                 ? clamp_dimension(node->base_width + width_delta, 1, 4000)
                 : node->base_width;
-            layout_node(index, node->x, node->y, width, node->base_height);
+            int content_bottom;
+            if (!desktop.layout_origin_set) {
+                desktop.layout_origin_x = node->x;
+                desktop.layout_origin_y = node->y;
+                desktop.layout_origin_set = 1;
+            }
+            /* Lay out once at the origin to measure nested content, then
+             * apply the clamped viewport offset for the visible pass. */
+            desktop.layout_extent_bottom = 0;
+            layout_node(index, desktop.layout_origin_x, desktop.layout_origin_y,
+                        width, node->base_height);
+            content_bottom = desktop.layout_extent_bottom;
+            desktop.scroll_max_y = content_bottom - (client.bottom - client.top);
+            if (desktop.scroll_max_y < 0) {
+                desktop.scroll_max_y = 0;
+            }
+            if (desktop.scroll_offset_y > desktop.scroll_max_y) {
+                desktop.scroll_offset_y = desktop.scroll_max_y;
+            }
+            update_root_scrollbar(window, client.bottom - client.top);
+            desktop.layout_extent_bottom = 0;
+            layout_node(index, desktop.layout_origin_x,
+                        desktop.layout_origin_y - desktop.scroll_offset_y,
+                        width, node->base_height);
         }
     }
     RedrawWindow(window, 0, 0,
@@ -5154,6 +8745,55 @@ static LRESULT desktop_window_proc(HWND window, UINT message, WPARAM wparam, LPA
         }
         return 0;
     }
+    if (message == WM_VSCROLL) {
+        int command = (int)(wparam & 0xFFFFU);
+        int next_offset = desktop.scroll_offset_y;
+        int page = desktop.scroll_page_y > 1 ? desktop.scroll_page_y : 120;
+        if (desktop.scroll_max_y <= 0) {
+            return 0;
+        }
+        if (command == SB_LINEUP) {
+            next_offset -= 40;
+        } else if (command == SB_LINEDOWN) {
+            next_offset += 40;
+        } else if (command == SB_PAGEUP) {
+            next_offset -= page;
+        } else if (command == SB_PAGEDOWN) {
+            next_offset += page;
+        } else if (command == SB_TOP) {
+            next_offset = 0;
+        } else if (command == SB_BOTTOM) {
+            next_offset = desktop.scroll_max_y;
+        } else if (command == SB_THUMBPOSITION || command == SB_THUMBTRACK) {
+            next_offset = (int)((wparam >> 16) & 0xFFFFU);
+        }
+        if (next_offset < 0) {
+            next_offset = 0;
+        }
+        if (next_offset > desktop.scroll_max_y) {
+            next_offset = desktop.scroll_max_y;
+        }
+        if (next_offset != desktop.scroll_offset_y) {
+            desktop.scroll_offset_y = next_offset;
+            layout_controls(window);
+        }
+        return 0;
+    }
+    if (message == WM_MOUSEWHEEL && desktop.scroll_max_y > 0) {
+        int delta = (short)((wparam >> 16) & 0xFFFFU);
+        int next_offset = desktop.scroll_offset_y - (delta * 40) / WHEEL_DELTA;
+        if (next_offset < 0) {
+            next_offset = 0;
+        }
+        if (next_offset > desktop.scroll_max_y) {
+            next_offset = desktop.scroll_max_y;
+        }
+        if (next_offset != desktop.scroll_offset_y) {
+            desktop.scroll_offset_y = next_offset;
+            layout_controls(window);
+        }
+        return 0;
+    }
     if (message == WM_SIZE) {
         /* A minimized window reports a zero-sized client area. Never lay out
          * child controls from that transient value, otherwise their regions
@@ -5163,7 +8803,7 @@ static LRESULT desktop_window_proc(HWND window, UINT message, WPARAM wparam, LPA
 #if JADREN_UI_HAS_EVENT_CALLBACK
             if (desktop.events_ready && desktop.resize_event_id != 0) {
                 sync_app_bindings_from_native();
-                jadren_ui_on_click(desktop.resize_event_id);
+                jadren_emit_event(desktop.resize_event_id);
                 refresh_app_bindings();
             }
 #endif
@@ -5181,7 +8821,7 @@ static LRESULT desktop_window_proc(HWND window, UINT message, WPARAM wparam, LPA
 #if JADREN_UI_HAS_EVENT_CALLBACK
             if (desktop.events_ready) {
                 sync_state_bindings_for_event(table->event_id);
-                jadren_ui_on_click(table->event_id);
+                jadren_emit_event(table->event_id);
                 refresh_app_bindings();
             }
 #endif
@@ -5199,7 +8839,7 @@ static LRESULT desktop_window_proc(HWND window, UINT message, WPARAM wparam, LPA
 #if JADREN_UI_HAS_EVENT_CALLBACK
             if (desktop.events_ready) {
                 sync_state_bindings_for_event(select->event_id);
-                jadren_ui_on_click(select->event_id);
+                jadren_emit_event(select->event_id);
                 refresh_app_bindings();
             }
 #endif
@@ -5211,7 +8851,7 @@ static LRESULT desktop_window_proc(HWND window, UINT message, WPARAM wparam, LPA
 #if JADREN_UI_HAS_EVENT_CALLBACK
             if (desktop.events_ready) {
                 sync_state_bindings_for_event(list->event_id);
-                jadren_ui_on_click(list->event_id);
+                jadren_emit_event(list->event_id);
                 refresh_app_bindings();
             }
 #endif
@@ -5247,7 +8887,7 @@ static LRESULT desktop_window_proc(HWND window, UINT message, WPARAM wparam, LPA
             if (button->emits_event) {
                 sync_app_bindings_from_native();
                 sync_state_bindings_for_event(button->event_id);
-                jadren_ui_on_click(button->event_id);
+                jadren_emit_event(button->event_id);
                 refresh_app_bindings();
                 return 0;
             }
@@ -5493,7 +9133,7 @@ static LRESULT desktop_window_proc(HWND window, UINT message, WPARAM wparam, LPA
             desktop.close_event_id != 0) {
             desktop.close_event_sent = 1;
             sync_app_bindings_from_native();
-            jadren_ui_on_click(desktop.close_event_id);
+            jadren_emit_event(desktop.close_event_id);
             refresh_app_bindings();
         }
 #endif
@@ -5546,7 +9186,8 @@ int jadren_win32_window_run(void) {
 
     /* Keep the parent hidden until every child panel and control exists. This
      * prevents the user from seeing a partially painted first frame. */
-    window = CreateWindowExW(0, class_name, desktop.title, WS_OVERLAPPEDWINDOW,
+    window = CreateWindowExW(0, class_name, desktop.title,
+                             WS_OVERLAPPEDWINDOW | WS_VSCROLL,
                              (int)0x80000000, (int)0x80000000, desktop.width, desktop.height,
                              0, 0, instance, 0);
     if (window == 0) {
@@ -5712,17 +9353,10 @@ int jadren_win32_window_run(void) {
     }
     for (index = 0; index < desktop.tooltip_count; index += 1) {
         TooltipSpec *tooltip = &desktop.tooltips[index];
-        ButtonSpec *tool = 0;
+        HWND tool_handle;
         TOOLINFOW tool_info = {0};
-        int button_index;
-        for (button_index = 0; button_index < desktop.button_count; button_index += 1) {
-            ButtonSpec *candidate = &desktop.buttons[button_index];
-            if (candidate->emits_event && candidate->event_id == tooltip->event_id) {
-                tool = candidate;
-                break;
-            }
-        }
-        if (tool == 0) {
+        tool_handle = event_control_handle(tooltip->event_id);
+        if (tool_handle == 0) {
             return startup_error(16, L"ui_tooltip event_id has no event control.");
         }
         /* Native tooltips are popup windows, not child panels. Windows owns
@@ -5747,9 +9381,13 @@ int jadren_win32_window_run(void) {
         /* V2 ends at lParam and is accepted by every supported common-controls
          * version; lpReserved is a later optional extension we do not use. */
         tool_info.cbSize = (UINT)(sizeof(TOOLINFOW) - sizeof(void *));
-        tool_info.uFlags = TTF_IDISHWND | TTF_CENTERTIP;
+        /* TTF_SUBCLASS lets comctl32 relay hover messages for native EDIT,
+         * COMBOBOX, LISTBOX and report-view controls.  Existing button/input
+         * subclasses remain the owner-draw/event adapters and are chained by
+         * the tooltip controller. */
+        tool_info.uFlags = TTF_IDISHWND | TTF_CENTERTIP | TTF_SUBCLASS;
         tool_info.hwnd = window;
-        tool_info.uId = (UINT_PTR)tool->handle;
+        tool_info.uId = (UINT_PTR)tool_handle;
         tool_info.lpszText = tooltip->text;
         SendMessageW(tooltip->handle, TTM_ADDTOOLW, 0,
                      (LPARAM)(unsigned __int64)&tool_info);
@@ -5795,6 +9433,30 @@ int jadren_win32_window_run(void) {
     RedrawWindow(window, 0, 0,
                  RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     while (GetMessageW(&message, 0, 0, 0) > 0) {
+        if (message.message == WM_MOUSEWHEEL && desktop.scroll_max_y > 0) {
+            BOOL internal_scroll_target = 0;
+            int scroll_index;
+            for (scroll_index = 0; scroll_index < desktop.scroll_count; scroll_index += 1) {
+                if (desktop.scrolls[scroll_index].handle == message.hwnd) {
+                    internal_scroll_target = 1;
+                }
+            }
+            for (scroll_index = 0; scroll_index < desktop.list_count; scroll_index += 1) {
+                if (desktop.lists[scroll_index].handle == message.hwnd) {
+                    internal_scroll_target = 1;
+                }
+            }
+            for (scroll_index = 0; scroll_index < desktop.table_count; scroll_index += 1) {
+                if (desktop.tables[scroll_index].handle == message.hwnd) {
+                    internal_scroll_target = 1;
+                }
+            }
+            if (!internal_scroll_target) {
+                desktop_window_proc(desktop.window, message.message,
+                                    message.wParam, message.lParam);
+                continue;
+            }
+        }
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }

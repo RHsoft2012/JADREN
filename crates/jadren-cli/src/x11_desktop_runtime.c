@@ -1,3 +1,6 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/Xutil.h>
@@ -6,8 +9,20 @@
 #include <locale.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <string.h>
 #include <unistd.h>
+
+/* Some freestanding Linux SDKs hide this POSIX declaration behind their
+ * feature-test headers; the runtime uses the fixed-size caller-owned form. */
+extern char *realpath(const char *path, char *resolved_path);
+
+#ifndef JADREN_UI_HAS_EVENT_CALLBACK
+#define JADREN_UI_HAS_EVENT_CALLBACK 0
+#endif
+#ifndef JADREN_UI_HAS_FILE_RUNTIME
+#define JADREN_UI_HAS_FILE_RUNTIME 0
+#endif
 
 /*
  * Small native POSIX retained backend for the first Linux desktop slice.
@@ -31,7 +46,10 @@
 #define JADREN_X11_MAX_TEXT 256
 #define JADREN_X11_MAX_STATE_SLOTS 32
 #define JADREN_X11_MAX_STATE_BINDINGS 64
-#define JADREN_X11_MAX_INPUT_APP_BINDINGS 12
+#define JADREN_X11_MAX_INPUT_APP_BINDINGS 16
+#define JADREN_X11_UI_EVENT_QUEUE_CAPACITY 64
+#define JADREN_X11_FILE_PATH_MAX 4096
+#define JADREN_X11_FILE_TITLE_MAX 4096
 
 typedef struct JadrenString {
     const unsigned char *data;
@@ -66,6 +84,7 @@ typedef struct JadrenNode {
     int stretch;
     int event_id;
     int checked;
+    int is_switch;
     uint32_t text_color;
     uint32_t background_color;
     int x;
@@ -146,6 +165,10 @@ static int jadren_focused_node;
 static int jadren_open_menu;
 static int jadren_open_select;
 static int jadren_last_event;
+static int jadren_ui_event_queue[JADREN_X11_UI_EVENT_QUEUE_CAPACITY];
+static uint32_t jadren_ui_event_queue_head;
+static uint32_t jadren_ui_event_queue_count;
+static uint32_t jadren_ui_event_queue_dropped;
 static int jadren_resize_event_id;
 static int jadren_close_event_id;
 static int jadren_close_event_sent;
@@ -158,6 +181,29 @@ static int jadren_state_binding_count;
 static JadrenInputAppBinding
     jadren_input_app_bindings[JADREN_X11_MAX_INPUT_APP_BINDINGS];
 static int jadren_input_app_binding_count;
+
+static void jadren_ui_event_queue_clear_state(void) {
+    jadren_ui_event_queue_head = 0U;
+    jadren_ui_event_queue_count = 0U;
+    jadren_ui_event_queue_dropped = 0U;
+}
+
+static void jadren_enqueue_ui_event(int event_id) {
+    uint32_t tail;
+    if (event_id == 0) {
+        return;
+    }
+    if (jadren_ui_event_queue_count >= JADREN_X11_UI_EVENT_QUEUE_CAPACITY) {
+        if (jadren_ui_event_queue_dropped != UINT32_MAX) {
+            jadren_ui_event_queue_dropped += 1U;
+        }
+        return;
+    }
+    tail = (jadren_ui_event_queue_head + jadren_ui_event_queue_count) %
+        JADREN_X11_UI_EVENT_QUEUE_CAPACITY;
+    jadren_ui_event_queue[tail] = event_id;
+    jadren_ui_event_queue_count += 1U;
+}
 
 static Display *jadren_display;
 static int jadren_screen;
@@ -178,12 +224,65 @@ extern uint64_t app_list_read_text(int list_id, int item_index,
                                    unsigned char *output_data,
                                    uint64_t output_length)
     __attribute__((weak));
+extern int app_list_filter_text(int source_list_id, int destination_list_id,
+                                const unsigned char *query_data,
+                                uint64_t query_length) __attribute__((weak));
+extern int app_list_filter_text_ex(int source_list_id, int destination_list_id,
+                                   const unsigned char *query_data,
+                                   uint64_t query_length, int mode)
+    __attribute__((weak));
+extern int app_list_filter_text_if_revision(
+    int source_list_id, int destination_list_id,
+    const unsigned char *query_data, uint64_t query_length,
+    uint64_t expected_revision) __attribute__((weak));
+extern int app_list_filter_text_ex_if_revision(
+    int source_list_id, int destination_list_id,
+    const unsigned char *query_data, uint64_t query_length, int mode,
+    uint64_t expected_revision) __attribute__((weak));
+extern int app_list_filter_callback(
+    int source_list_id, int destination_list_id,
+    unsigned char (*predicate)(int, int)) __attribute__((weak));
+extern int app_list_filter_callback_if_revision(
+    int source_list_id, int destination_list_id,
+    unsigned char (*predicate)(int, int), uint64_t expected_revision)
+    __attribute__((weak));
+extern int app_list_page(int source_list_id, int destination_list_id,
+                         int start_index, int page_size) __attribute__((weak));
+extern int app_list_page_if_revision(int source_list_id, int destination_list_id,
+                                     int start_index, int page_size,
+                                     uint64_t expected_revision)
+    __attribute__((weak));
+extern int app_list_sort_text(int list_id, int descending)
+    __attribute__((weak));
 extern int app_table_row_count(int table_id) __attribute__((weak));
 extern uint64_t app_table_read_cell(int table_id, int row_index,
                                     int column_index,
                                     unsigned char *output_data,
                                     uint64_t output_length)
     __attribute__((weak));
+extern int app_table_page(int source_table_id, int destination_table_id,
+                          int start_row, int page_size) __attribute__((weak));
+extern int app_table_page_if_revision(int source_table_id, int destination_table_id,
+                                      int start_row, int page_size,
+                                      uint64_t expected_revision)
+    __attribute__((weak));
+extern int app_table_index_find_pair_text_if_revision(
+    int table_id, int first_column_index, int second_column_index,
+    const unsigned char *first_data, uint64_t first_length,
+    const unsigned char *second_data, uint64_t second_length,
+    uint64_t expected_revision) __attribute__((weak));
+extern int app_table_index_find_int_if_revision(
+    int table_id, int column_index, int64_t query,
+    uint64_t expected_revision) __attribute__((weak));
+extern int app_table_index_find_uint_if_revision(
+    int table_id, int column_index, uint64_t query,
+    uint64_t expected_revision) __attribute__((weak));
+extern int app_table_index_find_float_if_revision(
+    int table_id, int column_index, double query,
+    uint64_t expected_revision) __attribute__((weak));
+extern int app_table_index_find_bool_if_revision(
+    int table_id, int column_index, unsigned char query,
+    uint64_t expected_revision) __attribute__((weak));
 extern int app_table_sort_text(int table_id, int column_index, int descending)
     __attribute__((weak));
 extern int app_table_sort_int(int table_id, int column_index, int descending)
@@ -194,6 +293,26 @@ extern int app_table_sort_float(int table_id, int column_index, int descending)
     __attribute__((weak));
 extern int app_table_sort_bool(int table_id, int column_index, int descending)
     __attribute__((weak));
+extern int app_table_sort_text_if_revision(int table_id, int column_index,
+                                           int descending,
+                                           uint64_t expected_revision)
+    __attribute__((weak));
+extern int app_table_sort_int_if_revision(int table_id, int column_index,
+                                          int descending,
+                                          uint64_t expected_revision)
+    __attribute__((weak));
+extern int app_table_sort_uint_if_revision(int table_id, int column_index,
+                                           int descending,
+                                           uint64_t expected_revision)
+    __attribute__((weak));
+extern int app_table_sort_float_if_revision(int table_id, int column_index,
+                                            int descending,
+                                            uint64_t expected_revision)
+    __attribute__((weak));
+extern int app_table_sort_bool_if_revision(int table_id, int column_index,
+                                           int descending,
+                                           uint64_t expected_revision)
+    __attribute__((weak));
 extern int app_table_filter_text(int source_table_id, int destination_table_id,
                                  int column_index, const char *query_data,
                                  uint64_t query_length)
@@ -202,17 +321,51 @@ extern int app_table_filter_text_ex(int source_table_id, int destination_table_i
                                     int column_index, const char *query_data,
                                     uint64_t query_length, int mode)
     __attribute__((weak));
+extern int app_table_filter_text_ex_if_revision(
+    int source_table_id, int destination_table_id, int column_index,
+    const char *query_data, uint64_t query_length, int mode,
+    uint64_t expected_revision) __attribute__((weak));
+extern int app_table_filter_text_if_revision(int source_table_id,
+                                             int destination_table_id,
+                                             int column_index,
+                                             const char *query_data,
+                                             uint64_t query_length,
+                                             uint64_t expected_revision)
+    __attribute__((weak));
 extern int app_table_filter_int(int source_table_id, int destination_table_id,
                                 int column_index, int64_t query)
+    __attribute__((weak));
+extern int app_table_filter_int_if_revision(int source_table_id, int destination_table_id,
+                                            int column_index, int64_t query,
+                                            uint64_t expected_revision)
     __attribute__((weak));
 extern int app_table_filter_uint(int source_table_id, int destination_table_id,
                                  int column_index, uint64_t query)
     __attribute__((weak));
+extern int app_table_filter_uint_if_revision(int source_table_id, int destination_table_id,
+                                             int column_index, uint64_t query,
+                                             uint64_t expected_revision)
+    __attribute__((weak));
 extern int app_table_filter_float(int source_table_id, int destination_table_id,
                                   int column_index, double query)
     __attribute__((weak));
+extern int app_table_filter_float_if_revision(int source_table_id, int destination_table_id,
+                                              int column_index, double query,
+                                              uint64_t expected_revision)
+    __attribute__((weak));
 extern int app_table_filter_bool(int source_table_id, int destination_table_id,
                                  int column_index, unsigned char query)
+    __attribute__((weak));
+extern int app_table_filter_bool_if_revision(int source_table_id, int destination_table_id,
+                                             int column_index, unsigned char query,
+                                             uint64_t expected_revision)
+    __attribute__((weak));
+extern int app_table_filter_callback(
+    int source_table_id, int destination_table_id,
+    unsigned char (*predicate)(int, int)) __attribute__((weak));
+extern int app_table_filter_callback_if_revision(
+    int source_table_id, int destination_table_id,
+    unsigned char (*predicate)(int, int), uint64_t expected_revision)
     __attribute__((weak));
 
 #if JADREN_UI_HAS_FILE_RUNTIME
@@ -221,12 +374,23 @@ extern int app_state_set_text(const char *key_data, uint64_t key_length,
 extern uint64_t app_state_read_text(const char *key_data, uint64_t key_length,
                                     unsigned char *output_data,
                                     uint64_t output_length);
+extern int app_state_read_text_exact(const char *key_data, uint64_t key_length,
+                                     unsigned char *output_data,
+                                     uint64_t output_length,
+                                     uint64_t *output_text_length,
+                                     uint64_t output_text_length_capacity);
+extern uint64_t app_data_revision(void);
 extern int app_state_set_bool(const char *key_data, uint64_t key_length,
                               unsigned char value);
 extern int app_state_get_bool(const char *key_data, uint64_t key_length);
+extern int app_state_read_bool(const char *key_data, uint64_t key_length,
+                               unsigned char *output_data,
+                               uint64_t output_length);
 extern int app_state_set_int(const char *key_data, uint64_t key_length,
                              int64_t value);
 extern int64_t app_state_get_int(const char *key_data, uint64_t key_length);
+extern int app_state_read_int(const char *key_data, uint64_t key_length,
+                              int64_t *output_data, uint64_t output_length);
 #endif
 
 #if JADREN_UI_HAS_EVENT_CALLBACK
@@ -252,11 +416,15 @@ static void jadren_sync_table_app_state(JadrenNode *table);
 static void jadren_refresh_table_from_app_state(JadrenNode *table);
 static void jadren_sync_app_bindings_from_native(void);
 void ui_app_refresh_app_state(int node_id);
+int ui_app_refresh_app_state_exact(int node_id);
 /* Retained node binding may attach to an already-loaded model. */
 static int jadren_preserve_app_binding;
 static JadrenNode *jadren_input_for_event(int event_id);
 static JadrenInputAppBinding *jadren_input_app_binding_for_event(int event_id);
 static JadrenNode *jadren_node_for_event(int event_id, int kind);
+static size_t jadren_utf8_fit(const char *data, size_t length,
+                              size_t capacity);
+static void jadren_x11_focus_if_viewable(Window window);
 void ui_refresh_bindings(void);
 
 static void jadren_copy_text(char *destination, size_t capacity,
@@ -578,7 +746,29 @@ static void jadren_draw_node(int id) {
             color = color ^ 0x181818U;
         }
         jadren_fill_node(node, color);
-        jadren_draw_text(node, node->x, node->y);
+        if (node->kind == JADREN_NODE_CHECKBOX && node->is_switch) {
+            int track_width = 42;
+            int track_height = 20;
+            int track_x = node->x + node->laid_width - track_width - 10;
+            int track_y = node->y + (node->laid_height - track_height) / 2;
+            uint32_t track_color = node->checked ? node->background_color : 0x6B7280U;
+            uint32_t knob_color = node->checked ? 0xFFFFFFU : 0xD1D5DBU;
+            if (track_x < node->x + 4) {
+                track_x = node->x + 4;
+            }
+            XSetForeground(jadren_display, jadren_gc, jadren_pixel(track_color));
+            XFillRectangle(jadren_display, jadren_window, jadren_gc,
+                           track_x, track_y, (unsigned int)track_width,
+                           (unsigned int)track_height);
+            XSetForeground(jadren_display, jadren_gc, jadren_pixel(knob_color));
+            XFillArc(jadren_display, jadren_window, jadren_gc,
+                     node->checked ? track_x + track_width - track_height : track_x,
+                     track_y, (unsigned int)track_height,
+                     (unsigned int)track_height, 0, 360 * 64);
+            jadren_draw_text(node, node->x, node->y);
+        } else {
+            jadren_draw_text(node, node->x, node->y);
+        }
         if (node->kind == JADREN_NODE_INPUT && node->id == jadren_focused_node) {
             XSetForeground(jadren_display, jadren_gc, jadren_pixel(node->text_color));
             XDrawRectangle(jadren_display, jadren_window, jadren_gc,
@@ -776,6 +966,7 @@ static void jadren_draw(void) {
 
 static void jadren_dispatch_event(int event_id) {
     jadren_last_event = event_id;
+    jadren_enqueue_ui_event(event_id);
     jadren_sync_app_bindings_from_native();
     jadren_sync_input_app_state(jadren_input_for_event(event_id));
     jadren_sync_state_bindings_for_event(event_id);
@@ -887,6 +1078,7 @@ int32_t ui_app_begin(const char *title_data, uint64_t title_length,
     jadren_open_menu = 0;
     jadren_open_select = 0;
     jadren_last_event = 0;
+    jadren_ui_event_queue_clear_state();
     jadren_resize_event_id = 0;
     jadren_close_event_id = 0;
     jadren_close_event_sent = 0;
@@ -1050,6 +1242,26 @@ int32_t ui_app_select_index(int select_node) {
                : select->selected_index;
 }
 
+/* Revision-guarded select read uses -2 for an invalid or stale request; -1
+ * remains the valid "no selection" value. */
+int32_t ui_app_select_index_if_revision(
+    int select_node, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *select = jadren_node(select_node);
+    int32_t selected_index;
+    if (select == NULL || select->kind != JADREN_NODE_SELECT ||
+        app_data_revision() != expected_revision) {
+        return -2;
+    }
+    selected_index = select->selected_index;
+    return app_data_revision() == expected_revision ? selected_index : -2;
+#else
+    (void)select_node;
+    (void)expected_revision;
+    return -2;
+#endif
+}
+
 int32_t ui_app_select_set_index(int select_node, int selected_index) {
     JadrenNode *select = jadren_node(select_node);
     if (select == NULL || select->kind != JADREN_NODE_SELECT ||
@@ -1092,11 +1304,73 @@ int32_t ui_select_index(int event_id) {
     return select == NULL ? -1 : select->selected_index;
 }
 
+int32_t ui_select_index_if_revision(int event_id, uint64_t expected_revision) {
+    JadrenNode *select = jadren_select_for_event(event_id);
+    return select == NULL
+               ? -2
+               : ui_app_select_index_if_revision(select->id,
+                                                  expected_revision);
+}
+
 void ui_select_set_index(int event_id, int selected_index) {
     JadrenNode *select = jadren_select_for_event(event_id);
     if (select != NULL) {
         (void)ui_app_select_set_index(select->id, selected_index);
     }
+}
+
+int32_t ui_list_index(int event_id) {
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    return list == NULL ? -1 : list->list_selected_index;
+}
+
+/* Revision-guarded list selection read uses -2 for an invalid or stale
+ * request; -1 remains the valid "no selection" value. */
+int32_t ui_list_index_if_revision(int event_id, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    int32_t selected_index;
+    if (list == NULL || app_data_revision() != expected_revision) {
+        return -2;
+    }
+    selected_index = list->list_selected_index;
+    return app_data_revision() == expected_revision ? selected_index : -2;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return -2;
+#endif
+}
+
+void ui_list_set_index(int event_id, int selected_index) {
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    if (list == NULL || selected_index < -1 ||
+        selected_index >= list->list_item_count) {
+        return;
+    }
+    list->list_selected_index = selected_index;
+    jadren_sync_list_app_state(list);
+}
+
+int32_t ui_list_set_index_if_revision(
+    int event_id, int selected_index, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    if (list == NULL || selected_index < -1 ||
+        selected_index >= list->list_item_count ||
+        app_data_revision() != expected_revision) {
+        return 0;
+    }
+    list->list_selected_index = selected_index;
+    jadren_sync_list_app_state(list);
+    return app_data_revision() == expected_revision &&
+           list->list_selected_index == selected_index;
+#else
+    (void)event_id;
+    (void)selected_index;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 int32_t ui_app_list(int parent, int event_id, int width, int height,
@@ -1131,6 +1405,207 @@ int32_t ui_app_list_item(int list_node, const char *text_data,
     return 1;
 }
 
+int32_t ui_app_list_set_item(int list_node, int item_index,
+                             const char *text_data, uint64_t text_length) {
+    JadrenNode *list = jadren_node(list_node);
+    if (list == NULL || list->kind != JADREN_NODE_LIST || item_index < 0 ||
+        item_index >= list->list_item_count || text_data == NULL ||
+        text_length >= JADREN_X11_MAX_TEXT) {
+        return 0;
+    }
+    jadren_copy_text(list->list_item_text[item_index],
+                     sizeof(list->list_item_text[item_index]), text_data,
+                     text_length);
+    return 1;
+}
+
+int32_t ui_app_list_set_item_if_revision(
+    int list_node, int item_index, const char *text_data, uint64_t text_length,
+    uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (app_data_revision() != expected_revision ||
+        !ui_app_list_set_item(list_node, item_index, text_data, text_length)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)list_node;
+    (void)item_index;
+    (void)text_data;
+    (void)text_length;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Insert one retained list item without heap allocation. The inclusive
+ * item_count position appends; rows at or after the insertion point keep
+ * their relative order and the selected index follows the shifted row. */
+static int32_t ui_app_list_insert_item_impl(
+    int list_node, int item_index, const char *text_data, uint64_t text_length,
+    int sync_selection_state) {
+    JadrenNode *list = jadren_node(list_node);
+    int index;
+    if (list == NULL || list->kind != JADREN_NODE_LIST || item_index < 0 ||
+        item_index > list->list_item_count ||
+        list->list_item_count >= JADREN_X11_MAX_LIST_ITEMS ||
+        text_data == NULL || text_length >= JADREN_X11_MAX_TEXT) {
+        return 0;
+    }
+    for (index = list->list_item_count; index > item_index; index -= 1) {
+        memcpy(list->list_item_text[index], list->list_item_text[index - 1],
+               sizeof(list->list_item_text[index]));
+    }
+    jadren_copy_text(list->list_item_text[item_index],
+                     sizeof(list->list_item_text[item_index]), text_data,
+                     text_length);
+    list->list_item_count += 1;
+    if (list->list_selected_index >= item_index) {
+        list->list_selected_index += 1;
+    }
+    if (sync_selection_state) {
+        jadren_sync_list_app_state(list);
+    }
+    return 1;
+}
+
+int32_t ui_app_list_insert_item(int list_node, int item_index,
+                                const char *text_data, uint64_t text_length) {
+    return ui_app_list_insert_item_impl(list_node, item_index, text_data,
+                                        text_length, 1);
+}
+
+int32_t ui_app_list_insert_item_if_revision(
+    int list_node, int item_index, const char *text_data, uint64_t text_length,
+    uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (app_data_revision() != expected_revision ||
+        !ui_app_list_insert_item_impl(list_node, item_index, text_data,
+                                      text_length, 0)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)list_node;
+    (void)item_index;
+    (void)text_data;
+    (void)text_length;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Move one retained list item to its final zero-based index. The selected
+ * item follows its value; intervening selections shift around it. */
+static int32_t ui_app_list_move_item_impl(int list_node, int from_index,
+                                          int to_index,
+                                          int sync_selection_state) {
+    JadrenNode *list = jadren_node(list_node);
+    char temporary[JADREN_X11_MAX_TEXT];
+    int index;
+    int selected_index;
+    if (list == NULL || list->kind != JADREN_NODE_LIST || from_index < 0 ||
+        to_index < 0 || from_index >= list->list_item_count ||
+        to_index >= list->list_item_count) {
+        return 0;
+    }
+    if (from_index == to_index) return 1;
+    memcpy(temporary, list->list_item_text[from_index], sizeof(temporary));
+    if (from_index < to_index) {
+        for (index = from_index; index < to_index; index += 1) {
+            memcpy(list->list_item_text[index], list->list_item_text[index + 1],
+                   sizeof(list->list_item_text[index]));
+        }
+    } else {
+        for (index = from_index; index > to_index; index -= 1) {
+            memcpy(list->list_item_text[index], list->list_item_text[index - 1],
+                   sizeof(list->list_item_text[index]));
+        }
+    }
+    memcpy(list->list_item_text[to_index], temporary, sizeof(temporary));
+    selected_index = list->list_selected_index;
+    if (selected_index == from_index) {
+        list->list_selected_index = to_index;
+    } else if (from_index < to_index && selected_index > from_index &&
+               selected_index <= to_index) {
+        list->list_selected_index = selected_index - 1;
+    } else if (from_index > to_index && selected_index >= to_index &&
+               selected_index < from_index) {
+        list->list_selected_index = selected_index + 1;
+    }
+    if (sync_selection_state) {
+        jadren_sync_list_app_state(list);
+    }
+    return 1;
+}
+
+int32_t ui_app_list_move_item(int list_node, int from_index, int to_index) {
+    return ui_app_list_move_item_impl(list_node, from_index, to_index, 1);
+}
+
+int32_t ui_app_list_move_item_if_revision(
+    int list_node, int from_index, int to_index, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (app_data_revision() != expected_revision ||
+        !ui_app_list_move_item_impl(list_node, from_index, to_index, 0)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)list_node;
+    (void)from_index;
+    (void)to_index;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+static int32_t ui_app_list_remove_item_impl(int list_node, int item_index,
+                                            int sync_selection_state) {
+    JadrenNode *list = jadren_node(list_node);
+    int index;
+    if (list == NULL || list->kind != JADREN_NODE_LIST || item_index < 0 ||
+        item_index >= list->list_item_count) {
+        return 0;
+    }
+    for (index = item_index; index + 1 < list->list_item_count; index += 1) {
+        memcpy(list->list_item_text[index], list->list_item_text[index + 1],
+               sizeof(list->list_item_text[index]));
+    }
+    list->list_item_count -= 1;
+    memset(list->list_item_text[list->list_item_count], 0,
+           sizeof(list->list_item_text[list->list_item_count]));
+    if (list->list_selected_index == item_index) {
+        list->list_selected_index = -1;
+    } else if (list->list_selected_index > item_index) {
+        list->list_selected_index -= 1;
+    }
+    if (sync_selection_state) {
+        jadren_sync_list_app_state(list);
+    }
+    return 1;
+}
+
+int32_t ui_app_list_remove_item(int list_node, int item_index) {
+    return ui_app_list_remove_item_impl(list_node, item_index, 1);
+}
+
+int32_t ui_app_list_remove_item_if_revision(
+    int list_node, int item_index, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (app_data_revision() != expected_revision ||
+        !ui_app_list_remove_item_impl(list_node, item_index, 0)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)list_node;
+    (void)item_index;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 int32_t ui_app_list_clear(int list_node) {
     JadrenNode *list = jadren_node(list_node);
     if (list == NULL || list->kind != JADREN_NODE_LIST) {
@@ -1149,11 +1624,50 @@ int32_t ui_app_list_count(int list_node) {
                : list->list_item_count;
 }
 
+/* Revision-guarded list count distinguishes a valid empty projection (0)
+ * from an invalid or stale read (-1). The second revision check keeps the
+ * returned count tied to the caller's snapshot. */
+int32_t ui_app_list_count_if_revision(int list_node,
+                                      uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *list = jadren_node(list_node);
+    int32_t count;
+    if (list == NULL || list->kind != JADREN_NODE_LIST ||
+        app_data_revision() != expected_revision) {
+        return -1;
+    }
+    count = list->list_item_count;
+    return app_data_revision() == expected_revision ? count : -1;
+#else
+    (void)list_node;
+    (void)expected_revision;
+    return -1;
+#endif
+}
+
 int32_t ui_app_list_index(int list_node) {
     JadrenNode *list = jadren_node(list_node);
     return list == NULL || list->kind != JADREN_NODE_LIST
                ? -1
                : list->list_selected_index;
+}
+
+int32_t ui_app_list_index_if_revision(
+    int list_node, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *list = jadren_node(list_node);
+    int32_t selected_index;
+    if (list == NULL || list->kind != JADREN_NODE_LIST ||
+        app_data_revision() != expected_revision) {
+        return -2;
+    }
+    selected_index = list->list_selected_index;
+    return app_data_revision() == expected_revision ? selected_index : -2;
+#else
+    (void)list_node;
+    (void)expected_revision;
+    return -2;
+#endif
 }
 
 int32_t ui_app_list_set_index(int list_node, int selected_index) {
@@ -1165,6 +1679,27 @@ int32_t ui_app_list_set_index(int list_node, int selected_index) {
     list->list_selected_index = selected_index;
     jadren_sync_list_app_state(list);
     return 1;
+}
+
+int32_t ui_app_list_set_index_if_revision(
+    int list_node, int selected_index, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *list = jadren_node(list_node);
+    if (list == NULL || list->kind != JADREN_NODE_LIST ||
+        selected_index < -1 || selected_index >= list->list_item_count ||
+        app_data_revision() != expected_revision) {
+        return 0;
+    }
+    list->list_selected_index = selected_index;
+    jadren_sync_list_app_state(list);
+    return app_data_revision() == expected_revision &&
+           list->list_selected_index == selected_index;
+#else
+    (void)list_node;
+    (void)selected_index;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 static int32_t jadren_refresh_list_from_app(JadrenNode *list) {
@@ -1213,6 +1748,233 @@ int32_t ui_app_list_refresh(int list_node) {
     return jadren_refresh_list_from_app(list);
 }
 
+static void jadren_refresh_bound_lists(int app_list_id) {
+    int node_index;
+    for (node_index = 1; node_index < jadren_next_node; node_index += 1) {
+        JadrenNode *node = &jadren_nodes[node_index];
+        if (!node->used || node->kind != JADREN_NODE_LIST ||
+            node->app_list_id != app_list_id) {
+            continue;
+        }
+        (void)jadren_refresh_list_from_app(node);
+    }
+}
+
+static int32_t jadren_filter_list_from_app(
+    JadrenNode *list, int destination_list_id, const unsigned char *query_data,
+    uint64_t query_length, int mode) {
+    int result;
+    if (list == NULL || list->app_list_id < 0 || destination_list_id < 0 ||
+        destination_list_id == list->app_list_id || mode < 0 || mode > 7 ||
+        (query_data == NULL && query_length > 0U) ||
+        app_list_filter_text_ex == NULL) {
+        return 0;
+    }
+    result = app_list_filter_text_ex(
+        list->app_list_id, destination_list_id, query_data, query_length, mode);
+    if (!result) return 0;
+    jadren_refresh_bound_lists(destination_list_id);
+    return 1;
+}
+
+static int32_t jadren_filter_list_from_app_if_revision(
+    JadrenNode *list, int destination_list_id, const unsigned char *query_data,
+    uint64_t query_length, int mode, uint64_t expected_revision) {
+    int result;
+    if (list == NULL || list->app_list_id < 0 || destination_list_id < 0 ||
+        destination_list_id == list->app_list_id || mode < 0 || mode > 7 ||
+        (query_data == NULL && query_length > 0U)) {
+        return 0;
+    }
+    if (mode == 0 && app_list_filter_text_if_revision != NULL) {
+        result = app_list_filter_text_if_revision(
+            list->app_list_id, destination_list_id, query_data, query_length,
+            expected_revision);
+    } else if (mode != 0 && app_list_filter_text_ex_if_revision != NULL) {
+        result = app_list_filter_text_ex_if_revision(
+            list->app_list_id, destination_list_id, query_data, query_length,
+            mode, expected_revision);
+    } else {
+        return 0;
+    }
+    if (!result) return 0;
+    jadren_refresh_bound_lists(destination_list_id);
+    return 1;
+}
+
+int32_t ui_app_list_filter_text(int list_node, int destination_list_id,
+                                const unsigned char *query_data,
+                                uint64_t query_length) {
+    return jadren_filter_list_from_app(
+        jadren_node(list_node), destination_list_id, query_data, query_length,
+        0);
+}
+
+int32_t ui_app_list_filter_text_if_revision(
+    int list_node, int destination_list_id, const unsigned char *query_data,
+    uint64_t query_length, uint64_t expected_revision) {
+    return jadren_filter_list_from_app_if_revision(
+        jadren_node(list_node), destination_list_id, query_data, query_length,
+        0, expected_revision);
+}
+
+int32_t ui_app_list_filter_text_ex(int list_node, int destination_list_id,
+                                   const unsigned char *query_data,
+                                   uint64_t query_length, int mode) {
+    return jadren_filter_list_from_app(
+        jadren_node(list_node), destination_list_id, query_data, query_length,
+        mode);
+}
+
+int32_t ui_app_list_filter_text_ex_if_revision(
+    int list_node, int destination_list_id, const unsigned char *query_data,
+    uint64_t query_length, int mode, uint64_t expected_revision) {
+    return jadren_filter_list_from_app_if_revision(
+        jadren_node(list_node), destination_list_id, query_data, query_length,
+        mode, expected_revision);
+}
+
+static int32_t jadren_filter_list_callback_from_app(
+    JadrenNode *list, int destination_list_id,
+    unsigned char (*predicate)(int, int)) {
+    if (list == NULL || list->app_list_id < 0 || destination_list_id < 0 ||
+        destination_list_id == list->app_list_id || predicate == NULL ||
+        app_list_filter_callback == NULL) {
+        return 0;
+    }
+    if (!app_list_filter_callback(list->app_list_id, destination_list_id,
+                                  predicate)) {
+        return 0;
+    }
+    jadren_refresh_bound_lists(destination_list_id);
+    return 1;
+}
+
+static int32_t jadren_filter_list_callback_from_app_if_revision(
+    JadrenNode *list, int destination_list_id,
+    unsigned char (*predicate)(int, int), uint64_t expected_revision) {
+#if !JADREN_UI_HAS_FILE_RUNTIME
+    (void)list;
+    (void)destination_list_id;
+    (void)predicate;
+    (void)expected_revision;
+    return 0;
+#else
+    if (list == NULL || list->app_list_id < 0 || destination_list_id < 0 ||
+        destination_list_id == list->app_list_id || predicate == NULL ||
+        app_list_filter_callback_if_revision == NULL ||
+        app_data_revision() != expected_revision) {
+        return 0;
+    }
+    if (!app_list_filter_callback_if_revision(
+            list->app_list_id, destination_list_id, predicate,
+            expected_revision)) {
+        return 0;
+    }
+    jadren_refresh_bound_lists(destination_list_id);
+    return 1;
+#endif
+}
+
+int32_t ui_app_list_filter_callback(
+    int list_node, int destination_list_id,
+    unsigned char (*predicate)(int, int)) {
+    return jadren_filter_list_callback_from_app(
+        jadren_node(list_node), destination_list_id, predicate);
+}
+
+int32_t ui_app_list_filter_callback_if_revision(
+    int list_node, int destination_list_id,
+    unsigned char (*predicate)(int, int), uint64_t expected_revision) {
+    return jadren_filter_list_callback_from_app_if_revision(
+        jadren_node(list_node), destination_list_id, predicate,
+        expected_revision);
+}
+
+static int32_t jadren_page_list_from_app(
+    JadrenNode *list, int destination_list_id, int start_index, int page_size) {
+    if (list == NULL || list->app_list_id < 0 || destination_list_id < 0 ||
+        destination_list_id == list->app_list_id || start_index < 0 ||
+        page_size < 0 || app_list_page == NULL) {
+        return 0;
+    }
+    if (!app_list_page(list->app_list_id, destination_list_id, start_index,
+                       page_size)) {
+        return 0;
+    }
+    jadren_refresh_bound_lists(destination_list_id);
+    return 1;
+}
+
+static int32_t jadren_page_list_from_app_if_revision(
+    JadrenNode *list, int destination_list_id, int start_index, int page_size,
+    uint64_t expected_revision) {
+    if (list == NULL || list->app_list_id < 0 || destination_list_id < 0 ||
+        destination_list_id == list->app_list_id || start_index < 0 ||
+        page_size < 0 || app_list_page_if_revision == NULL) {
+        return 0;
+    }
+    if (!app_list_page_if_revision(list->app_list_id, destination_list_id,
+                                   start_index, page_size, expected_revision)) {
+        return 0;
+    }
+    jadren_refresh_bound_lists(destination_list_id);
+    return 1;
+}
+
+int32_t ui_app_list_page(int list_node, int destination_list_id, int start_index,
+                         int page_size) {
+    return jadren_page_list_from_app(
+        jadren_node(list_node), destination_list_id, start_index, page_size);
+}
+
+int32_t ui_app_list_page_if_revision(
+    int list_node, int destination_list_id, int start_index, int page_size,
+    uint64_t expected_revision) {
+    return jadren_page_list_from_app_if_revision(
+        jadren_node(list_node), destination_list_id, start_index, page_size,
+        expected_revision);
+}
+
+static int32_t jadren_sort_list_from_app(JadrenNode *list, int descending) {
+    if (list == NULL || list->app_list_id < 0 ||
+        (descending != 0 && descending != 1) || app_list_sort_text == NULL) {
+        return 0;
+    }
+    if (!app_list_sort_text(list->app_list_id, descending)) return 0;
+    jadren_refresh_bound_lists(list->app_list_id);
+    return 1;
+}
+
+static int32_t jadren_sort_list_from_app_if_revision(
+    JadrenNode *list, int descending, uint64_t expected_revision) {
+#if !JADREN_UI_HAS_FILE_RUNTIME
+    (void)list;
+    (void)descending;
+    (void)expected_revision;
+    return 0;
+#else
+    if (list == NULL || list->app_list_id < 0 ||
+        (descending != 0 && descending != 1) ||
+        app_data_revision() != expected_revision || app_list_sort_text == NULL) {
+        return 0;
+    }
+    if (!app_list_sort_text(list->app_list_id, descending)) return 0;
+    jadren_refresh_bound_lists(list->app_list_id);
+    return 1;
+#endif
+}
+
+int32_t ui_app_list_sort_text(int list_node, int descending) {
+    return jadren_sort_list_from_app(jadren_node(list_node), descending);
+}
+
+int32_t ui_app_list_sort_text_if_revision(
+    int list_node, int descending, uint64_t expected_revision) {
+    return jadren_sort_list_from_app_if_revision(
+        jadren_node(list_node), descending, expected_revision);
+}
+
 uint64_t ui_app_list_read_item(int list_node, int item_index,
                                unsigned char *output_data,
                                uint64_t output_length) {
@@ -1230,6 +1992,64 @@ uint64_t ui_app_list_read_item(int list_node, int item_index,
         memcpy(output_data, list->list_item_text[item_index], length);
     }
     return (uint64_t)length;
+}
+
+int32_t ui_app_list_read_item_exact(int list_node, int item_index,
+                                    unsigned char *output_data,
+                                    uint64_t output_length,
+                                    uint64_t *output_text_length,
+                                    uint64_t output_text_length_capacity) {
+    JadrenNode *list = jadren_node(list_node);
+    uint64_t length;
+    if (list == NULL || list->kind != JADREN_NODE_LIST || item_index < 0 ||
+        item_index >= list->list_item_count || output_text_length == NULL ||
+        output_text_length_capacity == 0U) {
+        return 0;
+    }
+    length = (uint64_t)strlen(list->list_item_text[item_index]);
+    if (length > output_length || (length > 0U && output_data == NULL)) {
+        return 0;
+    }
+    if (length > 0U) {
+        memcpy(output_data, list->list_item_text[item_index], (size_t)length);
+    }
+    output_text_length[0] = length;
+    return 1;
+}
+
+/* Revision-guarded exact list read keeps caller-owned outputs untouched when
+ * the application model advanced before or during the bounded read. */
+int32_t ui_app_list_read_item_exact_if_revision(
+    int list_node, int item_index, unsigned char *output_data,
+    uint64_t output_length, uint64_t *output_text_length,
+    uint64_t output_text_length_capacity, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    unsigned char temporary[JADREN_X11_MAX_TEXT];
+    uint64_t temporary_length = 0;
+    if (app_data_revision() != expected_revision ||
+        !ui_app_list_read_item_exact(list_node, item_index, temporary,
+                                     sizeof(temporary), &temporary_length, 1U) ||
+        app_data_revision() != expected_revision ||
+        output_text_length == NULL || output_text_length_capacity == 0U ||
+        temporary_length > output_length ||
+        (temporary_length > 0U && output_data == NULL)) {
+        return 0;
+    }
+    if (temporary_length > 0U) {
+        memcpy(output_data, temporary, (size_t)temporary_length);
+    }
+    output_text_length[0] = temporary_length;
+    return 1;
+#else
+    (void)list_node;
+    (void)item_index;
+    (void)output_data;
+    (void)output_length;
+    (void)output_text_length;
+    (void)output_text_length_capacity;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 int32_t ui_app_table(int parent, int event_id, int width, int height,
@@ -1303,6 +2123,184 @@ int32_t ui_app_table_cell(int table_node, int row_index, int column_index,
     return 1;
 }
 
+int32_t ui_app_table_cell_if_revision(
+    int table_node, int row_index, int column_index, const char *text_data,
+    uint64_t text_length, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (app_data_revision() != expected_revision ||
+        !ui_app_table_cell(table_node, row_index, column_index, text_data,
+                           text_length)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)table_node;
+    (void)row_index;
+    (void)column_index;
+    (void)text_data;
+    (void)text_length;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Insert one zero-initialized retained table row without heap allocation.
+ * The inclusive row_count position appends. Selection follows the native
+ * report-view rule: rows at or after the insertion point move down by one. */
+static int32_t ui_app_table_insert_row_impl(int table_node, int row_index,
+                                            int sync_selection_state) {
+    JadrenTableData *table = jadren_table_data(jadren_node(table_node));
+    int row;
+    if (table == NULL || row_index < 0 ||
+        row_index > table->row_count ||
+        table->row_count >= JADREN_X11_MAX_TABLE_ROWS) {
+        return 0;
+    }
+    for (row = table->row_count; row > row_index; row -= 1) {
+        memcpy(table->cells[row], table->cells[row - 1],
+               sizeof(table->cells[row]));
+    }
+    memset(table->cells[row_index], 0, sizeof(table->cells[row_index]));
+    table->row_count += 1;
+    if (table->selected_row >= row_index) {
+        table->selected_row += 1;
+    }
+    if (sync_selection_state) {
+        jadren_sync_table_app_state(jadren_node(table_node));
+    }
+    return 1;
+}
+
+int32_t ui_app_table_insert_row(int table_node, int row_index) {
+    return ui_app_table_insert_row_impl(table_node, row_index, 1);
+}
+
+int32_t ui_app_table_insert_row_if_revision(
+    int table_node, int row_index, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (app_data_revision() != expected_revision ||
+        !ui_app_table_insert_row_impl(table_node, row_index, 0)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)table_node;
+    (void)row_index;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Move one retained table row as a unit. The bounded row staging keeps every
+ * column together and preserves the explicit selected-row identity. */
+static int32_t ui_app_table_move_row_impl(int table_node, int from_index,
+                                           int to_index,
+                                           int sync_selection_state) {
+    JadrenNode *node = jadren_node(table_node);
+    JadrenTableData *table = jadren_table_data(node);
+    char temporary[JADREN_X11_MAX_TABLE_COLUMNS][JADREN_X11_MAX_TEXT];
+    int index;
+    int selected_row;
+    if (table == NULL || from_index < 0 || to_index < 0 ||
+        from_index >= table->row_count || to_index >= table->row_count) {
+        return 0;
+    }
+    if (from_index == to_index) return 1;
+    memcpy(temporary, table->cells[from_index], sizeof(temporary));
+    if (from_index < to_index) {
+        for (index = from_index; index < to_index; index += 1) {
+            memcpy(table->cells[index], table->cells[index + 1],
+                   sizeof(table->cells[index]));
+        }
+    } else {
+        for (index = from_index; index > to_index; index -= 1) {
+            memcpy(table->cells[index], table->cells[index - 1],
+                   sizeof(table->cells[index]));
+        }
+    }
+    memcpy(table->cells[to_index], temporary, sizeof(temporary));
+    selected_row = table->selected_row;
+    if (selected_row == from_index) {
+        table->selected_row = to_index;
+    } else if (from_index < to_index && selected_row > from_index &&
+               selected_row <= to_index) {
+        table->selected_row = selected_row - 1;
+    } else if (from_index > to_index && selected_row >= to_index &&
+               selected_row < from_index) {
+        table->selected_row = selected_row + 1;
+    }
+    if (sync_selection_state) {
+        jadren_sync_table_app_state(node);
+    }
+    return 1;
+}
+
+int32_t ui_app_table_move_row(int table_node, int from_index, int to_index) {
+    return ui_app_table_move_row_impl(table_node, from_index, to_index, 1);
+}
+
+int32_t ui_app_table_move_row_if_revision(
+    int table_node, int from_index, int to_index, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (app_data_revision() != expected_revision ||
+        !ui_app_table_move_row_impl(table_node, from_index, to_index, 0)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)table_node;
+    (void)from_index;
+    (void)to_index;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+static int32_t ui_app_table_remove_row_impl(int table_node, int row_index,
+                                            int sync_selection_state) {
+    JadrenTableData *table = jadren_table_data(jadren_node(table_node));
+    int row;
+    if (table == NULL || row_index < 0 || row_index >= table->row_count) {
+        return 0;
+    }
+    for (row = row_index; row + 1 < table->row_count; row += 1) {
+        memcpy(table->cells[row], table->cells[row + 1],
+               sizeof(table->cells[row]));
+    }
+    table->row_count -= 1;
+    memset(table->cells[table->row_count], 0,
+           sizeof(table->cells[table->row_count]));
+    if (table->selected_row == row_index) {
+        table->selected_row = -1;
+    } else if (table->selected_row > row_index) {
+        table->selected_row -= 1;
+    }
+    if (sync_selection_state) {
+        jadren_sync_table_app_state(jadren_node(table_node));
+    }
+    return 1;
+}
+
+int32_t ui_app_table_remove_row(int table_node, int row_index) {
+    return ui_app_table_remove_row_impl(table_node, row_index, 1);
+}
+
+int32_t ui_app_table_remove_row_if_revision(
+    int table_node, int row_index, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (app_data_revision() != expected_revision ||
+        !ui_app_table_remove_row_impl(table_node, row_index, 0)) {
+        return 0;
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)table_node;
+    (void)row_index;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 uint64_t ui_app_table_read_cell(int table_node, int row_index,
                                 int column_index, unsigned char *output_data,
                                 uint64_t output_length) {
@@ -1321,6 +2319,68 @@ uint64_t ui_app_table_read_cell(int table_node, int row_index,
         memcpy(output_data, table->cells[row_index][column_index], length);
     }
     return (uint64_t)length;
+}
+
+/* Exact retained-table read follows the list/input contract: valid empty
+ * cells succeed with length zero, while invalid coordinates or a short
+ * caller-owned buffer leave both outputs untouched. */
+int32_t ui_app_table_read_cell_exact(int table_node, int row_index,
+                                     int column_index, unsigned char *output_data,
+                                     uint64_t output_length,
+                                     uint64_t *output_text_length,
+                                     uint64_t output_text_length_capacity) {
+    JadrenTableData *table = jadren_table_data(jadren_node(table_node));
+    uint64_t length;
+    if (table == NULL || row_index < 0 || row_index >= table->row_count ||
+        column_index < 0 || column_index >= table->column_count ||
+        output_text_length == NULL || output_text_length_capacity == 0U) {
+        return 0;
+    }
+    length = (uint64_t)strlen(table->cells[row_index][column_index]);
+    if (length > output_length || (length > 0U && output_data == NULL)) {
+        return 0;
+    }
+    if (length > 0U) {
+        memcpy(output_data, table->cells[row_index][column_index], (size_t)length);
+    }
+    output_text_length[0] = length;
+    return 1;
+}
+
+int32_t ui_app_table_read_cell_exact_if_revision(
+    int table_node, int row_index, int column_index,
+    unsigned char *output_data, uint64_t output_length,
+    uint64_t *output_text_length, uint64_t output_text_length_capacity,
+    uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    unsigned char temporary[JADREN_X11_MAX_TEXT];
+    uint64_t temporary_length = 0;
+    if (app_data_revision() != expected_revision ||
+        !ui_app_table_read_cell_exact(
+            table_node, row_index, column_index, temporary, sizeof(temporary),
+            &temporary_length, 1U) ||
+        app_data_revision() != expected_revision ||
+        output_text_length == NULL || output_text_length_capacity == 0U ||
+        temporary_length > output_length ||
+        (temporary_length > 0U && output_data == NULL)) {
+        return 0;
+    }
+    if (temporary_length > 0U) {
+        memcpy(output_data, temporary, (size_t)temporary_length);
+    }
+    output_text_length[0] = temporary_length;
+    return 1;
+#else
+    (void)table_node;
+    (void)row_index;
+    (void)column_index;
+    (void)output_data;
+    (void)output_length;
+    (void)output_text_length;
+    (void)output_text_length_capacity;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 static int32_t jadren_refresh_table_from_app(JadrenNode *table_node) {
@@ -1395,6 +2455,60 @@ static int32_t jadren_sort_table_from_app(JadrenTableData *table,
     return 1;
 }
 
+static int32_t jadren_sort_table_from_app_if_revision(
+    JadrenTableData *table, int column_index, int descending, int kind,
+    uint64_t expected_revision) {
+    int (*sort_function)(int, int, int, uint64_t) =
+        app_table_sort_text_if_revision;
+    if (kind == 1) sort_function = app_table_sort_int_if_revision;
+    else if (kind == 2) sort_function = app_table_sort_uint_if_revision;
+    else if (kind == 3) sort_function = app_table_sort_float_if_revision;
+    else if (kind == 4) sort_function = app_table_sort_bool_if_revision;
+    else if (kind != 0) return 0;
+    if (table == NULL || table->app_table_id < 0 || sort_function == NULL ||
+        column_index < 0 || column_index >= table->app_table_column_count) {
+        return 0;
+    }
+    if (!sort_function(table->app_table_id, column_index, descending,
+                       expected_revision)) {
+        return 0;
+    }
+    jadren_refresh_bound_tables(table->app_table_id);
+    return 1;
+}
+
+static int32_t jadren_page_table_from_app(JadrenTableData *table,
+                                          int destination_table_id,
+                                          int start_row, int page_size) {
+    if (table == NULL || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id || start_row < 0 ||
+        page_size < 0 || app_table_page == NULL) {
+        return 0;
+    }
+    if (!app_table_page(table->app_table_id, destination_table_id, start_row,
+                        page_size)) {
+        return 0;
+    }
+    jadren_refresh_bound_tables(destination_table_id);
+    return 1;
+}
+
+static int32_t jadren_page_table_from_app_if_revision(
+    JadrenTableData *table, int destination_table_id, int start_row,
+    int page_size, uint64_t expected_revision) {
+    if (table == NULL || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id || start_row < 0 ||
+        page_size < 0 || app_table_page_if_revision == NULL) {
+        return 0;
+    }
+    if (!app_table_page_if_revision(table->app_table_id, destination_table_id,
+                                    start_row, page_size, expected_revision)) {
+        return 0;
+    }
+    jadren_refresh_bound_tables(destination_table_id);
+    return 1;
+}
+
 int32_t ui_app_table_sort_text(int table_node, int column_index, int descending) {
     JadrenTableData *table = jadren_table_data(jadren_node(table_node));
     return jadren_sort_table_from_app(table, column_index, descending, 0);
@@ -1418,6 +2532,61 @@ int32_t ui_app_table_sort_float(int table_node, int column_index, int descending
 int32_t ui_app_table_sort_bool(int table_node, int column_index, int descending) {
     return jadren_sort_table_from_app(jadren_table_data(jadren_node(table_node)),
                                       column_index, descending, 4);
+}
+
+int32_t ui_app_table_sort_text_if_revision(int table_node, int column_index,
+                                           int descending,
+                                           uint64_t expected_revision) {
+    return jadren_sort_table_from_app_if_revision(
+        jadren_table_data(jadren_node(table_node)), column_index, descending,
+        0, expected_revision);
+}
+
+int32_t ui_app_table_sort_int_if_revision(int table_node, int column_index,
+                                          int descending,
+                                          uint64_t expected_revision) {
+    return jadren_sort_table_from_app_if_revision(
+        jadren_table_data(jadren_node(table_node)), column_index, descending,
+        1, expected_revision);
+}
+
+int32_t ui_app_table_sort_uint_if_revision(int table_node, int column_index,
+                                           int descending,
+                                           uint64_t expected_revision) {
+    return jadren_sort_table_from_app_if_revision(
+        jadren_table_data(jadren_node(table_node)), column_index, descending,
+        2, expected_revision);
+}
+
+int32_t ui_app_table_sort_float_if_revision(int table_node, int column_index,
+                                            int descending,
+                                            uint64_t expected_revision) {
+    return jadren_sort_table_from_app_if_revision(
+        jadren_table_data(jadren_node(table_node)), column_index, descending,
+        3, expected_revision);
+}
+
+int32_t ui_app_table_sort_bool_if_revision(int table_node, int column_index,
+                                           int descending,
+                                           uint64_t expected_revision) {
+    return jadren_sort_table_from_app_if_revision(
+        jadren_table_data(jadren_node(table_node)), column_index, descending,
+        4, expected_revision);
+}
+
+int32_t ui_app_table_page(int table_node, int destination_table_id,
+                          int start_row, int page_size) {
+    return jadren_page_table_from_app(
+        jadren_table_data(jadren_node(table_node)), destination_table_id,
+        start_row, page_size);
+}
+
+int32_t ui_app_table_page_if_revision(int table_node, int destination_table_id,
+                                      int start_row, int page_size,
+                                      uint64_t expected_revision) {
+    return jadren_page_table_from_app_if_revision(
+        jadren_table_data(jadren_node(table_node)), destination_table_id,
+        start_row, page_size, expected_revision);
 }
 
 void ui_table_sort_text(int event_id, int column_index, int descending) {
@@ -1450,6 +2619,121 @@ void ui_table_sort_bool(int event_id, int column_index, int descending) {
         column_index, descending, 4);
 }
 
+void ui_table_sort_text_if_revision(int event_id, int column_index,
+                                    int descending, uint64_t expected_revision) {
+    (void)jadren_sort_table_from_app_if_revision(
+        jadren_table_data(jadren_node_for_event(event_id, JADREN_NODE_TABLE)),
+        column_index, descending, 0, expected_revision);
+}
+
+void ui_table_sort_int_if_revision(int event_id, int column_index,
+                                   int descending, uint64_t expected_revision) {
+    (void)jadren_sort_table_from_app_if_revision(
+        jadren_table_data(jadren_node_for_event(event_id, JADREN_NODE_TABLE)),
+        column_index, descending, 1, expected_revision);
+}
+
+void ui_table_sort_uint_if_revision(int event_id, int column_index,
+                                    int descending, uint64_t expected_revision) {
+    (void)jadren_sort_table_from_app_if_revision(
+        jadren_table_data(jadren_node_for_event(event_id, JADREN_NODE_TABLE)),
+        column_index, descending, 2, expected_revision);
+}
+
+void ui_table_sort_float_if_revision(int event_id, int column_index,
+                                     int descending, uint64_t expected_revision) {
+    (void)jadren_sort_table_from_app_if_revision(
+        jadren_table_data(jadren_node_for_event(event_id, JADREN_NODE_TABLE)),
+        column_index, descending, 3, expected_revision);
+}
+
+void ui_table_sort_bool_if_revision(int event_id, int column_index,
+                                    int descending, uint64_t expected_revision) {
+    (void)jadren_sort_table_from_app_if_revision(
+        jadren_table_data(jadren_node_for_event(event_id, JADREN_NODE_TABLE)),
+        column_index, descending, 4, expected_revision);
+}
+
+int32_t ui_table_index_find_pair_text_if_revision(
+    int event_id, int first_column_index, int second_column_index,
+    const unsigned char *first_data, uint64_t first_length,
+    const unsigned char *second_data, uint64_t second_length,
+    uint64_t expected_revision) {
+    JadrenTableData *table =
+        jadren_table_data(jadren_node_for_event(event_id, JADREN_NODE_TABLE));
+    if (table == NULL || table->app_table_id < 0 || first_column_index < 0 ||
+        second_column_index < 0 ||
+        first_column_index >= table->app_table_column_count ||
+        second_column_index >= table->app_table_column_count ||
+        (first_data == NULL && first_length > 0U) ||
+        (second_data == NULL && second_length > 0U) ||
+        first_length > JADREN_X11_MAX_TEXT ||
+        second_length > JADREN_X11_MAX_TEXT ||
+        app_table_index_find_pair_text_if_revision == NULL) {
+        return -1;
+    }
+    return app_table_index_find_pair_text_if_revision(
+        table->app_table_id, first_column_index, second_column_index,
+        first_data, first_length, second_data, second_length,
+        expected_revision);
+}
+
+int32_t ui_table_index_find_int_if_revision(
+    int event_id, int column_index, int64_t query,
+    uint64_t expected_revision) {
+    JadrenTableData *table =
+        jadren_table_data(jadren_node_for_event(event_id, JADREN_NODE_TABLE));
+    if (table == NULL || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count ||
+        app_table_index_find_int_if_revision == NULL) {
+        return -1;
+    }
+    return app_table_index_find_int_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+}
+
+int32_t ui_table_index_find_uint_if_revision(
+    int event_id, int column_index, uint64_t query,
+    uint64_t expected_revision) {
+    JadrenTableData *table =
+        jadren_table_data(jadren_node_for_event(event_id, JADREN_NODE_TABLE));
+    if (table == NULL || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count ||
+        app_table_index_find_uint_if_revision == NULL) {
+        return -1;
+    }
+    return app_table_index_find_uint_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+}
+
+int32_t ui_table_index_find_float_if_revision(
+    int event_id, int column_index, double query,
+    uint64_t expected_revision) {
+    JadrenTableData *table =
+        jadren_table_data(jadren_node_for_event(event_id, JADREN_NODE_TABLE));
+    if (table == NULL || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count ||
+        app_table_index_find_float_if_revision == NULL) {
+        return -1;
+    }
+    return app_table_index_find_float_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+}
+
+int32_t ui_table_index_find_bool_if_revision(
+    int event_id, int column_index, unsigned char query,
+    uint64_t expected_revision) {
+    JadrenTableData *table =
+        jadren_table_data(jadren_node_for_event(event_id, JADREN_NODE_TABLE));
+    if (table == NULL || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count || query > 1U ||
+        app_table_index_find_bool_if_revision == NULL) {
+        return -1;
+    }
+    return app_table_index_find_bool_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+}
+
 int32_t ui_app_table_filter_text(int table_node, int destination_table_id,
                                  int column_index, const char *query_data,
                                  uint64_t query_length) {
@@ -1468,6 +2752,26 @@ int32_t ui_app_table_filter_text(int table_node, int destination_table_id,
     return 1;
 }
 
+int32_t ui_app_table_filter_text_if_revision(
+    int table_node, int destination_table_id, int column_index,
+    const char *query_data, uint64_t query_length, uint64_t expected_revision) {
+    JadrenTableData *table = jadren_table_data(jadren_node(table_node));
+    if (table == NULL || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id ||
+        app_table_filter_text_if_revision == NULL || column_index < 0 ||
+        column_index >= table->app_table_column_count ||
+        (query_data == NULL && query_length > 0U)) {
+        return 0;
+    }
+    if (!app_table_filter_text_if_revision(
+            table->app_table_id, destination_table_id, column_index,
+            query_data, query_length, expected_revision)) {
+        return 0;
+    }
+    jadren_refresh_bound_tables(destination_table_id);
+    return 1;
+}
+
 int32_t ui_app_table_filter_text_ex(int table_node, int destination_table_id,
                                     int column_index, const char *query_data,
                                     uint64_t query_length, int mode) {
@@ -1480,6 +2784,27 @@ int32_t ui_app_table_filter_text_ex(int table_node, int destination_table_id,
     }
     if (!app_table_filter_text_ex(table->app_table_id, destination_table_id,
                                   column_index, query_data, query_length, mode)) {
+        return 0;
+    }
+    jadren_refresh_bound_tables(destination_table_id);
+    return 1;
+}
+
+int32_t ui_app_table_filter_text_ex_if_revision(
+    int table_node, int destination_table_id, int column_index,
+    const char *query_data, uint64_t query_length, int mode,
+    uint64_t expected_revision) {
+    JadrenTableData *table = jadren_table_data(jadren_node(table_node));
+    if (table == NULL || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id ||
+        app_table_filter_text_ex_if_revision == NULL || column_index < 0 ||
+        column_index >= table->app_table_column_count ||
+        (query_data == NULL && query_length > 0U) || mode < 0 || mode > 7) {
+        return 0;
+    }
+    if (!app_table_filter_text_ex_if_revision(
+            table->app_table_id, destination_table_id, column_index,
+            query_data, query_length, mode, expected_revision)) {
         return 0;
     }
     jadren_refresh_bound_tables(destination_table_id);
@@ -1514,6 +2839,77 @@ static int32_t jadren_filter_table_typed(JadrenTableData *table,
     return 1;
 }
 
+static int32_t jadren_filter_table_typed_if_revision(
+    JadrenTableData *table, int destination_table_id, int column_index,
+    int kind, int64_t int_query, uint64_t uint_query, double float_query,
+    unsigned char bool_query, uint64_t expected_revision) {
+    int result = 0;
+    if (table == NULL || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id || column_index < 0 ||
+        column_index >= table->app_table_column_count) return 0;
+    if (kind == 1 && app_table_filter_int_if_revision != NULL)
+        result = app_table_filter_int_if_revision(
+            table->app_table_id, destination_table_id, column_index, int_query,
+            expected_revision);
+    else if (kind == 2 && app_table_filter_uint_if_revision != NULL)
+        result = app_table_filter_uint_if_revision(
+            table->app_table_id, destination_table_id, column_index, uint_query,
+            expected_revision);
+    else if (kind == 3 && app_table_filter_float_if_revision != NULL)
+        result = app_table_filter_float_if_revision(
+            table->app_table_id, destination_table_id, column_index, float_query,
+            expected_revision);
+    else if (kind == 4 && app_table_filter_bool_if_revision != NULL)
+        result = app_table_filter_bool_if_revision(
+            table->app_table_id, destination_table_id, column_index, bool_query,
+            expected_revision);
+    if (!result) return 0;
+    jadren_refresh_bound_tables(destination_table_id);
+    return 1;
+}
+
+static int32_t jadren_filter_table_callback(
+    JadrenTableData *table, int destination_table_id,
+    unsigned char (*predicate)(int, int)) {
+    if (table == NULL || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id || predicate == NULL ||
+        app_table_filter_callback == NULL) {
+        return 0;
+    }
+    if (!app_table_filter_callback(table->app_table_id, destination_table_id,
+                                   predicate)) {
+        return 0;
+    }
+    jadren_refresh_bound_tables(destination_table_id);
+    return 1;
+}
+
+static int32_t jadren_filter_table_callback_if_revision(
+    JadrenTableData *table, int destination_table_id,
+    unsigned char (*predicate)(int, int), uint64_t expected_revision) {
+#if !JADREN_UI_HAS_FILE_RUNTIME
+    (void)table;
+    (void)destination_table_id;
+    (void)predicate;
+    (void)expected_revision;
+    return 0;
+#else
+    if (table == NULL || table->app_table_id < 0 || destination_table_id < 0 ||
+        destination_table_id == table->app_table_id || predicate == NULL ||
+        app_table_filter_callback_if_revision == NULL ||
+        app_data_revision() != expected_revision) {
+        return 0;
+    }
+    if (!app_table_filter_callback_if_revision(
+            table->app_table_id, destination_table_id, predicate,
+            expected_revision)) {
+        return 0;
+    }
+    jadren_refresh_bound_tables(destination_table_id);
+    return 1;
+#endif
+}
+
 int32_t ui_app_table_filter_int(int table_node, int destination_table_id,
                                 int column_index, int64_t query) {
     return jadren_filter_table_typed(jadren_table_data(jadren_node(table_node)),
@@ -1540,6 +2936,54 @@ int32_t ui_app_table_filter_bool(int table_node, int destination_table_id,
     return jadren_filter_table_typed(jadren_table_data(jadren_node(table_node)),
                                      destination_table_id, column_index, 4,
                                      0, 0, 0.0, query);
+}
+
+int32_t ui_app_table_filter_int_if_revision(
+    int table_node, int destination_table_id, int column_index, int64_t query,
+    uint64_t expected_revision) {
+    return jadren_filter_table_typed_if_revision(
+        jadren_table_data(jadren_node(table_node)), destination_table_id,
+        column_index, 1, query, 0, 0.0, 0, expected_revision);
+}
+
+int32_t ui_app_table_filter_uint_if_revision(
+    int table_node, int destination_table_id, int column_index, uint64_t query,
+    uint64_t expected_revision) {
+    return jadren_filter_table_typed_if_revision(
+        jadren_table_data(jadren_node(table_node)), destination_table_id,
+        column_index, 2, 0, query, 0.0, 0, expected_revision);
+}
+
+int32_t ui_app_table_filter_float_if_revision(
+    int table_node, int destination_table_id, int column_index, double query,
+    uint64_t expected_revision) {
+    return jadren_filter_table_typed_if_revision(
+        jadren_table_data(jadren_node(table_node)), destination_table_id,
+        column_index, 3, 0, 0, query, 0, expected_revision);
+}
+
+int32_t ui_app_table_filter_bool_if_revision(
+    int table_node, int destination_table_id, int column_index,
+    unsigned char query, uint64_t expected_revision) {
+    return jadren_filter_table_typed_if_revision(
+        jadren_table_data(jadren_node(table_node)), destination_table_id,
+        column_index, 4, 0, 0, 0.0, query, expected_revision);
+}
+
+int32_t ui_app_table_filter_callback(
+    int table_node, int destination_table_id,
+    unsigned char (*predicate)(int, int)) {
+    return jadren_filter_table_callback(
+        jadren_table_data(jadren_node(table_node)), destination_table_id,
+        predicate);
+}
+
+int32_t ui_app_table_filter_callback_if_revision(
+    int table_node, int destination_table_id,
+    unsigned char (*predicate)(int, int), uint64_t expected_revision) {
+    return jadren_filter_table_callback_if_revision(
+        jadren_table_data(jadren_node(table_node)), destination_table_id,
+        predicate, expected_revision);
 }
 
 void ui_table_filter_int(int event_id, int destination_table_id, int column_index,
@@ -1588,6 +3032,81 @@ int32_t ui_app_table_bind_app(int table_node, int table_id,
     return jadren_refresh_table_from_app(jadren_node(table_node));
 }
 
+int32_t ui_app_table_index_find_pair_text_if_revision(
+    int table_node, int first_column_index, int second_column_index,
+    const unsigned char *first_data, uint64_t first_length,
+    const unsigned char *second_data, uint64_t second_length,
+    uint64_t expected_revision) {
+    JadrenTableData *table = jadren_table_data(jadren_node(table_node));
+    if (table == NULL || table->app_table_id < 0 ||
+        first_column_index < 0 || second_column_index < 0 ||
+        first_column_index >= table->app_table_column_count ||
+        second_column_index >= table->app_table_column_count ||
+        (first_data == NULL && first_length > 0U) ||
+        (second_data == NULL && second_length > 0U) ||
+        first_length > JADREN_X11_MAX_TEXT ||
+        second_length > JADREN_X11_MAX_TEXT ||
+        app_table_index_find_pair_text_if_revision == NULL) {
+        return -1;
+    }
+    return app_table_index_find_pair_text_if_revision(
+        table->app_table_id, first_column_index, second_column_index,
+        first_data, first_length, second_data, second_length,
+        expected_revision);
+}
+
+int32_t ui_app_table_index_find_int_if_revision(
+    int table_node, int column_index, int64_t query,
+    uint64_t expected_revision) {
+    JadrenTableData *table = jadren_table_data(jadren_node(table_node));
+    if (table == NULL || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count ||
+        app_table_index_find_int_if_revision == NULL) {
+        return -1;
+    }
+    return app_table_index_find_int_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+}
+
+int32_t ui_app_table_index_find_uint_if_revision(
+    int table_node, int column_index, uint64_t query,
+    uint64_t expected_revision) {
+    JadrenTableData *table = jadren_table_data(jadren_node(table_node));
+    if (table == NULL || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count ||
+        app_table_index_find_uint_if_revision == NULL) {
+        return -1;
+    }
+    return app_table_index_find_uint_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+}
+
+int32_t ui_app_table_index_find_float_if_revision(
+    int table_node, int column_index, double query,
+    uint64_t expected_revision) {
+    JadrenTableData *table = jadren_table_data(jadren_node(table_node));
+    if (table == NULL || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count ||
+        app_table_index_find_float_if_revision == NULL) {
+        return -1;
+    }
+    return app_table_index_find_float_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+}
+
+int32_t ui_app_table_index_find_bool_if_revision(
+    int table_node, int column_index, unsigned char query,
+    uint64_t expected_revision) {
+    JadrenTableData *table = jadren_table_data(jadren_node(table_node));
+    if (table == NULL || table->app_table_id < 0 || column_index < 0 ||
+        column_index >= table->app_table_column_count || query > 1U ||
+        app_table_index_find_bool_if_revision == NULL) {
+        return -1;
+    }
+    return app_table_index_find_bool_if_revision(
+        table->app_table_id, column_index, query, expected_revision);
+}
+
 int32_t ui_app_table_refresh(int table_node) {
     return jadren_refresh_table_from_app(jadren_node(table_node));
 }
@@ -1608,9 +3127,45 @@ int32_t ui_app_table_row_count(int table_node) {
     return table == NULL ? 0 : table->row_count;
 }
 
+/* Revision-guarded table row count distinguishes a valid empty projection
+ * (0) from an invalid or stale read (-1). */
+int32_t ui_app_table_row_count_if_revision(
+    int table_node, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenTableData *table = jadren_table_data(jadren_node(table_node));
+    int32_t count;
+    if (table == NULL || app_data_revision() != expected_revision) {
+        return -1;
+    }
+    count = table->row_count;
+    return app_data_revision() == expected_revision ? count : -1;
+#else
+    (void)table_node;
+    (void)expected_revision;
+    return -1;
+#endif
+}
+
 int32_t ui_app_table_selected_row(int table_node) {
     JadrenTableData *table = jadren_table_data(jadren_node(table_node));
     return table == NULL ? -1 : table->selected_row;
+}
+
+int32_t ui_app_table_selected_row_if_revision(
+    int table_node, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenTableData *table = jadren_table_data(jadren_node(table_node));
+    int32_t selected_row;
+    if (table == NULL || app_data_revision() != expected_revision) {
+        return -2;
+    }
+    selected_row = table->selected_row;
+    return app_data_revision() == expected_revision ? selected_row : -2;
+#else
+    (void)table_node;
+    (void)expected_revision;
+    return -2;
+#endif
 }
 
 int32_t ui_app_table_set_selected_row(int table_node, int row_index) {
@@ -1621,6 +3176,79 @@ int32_t ui_app_table_set_selected_row(int table_node, int row_index) {
     table->selected_row = row_index;
     jadren_sync_table_app_state(jadren_node(table_node));
     return 1;
+}
+
+int32_t ui_app_table_set_selected_row_if_revision(
+    int table_node, int row_index, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *node = jadren_node(table_node);
+    JadrenTableData *table = jadren_table_data(node);
+    if (table == NULL || row_index < -1 || row_index >= table->row_count ||
+        app_data_revision() != expected_revision) {
+        return 0;
+    }
+    table->selected_row = row_index;
+    jadren_sync_table_app_state(node);
+    return app_data_revision() == expected_revision &&
+           table->selected_row == row_index;
+#else
+    (void)table_node;
+    (void)row_index;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+int32_t ui_list_read_item_exact(
+    int event_id, int item_index, unsigned char *output_data,
+    uint64_t output_length, uint64_t *output_text_length,
+    uint64_t output_text_length_capacity) {
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    return list == NULL
+               ? 0
+               : ui_app_list_read_item_exact(
+                     list->id, item_index, output_data, output_length,
+                     output_text_length, output_text_length_capacity);
+}
+
+int32_t ui_list_read_item_exact_if_revision(
+    int event_id, int item_index, unsigned char *output_data,
+    uint64_t output_length, uint64_t *output_text_length,
+    uint64_t output_text_length_capacity, uint64_t expected_revision) {
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    return list == NULL
+               ? 0
+               : ui_app_list_read_item_exact_if_revision(
+                     list->id, item_index, output_data, output_length,
+                     output_text_length, output_text_length_capacity,
+                     expected_revision);
+}
+
+int32_t ui_table_read_cell_exact(
+    int event_id, int row_index, int column_index,
+    unsigned char *output_data, uint64_t output_length,
+    uint64_t *output_text_length, uint64_t output_text_length_capacity) {
+    JadrenNode *table = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    return table == NULL
+               ? 0
+               : ui_app_table_read_cell_exact(
+                     table->id, row_index, column_index, output_data,
+                     output_length, output_text_length,
+                     output_text_length_capacity);
+}
+
+int32_t ui_table_read_cell_exact_if_revision(
+    int event_id, int row_index, int column_index,
+    unsigned char *output_data, uint64_t output_length,
+    uint64_t *output_text_length, uint64_t output_text_length_capacity,
+    uint64_t expected_revision) {
+    JadrenNode *table = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    return table == NULL
+               ? 0
+               : ui_app_table_read_cell_exact_if_revision(
+                     table->id, row_index, column_index, output_data,
+                     output_length, output_text_length,
+                     output_text_length_capacity, expected_revision);
 }
 
 enum {
@@ -1641,6 +3269,133 @@ static JadrenNode *jadren_node_for_event(int event_id, int kind) {
         }
     }
     return NULL;
+}
+
+int32_t ui_list_count(int event_id) {
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    return list == NULL ? 0 : list->list_item_count;
+}
+
+int32_t ui_list_count_if_revision(int event_id, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    int32_t count;
+    if (list == NULL || app_data_revision() != expected_revision) {
+        return -1;
+    }
+    count = list->list_item_count;
+    return app_data_revision() == expected_revision ? count : -1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return -1;
+#endif
+}
+
+int32_t ui_table_row_count(int event_id) {
+    JadrenNode *table = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    JadrenTableData *data = table == NULL ? NULL : jadren_table_data(table);
+    return data == NULL ? 0 : data->row_count;
+}
+
+int32_t ui_table_row_count_if_revision(int event_id,
+                                       uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *table = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    JadrenTableData *data = table == NULL ? NULL : jadren_table_data(table);
+    int32_t count;
+    if (data == NULL || app_data_revision() != expected_revision) {
+        return -1;
+    }
+    count = data->row_count;
+    return app_data_revision() == expected_revision ? count : -1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return -1;
+#endif
+}
+
+/* Keep the legacy event-id application projections available on X11 as well
+ * as Win32.  Retained controls still own the bounded storage; these helpers
+ * only resolve the event id and delegate to the same app_list/app_table
+ * refresh path, so they do not create a second model or reactive loop. */
+void ui_list_bind_app(int event_id, int list_id) {
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    if (list == NULL) {
+        return;
+    }
+    (void)ui_app_list_bind_app(list->id, list_id);
+}
+
+void ui_list_refresh_app(int event_id) {
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    if (list == NULL) {
+        return;
+    }
+    (void)ui_app_list_refresh(list->id);
+}
+
+void ui_table_bind_app(int event_id, int table_id, int column_count) {
+    JadrenNode *table = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    if (table == NULL) {
+        return;
+    }
+    (void)ui_app_table_bind_app(table->id, table_id, column_count);
+}
+
+void ui_table_refresh_app(int event_id) {
+    JadrenNode *table = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    if (table == NULL) {
+        return;
+    }
+    (void)ui_app_table_refresh(table->id);
+}
+
+/* Keep the legacy event-id table helpers available on X11 as well as Win32.
+ * The retained app facade uses node ids, while the original TimeTracker
+ * fixtures intentionally use callback/event ids.  Both paths must observe
+ * the same bounded selected-row state and synchronization contract. */
+int32_t ui_table_selected_row(int event_id) {
+    JadrenNode *node = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    return node == NULL ? -1 : ui_app_table_selected_row(node->id);
+}
+
+int32_t ui_table_selected_row_if_revision(int event_id,
+                                           uint64_t expected_revision) {
+    JadrenNode *node = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    return node == NULL
+               ? -2
+               : ui_app_table_selected_row_if_revision(node->id,
+                                                        expected_revision);
+}
+
+void ui_table_set_selected_row(int event_id, int row_index) {
+    JadrenNode *node = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    if (node != NULL) {
+        (void)ui_app_table_set_selected_row(node->id, row_index);
+    }
+}
+
+int32_t ui_table_set_selected_row_if_revision(
+    int event_id, int row_index, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *node = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    JadrenTableData *table = node == NULL ? NULL : jadren_table_data(node);
+    if (table == NULL || row_index < -1 || row_index >= table->row_count ||
+        app_data_revision() != expected_revision) {
+        return 0;
+    }
+    table->selected_row = row_index;
+    jadren_sync_table_app_state(node);
+    return app_data_revision() == expected_revision &&
+           ui_table_selected_row(event_id) == row_index;
+#else
+    (void)event_id;
+    (void)row_index;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 static int jadren_state_binding_value(const JadrenStateBinding *binding) {
@@ -1764,6 +3519,104 @@ int32_t ui_dispatch_event(int32_t event_id) {
     (void)event_id;
 #endif
     return 0;
+}
+
+/* Caller-owned FIFO read-back for native and programmatic UI events. The
+ * queue is fixed at 64 entries, drops only the newest event on overflow, and
+ * keeps the drop count explicit. A short output is rejected before consuming
+ * any queued event or changing either caller-owned output. */
+void ui_event_queue_clear(void) {
+    jadren_ui_event_queue_clear_state();
+}
+
+uint64_t ui_event_queue_count(void) {
+    return (uint64_t)jadren_ui_event_queue_count;
+}
+
+uint64_t ui_event_queue_capacity(void) {
+    return (uint64_t)JADREN_X11_UI_EVENT_QUEUE_CAPACITY;
+}
+
+uint64_t ui_event_queue_dropped(void) {
+    return (uint64_t)jadren_ui_event_queue_dropped;
+}
+
+/* Caller-owned bounded FIFO snapshot. It copies every pending event without
+ * consuming the queue, and preflights output capacity before changing either
+ * caller-owned output. */
+int32_t ui_event_queue_peek_exact(int32_t *output_data,
+                                 uint64_t output_length,
+                                 uint64_t *event_count_output,
+                                 uint64_t event_count_length) {
+    uint32_t index;
+    if (event_count_output == NULL || event_count_length == 0U ||
+        (uint64_t)jadren_ui_event_queue_count > output_length ||
+        (jadren_ui_event_queue_count > 0U && output_data == NULL)) {
+        return 0;
+    }
+    for (index = 0U; index < jadren_ui_event_queue_count; index += 1U) {
+        output_data[index] = jadren_ui_event_queue[
+            (jadren_ui_event_queue_head + index) %
+            JADREN_X11_UI_EVENT_QUEUE_CAPACITY];
+    }
+    event_count_output[0] = (uint64_t)jadren_ui_event_queue_count;
+    return 1;
+}
+
+int32_t ui_event_queue_poll_exact(int32_t *output_data,
+                                  uint64_t output_length,
+                                  uint64_t *event_count_output,
+                                  uint64_t event_count_length) {
+    uint32_t index;
+    if (event_count_output == NULL || event_count_length == 0U ||
+        (uint64_t)jadren_ui_event_queue_count > output_length ||
+        (jadren_ui_event_queue_count > 0U && output_data == NULL)) {
+        return 0;
+    }
+    for (index = 0U; index < jadren_ui_event_queue_count; index += 1U) {
+        output_data[index] = jadren_ui_event_queue[
+            (jadren_ui_event_queue_head + index) %
+            JADREN_X11_UI_EVENT_QUEUE_CAPACITY];
+    }
+    event_count_output[0] = (uint64_t)jadren_ui_event_queue_count;
+    jadren_ui_event_queue_head = 0U;
+    jadren_ui_event_queue_count = 0U;
+    return 1;
+}
+
+/* Caller-owned bounded FIFO batch read. It consumes at most max_events and
+ * leaves any suffix queued for a later tick. The complete requested batch is
+ * preflighted before mutation; zero is a successful no-op. */
+int32_t ui_event_queue_poll_batch_exact(int32_t *output_data,
+                                        uint64_t output_length,
+                                        uint64_t max_events,
+                                        uint64_t *event_count_output,
+                                        uint64_t event_count_length) {
+    uint64_t pending;
+    uint64_t take;
+    uint64_t index;
+    if (event_count_output == NULL || event_count_length == 0U) {
+        return 0;
+    }
+    pending = (uint64_t)jadren_ui_event_queue_count;
+    take = pending < max_events ? pending : max_events;
+    if (take > output_length || (take > 0U && output_data == NULL)) {
+        return 0;
+    }
+    for (index = 0U; index < take; index += 1U) {
+        output_data[index] = jadren_ui_event_queue[
+            (jadren_ui_event_queue_head + (uint32_t)index) %
+            JADREN_X11_UI_EVENT_QUEUE_CAPACITY];
+    }
+    event_count_output[0] = take;
+    jadren_ui_event_queue_head =
+        (jadren_ui_event_queue_head + (uint32_t)take) %
+        JADREN_X11_UI_EVENT_QUEUE_CAPACITY;
+    jadren_ui_event_queue_count -= (uint32_t)take;
+    if (jadren_ui_event_queue_count == 0U) {
+        jadren_ui_event_queue_head = 0U;
+    }
+    return 1;
 }
 
 static void jadren_sync_state_bindings_for_event(int event_id) {
@@ -1953,6 +3806,25 @@ int32_t ui_checked(int event_id) {
     return checkbox == NULL ? 0 : checkbox->checked != 0;
 }
 
+/* Revision-guarded checkbox read. A stale or invalid event is represented by
+ * -2; a valid unchecked/checked value remains 0/1. */
+int32_t ui_checked_if_revision(int event_id, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *checkbox =
+        jadren_node_for_event(event_id, JADREN_NODE_CHECKBOX);
+    int32_t checked;
+    if (checkbox == NULL || app_data_revision() != expected_revision) {
+        return -2;
+    }
+    checked = checkbox->checked != 0 ? 1 : 0;
+    return app_data_revision() == expected_revision ? checked : -2;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return -2;
+#endif
+}
+
 void ui_set_checked(int event_id, int checked) {
     JadrenNode *checkbox =
         jadren_node_for_event(event_id, JADREN_NODE_CHECKBOX);
@@ -1981,6 +3853,20 @@ int32_t ui_app_status(int parent, const char *text_data, uint64_t text_length,
     return id;
 }
 
+int32_t ui_app_label_set_text(int node_id, const char *text_data,
+                              uint64_t text_length) {
+    JadrenNode *node = jadren_node(node_id);
+    if (node == NULL ||
+        (node->kind != JADREN_NODE_LABEL && node->kind != JADREN_NODE_STATUS)) {
+        return 0;
+    }
+    jadren_copy_text(node->text, sizeof(node->text), text_data, text_length);
+    if (jadren_display != NULL && jadren_window != 0) {
+        jadren_draw();
+    }
+    return 1;
+}
+
 int32_t ui_app_text_input(int parent, const char *text_data,
                           uint64_t text_length, int event_id, int width,
                           int height, uint32_t text_color,
@@ -2005,7 +3891,9 @@ int32_t ui_app_tooltip(int node_id, const char *text_data, uint64_t text_length,
                        uint32_t background_color, int corner_radius) {
     JadrenNode *node = jadren_node(node_id);
     if (node == NULL || node->event_id == 0 ||
-        (node->kind != JADREN_NODE_BUTTON && node->kind != JADREN_NODE_CHECKBOX) ||
+        (node->kind != JADREN_NODE_BUTTON && node->kind != JADREN_NODE_CHECKBOX &&
+         node->kind != JADREN_NODE_INPUT && node->kind != JADREN_NODE_SELECT &&
+         node->kind != JADREN_NODE_LIST && node->kind != JADREN_NODE_TABLE) ||
         text_data == NULL) {
         return 0;
     }
@@ -2030,6 +3918,19 @@ int32_t ui_app_checkbox(int parent, const char *label_data, uint64_t label_lengt
                          event_id, width, height, text_color, background_color, stretch);
     if (id != 0) {
         jadren_nodes[id].checked = checked != 0;
+    }
+    return id;
+}
+
+int32_t ui_app_switch(int parent, const char *label_data, uint64_t label_length,
+                      int event_id, int width, int height, uint32_t text_color,
+                      uint32_t background_color, int corner_radius, int stretch,
+                      int checked) {
+    int id = ui_app_checkbox(parent, label_data, label_length, event_id,
+                             width, height, text_color, background_color,
+                             corner_radius, stretch, checked);
+    if (id != 0) {
+        jadren_nodes[id].is_switch = 1;
     }
     return id;
 }
@@ -2087,6 +3988,21 @@ void ui_set_input_text(int event_id, const char *text_data, uint64_t text_length
     }
 }
 
+int ui_set_input_text_exact(int event_id, const unsigned char *text_data,
+                            uint64_t text_length) {
+    if (text_data == NULL || text_length == 0U || text_length >= 384U) return 0;
+    ui_set_input_text(event_id, (const char *)text_data, text_length);
+    return 1;
+}
+
+/* The preview X11 renderer has no separate native widget handle to disable;
+ * retain the ABI and keep the operation a safe, deterministic no-op until
+ * input hit-testing gains an explicit enabled state. */
+void ui_set_input_enabled(int event_id, int enabled) {
+    (void)event_id;
+    (void)enabled;
+}
+
 uint64_t ui_input_length(int event_id) {
     JadrenNode *node = jadren_input_for_event(event_id);
     return node == NULL ? 0U : (uint64_t)strlen(node->text);
@@ -2132,6 +4048,568 @@ int ui_input_read_exact(int event_id, unsigned char *output_data,
     return 1;
 }
 
+/* Revision-guarded exact read-back stages the complete bounded value before
+ * publishing either caller-owned output. A stale revision, invalid event or
+ * short output leaves both output slices unchanged. */
+int ui_input_read_exact_if_revision(
+    int event_id, unsigned char *output_data, uint64_t output_length,
+    uint64_t *output_text_length, uint64_t output_text_length_capacity,
+    uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    unsigned char temporary[JADREN_X11_MAX_TEXT];
+    uint64_t length = 0;
+    if (app_data_revision() != expected_revision ||
+        !ui_input_read_exact(event_id, temporary, sizeof(temporary), &length,
+                             1U)) {
+        return 0;
+    }
+    if (app_data_revision() != expected_revision ||
+        output_text_length == NULL || output_text_length_capacity == 0U ||
+        output_length < length || (length > 0U && output_data == NULL)) {
+        return 0;
+    }
+    if (length > 0U) {
+        memcpy(output_data, temporary, (size_t)length);
+    }
+    output_text_length[0] = length;
+    return 1;
+#else
+    (void)event_id;
+    (void)output_data;
+    (void)output_length;
+    (void)output_text_length;
+    (void)output_text_length_capacity;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+static JadrenNode *jadren_input_for_node(int input_node) {
+    JadrenNode *node = jadren_node(input_node);
+    if (node == NULL || node->kind != JADREN_NODE_INPUT) {
+        return NULL;
+    }
+    return node;
+}
+
+/* Retained text-input read-back uses the node id returned by
+ * ui_app_text_input while preserving the event-ID implementation's bounded
+ * caller-owned output contract. */
+uint64_t ui_app_input_length(int input_node) {
+    JadrenNode *node = jadren_input_for_node(input_node);
+    return node == NULL ? 0U : ui_input_length(node->event_id);
+}
+
+uint64_t ui_app_input_read(int input_node, unsigned char *output_data,
+                           uint64_t output_length) {
+    JadrenNode *node = jadren_input_for_node(input_node);
+    return node == NULL ? 0U
+                        : ui_input_read(node->event_id, output_data, output_length);
+}
+
+int32_t ui_app_input_read_exact(
+    int input_node, unsigned char *output_data, uint64_t output_length,
+    uint64_t *output_text_length, uint64_t output_text_length_capacity) {
+    JadrenNode *node = jadren_input_for_node(input_node);
+    return node == NULL
+               ? 0
+               : ui_input_read_exact(node->event_id, output_data, output_length,
+                                     output_text_length,
+                                     output_text_length_capacity);
+}
+
+int32_t ui_app_input_read_exact_if_revision(
+    int input_node, unsigned char *output_data, uint64_t output_length,
+    uint64_t *output_text_length, uint64_t output_text_length_capacity,
+    uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *node = jadren_input_for_node(input_node);
+    return node == NULL
+               ? 0
+               : ui_input_read_exact_if_revision(
+                     node->event_id, output_data, output_length,
+                     output_text_length, output_text_length_capacity,
+                     expected_revision);
+#else
+    (void)input_node;
+    (void)output_data;
+    (void)output_length;
+    (void)output_text_length;
+    (void)output_text_length_capacity;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Linux/X11 keeps the file chooser in the native runtime instead of invoking
+ * a shell, portal subprocess, toolkit or Electron bridge.  The dialog is
+ * intentionally small and bounded: it accepts a UTF-8 path, validates it
+ * against the requested open/save contract, and only then publishes the
+ * caller-owned output.  This is a real Xlib modal window, not a console
+ * fallback. */
+static int jadren_x11_file_copy_text(const char *source, uint64_t length,
+                                     char *target, size_t capacity) {
+    if (source == NULL || target == NULL || capacity == 0U || length == 0U ||
+        length >= (uint64_t)capacity) {
+        return 0;
+    }
+    memcpy(target, source, (size_t)length);
+    target[length] = '\0';
+    return 1;
+}
+
+static int jadren_x11_file_extension_is_safe(const char *extension,
+                                             uint64_t length) {
+    uint64_t index;
+    unsigned char value;
+    if (extension == NULL || length == 0U || length > 16U) return 0;
+    for (index = 0U; index < length; index += 1U) {
+        value = (unsigned char)extension[index];
+        if (!((value >= (unsigned char)'a' && value <= (unsigned char)'z') ||
+              (value >= (unsigned char)'A' && value <= (unsigned char)'Z') ||
+              (value >= (unsigned char)'0' && value <= (unsigned char)'9'))) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int jadren_x11_file_basename_is_safe(const char *value,
+                                            uint64_t length, int stem_only) {
+    uint64_t index;
+    unsigned char byte;
+    if (value == NULL || length == 0U || length > 255U) return 0;
+    for (index = 0U; index < length; index += 1U) {
+        byte = (unsigned char)value[index];
+        if (byte < 0x20U || byte == (unsigned char)'/' || byte == 0x7fU) {
+            return 0;
+        }
+        if (stem_only && byte == (unsigned char)'.') return 0;
+    }
+    return 1;
+}
+
+static unsigned char jadren_x11_ascii_lower(unsigned char value) {
+    if (value >= (unsigned char)'A' && value <= (unsigned char)'Z') {
+        return (unsigned char)(value + ((unsigned char)'a' - (unsigned char)'A'));
+    }
+    return value;
+}
+
+static int jadren_x11_file_has_extension(const char *path,
+                                         const char *extension,
+                                         uint64_t extension_length) {
+    const char *base;
+    const char *dot;
+    size_t path_length;
+    size_t suffix_length;
+    size_t index;
+    if (path == NULL || !jadren_x11_file_extension_is_safe(
+                            extension, extension_length)) {
+        return 0;
+    }
+    base = strrchr(path, '/');
+    base = base == NULL ? path : base + 1;
+    dot = strrchr(base, '.');
+    if (dot == NULL || dot == base) return 0;
+    path_length = strlen(dot + 1);
+    suffix_length = (size_t)extension_length;
+    if (path_length != suffix_length) return 0;
+    for (index = 0U; index < suffix_length; index += 1U) {
+        if (jadren_x11_ascii_lower((unsigned char)dot[1U + index]) !=
+            jadren_x11_ascii_lower((unsigned char)extension[index])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int jadren_x11_file_make_open_path(const char *typed, char *output,
+                                          size_t capacity) {
+    struct stat metadata;
+    if (typed == NULL || typed[0] == '\0' || output == NULL || capacity == 0U) {
+        return 0;
+    }
+    if (realpath(typed, output) == NULL || strlen(output) >= capacity ||
+        stat(output, &metadata) != 0 || !S_ISREG(metadata.st_mode) ||
+        access(output, R_OK) != 0) {
+        return 0;
+    }
+    return 1;
+}
+
+static int jadren_x11_file_make_save_path(const char *typed, char *output,
+                                          size_t capacity) {
+    char absolute[JADREN_X11_FILE_PATH_MAX];
+    char parent[JADREN_X11_FILE_PATH_MAX];
+    char canonical_parent[JADREN_X11_FILE_PATH_MAX];
+    const char *slash;
+    const char *basename;
+    size_t typed_length;
+    size_t parent_length;
+    size_t basename_length;
+    size_t cwd_length;
+    struct stat metadata;
+    if (typed == NULL || typed[0] == '\0' || output == NULL || capacity == 0U) {
+        return 0;
+    }
+    typed_length = strlen(typed);
+    if (typed_length >= sizeof(absolute)) return 0;
+    if (typed[0] == '/') {
+        memcpy(absolute, typed, typed_length + 1U);
+    } else {
+        if (getcwd(absolute, sizeof(absolute)) == NULL) return 0;
+        cwd_length = strlen(absolute);
+        if (cwd_length + 1U + typed_length >= sizeof(absolute)) return 0;
+        absolute[cwd_length] = '/';
+        memcpy(absolute + cwd_length + 1U, typed, typed_length + 1U);
+    }
+    slash = strrchr(absolute, '/');
+    if (slash == NULL || slash == absolute) {
+        strcpy(parent, "/");
+        basename = slash == NULL ? absolute : slash + 1;
+    } else {
+        parent_length = (size_t)(slash - absolute);
+        if (parent_length >= sizeof(parent)) return 0;
+        memcpy(parent, absolute, parent_length);
+        parent[parent_length] = '\0';
+        basename = slash + 1;
+    }
+    basename_length = strlen(basename);
+    if (!jadren_x11_file_basename_is_safe(basename, basename_length, 0)) return 0;
+    if (realpath(parent, canonical_parent) == NULL ||
+        stat(canonical_parent, &metadata) != 0 || !S_ISDIR(metadata.st_mode)) {
+        return 0;
+    }
+    parent_length = strlen(canonical_parent);
+    if (parent_length > 1U && canonical_parent[parent_length - 1U] == '/') {
+        parent_length -= 1U;
+    }
+    if (parent_length + 1U + basename_length >= capacity) return 0;
+    memcpy(output, canonical_parent, parent_length);
+    output[parent_length] = '/';
+    memcpy(output + parent_length + 1U, basename, basename_length + 1U);
+    return 1;
+}
+
+static void jadren_x11_file_draw_text(Window window, GC gc, int x, int y,
+                                      unsigned long color, const char *text) {
+    if (text == NULL || text[0] == '\0') return;
+    XSetForeground(jadren_display, gc, color);
+    XDrawString(jadren_display, window, gc, x, y, text, (int)strlen(text));
+}
+
+static int jadren_x11_file_dialog(const char *title_data, uint64_t title_length,
+                                  const char *suggested_data,
+                                  uint64_t suggested_length,
+                                  const char *extension_data,
+                                  uint64_t extension_length,
+                                  unsigned char *output_data,
+                                  uint64_t output_length,
+                                  uint64_t *output_path_length,
+                                  uint64_t output_path_length_capacity,
+                                  int save_mode, int extension_mode,
+                                  int directory_mode) {
+    char title[JADREN_X11_FILE_TITLE_MAX + 1U];
+    char path[JADREN_X11_FILE_PATH_MAX];
+    char candidate[JADREN_X11_FILE_PATH_MAX];
+    char message[128];
+    Window dialog;
+    GC dialog_gc;
+    XEvent event;
+    XIC dialog_input_context = NULL;
+    int done = 0;
+    int accepted = 0;
+    int overwrite_armed = 0;
+    const char *prompt = directory_mode ? "Directory path:" :
+                         (save_mode ? "Path to save:" : "Path to open:");
+    const char *action = directory_mode ? "Select" : (save_mode ? "Save" : "Open");
+    unsigned long background = jadren_pixel(0xF8FAFCU);
+    unsigned long foreground = jadren_pixel(0x10233FU);
+    unsigned long accent = jadren_pixel(0x2563EBU);
+    unsigned long muted = jadren_pixel(0x475569U);
+    struct stat metadata;
+    if (jadren_display == NULL || jadren_window == 0 ||
+        !jadren_x11_file_copy_text(title_data, title_length, title,
+                                    sizeof(title)) ||
+        output_data == NULL || output_length == 0U || output_path_length == NULL ||
+        output_path_length_capacity == 0U) {
+        return 0;
+    }
+    if (extension_mode && !jadren_x11_file_extension_is_safe(
+                              extension_data, extension_length)) {
+        return 0;
+    }
+    path[0] = '\0';
+    if (suggested_data != NULL && suggested_length != 0U) {
+        if (!jadren_x11_file_copy_text(suggested_data, suggested_length, path,
+                                       sizeof(path))) return 0;
+        if (extension_mode && !jadren_x11_file_has_extension(
+                                  path, extension_data, extension_length)) {
+            size_t path_length = strlen(path);
+            if (path_length + 1U + (size_t)extension_length >= sizeof(path)) {
+                return 0;
+            }
+            path[path_length] = '.';
+            memcpy(path + path_length + 1U, extension_data,
+                   (size_t)extension_length);
+            path[path_length + 1U + (size_t)extension_length] = '\0';
+        }
+    }
+    message[0] = '\0';
+    dialog = XCreateSimpleWindow(
+        jadren_display, jadren_window, 24, 24, 720U, 176U, 1U,
+        BlackPixel(jadren_display, jadren_screen), background);
+    if (dialog == 0) return 0;
+    dialog_gc = XCreateGC(jadren_display, dialog, 0, NULL);
+    if (dialog_gc == 0) {
+        XDestroyWindow(jadren_display, dialog);
+        return 0;
+    }
+    XStoreName(jadren_display, dialog, title);
+    XSetWMProtocols(jadren_display, dialog, &jadren_delete_atom, 1);
+    XSelectInput(jadren_display, dialog,
+                 ExposureMask | ButtonPressMask | KeyPressMask |
+                     StructureNotifyMask);
+    XMapRaised(jadren_display, dialog);
+    /* Wait until the mapped child is viewable before claiming focus.  Some
+     * X11 servers (including WSLg) reject XSetInputFocus for a window while
+     * the map request is still pending with BadMatch. */
+    XSync(jadren_display, False);
+    jadren_x11_focus_if_viewable(dialog);
+    if (jadren_input_method != NULL) {
+        dialog_input_context = XCreateIC(
+            jadren_input_method, XNInputStyle,
+            (XIMPreeditNothing | XIMStatusNothing), XNClientWindow, dialog,
+            XNFocusWindow, dialog, NULL);
+        if (dialog_input_context != NULL) XSetICFocus(dialog_input_context);
+    }
+    XFlush(jadren_display);
+    while (!done) {
+        XNextEvent(jadren_display, &event);
+        /* A callback can open the chooser while the parent has a redraw
+         * event queued.  Keep the modal loop strictly window-local so those
+         * parent events are not accidentally interpreted as chooser input. */
+        if (event.xany.window != dialog) continue;
+        if (event.type == Expose) {
+            XSetForeground(jadren_display, dialog_gc, background);
+            XFillRectangle(jadren_display, dialog, dialog_gc, 0, 0, 720U, 176U);
+            jadren_x11_file_draw_text(dialog, dialog_gc, 20, 25, foreground, title);
+            jadren_x11_file_draw_text(dialog, dialog_gc, 20, 50, muted, prompt);
+            XSetForeground(jadren_display, dialog_gc, foreground);
+            XDrawRectangle(jadren_display, dialog, dialog_gc, 20, 60, 680U, 30U);
+            jadren_x11_file_draw_text(dialog, dialog_gc, 28, 80, foreground, path);
+            jadren_x11_file_draw_text(dialog, dialog_gc, 20, 108, muted, message);
+            XSetForeground(jadren_display, dialog_gc, accent);
+            XFillRectangle(jadren_display, dialog, dialog_gc, 510, 128, 90U, 30U);
+            XSetForeground(jadren_display, dialog_gc, background);
+            XDrawString(jadren_display, dialog, dialog_gc, 528, 148, action,
+                        (int)strlen(action));
+            XSetForeground(jadren_display, dialog_gc, foreground);
+            XDrawRectangle(jadren_display, dialog, dialog_gc, 612, 128, 88U, 30U);
+            XDrawString(jadren_display, dialog, dialog_gc, 630, 148, "Cancel", 6);
+        } else if (event.type == ButtonPress) {
+            int x = event.xbutton.x;
+            int y = event.xbutton.y;
+            if (y >= 128 && y < 160 && x >= 612) {
+                done = 1;
+            } else if (y >= 128 && y < 160 && x >= 510 && x < 600) {
+                candidate[0] = '\0';
+                if (directory_mode) {
+                    if (stat(path, &metadata) != 0 || !S_ISDIR(metadata.st_mode)) {
+                        strcpy(message, "Select an existing directory.");
+                    } else {
+                        size_t path_length = strlen(path);
+                        if (path_length >= sizeof(candidate)) {
+                            strcpy(message, "The directory path is too long.");
+                        } else {
+                            memcpy(candidate, path, path_length + 1U);
+                            accepted = 1;
+                            done = 1;
+                        }
+                    }
+                } else if (save_mode) {
+                    if (!jadren_x11_file_make_save_path(path, candidate,
+                                                         sizeof(candidate))) {
+                        strcpy(message, "The parent directory is invalid.");
+                    } else if (extension_mode &&
+                               !jadren_x11_file_has_extension(
+                                   candidate, extension_data, extension_length)) {
+                        strcpy(message, "The selected extension is invalid.");
+                    } else if (stat(candidate, &metadata) == 0 &&
+                               S_ISDIR(metadata.st_mode)) {
+                        strcpy(message, "The target is a directory.");
+                    } else if (stat(candidate, &metadata) == 0 &&
+                               !overwrite_armed) {
+                        overwrite_armed = 1;
+                        strcpy(message, "File exists; press Save again to replace.");
+                    } else {
+                        accepted = 1;
+                        done = 1;
+                    }
+                } else if (!jadren_x11_file_make_open_path(path, candidate,
+                                                            sizeof(candidate))) {
+                    strcpy(message, "Select an existing readable file.");
+                } else if (extension_mode &&
+                           !jadren_x11_file_has_extension(
+                               candidate, extension_data, extension_length)) {
+                    strcpy(message, "The selected extension is invalid.");
+                } else {
+                    accepted = 1;
+                    done = 1;
+                }
+            } else if (y >= 60 && y < 96) {
+                jadren_x11_focus_if_viewable(dialog);
+            }
+            XClearArea(jadren_display, dialog, 0, 0, 0, 0, True);
+        } else if (event.type == KeyPress) {
+            char text[512];
+            KeySym key_symbol;
+            Status lookup_status = 0;
+            int key_count;
+            if (dialog_input_context != NULL) {
+                key_count = Xutf8LookupString(dialog_input_context, &event.xkey,
+                                              text, (int)sizeof(text) - 1,
+                                              &key_symbol, &lookup_status);
+            } else {
+                key_count = XLookupString(&event.xkey, text,
+                                          (int)sizeof(text) - 1, &key_symbol,
+                                          NULL);
+            }
+            if (key_symbol == XK_Escape) {
+                done = 1;
+            } else if (key_symbol == XK_Return || key_symbol == XK_KP_Enter) {
+                XEvent click;
+                memset(&click, 0, sizeof(click));
+                click.type = ButtonPress;
+                click.xbutton.window = dialog;
+                click.xbutton.x = 540;
+                click.xbutton.y = 140;
+                XPutBackEvent(jadren_display, &click);
+            } else if (key_symbol == XK_BackSpace) {
+                size_t length = strlen(path);
+                if (length > 0U) {
+                    length -= 1U;
+                    while (length > 0U &&
+                           (((unsigned char)path[length] & 0xc0U) == 0x80U)) {
+                        length -= 1U;
+                    }
+                    path[length] = '\0';
+                }
+                overwrite_armed = 0;
+            } else if (key_count > 0 && lookup_status != XBufferOverflow) {
+                size_t current = strlen(path);
+                size_t available = sizeof(path) - 1U - current;
+                size_t accepted_bytes = jadren_utf8_fit(
+                    text, (size_t)key_count, available);
+                if (accepted_bytes > 0U) {
+                    memcpy(path + current, text, accepted_bytes);
+                    path[current + accepted_bytes] = '\0';
+                    overwrite_armed = 0;
+                }
+            }
+            XClearArea(jadren_display, dialog, 0, 0, 0, 0, True);
+        } else if (event.type == ClientMessage || event.type == DestroyNotify) {
+            done = 1;
+        }
+    }
+    if (dialog_input_context != NULL) XDestroyIC(dialog_input_context);
+    XFreeGC(jadren_display, dialog_gc);
+    XDestroyWindow(jadren_display, dialog);
+    jadren_x11_focus_if_viewable(jadren_window);
+    if (jadren_input_context != NULL) XSetICFocus(jadren_input_context);
+    XFlush(jadren_display);
+    if (!accepted || strlen(candidate) == 0U || strlen(candidate) > output_length) {
+        return 0;
+    }
+    memcpy(output_data, candidate, strlen(candidate));
+    output_path_length[0] = (uint64_t)strlen(candidate);
+    return 1;
+}
+
+int ui_file_open_exact(const char *title_data, uint64_t title_length,
+                       unsigned char *output_data, uint64_t output_length,
+                       uint64_t *output_path_length,
+                       uint64_t output_path_length_capacity) {
+    return jadren_x11_file_dialog(title_data, title_length, NULL, 0U, NULL, 0U,
+                                  output_data, output_length, output_path_length,
+                                  output_path_length_capacity, 0, 0, 0);
+}
+
+int ui_directory_open_exact(const char *title_data, uint64_t title_length,
+                            unsigned char *output_data, uint64_t output_length,
+                            uint64_t *output_path_length,
+                            uint64_t output_path_length_capacity) {
+    return jadren_x11_file_dialog(title_data, title_length, NULL, 0U, NULL, 0U,
+                                  output_data, output_length, output_path_length,
+                                  output_path_length_capacity, 0, 0, 1);
+}
+
+int ui_file_open_extension_exact(const char *title_data, uint64_t title_length,
+                                 const char *extension_data,
+                                 uint64_t extension_length,
+                                 unsigned char *output_data,
+                                 uint64_t output_length,
+                                 uint64_t *output_path_length,
+                                 uint64_t output_path_length_capacity) {
+    return jadren_x11_file_dialog(
+        title_data, title_length, NULL, 0U, extension_data, extension_length,
+        output_data, output_length, output_path_length,
+        output_path_length_capacity, 0, 1, 0);
+}
+
+int ui_file_save_exact(const char *title_data, uint64_t title_length,
+                       unsigned char *output_data, uint64_t output_length,
+                       uint64_t *output_path_length,
+                       uint64_t output_path_length_capacity) {
+    return jadren_x11_file_dialog(title_data, title_length, NULL, 0U, NULL, 0U,
+                                  output_data, output_length, output_path_length,
+                                  output_path_length_capacity, 1, 0, 0);
+}
+
+int ui_file_save_suggested_exact(const char *title_data, uint64_t title_length,
+                                 const char *suggested_name_data,
+                                 uint64_t suggested_name_length,
+                                 const char *default_extension_data,
+                                 uint64_t default_extension_length,
+                                 unsigned char *output_data,
+                                 uint64_t output_length,
+                                 uint64_t *output_path_length,
+                                 uint64_t output_path_length_capacity) {
+    if (!jadren_x11_file_basename_is_safe(suggested_name_data,
+                                          suggested_name_length, 0) ||
+        !jadren_x11_file_extension_is_safe(default_extension_data,
+                                           default_extension_length) ||
+        default_extension_length > 3U) {
+        return 0;
+    }
+    return jadren_x11_file_dialog(
+        title_data, title_length, suggested_name_data, suggested_name_length,
+        default_extension_data, default_extension_length, output_data,
+        output_length, output_path_length, output_path_length_capacity, 1, 1, 0);
+}
+
+int ui_file_save_extension_exact(const char *title_data, uint64_t title_length,
+                                 const char *suggested_stem_data,
+                                 uint64_t suggested_stem_length,
+                                 const char *extension_data,
+                                 uint64_t extension_length,
+                                 unsigned char *output_data,
+                                 uint64_t output_length,
+                                 uint64_t *output_path_length,
+                                 uint64_t output_path_length_capacity) {
+    if (!jadren_x11_file_basename_is_safe(suggested_stem_data,
+                                          suggested_stem_length, 1) ||
+        !jadren_x11_file_extension_is_safe(extension_data, extension_length) ||
+        extension_length > 3U) {
+        return 0;
+    }
+    return jadren_x11_file_dialog(
+        title_data, title_length, suggested_stem_data, suggested_stem_length,
+        extension_data, extension_length, output_data, output_length,
+        output_path_length, output_path_length_capacity, 1, 1, 0);
+}
+
 static JadrenInputAppBinding *jadren_input_app_binding_for_event(int event_id) {
     int index;
     for (index = 0; index < jadren_input_app_binding_count; index += 1) {
@@ -2140,6 +4618,19 @@ static JadrenInputAppBinding *jadren_input_app_binding_for_event(int event_id) {
         }
     }
     return NULL;
+}
+
+static int jadren_ui_input_binding_key_is_safe(const char *key_data,
+                                               uint64_t key_length) {
+    uint64_t index;
+    unsigned char value;
+    if (key_data == NULL || key_length == 0U || key_length > 64U) return 0;
+    for (index = 0; index < key_length; index += 1U) {
+        value = (unsigned char)key_data[index];
+        if (value < 0x20U || value == (unsigned char)'"' ||
+            value == (unsigned char)'\\') return 0;
+    }
+    return 1;
 }
 
 static void jadren_sync_input_app_state(JadrenNode *input) {
@@ -2185,8 +4676,8 @@ void ui_input_bind_app_state(int event_id, const char *key_data,
                              uint64_t key_length) {
     JadrenInputAppBinding *binding;
     JadrenNode *input = jadren_input_for_event(event_id);
-    if (input == NULL || key_data == NULL || key_length == 0U ||
-        key_length > 64U) {
+    if (input == NULL ||
+        !jadren_ui_input_binding_key_is_safe(key_data, key_length)) {
         return;
     }
     binding = jadren_input_app_binding_for_event(event_id);
@@ -2206,8 +4697,124 @@ void ui_input_bind_app_state(int event_id, const char *key_data,
     }
 }
 
+/* Exact text-input binding. Publish the binding only after all validation and
+ * the optional initial state write succeed, preserving an existing binding on
+ * every failure path. */
+int ui_input_bind_app_state_exact(int event_id, const char *key_data,
+                                  uint64_t key_length) {
+    JadrenInputAppBinding *binding;
+    JadrenNode *input = jadren_input_for_event(event_id);
+    if (input == NULL ||
+        !jadren_ui_input_binding_key_is_safe(key_data, key_length)) {
+        return 0;
+    }
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL &&
+        jadren_input_app_binding_count >= JADREN_X11_MAX_INPUT_APP_BINDINGS) {
+        return 0;
+    }
+#if JADREN_UI_HAS_FILE_RUNTIME
+    if (!jadren_preserve_app_binding &&
+        !app_state_set_text(key_data, key_length, input->text,
+                            (uint64_t)strlen(input->text))) {
+        return 0;
+    }
+#endif
+    if (binding == NULL) {
+        binding = &jadren_input_app_bindings[jadren_input_app_binding_count];
+        jadren_input_app_binding_count += 1;
+    }
+    binding->event_id = event_id;
+    binding->kind = JADREN_APP_BIND_TEXT;
+    binding->key_length = (size_t)key_length;
+    jadren_copy_text(binding->key, sizeof(binding->key), key_data, key_length);
+    return 1;
+}
+
 void ui_input_refresh_app_state(int event_id) {
     jadren_refresh_input_from_app_state(jadren_input_for_event(event_id));
+}
+
+/* Exact refresh distinguishes a valid empty text value from a missing or
+ * mismatched app_state key and mutates the retained input only after success. */
+int ui_input_refresh_app_state_exact(int event_id) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *input = jadren_input_for_event(event_id);
+    JadrenInputAppBinding *binding;
+    unsigned char output[JADREN_X11_MAX_TEXT];
+    uint64_t length = 0;
+    if (input == NULL) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_TEXT) return 0;
+    if (!app_state_read_text_exact(binding->key, (uint64_t)binding->key_length,
+                                   output, sizeof(output), &length, 1U)) {
+        return 0;
+    }
+    jadren_copy_text(input->text, sizeof(input->text), (const char *)output,
+                     length);
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    return 0;
+#endif
+}
+
+/* Revision-guarded exact refresh. Read the complete bounded model value into
+ * a temporary buffer, re-check the model revision, and only then publish it
+ * to the retained input node. */
+int ui_input_refresh_app_state_if_revision(int event_id,
+                                           uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *input = jadren_input_for_event(event_id);
+    JadrenInputAppBinding *binding;
+    unsigned char output[JADREN_X11_MAX_TEXT];
+    uint64_t length = 0;
+    if (input == NULL || app_data_revision() != expected_revision) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_TEXT) return 0;
+    if (!app_state_read_text_exact(binding->key, (uint64_t)binding->key_length,
+                                   output, sizeof(output), &length, 1U)) {
+        return 0;
+    }
+    if (app_data_revision() != expected_revision) return 0;
+    jadren_copy_text(input->text, sizeof(input->text), (const char *)output,
+                     length);
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Commit the current retained input text into the bound model slot only when
+ * the caller's app-data revision is still current. The final equality check
+ * is process-local; this API is not a cross-thread transaction. */
+int ui_input_commit_app_state_if_revision(
+    int event_id, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *input = jadren_input_for_event(event_id);
+    JadrenInputAppBinding *binding;
+    uint64_t length;
+    if (input == NULL || app_data_revision() != expected_revision) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_TEXT) return 0;
+    length = (uint64_t)strlen(input->text);
+    if (length >= sizeof(input->text)) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    if (!app_state_set_text(binding->key, (uint64_t)binding->key_length,
+                            input->text, length)) {
+        return 0;
+    }
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 static void jadren_sync_checkbox_app_state(JadrenNode *checkbox) {
@@ -2311,6 +4918,70 @@ void ui_checkbox_refresh_app_state(int event_id) {
         jadren_node_for_event(event_id, JADREN_NODE_CHECKBOX));
 }
 
+int ui_checkbox_refresh_app_state_exact(int event_id) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *checkbox = jadren_node_for_event(event_id, JADREN_NODE_CHECKBOX);
+    JadrenInputAppBinding *binding;
+    unsigned char value = 0;
+    if (checkbox == NULL) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_BOOL ||
+        !app_state_read_bool(binding->key, (uint64_t)binding->key_length,
+                             &value, 1U)) return 0;
+    checkbox->checked = value != 0;
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    return 0;
+#endif
+}
+
+int ui_checkbox_refresh_app_state_if_revision(
+    int event_id, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *checkbox = jadren_node_for_event(event_id, JADREN_NODE_CHECKBOX);
+    JadrenInputAppBinding *binding;
+    unsigned char value = 0;
+    if (checkbox == NULL || app_data_revision() != expected_revision) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_BOOL ||
+        !app_state_read_bool(binding->key, (uint64_t)binding->key_length,
+                             &value, 1U)) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    checkbox->checked = value != 0;
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+int ui_checkbox_commit_app_state_if_revision(
+    int event_id, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *checkbox = jadren_node_for_event(event_id, JADREN_NODE_CHECKBOX);
+    JadrenInputAppBinding *binding;
+    if (checkbox == NULL || app_data_revision() != expected_revision) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_BOOL) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    if (!app_state_set_bool(
+            binding->key, (uint64_t)binding->key_length,
+            (unsigned char)(checkbox->checked ? 1 : 0))) {
+        return 0;
+    }
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 int ui_select_bind_app_state(int event_id, const char *key_data,
                              uint64_t key_length) {
     JadrenInputAppBinding *binding;
@@ -2347,6 +5018,85 @@ int ui_select_bind_app_state(int event_id, const char *key_data,
 void ui_select_refresh_app_state(int event_id) {
     jadren_refresh_select_from_app_state(
         jadren_node_for_event(event_id, JADREN_NODE_SELECT));
+}
+
+int ui_select_refresh_app_state_exact(int event_id) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *select = jadren_node_for_event(event_id, JADREN_NODE_SELECT);
+    JadrenInputAppBinding *binding;
+    int64_t value = 0;
+    if (select == NULL) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_SELECT ||
+        !app_state_read_int(binding->key, (uint64_t)binding->key_length,
+                            &value, 1U) || value < -1 ||
+        value >= (int64_t)select->option_count) return 0;
+    select->selected_index = (int)value;
+    if (value < 0) {
+        select->text[0] = '\0';
+    } else {
+        jadren_copy_text(select->text, sizeof(select->text),
+                         select->option_text[value],
+                         (uint64_t)strlen(select->option_text[value]));
+    }
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    return 0;
+#endif
+}
+
+int ui_select_refresh_app_state_if_revision(
+    int event_id, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *select = jadren_node_for_event(event_id, JADREN_NODE_SELECT);
+    JadrenInputAppBinding *binding;
+    int64_t value = 0;
+    if (select == NULL || app_data_revision() != expected_revision) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_SELECT ||
+        !app_state_read_int(binding->key, (uint64_t)binding->key_length,
+                            &value, 1U) || value < -1 ||
+        value >= (int64_t)select->option_count) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    select->selected_index = (int)value;
+    if (value < 0) {
+        select->text[0] = '\0';
+    } else {
+        jadren_copy_text(select->text, sizeof(select->text),
+                         select->option_text[value],
+                         (uint64_t)strlen(select->option_text[value]));
+    }
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+int ui_select_commit_app_state_if_revision(
+    int event_id, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *select = jadren_node_for_event(event_id, JADREN_NODE_SELECT);
+    JadrenInputAppBinding *binding;
+    int64_t value;
+    if (select == NULL || app_data_revision() != expected_revision) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_SELECT) return 0;
+    value = (int64_t)select->selected_index;
+    if (value < -1 || value >= (int64_t)select->option_count) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    if (!app_state_set_int(binding->key, (uint64_t)binding->key_length, value)) return 0;
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 static void jadren_sync_list_app_state(JadrenNode *list) {
@@ -2497,6 +5247,71 @@ void ui_list_refresh_app_state(int event_id) {
         jadren_node_for_event(event_id, JADREN_NODE_LIST));
 }
 
+int ui_list_refresh_app_state_exact(int event_id) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    JadrenInputAppBinding *binding;
+    int64_t value = 0;
+    if (list == NULL) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_LIST ||
+        !app_state_read_int(binding->key, (uint64_t)binding->key_length,
+                            &value, 1U) || value < -1 ||
+        value >= (int64_t)list->list_item_count) return 0;
+    list->list_selected_index = (int)value;
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    return 0;
+#endif
+}
+
+int ui_list_refresh_app_state_if_revision(
+    int event_id, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    JadrenInputAppBinding *binding;
+    int64_t value = 0;
+    if (list == NULL || app_data_revision() != expected_revision) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_LIST ||
+        !app_state_read_int(binding->key, (uint64_t)binding->key_length,
+                            &value, 1U) || value < -1 ||
+        value >= (int64_t)list->list_item_count) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    list->list_selected_index = (int)value;
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+int ui_list_commit_app_state_if_revision(
+    int event_id, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *list = jadren_node_for_event(event_id, JADREN_NODE_LIST);
+    JadrenInputAppBinding *binding;
+    int64_t value;
+    if (list == NULL || app_data_revision() != expected_revision) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_LIST) return 0;
+    value = (int64_t)list->list_selected_index;
+    if (value < -1 || value >= (int64_t)list->list_item_count) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    if (!app_state_set_int(binding->key, (uint64_t)binding->key_length, value)) return 0;
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
 int ui_table_bind_app_state(int event_id, const char *key_data,
                             uint64_t key_length) {
     JadrenInputAppBinding *binding;
@@ -2537,6 +5352,80 @@ int ui_table_bind_app_state(int event_id, const char *key_data,
 void ui_table_refresh_app_state(int event_id) {
     jadren_refresh_table_from_app_state(
         jadren_node_for_event(event_id, JADREN_NODE_TABLE));
+}
+
+int ui_table_refresh_app_state_exact(int event_id) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *node = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    JadrenInputAppBinding *binding;
+    JadrenTableData *table;
+    int64_t value = 0;
+    if (node == NULL) return 0;
+    table = jadren_table_data(node);
+    if (table == NULL) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_TABLE ||
+        !app_state_read_int(binding->key, (uint64_t)binding->key_length,
+                            &value, 1U) || value < -1 ||
+        value >= (int64_t)table->row_count) return 0;
+    table->selected_row = (int)value;
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    return 0;
+#endif
+}
+
+int ui_table_refresh_app_state_if_revision(
+    int event_id, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *node = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    JadrenInputAppBinding *binding;
+    JadrenTableData *table;
+    int64_t value = 0;
+    if (node == NULL || app_data_revision() != expected_revision) return 0;
+    table = jadren_table_data(node);
+    if (table == NULL) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_TABLE ||
+        !app_state_read_int(binding->key, (uint64_t)binding->key_length,
+                            &value, 1U) || value < -1 ||
+        value >= (int64_t)table->row_count) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    table->selected_row = (int)value;
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+int ui_table_commit_app_state_if_revision(
+    int event_id, uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    JadrenNode *node = jadren_node_for_event(event_id, JADREN_NODE_TABLE);
+    JadrenInputAppBinding *binding;
+    JadrenTableData *table;
+    int64_t value;
+    if (node == NULL || app_data_revision() != expected_revision) return 0;
+    table = jadren_table_data(node);
+    if (table == NULL) return 0;
+    binding = jadren_input_app_binding_for_event(event_id);
+    if (binding == NULL || binding->kind != JADREN_APP_BIND_TABLE) return 0;
+    value = (int64_t)table->selected_row;
+    if (value < -1 || value >= (int64_t)table->row_count) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    if (!app_state_set_int(binding->key, (uint64_t)binding->key_length, value)) return 0;
+    jadren_sync_state_bindings_for_event(event_id);
+    return 1;
+#else
+    (void)event_id;
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 /* Retained UI convenience binding: callers keep the node id returned by
@@ -2583,6 +5472,78 @@ int ui_app_bind_app_state(int node_id, const char *key_data,
     return result;
 }
 
+int ui_app_bind_app_state_exact(int node_id, const char *key_data,
+                                uint64_t key_length) {
+    JadrenNode *node = jadren_node(node_id);
+    int result;
+    if (node == NULL ||
+        !jadren_ui_input_binding_key_is_safe(key_data, key_length)) {
+        return 0;
+    }
+#if !JADREN_UI_HAS_FILE_RUNTIME
+    return 0;
+#else
+    switch (node->kind) {
+    case JADREN_NODE_INPUT: {
+        unsigned char output[JADREN_X11_MAX_TEXT];
+        uint64_t length = 0;
+        if (!app_state_read_text_exact(key_data, key_length, output,
+                                       sizeof(output), &length, 1U)) return 0;
+        break;
+    }
+    case JADREN_NODE_CHECKBOX: {
+        unsigned char value = 0;
+        if (!app_state_read_bool(key_data, key_length, &value, 1U)) return 0;
+        break;
+    }
+    case JADREN_NODE_SELECT: {
+        int64_t value = 0;
+        if (!app_state_read_int(key_data, key_length, &value, 1U) ||
+            value < -1 || value >= (int64_t)node->option_count) return 0;
+        break;
+    }
+    case JADREN_NODE_LIST: {
+        int64_t value = 0;
+        if (!app_state_read_int(key_data, key_length, &value, 1U) ||
+            value < -1 || value >= (int64_t)node->list_item_count) return 0;
+        break;
+    }
+    case JADREN_NODE_TABLE: {
+        JadrenTableData *table = jadren_table_data(node);
+        int64_t value = 0;
+        if (table == NULL || !app_state_read_int(key_data, key_length, &value, 1U) ||
+            value < -1 || value >= (int64_t)table->row_count) return 0;
+        break;
+    }
+    default:
+        return 0;
+    }
+    jadren_preserve_app_binding = 1;
+    switch (node->kind) {
+    case JADREN_NODE_INPUT:
+        result = ui_input_bind_app_state_exact(node->event_id, key_data, key_length);
+        break;
+    case JADREN_NODE_CHECKBOX:
+        result = ui_checkbox_bind_app_state(node->event_id, key_data, key_length);
+        break;
+    case JADREN_NODE_SELECT:
+        result = ui_select_bind_app_state(node->event_id, key_data, key_length);
+        break;
+    case JADREN_NODE_LIST:
+        result = ui_list_bind_app_state(node->event_id, key_data, key_length);
+        break;
+    case JADREN_NODE_TABLE:
+        result = ui_table_bind_app_state(node->event_id, key_data, key_length);
+        break;
+    default:
+        result = 0;
+        break;
+    }
+    jadren_preserve_app_binding = 0;
+    return result && ui_app_refresh_app_state_exact(node_id);
+#endif
+}
+
 void ui_app_refresh_app_state(int node_id) {
     JadrenNode *node = jadren_node(node_id);
     if (node == NULL) return;
@@ -2605,6 +5566,221 @@ void ui_app_refresh_app_state(int node_id) {
     default:
         break;
     }
+}
+
+int ui_app_refresh_app_state_exact(int node_id) {
+#if !JADREN_UI_HAS_FILE_RUNTIME
+    (void)node_id;
+    return 0;
+#else
+    JadrenNode *node = jadren_node(node_id);
+    if (node == NULL) return 0;
+    switch (node->kind) {
+    case JADREN_NODE_INPUT:
+        return ui_input_refresh_app_state_exact(node->event_id);
+    case JADREN_NODE_CHECKBOX:
+        return ui_checkbox_refresh_app_state_exact(node->event_id);
+    case JADREN_NODE_SELECT:
+        return ui_select_refresh_app_state_exact(node->event_id);
+    case JADREN_NODE_LIST:
+        return ui_list_refresh_app_state_exact(node->event_id);
+    case JADREN_NODE_TABLE:
+        return ui_table_refresh_app_state_exact(node->event_id);
+    default:
+        return 0;
+    }
+#endif
+}
+
+int ui_app_refresh_app_state_if_revision(
+    int node_id, uint64_t expected_revision) {
+#if !JADREN_UI_HAS_FILE_RUNTIME
+    (void)node_id;
+    (void)expected_revision;
+    return 0;
+#else
+    JadrenNode *node = jadren_node(node_id);
+    if (node == NULL || app_data_revision() != expected_revision) return 0;
+    switch (node->kind) {
+    case JADREN_NODE_INPUT:
+        return ui_input_refresh_app_state_if_revision(node->event_id,
+                                                      expected_revision);
+    case JADREN_NODE_CHECKBOX:
+        return ui_checkbox_refresh_app_state_if_revision(node->event_id,
+                                                         expected_revision);
+    case JADREN_NODE_SELECT:
+        return ui_select_refresh_app_state_if_revision(node->event_id,
+                                                       expected_revision);
+    case JADREN_NODE_LIST:
+        return ui_list_refresh_app_state_if_revision(node->event_id,
+                                                     expected_revision);
+    case JADREN_NODE_TABLE:
+        return ui_table_refresh_app_state_if_revision(node->event_id,
+                                                      expected_revision);
+    default:
+        return 0;
+    }
+#endif
+}
+
+/* Commit one retained control's current native value into its bound model
+ * slot.  The node kind routes to the existing event-ID commit helpers, whose
+ * bounded pre/post revision checks remain authoritative.  This is
+ * process-local caller coordination, not a cross-thread transaction or
+ * persistence lock. */
+int ui_app_commit_app_state_if_revision(
+    int node_id, uint64_t expected_revision) {
+#if !JADREN_UI_HAS_FILE_RUNTIME
+    (void)node_id;
+    (void)expected_revision;
+    return 0;
+#else
+    JadrenNode *node = jadren_node(node_id);
+    if (node == NULL || app_data_revision() != expected_revision) return 0;
+    switch (node->kind) {
+    case JADREN_NODE_INPUT:
+        return ui_input_commit_app_state_if_revision(node->event_id,
+                                                     expected_revision);
+    case JADREN_NODE_CHECKBOX:
+        return ui_checkbox_commit_app_state_if_revision(node->event_id,
+                                                        expected_revision);
+    case JADREN_NODE_SELECT:
+        return ui_select_commit_app_state_if_revision(node->event_id,
+                                                      expected_revision);
+    case JADREN_NODE_LIST:
+        return ui_list_commit_app_state_if_revision(node->event_id,
+                                                    expected_revision);
+    case JADREN_NODE_TABLE:
+        return ui_table_commit_app_state_if_revision(node->event_id,
+                                                     expected_revision);
+    default:
+        return 0;
+    }
+#endif
+}
+
+/* Validate every bound projection without mutating retained nodes.  The
+ * mutating pass below can therefore reject an invalid model slot before any
+ * earlier node is refreshed.  This remains process-local; it is not a lock or
+ * a cross-thread transaction. */
+static int jadren_ui_refresh_bindings_preflight(uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int index;
+    unsigned char output[JADREN_X11_MAX_TEXT];
+    uint64_t length;
+    if (app_data_revision() != expected_revision) return 0;
+    for (index = 1; index < jadren_next_node; index += 1) {
+        JadrenNode *node = &jadren_nodes[index];
+        JadrenInputAppBinding *binding;
+        if (!node->used) continue;
+        binding = jadren_input_app_binding_for_event(node->event_id);
+        if (binding == NULL) continue;
+        switch (node->kind) {
+            case JADREN_NODE_INPUT:
+                if (binding->kind == JADREN_APP_BIND_TEXT) {
+                    length = 0U;
+                    if (!app_state_read_text_exact(
+                            binding->key, (uint64_t)binding->key_length,
+                            output, sizeof(output), &length, 1U)) return 0;
+                }
+                break;
+            case JADREN_NODE_CHECKBOX: {
+                unsigned char value = 0;
+                if (binding->kind == JADREN_APP_BIND_BOOL &&
+                    !app_state_read_bool(binding->key,
+                                         (uint64_t)binding->key_length,
+                                         &value, 1U)) return 0;
+                break;
+            }
+            case JADREN_NODE_SELECT: {
+                int64_t value = 0;
+                if (binding->kind == JADREN_APP_BIND_SELECT &&
+                    (!app_state_read_int(binding->key,
+                                         (uint64_t)binding->key_length,
+                                         &value, 1U) || value < -1 ||
+                     value >= (int64_t)node->option_count)) return 0;
+                break;
+            }
+            case JADREN_NODE_LIST: {
+                int64_t value = 0;
+                if (binding->kind == JADREN_APP_BIND_LIST &&
+                    (!app_state_read_int(binding->key,
+                                         (uint64_t)binding->key_length,
+                                         &value, 1U) || value < -1 ||
+                     value >= (int64_t)node->list_item_count)) return 0;
+                break;
+            }
+            case JADREN_NODE_TABLE: {
+                JadrenTableData *table = jadren_table_data(node);
+                int64_t value = 0;
+                if (binding->kind == JADREN_APP_BIND_TABLE &&
+                    (table == NULL ||
+                     !app_state_read_int(binding->key,
+                                         (uint64_t)binding->key_length,
+                                         &value, 1U) || value < -1 ||
+                     value >= (int64_t)table->row_count)) return 0;
+                break;
+            }
+            default:
+                break;
+        }
+    }
+    return app_data_revision() == expected_revision;
+#else
+    (void)expected_revision;
+    return 0;
+#endif
+}
+
+/* Refresh every explicit app-state projection against one caller snapshot.
+ * A read-only preflight runs before the mutating pass, so invalid/mismatched
+ * bindings fail without partial projection updates. */
+int ui_refresh_bindings_if_revision(uint64_t expected_revision) {
+#if JADREN_UI_HAS_FILE_RUNTIME
+    int index;
+    if (!jadren_ui_refresh_bindings_preflight(expected_revision)) return 0;
+    for (index = 1; index < jadren_next_node; index += 1) {
+        JadrenNode *node = &jadren_nodes[index];
+        JadrenInputAppBinding *binding;
+        if (!node->used) continue;
+        binding = jadren_input_app_binding_for_event(node->event_id);
+        if (binding == NULL) continue;
+        if (node->kind == JADREN_NODE_INPUT &&
+            binding->kind == JADREN_APP_BIND_TEXT &&
+            !ui_input_refresh_app_state_if_revision(node->event_id,
+                                                     expected_revision)) {
+            return 0;
+        }
+        if (node->kind == JADREN_NODE_CHECKBOX &&
+            binding->kind == JADREN_APP_BIND_BOOL &&
+            !ui_checkbox_refresh_app_state_if_revision(node->event_id,
+                                                        expected_revision)) {
+            return 0;
+        }
+        if (node->kind == JADREN_NODE_SELECT &&
+            binding->kind == JADREN_APP_BIND_SELECT &&
+            !ui_select_refresh_app_state_if_revision(node->event_id,
+                                                     expected_revision)) {
+            return 0;
+        }
+        if (node->kind == JADREN_NODE_LIST &&
+            binding->kind == JADREN_APP_BIND_LIST &&
+            !ui_list_refresh_app_state_if_revision(node->event_id,
+                                                   expected_revision)) {
+            return 0;
+        }
+        if (node->kind == JADREN_NODE_TABLE &&
+            binding->kind == JADREN_APP_BIND_TABLE &&
+            !ui_table_refresh_app_state_if_revision(node->event_id,
+                                                    expected_revision)) {
+            return 0;
+        }
+    }
+    return 1;
+#else
+    (void)expected_revision;
+    return 0;
+#endif
 }
 
 static void jadren_input_backspace(JadrenNode *node) {
@@ -2727,6 +5903,20 @@ static void jadren_close_input_method(void) {
     }
 }
 
+/* XSetInputFocus rejects unmapped windows with BadMatch.  A managed desktop
+ * may map a window asynchronously (WSLg does this while the compositor is
+ * attaching the surface), so focus is best-effort and must never terminate a
+ * Jadren process through Xlib's default error handler. */
+static void jadren_x11_focus_if_viewable(Window window) {
+    XWindowAttributes attributes;
+    if (jadren_display == NULL || window == 0 ||
+        XGetWindowAttributes(jadren_display, window, &attributes) == 0 ||
+        attributes.map_state != IsViewable) {
+        return;
+    }
+    XSetInputFocus(jadren_display, window, RevertToParent, CurrentTime);
+}
+
 int32_t ui_app_run(void) {
     XEvent event;
     if (jadren_active || jadren_stack_depth != 0) {
@@ -2754,7 +5944,8 @@ int32_t ui_app_run(void) {
     /* A bare Xvfb has no window manager to assign keyboard focus.  Claim it
      * after mapping so XTest/xdotool and normal native key events reach the
      * retained input just like they do in a managed desktop session. */
-    XSetInputFocus(jadren_display, jadren_window, RevertToParent, CurrentTime);
+    XSync(jadren_display, False);
+    jadren_x11_focus_if_viewable(jadren_window);
     XFlush(jadren_display);
     for (;;) {
         XNextEvent(jadren_display, &event);
@@ -2808,8 +5999,7 @@ int32_t ui_app_run(void) {
                 jadren_draw();
             }
         } else if (event.type == ButtonPress) {
-            XSetInputFocus(jadren_display, jadren_window, RevertToParent,
-                           CurrentTime);
+            jadren_x11_focus_if_viewable(jadren_window);
             int hit = jadren_hit_test(event.xbutton.x, event.xbutton.y);
             if (hit <= -101) {
                 JadrenNode *select = jadren_node(jadren_open_select);

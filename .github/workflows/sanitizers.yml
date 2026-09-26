@@ -44,7 +44,32 @@ jobs:
 
       - name: Run AddressSanitizer
         shell: bash
-        run: RUSTFLAGS='-Zsanitizer=address' cargo +"$SANITIZER_TOOLCHAIN" test --locked -p jadren-runtime --lib
+        run: |
+          set -euo pipefail
+          RUSTFLAGS='-Zsanitizer=address' cargo +"$SANITIZER_TOOLCHAIN" test --locked -p jadren-runtime --lib --no-run
+          test_binary="$(find target/debug/deps -maxdepth 1 -type f -executable -name 'jadren_runtime-*' -print -quit)"
+          if test -z "$test_binary"; then
+            echo 'AddressSanitizer test binary was not produced.' >&2
+            exit 1
+          fi
+          if command -v llvm-symbolizer >/dev/null 2>&1; then
+            export ASAN_SYMBOLIZER_PATH="$(command -v llvm-symbolizer)"
+          fi
+          export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}symbolize=1:detect_leaks=1"
+          serial_exit=0
+          "$test_binary" --test-threads=1 || serial_exit=$?
+          if test "$serial_exit" -eq 0; then
+            exit 0
+          fi
+          echo '::error::The serial AddressSanitizer suite failed; isolating tests for diagnostics.'
+          while IFS= read -r test_name; do
+            echo "::group::AddressSanitizer: $test_name"
+            if ! "$test_binary" "$test_name" --exact --test-threads=1; then
+              echo "::error::AddressSanitizer failed for test: $test_name"
+            fi
+            echo '::endgroup::'
+          done < <("$test_binary" --list | sed -n 's/: test$//p')
+          exit "$serial_exit"
 
       - name: Verify UndefinedBehaviorSanitizer capability
         shell: bash

@@ -1,0 +1,58 @@
+module generic_buffer_binary_search.main
+
+import jadren.core.collections.append
+import jadren.core.collections.binary_search
+import jadren.core.collections.length
+
+fn main() -> Int32 {
+    let integers: Result<Buffer<Int32>, Int32> = buffer_create(8usize)
+    var result_code: Int32 = 0
+    match integers {
+        Ok(values) => {
+            if ! append(values, 1) { result_code = 1 }
+            if ! append(values, 3) { result_code = 2 }
+            if ! append(values, 3) { result_code = 3 }
+            if ! append(values, 9) { result_code = 4 }
+            let initial_capacity: UIntSize = buffer_capacity(values)
+            if binary_search(values, 0) != -1 { result_code = 5 }
+            if binary_search(values, 1) != 0 { result_code = 6 }
+            if binary_search(values, 2) != -1 { result_code = 7 }
+            if binary_search(values, 3) != 1 { result_code = 8 }
+            if binary_search(values, 9) != 3 { result_code = 9 }
+            if binary_search(values, 10) != -1 { result_code = 10 }
+            if length(values) != 4usize { result_code = 11 }
+            if buffer_capacity(values) != initial_capacity { result_code = 12 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let floats: Result<Buffer<Float64>, Int32> = buffer_create(6usize)
+    match floats {
+        Ok(values) => {
+            if ! append(values, -2.0f64) { result_code = 13 }
+            if ! append(values, 0.5f64) { result_code = 14 }
+            if ! append(values, 8.0f64) { result_code = 15 }
+            let initial_capacity: UIntSize = buffer_capacity(values)
+            if binary_search(values, -3.0f64) != -1 { result_code = 16 }
+            if binary_search(values, -2.0f64) != 0 { result_code = 17 }
+            if binary_search(values, 0.0f64) != -1 { result_code = 18 }
+            if binary_search(values, 0.5f64) != 1 { result_code = 19 }
+            if binary_search(values, 1.0f64) != -1 { result_code = 20 }
+            if binary_search(values, 8.0f64) != 2 { result_code = 21 }
+            if binary_search(values, 9.0f64) != -1 { result_code = 22 }
+            if length(values) != 3usize { result_code = 23 }
+            if buffer_capacity(values) != initial_capacity { result_code = 24 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let empty: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    match empty {
+        Ok(values) => {
+            if binary_search(values, 42) != -1 { result_code = 25 }
+            if length(values) != 0usize { result_code = 26 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

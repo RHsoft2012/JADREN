@@ -49,6 +49,596 @@ fn prints_version() {
     );
 }
 
+#[test]
+fn init_desktop_template_creates_checkable_native_app() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-init-desktop-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    if directory.exists() {
+        fs::remove_dir_all(&directory).expect("old template directory should be removable");
+    }
+    fs::create_dir_all(&directory).expect("template working directory should be creatable");
+
+    let init = Command::new(binary())
+        .args(["init", "--template", "desktop", "--name", "native_app"])
+        .current_dir(&directory)
+        .output()
+        .expect("jadren init should start");
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    assert!(directory.join("jadren.toml").is_file());
+    assert!(directory.join("jadren.lock").is_file());
+    assert!(directory.join("README.md").is_file());
+    let source = directory.join("src/main.jdn");
+    assert!(source.is_file());
+    let source_text = fs::read_to_string(&source).expect("desktop source should be readable");
+    assert!(source_text.contains("module native_app.main"));
+    assert!(source_text.contains("@export(name: \"jadren_ui_on_click\", abi: \"C\")"));
+    assert!(source_text.contains("ui_app_text_input"));
+    assert!(source_text.contains("ui_app_bind_app_state_exact"));
+    assert!(source_text.contains("ui_set_input_text"));
+    assert!(source_text.contains("ui_app_input_read_exact"));
+    assert!(source_text.contains("ui_app_commit_app_state_if_revision"));
+    assert!(source_text.contains("verify_smoke_input_binding"));
+    assert!(source_text.contains("ui_app_list_set_index"));
+    assert!(source_text.contains("ui_app_table_set_selected_row"));
+    assert!(source_text.contains("verify_smoke_collection_bindings"));
+    assert!(source_text.contains("ui_app_list_sort_text"));
+    assert!(source_text.contains("ui_app_list_sort_text_if_revision"));
+    assert!(source_text.contains("ui_app_table_sort_text"));
+    assert!(source_text.contains("ui_app_table_sort_text_if_revision"));
+    assert!(source_text.contains("verify_smoke_collection_sorting"));
+    assert!(source_text.contains("ui_app_list_filter_text_ex_if_revision"));
+    assert!(source_text.contains("ui_app_table_filter_text_ex_if_revision"));
+    assert!(source_text.contains("verify_smoke_collection_filters"));
+    assert!(source_text.contains("ui_app_list_page_if_revision"));
+    assert!(source_text.contains("ui_app_table_page_if_revision"));
+    assert!(source_text.contains("verify_smoke_collection_paging"));
+    assert!(source_text.contains("app_list_insert_text_if_revision"));
+    assert!(source_text.contains("app_list_remove_if_revision"));
+    assert!(source_text.contains("app_table_insert_row_if_revision"));
+    assert!(source_text.contains("app_table_set_cell_if_revision"));
+    assert!(source_text.contains("app_table_remove_row_if_revision"));
+    assert!(source_text.contains("ui_app_list_refresh"));
+    assert!(source_text.contains("ui_app_table_refresh"));
+    assert!(source_text.contains("verify_smoke_collection_mutations"));
+    assert!(source_text.contains("ui_app_list_filter_callback_if_revision"));
+    assert!(source_text.contains("ui_app_table_filter_callback_if_revision"));
+    assert!(source_text.contains("desktop_keep_first_collection_item"));
+    assert!(source_text.contains("verify_smoke_collection_callback_filters"));
+    assert!(source_text.contains("ui_dispatch_event(1)"));
+    assert!(source_text.contains("app_state_read_text_exact"));
+    assert!(source_text.contains("desktop_save_atomic_durable_buffer"));
+    assert!(source_text.contains("desktop_load_file_buffer"));
+    assert!(source_text.contains("desktop_export_table_csv_durable"));
+    assert!(source_text.contains("desktop_parse_serve_api_port"));
+    assert!(source_text.contains("desktop_add_api_snapshot_routes"));
+    assert!(source_text.contains("desktop_serve_api"));
+    assert!(source_text.contains("/api/status"));
+    assert!(source_text.contains("/api/revision"));
+    assert!(source_text.contains("/api/model"));
+    assert!(source_text.contains("buffer_resize"));
+    assert!(source_text.contains("verify_smoke_persistence"));
+    assert!(source_text.contains("app_data_validate"));
+    assert!(source_text.contains("--smoke"));
+    assert!(source_text.contains("ui_app_run()"));
+
+    let check = Command::new(binary())
+        .args(["check", "."])
+        .current_dir(&directory)
+        .output()
+        .expect("generated desktop package should check");
+    assert!(
+        check.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    fs::remove_dir_all(&directory).expect("template directory should be removable");
+}
+
+#[test]
+fn init_full_app_template_creates_checkable_native_application_foundation() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-init-full-app-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    if directory.exists() {
+        fs::remove_dir_all(&directory).expect("old template directory should be removable");
+    }
+    fs::create_dir_all(&directory).expect("template working directory should be creatable");
+
+    let init = Command::new(binary())
+        .args([
+            "init",
+            "--template",
+            "full-app",
+            "--name",
+            "native_application",
+        ])
+        .current_dir(&directory)
+        .output()
+        .expect("jadren init should start");
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    assert!(directory.join("jadren.toml").is_file());
+    assert!(directory.join("jadren.lock").is_file());
+    assert!(directory.join("README.md").is_file());
+    let main_source = directory.join("src/main.jdn");
+    let model_source = directory.join("src/model.jdn");
+    let data_source = directory.join("src/data.jdn");
+    let controller_source = directory.join("src/controller.jdn");
+    let view_source = directory.join("src/view.jdn");
+    let storage_source = directory.join("src/storage.jdn");
+    let exports_source = directory.join("src/exports.jdn");
+    let api_source = directory.join("src/api.jdn");
+    assert!(main_source.is_file());
+    assert!(model_source.is_file());
+    assert!(data_source.is_file());
+    assert!(controller_source.is_file());
+    assert!(view_source.is_file());
+    assert!(storage_source.is_file());
+    assert!(exports_source.is_file());
+    assert!(api_source.is_file());
+    let main_text =
+        fs::read_to_string(&main_source).expect("application main source should be readable");
+    let model_text =
+        fs::read_to_string(&model_source).expect("application model source should be readable");
+    let data_text =
+        fs::read_to_string(&data_source).expect("application data source should be readable");
+    let controller_text = fs::read_to_string(&controller_source)
+        .expect("application controller source should be readable");
+    let view_text =
+        fs::read_to_string(&view_source).expect("application view source should be readable");
+    let storage_text =
+        fs::read_to_string(&storage_source).expect("application storage source should be readable");
+    let exports_text =
+        fs::read_to_string(&exports_source).expect("application exports source should be readable");
+    let api_text =
+        fs::read_to_string(&api_source).expect("application API source should be readable");
+    let readme_text =
+        fs::read_to_string(directory.join("README.md")).expect("template README should read");
+    assert!(readme_text.contains("_if_model_revision"));
+    for marker in [
+        "module native_application.main",
+        "native_application.model.bootstrap",
+        "native_application.model.verify_interaction_smoke_model",
+        "native_application.model.verify_due_reminder_smoke_model",
+        "native_application.model.verify_scheduled_reminder_smoke_model",
+        "native_application.model.verify_filtered_projects_smoke_model",
+        "native_application.model.verify_filtered_tasks_smoke_model",
+        "native_application.model.verify_tasks_ascending_smoke_model",
+        "native_application.model.verify_tasks_descending_smoke_model",
+        "native_application.model.verify_removal_smoke_model",
+        "native_application.controller.cleanup_interactive_checkpoint",
+        "native_application.controller.verify_interactive_checkpoint_slot",
+        "native_application.controller.cleanup_interactive_exports",
+        "native_application.controller.verify_interactive_exports",
+        "native_application.controller.cleanup_interactive_json_backup",
+        "native_application.controller.verify_interactive_json_backup",
+        "native_application.storage.smoke_checkpoint_roundtrip",
+        "native_application.storage.smoke_file_backed_model_roundtrip",
+        "native_application.exports.smoke_durable_exports",
+        "native_application.api.serve_health_once",
+        "native_application.api.serve_snapshot",
+        "native_application.api.serve_draft_update",
+        "native_application.api.serve_draft_commit",
+        "native_application.api.serve_model_sync",
+        "native_application.view.build",
+        "native_application.view.dispatch_smoke_actions",
+        "native_application.view.dispatch_smoke_edit",
+        "native_application.view.dispatch_smoke_due_reminders",
+        "native_application.view.dispatch_smoke_future_reminder",
+        "native_application.view.dispatch_smoke_filter",
+        "native_application.view.dispatch_smoke_json_backup",
+        "native_application.view.dispatch_smoke_sort_ascending",
+        "native_application.view.dispatch_smoke_sort_descending",
+        "native_application.view.dispatch_smoke_persistence",
+        "native_application.view.dispatch_smoke_exports",
+        "native_application.view.dispatch_smoke_removal",
+        "native_application.view.reset_smoke_event_queue",
+        "native_application.view.verify_interaction_smoke_view",
+        "native_application.view.verify_due_reminder_smoke_view",
+        "native_application.view.verify_scheduled_reminder_smoke_view",
+        "native_application.view.verify_filtered_projects_smoke_view",
+        "native_application.view.verify_filtered_tasks_smoke_view",
+        "native_application.view.verify_tasks_ascending_smoke_view",
+        "native_application.view.verify_tasks_descending_smoke_view",
+        "native_application.view.verify_interactive_checkpoint_slot_view",
+        "native_application.view.verify_removal_smoke_view",
+        "native_application.view.verify_smoke_event_queue",
+        "full_app_has_smoke_flag",
+        "full_app_parse_serve_once_port",
+        "full_app_parse_serve_api_port",
+        "full_app_parse_serve_draft_port",
+        "full_app_parse_serve_draft_commit_port",
+        "full_app_parse_serve_model_sync_port",
+        "ui_app_run()",
+    ] {
+        assert!(
+            main_text.contains(marker),
+            "missing full-app main marker: {marker}"
+        );
+    }
+    for marker in [
+        "module native_application.data",
+        "app_data_snapshot_length",
+        "pub fn revision",
+        "snapshot_length_if_model_revision",
+        "app_data_write_exact",
+        "pub fn write_exact",
+        "pub fn write_exact_if_model_revision",
+        "file_write_atomic_durable",
+        "file_read_exact",
+        "app_data_load_exact",
+        "pub fn load_exact_if_model_revision",
+        "pub fn save_atomic_durable",
+        "pub fn save_atomic_durable_if_model_revision",
+        "pub fn load_file",
+        "pub fn load_file_if_model_revision",
+        "pub fn load_exact",
+        "pub fn tx_begin_if_model_revision",
+        "pub fn tx_commit_durable_directory_if_model_revision",
+        "pub fn tx_rollback",
+    ] {
+        assert!(
+            data_text.contains(marker),
+            "missing full-app data marker: {marker}"
+        );
+    }
+    for marker in [
+        "module native_application.model",
+        "app_list_push_text",
+        "checkpoint_slot",
+        "project_draft",
+        "project_editor",
+        "task_editor",
+        "task_status_editor",
+        "task_notes_editor",
+        "task_estimate_editor",
+        "task_reminder_due_editor",
+        "selected_task_id",
+        "next_task_id",
+        "project_filter",
+        "filtered_project_choice",
+        "task_filter",
+        "filtered_task_choice",
+        "app_list_filter_text_ex_bytes",
+        "app_table_filter_text_ex_bytes",
+        "app_table_set_column_type",
+        "app_table_append_row",
+        "app_table_set_named_cell",
+        "app_table_upsert_int",
+        "app_table_find_int",
+        "app_table_set_column_name(0, 2, \"Project\")",
+        "app_table_set_column_name(0, 3, \"Notes\")",
+        "app_table_set_column_name(0, 4, \"EstimateMinutes\")",
+        "app_table_set_column_name(0, 5, \"ReminderDueUnixSeconds\")",
+        "add_draft_task",
+        "add_project",
+        "complete_selected_task",
+        "load_selected_project_editor",
+        "sync_selected_project_from_list",
+        "rename_selected_project",
+        "remove_selected_project",
+        "load_selected_task_editor",
+        "load_selected_task_status_editor",
+        "load_selected_task_notes_editor",
+        "load_selected_task_estimate_editor",
+        "load_selected_task_reminder_due_editor",
+        "load_selected_task_fields",
+        "sync_selected_task_from_row",
+        "task_ids_are_unique",
+        "task_projects_are_valid",
+        "task_reminders_are_valid",
+        "rebuild_task_reminders",
+        "normalize_next_task_id",
+        "rename_selected_task",
+        "update_selected_task_status",
+        "update_selected_task_notes",
+        "update_selected_task_estimate",
+        "update_selected_task_reminder",
+        "poll_due_task_reminders",
+        "parse_int",
+        "move_selected_task_to_selected_project",
+        "remove_selected_task",
+        "refresh_project_filter",
+        "refresh_task_filter",
+        "sort_tasks_by_title",
+        "verify_selected_project_editor",
+        "verify_interaction_smoke_model",
+        "verify_due_reminder_smoke_model",
+        "verify_scheduled_reminder_smoke_model",
+        "verify_filtered_projects_smoke_model",
+        "verify_filtered_tasks_smoke_model",
+        "verify_tasks_ascending_smoke_model",
+        "verify_tasks_descending_smoke_model",
+        "verify_removal_smoke_model",
+        "app_data_tx_begin_if_revision",
+        "app_data_tx_commit",
+        "app_data_tx_rollback",
+        "verify_smoke_model",
+    ] {
+        assert!(
+            model_text.contains(marker),
+            "missing full-app model marker: {marker}"
+        );
+    }
+    for marker in [
+        "module native_application.api",
+        "serve_health_once",
+        "serve_snapshot",
+        "serve_draft_update",
+        "serve_draft_commit",
+        "serve_model_sync",
+        "full_app_load_model_if_revision",
+        "full_app_commit_draft_if_revision",
+        "net_tcp_listen",
+        "net_tcp_accept",
+        "net_tcp_receive",
+        "net_tcp_send_all_prefix",
+        "http_request_body_exact_prefix",
+        "http_router_add",
+        "http_router_add_exact",
+        "app_state_write_json_exact",
+        "app_list_export_json_exact",
+        "app_table_export_json_exact",
+        "app_state_set_text_bytes",
+        "state_body: [UInt8; 512]",
+        "app_data_tx_begin_if_revision",
+        "app_data_tx_commit_durable_if_revision",
+        "app_data_tx_rollback",
+        "import native_application.data.revision",
+        "import native_application.data.snapshot_length_if_model_revision",
+        "import native_application.data.write_exact_if_model_revision",
+        "import native_application.data.load_exact_if_model_revision",
+        "revision()",
+        "snapshot_length_if_model_revision(expected_revision)",
+        "write_exact_if_model_revision(output, output_length, expected_revision)",
+        "write_exact(rollback, rollback_length)",
+        "load_exact_if_model_revision(input, input_length, expected_revision)",
+        "load_exact(rollback, rollback_length[0])",
+        "task_reminders_are_valid",
+        "rebuild_task_reminders",
+        "http_request_header_exact",
+        "http_session_open",
+        "http_session_step",
+    ] {
+        assert!(
+            api_text.contains(marker),
+            "missing full-app API marker: {marker}"
+        );
+    }
+    for marker in [
+        "module native_application.view",
+        "ui_app_text_input",
+        "ui_app_list_bind_app",
+        "ui_app_table_bind_app",
+        "ui_app_bind_app_state_exact",
+        "project_draft",
+        "project_editor",
+        "task_editor",
+        "task_status_editor",
+        "task_notes_editor",
+        "task_estimate_editor",
+        "task_reminder_due_editor",
+        "ui_app_table_column(tasks, 3, \"Notes\", 185)",
+        "ui_app_table_column(tasks, 4, \"Estimate minutes\", 105)",
+        "ui_app_table_column(tasks, 5, \"Reminder due (Unix)\", 210)",
+        "ui_app_table_bind_app(tasks, 0, 6)",
+        "ui_table_read_cell(30, 2, 3, notes)",
+        "ui_table_read_cell(30, 2, 4, estimate)",
+        "checkpoint_slots",
+        "filtered_projects",
+        "filtered_tasks",
+        "ui_app_button",
+        "Remove unused project",
+        "Assign task to selected project",
+        "Update notes",
+        "Update estimate",
+        "Schedule reminder",
+        "Check due reminders",
+        "controller.handle",
+        "dispatch_smoke_actions",
+        "dispatch_smoke_edit",
+        "dispatch_smoke_due_reminders",
+        "dispatch_smoke_future_reminder",
+        "dispatch_smoke_filter",
+        "dispatch_smoke_json_backup",
+        "dispatch_smoke_sort_ascending",
+        "dispatch_smoke_sort_descending",
+        "dispatch_smoke_persistence",
+        "dispatch_smoke_exports",
+        "dispatch_smoke_removal",
+        "reset_smoke_event_queue",
+        "verify_interaction_smoke_view",
+        "verify_due_reminder_smoke_view",
+        "verify_scheduled_reminder_smoke_view",
+        "verify_filtered_projects_smoke_view",
+        "verify_filtered_tasks_smoke_view",
+        "verify_tasks_ascending_smoke_view",
+        "verify_tasks_descending_smoke_view",
+        "verify_interactive_checkpoint_slot_view",
+        "verify_removal_smoke_view",
+        "verify_smoke_event_queue",
+        "ui_event_queue_clear",
+        "ui_event_queue_poll_exact",
+        "ui_list_count",
+        "ui_table_selected_row",
+        "verify_smoke_view",
+    ] {
+        assert!(
+            view_text.contains(marker),
+            "missing full-app view marker: {marker}"
+        );
+    }
+    for marker in [
+        "module native_application.controller",
+        "native_application.model.add_draft_task",
+        "native_application.model.add_project",
+        "native_application.model.complete_selected_task",
+        "native_application.model.rename_selected_project",
+        "native_application.model.remove_selected_project",
+        "native_application.model.load_selected_task_fields",
+        "native_application.model.sync_selected_project_from_list",
+        "native_application.model.sync_selected_task_from_row",
+        "native_application.model.task_ids_are_unique",
+        "native_application.model.task_projects_are_valid",
+        "native_application.model.task_reminders_are_valid",
+        "native_application.model.rebuild_task_reminders",
+        "native_application.model.normalize_next_task_id",
+        "native_application.model.rename_selected_task",
+        "native_application.model.update_selected_task_status",
+        "native_application.model.update_selected_task_notes",
+        "native_application.model.update_selected_task_reminder",
+        "native_application.model.poll_due_task_reminders",
+        "native_application.model.move_selected_task_to_selected_project",
+        "native_application.model.remove_selected_task",
+        "native_application.model.refresh_project_filter",
+        "native_application.model.refresh_task_filter",
+        "native_application.model.sort_tasks_by_title",
+        "native_application.storage.save_checkpoint_durable",
+        "native_application.storage.load_checkpoint",
+        "native_application.exports.export_list_csv_durable",
+        "native_application.exports.export_table_csv_durable",
+        "pub fn handle",
+        "save_interactive_checkpoint",
+        "restore_interactive_checkpoint",
+        "interactive_checkpoint_slot",
+        "verify_interactive_checkpoint_slot",
+        "cleanup_interactive_checkpoint",
+        "export_interactive_list",
+        "export_interactive_table",
+        "verify_interactive_exports",
+        "cleanup_interactive_exports",
+        "export_interactive_table_json",
+        "import_interactive_table_json",
+        "verify_interactive_json_backup",
+        "cleanup_interactive_json_backup",
+        "app_table_export_json_file_durable",
+        "app_table_import_json_file",
+    ] {
+        assert!(
+            controller_text.contains(marker),
+            "missing full-app controller marker: {marker}"
+        );
+    }
+    for marker in [
+        "module native_application.storage",
+        "save_checkpoint_durable",
+        "restore_project_choice",
+        "restore_task_choice",
+        "restore_selected_task_id",
+        "restore_next_task_id",
+        "restore_filtered_project_choice",
+        "restore_filtered_task_choice",
+        "restore_checkpoint_slot",
+        "normalize_selection_keys",
+        "normalize_next_task_id",
+        "task_projects_are_valid",
+        "task_reminders_are_valid",
+        "rebuild_task_reminders",
+        "app_state_read_uint",
+        "tx_commit_durable_directory_if_model_revision",
+        "save_model_file_if_model_revision",
+        "load_model_file_if_model_revision",
+        "snapshot_length_if_model_revision",
+        "smoke_checkpoint_roundtrip",
+        "save_model_file",
+        "load_model_file",
+        "smoke_file_backed_model_roundtrip",
+    ] {
+        assert!(
+            storage_text.contains(marker),
+            "missing full-app storage marker: {marker}"
+        );
+    }
+    for marker in [
+        "module native_application.exports",
+        "export_list_csv_durable",
+        "app_list_export_csv_file_durable",
+        "app_table_export_csv_file_durable",
+        "smoke_durable_exports",
+    ] {
+        assert!(
+            exports_text.contains(marker),
+            "missing full-app exports marker: {marker}"
+        );
+    }
+
+    let check = Command::new(binary())
+        .args(["check", "."])
+        .current_dir(&directory)
+        .output()
+        .expect("generated full-app package should check");
+    assert!(
+        check.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    fs::remove_dir_all(&directory).expect("template directory should be removable");
+}
+
+#[test]
+fn init_server_template_creates_checkable_native_service() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-init-server-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    if directory.exists() {
+        fs::remove_dir_all(&directory).expect("old template directory should be removable");
+    }
+    fs::create_dir_all(&directory).expect("template working directory should be creatable");
+
+    let init = Command::new(binary())
+        .args(["init", "--template", "server", "--name", "native_server"])
+        .current_dir(&directory)
+        .output()
+        .expect("jadren init should start");
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    assert!(directory.join("jadren.toml").is_file());
+    assert!(directory.join("jadren.lock").is_file());
+    assert!(directory.join("README.md").is_file());
+    let source = directory.join("src/main.jdn");
+    assert!(source.is_file());
+    let source_text = fs::read_to_string(&source).expect("server source should be readable");
+    assert!(source_text.contains("module native_server.main"));
+    assert!(source_text.contains("http_session_open"));
+    assert!(source_text.contains("http_router_add"));
+    assert!(source_text.contains("process_arg_count"));
+    assert!(source_text.contains("server_parse_port"));
+    assert!(source_text.contains("server_parse_max_requests"));
+    assert!(source_text.contains("while running"));
+
+    let check = Command::new(binary())
+        .args(["check", "."])
+        .current_dir(&directory)
+        .output()
+        .expect("generated server package should check");
+    assert!(
+        check.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    fs::remove_dir_all(&directory).expect("template directory should be removable");
+}
+
 #[cfg(any(windows, target_os = "linux"))]
 #[test]
 fn builds_and_runs_host_executables_from_main() {
@@ -469,6 +1059,126 @@ fn builds_cross_file_nested_generic_nominal_buffer() {
     let run = Command::new(&output)
         .status()
         .expect("nested generic nominal package executable should run");
+    assert_eq!(run.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn builds_cross_file_generic_buffer_query_repeated_calls() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-generic-buffer-query-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("package")
+    ));
+    let source = directory.join("src");
+    fs::create_dir_all(&source).expect("package source directory should be writable");
+    fs::write(
+        directory.join("jadren.toml"),
+        "[package]\nname = \"demo-generic-buffer-query\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\n\n[targets]\nlibrary = true\n",
+    )
+    .expect("manifest should be writable");
+    let lock = Command::new(binary())
+        .args(["lock"])
+        .arg(&directory)
+        .output()
+        .expect("jadren lock should start");
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    fs::write(
+        source.join("library.jdn"),
+        "module demo_generic_buffer_query.library\npub fn has_index<T>(values: read Buffer<T>, index: UIntSize) -> Bool { for candidate in values.indices { if candidate == index { return true } } return false }\n",
+    )
+    .expect("library source should be writable");
+    fs::write(
+        source.join("main.jdn"),
+        "module demo_generic_buffer_query.main\nimport demo_generic_buffer_query.library.has_index\nfn main() -> Int32 { let created: Result<Buffer<Int32>, Int32> = buffer_create(0usize) var result_code: Int32 = 0 match created { Ok(values) => { if !buffer_append(values, 7) { result_code = 1 } if !has_index(values, 0usize) { result_code = 2 } if has_index(values, 1usize) { result_code = 3 } let clear_status: Int32 = buffer_clear_status(values) if clear_status != 0 { result_code = clear_status } } Error(status) => { result_code = status } } return result_code }\n",
+    )
+    .expect("entry source should be writable");
+
+    let output = directory.join(if cfg!(windows) {
+        "demo-generic-buffer-query.exe"
+    } else {
+        "demo-generic-buffer-query"
+    });
+    let build = Command::new(binary())
+        .args(["build"])
+        .arg(&directory)
+        .args(["-o"])
+        .arg(&output)
+        .args(["--profile", "release"])
+        .output()
+        .expect("generic buffer query package build should start");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&output)
+        .status()
+        .expect("generic buffer query package executable should run");
+    assert_eq!(run.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn selects_cross_file_generic_return_specialization() {
+    let directory = std::env::temp_dir().join(format!(
+        "jadren-cli-generic-return-specialization-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("package")
+    ));
+    let source = directory.join("src");
+    fs::create_dir_all(&source).expect("package source directory should be writable");
+    fs::write(
+        directory.join("jadren.toml"),
+        "[package]\nname = \"demo-generic-return-specialization\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\n\n[targets]\nlibrary = true\n",
+    )
+    .expect("manifest should be writable");
+    let lock = Command::new(binary())
+        .args(["lock"])
+        .arg(&directory)
+        .output()
+        .expect("jadren lock should start");
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    fs::write(
+        source.join("library.jdn"),
+        "module demo_generic_return.library\npub fn make<T>(size: UIntSize) -> Result<Buffer<T>, Int32> { return buffer_create(size) }\n",
+    )
+    .expect("library source should be writable");
+    fs::write(
+        source.join("main.jdn"),
+        "module demo_generic_return.main\nimport demo_generic_return.library.make\nfn main() -> Int32 { let outer_result: Result<Buffer<Buffer<Int32>>, Int32> = make(1usize) let inner_result: Result<Buffer<Int32>, Int32> = make(0usize) var result_code: Int32 = 0 match outer_result { Ok(outer) => { match inner_result { Ok(inner) => { if !buffer_append_move(outer, inner) { result_code = 1 } if buffer_length(outer) != 1usize { result_code = 2 } if !buffer_clear_move(outer) { result_code = 3 } } Error(status) => { result_code = status } } } Error(status) => { result_code = status } } return result_code }\n",
+    )
+    .expect("entry source should be writable");
+
+    let output = directory.join(if cfg!(windows) {
+        "demo-generic-return-specialization.exe"
+    } else {
+        "demo-generic-return-specialization"
+    });
+    let build = Command::new(binary())
+        .args(["build"])
+        .arg(&directory)
+        .args(["-o"])
+        .arg(&output)
+        .args(["--profile", "release"])
+        .output()
+        .expect("generic return specialization build should start");
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&output)
+        .status()
+        .expect("generic return specialization executable should run");
     assert_eq!(run.code(), Some(0));
     let _ = fs::remove_dir_all(directory);
 }
@@ -1044,7 +1754,7 @@ fn doctor_reports_target_and_deterministic_config() {
     assert!(stdout.contains("deterministic ordering: enabled"));
     assert!(stdout.contains("LLVM toolchain: 22.1.8 verified"));
     assert!(stdout.contains(
-            "runtime ABI 0.21 system+region allocators, abort panic boundary, callbacks, Buffer/Slice, UTF-8 String, math scalar, vector value, quaternion Slerp, enum carrier branch tables, field tables, direct/nested drop-only record remove and caller-owned insert/remove/pop move available"
+            "runtime ABI 0.22 system+region allocators, abort panic boundary, callbacks, Buffer/Slice, UTF-8 String, math scalar, vector value, quaternion Slerp, enum carrier branch tables, field tables, direct/nested drop-only record remove and caller-owned insert/remove/pop move available"
     ));
 }
 
@@ -1161,6 +1871,136 @@ fn reports_local_type_mismatch() {
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"code\":\"J0301\""));
+}
+
+#[test]
+fn reports_app_state_float_delta_type_mismatch() {
+    let path = std::env::temp_dir().join(format!(
+        "jadren-app-state-float-type-{}-{}.jdn",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    fs::write(
+        &path,
+        "module test; fn main() { let value: Bool = app_state_add_float(\"rate\", 1i64) }",
+    )
+    .expect("temporary source should be writable");
+
+    let output = Command::new(binary())
+        .arg("check")
+        .arg(&path)
+        .args(["--format", "json"])
+        .output()
+        .expect("jadren should start");
+    let _ = fs::remove_file(path);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"code\":\"J0301\""), "{stdout}");
+}
+
+#[test]
+fn reports_app_state_revision_set_type_mismatch() {
+    let path = std::env::temp_dir().join(format!(
+        "jadren-app-state-set-int-revision-type-{}-{}.jdn",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    fs::write(
+        &path,
+        "module test; fn main() { let value: Bool = app_state_set_int_if_revision(\"minutes\", true, 0u64) }",
+    )
+    .expect("temporary source should be writable");
+
+    let output = Command::new(binary())
+        .arg("check")
+        .arg(&path)
+        .args(["--format", "json"])
+        .output()
+        .expect("jadren should start");
+    let _ = fs::remove_file(path);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"code\":\"J0301\""), "{stdout}");
+}
+
+#[test]
+fn reports_app_state_typed_revision_set_mismatch() {
+    let path = std::env::temp_dir().join(format!(
+        "jadren-app-state-typed-revision-set-type-{}-{}.jdn",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    fs::write(
+        &path,
+        "module test; fn main() { let value: Bool = app_state_set_text_if_revision(\"name\", 1i64, 0u64) }",
+    )
+    .expect("temporary source should be writable");
+
+    let output = Command::new(binary())
+        .arg("check")
+        .arg(&path)
+        .args(["--format", "json"])
+        .output()
+        .expect("jadren should start");
+    let _ = fs::remove_file(path);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"code\":\"J0301\""), "{stdout}");
+}
+
+#[test]
+fn reports_app_state_text_bytes_revision_set_mismatch() {
+    let path = std::env::temp_dir().join(format!(
+        "jadren-app-state-set-text-bytes-revision-type-{}-{}.jdn",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    fs::write(
+        &path,
+        "module test; fn main() { let value: Bool = app_state_set_text_bytes_if_revision(\"name\", 1i64, 1usize, 0u64) }",
+    )
+    .expect("temporary source should be writable");
+
+    let output = Command::new(binary())
+        .arg("check")
+        .arg(&path)
+        .args(["--format", "json"])
+        .output()
+        .expect("jadren should start");
+    let _ = fs::remove_file(path);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"code\":\"J0301\""), "{stdout}");
+}
+
+#[test]
+fn reports_app_state_text_bytes_model_revision_set_mismatch() {
+    let path = std::env::temp_dir().join(format!(
+        "jadren-app-state-set-text-bytes-model-revision-type-{}-{}.jdn",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    fs::write(
+        &path,
+        "module test; fn main() { let value: Bool = app_state_set_text_bytes_if_model_revision(\"name\", 1i64, 1usize, 0u64) }",
+    )
+    .expect("temporary source should be writable");
+
+    let output = Command::new(binary())
+        .arg("check")
+        .arg(&path)
+        .args(["--format", "json"])
+        .output()
+        .expect("jadren should start");
+    let _ = fs::remove_file(path);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"code\":\"J0301\""), "{stdout}");
 }
 
 #[test]

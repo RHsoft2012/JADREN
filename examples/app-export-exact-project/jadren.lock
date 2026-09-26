@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "9dc08e8a55d819f9"
+
+[package]
+name = "app-export-exact-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

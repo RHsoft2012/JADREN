@@ -1,0 +1,321 @@
+module ui_app_collection_write_project.main
+import jadren.app.state.clear
+import jadren.app.state.set_text
+import jadren.app.data.revision
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.panel
+import jadren.app.ui.list
+import jadren.app.ui.list_item
+import jadren.app.ui.list_set_item
+import jadren.app.ui.list_set_item_if_revision
+import jadren.app.ui.list_set_item_if_model_revision
+import jadren.app.ui.list_insert_item_if_model_revision
+import jadren.app.ui.list_move_item_if_model_revision
+import jadren.app.ui.list_remove_item_if_model_revision
+import jadren.app.ui.list_read_item_exact_if_revision
+import jadren.app.ui.list_read_item_exact_if_model_revision
+import jadren.app.ui.list_count_if_model_revision
+import jadren.app.ui.list_index_if_model_revision
+import jadren.app.ui.table
+import jadren.app.ui.table_column
+import jadren.app.ui.table_cell
+import jadren.app.ui.table_cell_if_revision
+import jadren.app.ui.table_cell_if_model_revision
+import jadren.app.ui.table_insert_row_if_model_revision
+import jadren.app.ui.table_move_row_if_model_revision
+import jadren.app.ui.table_remove_row_if_model_revision
+import jadren.app.ui.table_read_cell_exact_if_revision
+import jadren.app.ui.table_read_cell_exact_if_model_revision
+import jadren.app.ui.table_row_count_if_model_revision
+import jadren.app.ui.table_selected_row_if_model_revision
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear()
+    if ! set_text("revision_seed",
+    "ready") {
+        return 1
+    }
+    let root: Int32 = begin("Retained collection writes",
+    640,
+    420,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 2
+    }
+    let panel_node: Int32 = panel(root,
+    580,
+    320,
+    0xFFFFFFu32,
+    12,
+    12,
+    8,
+    0,
+    1)
+    if panel_node == 0 {
+        return 3
+    }
+    let list_node: Int32 = list(panel_node,
+    51,
+    320,
+    96,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if list_node == 0 {
+        return 4
+    }
+    if ! list_item(list_node,
+    "First") {
+        return 5
+    }
+    if ! list_item(list_node,
+    "Second") {
+        return 6
+    }
+    let table_node: Int32 = table(panel_node,
+    52,
+    520,
+    140,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if table_node == 0 {
+        return 7
+    }
+    if ! table_column(table_node,
+    0,
+    "Name",
+    240) {
+        return 8
+    }
+    if ! table_column(table_node,
+    1,
+    "State",
+    180) {
+        return 9
+    }
+    if ! table_cell(table_node,
+    0,
+    0,
+    "First") {
+        return 10
+    }
+    if ! table_cell(table_node,
+    0,
+    1,
+    "Open") {
+        return 11
+    }
+    let current: UInt64 = revision()
+    if ! list_set_item_if_model_revision(list_node,
+    0,
+    "Edited",
+    current) {
+        return 12
+    }
+    if ! table_cell_if_model_revision(table_node,
+    0,
+    1,
+    "Done",
+    current) {
+        return 13
+    }
+    if ! list_insert_item_if_model_revision(list_node,
+    2,
+    "Third",
+    current) {
+        return 29
+    }
+    if ! list_move_item_if_model_revision(list_node,
+    2,
+    1,
+    current) {
+        return 30
+    }
+    if ! list_remove_item_if_model_revision(list_node,
+    2,
+    current) {
+        return 31
+    }
+    if ! table_insert_row_if_model_revision(table_node,
+    1,
+    current) {
+        return 32
+    }
+    if ! table_move_row_if_model_revision(table_node,
+    1,
+    0,
+    current) {
+        return 33
+    }
+    if ! table_remove_row_if_model_revision(table_node,
+    1,
+    current) {
+        return 34
+    }
+    var bytes:[UInt8;
+    32] =[90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8]
+    var length:[UIntSize;
+    1] =[77usize]
+    if list_count_if_model_revision(list_node,
+    current) != 2 {
+        return 35
+    }
+    if list_index_if_model_revision(list_node,
+    current) != - 1 {
+        return 36
+    }
+    if table_row_count_if_model_revision(table_node,
+    current) != 1 {
+        return 37
+    }
+    if table_selected_row_if_model_revision(table_node,
+    current) != - 1 {
+        return 38
+    }
+    if ! list_read_item_exact_if_model_revision(list_node,
+    0,
+    bytes,
+    length,
+    current) {
+        return 14
+    }
+    if length[0] != 6usize {
+        return 15
+    }
+    if bytes[0] != 69u8 {
+        return 15
+    }
+    if bytes[5] != 100u8 {
+        return 15
+    }
+    length[0] = 78usize
+    if ! table_read_cell_exact_if_model_revision(table_node,
+    0,
+    1,
+    bytes,
+    length,
+    current) {
+        return 16
+    }
+    if length[0] != 4usize {
+        return 17
+    }
+    if bytes[0] != 68u8 {
+        return 17
+    }
+    if bytes[3] != 101u8 {
+        return 17
+    }
+    let stale: UInt64 = revision()
+    if ! set_text("revision_seed",
+    "changed") {
+        return 18
+    }
+    if list_set_item_if_model_revision(list_node,
+    1,
+    "Stale",
+    stale) {
+        return 19
+    }
+    if table_cell_if_model_revision(table_node,
+    0,
+    0,
+    "Stale",
+    stale) {
+        return 20
+    }
+    length[0] = 79usize
+    if ! list_read_item_exact_if_model_revision(list_node,
+    1,
+    bytes,
+    length,
+    revision()) {
+        return 21
+    }
+    if length[0] != 6usize {
+        return 22
+    }
+    if bytes[0] != 83u8 {
+        return 22
+    }
+    if bytes[5] != 100u8 {
+        return 22
+    }
+    let fresh: UInt64 = revision()
+    if ! list_set_item(list_node,
+    1,
+    "Current") {
+        return 23
+    }
+    if ! table_cell_if_model_revision(table_node,
+    0,
+    0,
+    "Current",
+    fresh) {
+        return 24
+    }
+    length[0] = 80usize
+    if ! table_read_cell_exact_if_model_revision(table_node,
+    0,
+    0,
+    bytes,
+    length,
+    fresh) {
+        return 25
+    }
+    if length[0] != 7usize {
+        return 26
+    }
+    if bytes[0] != 67u8 {
+        return 26
+    }
+    if bytes[6] != 116u8 {
+        return 26
+    }
+    if ! finish(panel_node) {
+        return 27
+    }
+    if ! finish(root) {
+        return 28
+    }
+    clear()
+    return 0
+}

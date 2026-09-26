@@ -1,8 +1,19 @@
 module app_event_reducer_project.main
 
+import app_event_reducer_project.controller.handle
 import app_event_reducer_project.model.commit
 import app_event_reducer_project.model.load
 import app_event_reducer_project.view.build
+import jadren.app.data.load_file_buffer
+import jadren.app.data.save_atomic_durable_buffer
+import jadren.app.data.snapshot_length
+import jadren.app.data.validate
+import jadren.app.data.write_exact_buffer
+import jadren.app.event.queue_clear
+import jadren.app.event.queue_count
+import jadren.app.event.queue_capacity
+import jadren.app.event.queue_dropped
+import jadren.app.event.queue_poll_batch_exact
 import jadren.app.input.set_checked
 import jadren.app.input.set_select_index
 import jadren.app.input.set_list_index
@@ -18,7 +29,10 @@ import jadren.app.ui.begin
 import jadren.app.ui.dispatch
 import jadren.app.ui.finish
 import jadren.app.ui.panel
+import jadren.app.fs.size
 import jadren.app.fs.write_text
+import jadren.app.list
+import jadren.app.table
 
 fn main() -> Int32 {
     clear()
@@ -29,6 +43,16 @@ fn main() -> Int32 {
     if !set_int("reducer.table_row", -1i64) { return 5 }
     if !set_int("reducer.text_length", 0i64) { return 6 }
     if !set_text("reducer.text", "") { return 7 }
+    list.clear(0)
+    if !list.push_text(0, "Today") { return 79 }
+    if !list.push_text(0, "Tomorrow") { return 80 }
+    if !list.push_text(0, "Later") { return 81 }
+    table.clear(0)
+    if !table.set_column_name(0, 0, "Task") { return 82 }
+    if !table.append_row(0) { return 83 }
+    if !table.set_cell(0, 0, 0, "Build") { return 84 }
+    if !table.append_row(0) { return 85 }
+    if !table.set_cell(0, 1, 0, "Test") { return 86 }
 
     let root: Int32 = begin("Jadren typed event reducer", 720, 520, 0xF6F8FCu32)
     if root == 0 { return 8 }
@@ -36,38 +60,194 @@ fn main() -> Int32 {
     if panel_node == 0 { return 9 }
     if !build(panel_node) { return 10 }
 
-    // The controller receives the same numeric event IDs as the native UI,
-    // but immediately converts them to typed AppEvent values.
+    // Native callbacks publish IDs into the bounded FIFO. The caller owns the
+    // batch boundary; the typed controller runs only after polling a batch.
+    queue_clear()
     if !dispatch(7) { return 11 }
-    if get_int("reducer.runs") != 1i64 { return 12 }
     set_checked(8, 1)
     if !dispatch(8) { return 13 }
-    if !get_bool("reducer.completed") { return 14 }
     set_value(9, "Jadren")
     if !dispatch(9) { return 15 }
-    if get_int("reducer.text_length") != 6i64 { return 16 }
     set_select_index(10, 1)
     if !dispatch(10) { return 17 }
-    if get_int("reducer.selected") != 1i64 { return 18 }
     set_list_index(11, 2)
     if !dispatch(11) { return 19 }
-    if get_int("reducer.list_index") != 2i64 { return 20 }
     set_table_selected_row(12, 1)
     if !dispatch(12) { return 21 }
-    if get_int("reducer.table_row") != 1i64 { return 22 }
-    if dispatch(99) { return 23 }
+    if queue_count() != 6usize { return 22 }
+    if queue_dropped() != 0usize { return 23 }
+
+    var first_batch: [Int32; 3] = [0, 0, 0]
+    var first_count: [UIntSize; 1] = [99usize]
+    if !queue_poll_batch_exact(first_batch, 3usize, first_count) { return 24 }
+    if first_count[0] != 3usize { return 25 }
+    if first_batch[0] != 7 { return 26 }
+    if first_batch[1] != 8 { return 26 }
+    if first_batch[2] != 9 { return 26 }
+    if queue_count() != 3usize { return 27 }
+    if handle(first_batch[0]) != 7 { return 28 }
+    if handle(first_batch[1]) != 8 { return 29 }
+    if handle(first_batch[2]) != 9 { return 30 }
+    if get_int("reducer.runs") != 1i64 { return 31 }
+    if !get_bool("reducer.completed") { return 32 }
+    if get_int("reducer.text_length") != 6i64 { return 33 }
+
+    var second_batch: [Int32; 3] = [0, 0, 0]
+    var second_count: [UIntSize; 1] = [99usize]
+    if !queue_poll_batch_exact(second_batch, 3usize, second_count) { return 34 }
+    if second_count[0] != 3usize { return 35 }
+    if second_batch[0] != 10 { return 36 }
+    if second_batch[1] != 11 { return 36 }
+    if second_batch[2] != 12 { return 36 }
+    if handle(second_batch[0]) != 10 { return 37 }
+    if handle(second_batch[1]) != 11 { return 38 }
+    if handle(second_batch[2]) != 12 { return 39 }
+    if get_int("reducer.selected") != 1i64 { return 40 }
+    if get_int("reducer.list_index") != 2i64 { return 41 }
+    if get_int("reducer.table_row") != 1i64 { return 42 }
+    if queue_count() != 0usize { return 43 }
+    if dispatch(99) { return 44 }
 
     let model = load()
-    if model.runs != 1i64 { return 24 }
-    if !model.completed { return 25 }
-    if model.selected != 1 { return 26 }
-    if model.list_index != 2 { return 27 }
-    if model.table_row != 1 { return 28 }
-    if model.text_length != 6i64 { return 29 }
-    if !commit(model) { return 30 }
-    if !finish(panel_node) { return 31 }
-    if !finish(root) { return 32 }
+    if model.runs != 1i64 { return 45 }
+    if !model.completed { return 46 }
+    if model.selected != 1 { return 47 }
+    if model.list_index != 2 { return 48 }
+    if model.table_row != 1 { return 49 }
+    if model.text_length != 6i64 { return 50 }
+    if !commit(model) { return 51 }
+
+    // Persist the complete model before creating the retained native window;
+    // the UI projection is intentionally downstream of the durable boundary.
+    if !validate() { return 69 }
+    if snapshot_length() == 0usize { return 70 }
+    let checkpoint_status: Int32 = persist_checkpoint()
+    if checkpoint_status != 0 { return checkpoint_status }
+    if !reload_checkpoint() { return 78 }
+
+    // The capacity is a native contract, not a duplicated application
+    // constant. Verify DropNewest overflow and consume only a bounded prefix.
+    let fifo_capacity: UIntSize = queue_capacity()
+    if fifo_capacity != 64usize { return 52 }
+    queue_clear()
+    var overflow_index: UIntSize = 0usize
+    while overflow_index < fifo_capacity {
+        if !dispatch(7) { return 53 }
+        overflow_index = overflow_index + 1usize
+    }
+    if queue_count() != fifo_capacity { return 54 }
+    if !dispatch(8) { return 55 }
+    if queue_count() != fifo_capacity { return 56 }
+    if queue_dropped() != 1usize { return 57 }
+    var overflow_first: [Int32; 1] = [0]
+    var overflow_count: [UIntSize; 1] = [99usize]
+    if !queue_poll_batch_exact(overflow_first, 1usize, overflow_count) { return 58 }
+    if overflow_count[0] != 1usize { return 59 }
+    if overflow_first[0] != 7 { return 60 }
+    if queue_count() != fifo_capacity - 1usize { return 61 }
+    queue_clear()
+    if queue_count() != 0usize { return 62 }
+    if queue_dropped() != 0usize { return 63 }
+
+    if !finish(panel_node) { return 66 }
+    if !finish(root) { return 67 }
     if write_text("target/jadren/app-event-reducer-project.result",
-                  "app-event-reducer:pass\n") == 0usize { return 33 }
+                  "app-event-reducer:pass queue-batch:2 queue-capacity:64 overflow:1 complete-model:pass\n") == 0usize { return 68 }
     return 0
+}
+
+fn persist_checkpoint() -> Int32 {
+    let planned_length: UIntSize = snapshot_length()
+    if planned_length == 0usize { return 70 }
+    if planned_length > 2048usize { return 71 }
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(2048usize)
+    var status: Int32 = 0
+    match created {
+        Error(_) => { status = 72 }
+        Ok(snapshot) => {
+            if !buffer_resize(snapshot, 2048usize) {
+                status = 72
+            }
+            var written_length: [UIntSize; 1] = [0usize]
+            if status == 0 {
+                if !write_exact_buffer(snapshot, 2048usize, written_length) {
+                    status = 73
+                }
+            }
+            if status == 0 {
+                if written_length[0] != planned_length {
+                    status = 74
+                }
+            }
+            if status == 0 {
+                if !save_atomic_durable_buffer(
+                    "target/app-event-reducer-project-state.tmp",
+                    "target/jadren/app-event-reducer-project-state.data",
+                    "target/jadren",
+                    snapshot,
+                    2048usize
+                ) {
+                    status = 75
+                }
+            }
+            if status == 0 {
+                if size("target/jadren/app-event-reducer-project-state.data") == 0usize {
+                    status = 76
+                }
+            }
+        }
+    }
+    return status
+}
+
+fn reload_checkpoint() -> Bool {
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(2048usize)
+    var success: Bool = false
+    match created {
+        Error(_) => { success = false }
+        Ok(snapshot) => {
+            if buffer_resize(snapshot, 2048usize) {
+                if list.set_text(0, 0, "corrupted") {
+                    if table.set_cell(0, 0, 0, "corrupted") {
+                        if set_text("reducer.text", "corrupted") {
+                            if load_file_buffer(
+                "target/jadren/app-event-reducer-project-state.data",
+                snapshot,
+                2048usize
+                            ) {
+                            if get_bool("reducer.completed") {
+                                if get_int("reducer.runs") == 1i64 {
+                                    if get_int("reducer.selected") == 1i64 {
+                                        if get_int("reducer.list_index") == 2i64 {
+                                            if get_int("reducer.table_row") == 1i64 {
+                                                if get_int("reducer.text_length") == 6i64 {
+                                                    if list.count(0) == 3 {
+                                                        if table.row_count(0) == 2 {
+                                                            var restored_list: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+                                                            if list.read_text(0, 0, restored_list) == 5usize {
+                                                                if restored_list[0] == 84u8 {
+                                                                    var restored_cell: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+                                                                    if table.read_cell(0, 0, 0, restored_cell) == 5usize {
+                                                                        if restored_cell[0] == 66u8 {
+                                                                            success = true
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    }
+    return success
 }

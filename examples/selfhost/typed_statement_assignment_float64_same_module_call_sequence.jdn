@@ -1,0 +1,14 @@
+module selfhost.typed_statement_assignment_float64_same_module_call_sequence;
+
+// JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS
+// This bounded statement-call fixture materializes helper from the same
+// module, so the generated object has no external C helper dependency.
+fn local_value() -> Float64 {
+    let first: Float64 = helper(1.5f64);
+    first = helper(first);
+    return helper(first);
+}
+
+fn helper(value: Float64) -> Float64 {
+    return value + 1.0f64;
+}

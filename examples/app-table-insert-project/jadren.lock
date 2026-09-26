@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "1407529bce6d5d3f"
+
+[package]
+name = "app-table-insert-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

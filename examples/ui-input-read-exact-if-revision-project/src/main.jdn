@@ -1,0 +1,142 @@
+module ui_input_read_exact_if_revision_project.main
+import jadren.app.ui.input_read_exact_if_model_revision
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    app_state_clear()
+    let root: Int32 = ui_app_begin("Guarded input read",
+    560,
+    280,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 1
+    }
+    let panel: Int32 = ui_app_panel(root,
+    500,
+    200,
+    0xFFFFFFu32,
+    12,
+    12,
+    8,
+    0,
+    1)
+    if panel == 0 {
+        return 2
+    }
+    let input: Int32 = ui_app_text_input(panel,
+    "Hello",
+    41,
+    320,
+    38,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if input == 0 {
+        return 3
+    }
+    var output:[UInt8;
+    16] =[90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8]
+    var length:[UIntSize;
+    1] =[77usize]
+    let current_before: UInt64 = app_data_revision()
+    if ! input_read_exact_if_model_revision(41,
+    output,
+    length,
+    current_before) {
+        return 4
+    }
+    if length[0] != 5usize {
+        return 5
+    }
+    if output[0] != 72u8 {
+        return 5
+    }
+    if output[4] != 111u8 {
+        return 5
+    }
+    output[0] = 91u8
+    length[0] = 78usize
+    let stale: UInt64 = app_data_revision()
+    if ! app_state_set_int("probe",
+    1 as Int64) {
+        return 6
+    }
+    if input_read_exact_if_model_revision(41,
+    output,
+    length,
+    stale) {
+        return 7
+    }
+    if output[0] != 91u8 {
+        return 8
+    }
+    if length[0] != 78usize {
+        return 8
+    }
+    let current: UInt64 = app_data_revision()
+    if ! input_read_exact_if_model_revision(41,
+    output,
+    length,
+    current) {
+        return 9
+    }
+    if length[0] != 5usize {
+        return 10
+    }
+    if output[0] != 72u8 {
+        return 10
+    }
+    if output[4] != 111u8 {
+        return 10
+    }
+    var short_output:[UInt8;
+    1] =[92u8]
+    var short_length:[UIntSize;
+    1] =[79usize]
+    if input_read_exact_if_model_revision(41,
+    short_output,
+    short_length,
+    app_data_revision()) {
+        return 11
+    }
+    // A one-byte output is too short and must not partially overwrite either
+    // caller-owned result.
+    if short_output[0] != 92u8 {
+        return 12
+    }
+    if short_length[0] != 79usize {
+        return 12
+    }
+    if input_read_exact_if_model_revision(999,
+    output,
+    length,
+    app_data_revision()) {
+        return 13
+    }
+    if ! ui_app_end(panel) {
+        return 14
+    }
+    if ! ui_app_end(root) {
+        return 15
+    }
+    app_state_clear()
+    return 0
+}

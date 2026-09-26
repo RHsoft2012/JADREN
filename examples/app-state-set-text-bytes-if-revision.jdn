@@ -1,0 +1,59 @@
+module app_state_set_text_bytes_if_revision.main
+// Caller-owned input buffers can publish a bounded UTF-8 prefix against the
+// observed state revision without converting the input to String.
+fn main() -> Int32 {
+    app_state_clear()
+    if ! app_state_set_text("name",
+    "old") {
+        return 1
+    }
+    var value: [UInt8; 8] = [110u8, 101u8, 119u8, 33u8, 0u8, 0u8, 0u8, 0u8]
+    let snapshot: UInt64 = app_state_revision()
+    if ! app_state_set_text_bytes_if_revision("name",
+    value,
+    4usize,
+    snapshot) {
+        return 2
+    }
+    var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if app_state_read_text("name",
+    output) != 4usize {
+        return 3
+    }
+    if output[0] != 110u8 {
+        return 4
+    }
+    if output[3] != 33u8 {
+        return 4
+    }
+    let current: UInt64 = app_state_revision()
+    if app_state_set_text_bytes_if_revision("name",
+    value,
+    4usize,
+    snapshot) {
+        return 5
+    }
+    if app_state_revision() != current {
+        return 6
+    }
+    if app_state_set_text_bytes_if_revision("name",
+    value,
+    9usize,
+    current) {
+        return 7
+    }
+    if app_state_revision() != current {
+        return 8
+    }
+    if app_state_read_text("name",
+    output) != 4usize {
+        return 9
+    }
+    if app_state_set_text_bytes_if_revision("",
+    value,
+    4usize,
+    current) {
+        return 10
+    }
+    return 0
+}

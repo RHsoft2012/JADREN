@@ -1,0 +1,571 @@
+module app_table_typed_buffer_read_revision_project.main
+import jadren.app.data.revision
+import jadren.app.table.append_row
+import jadren.app.table.read_bool_exact_buffer_if_revision
+import jadren.app.table.read_bool_exact_buffer_if_model_revision
+import jadren.app.table.read_float_exact_buffer_if_revision
+import jadren.app.table.read_float_exact_buffer_if_model_revision
+import jadren.app.table.read_int_exact_buffer_if_revision
+import jadren.app.table.read_int_exact_buffer_if_model_revision
+import jadren.app.table.read_named_bool_exact_buffer_if_model_revision
+import jadren.app.table.read_named_bool_exact_buffer_if_revision
+import jadren.app.table.read_named_cell_exact_buffer_if_model_revision
+import jadren.app.table.read_named_cell_exact_if_model_revision
+import jadren.app.table.read_named_float_exact_buffer_if_model_revision
+import jadren.app.table.read_named_float_exact_buffer_if_revision
+import jadren.app.table.read_named_int_exact_buffer_if_model_revision
+import jadren.app.table.read_named_int_exact_buffer_if_revision
+import jadren.app.table.read_named_uint_exact_buffer_if_model_revision
+import jadren.app.table.read_named_uint_exact_buffer_if_revision
+import jadren.app.table.read_cell_exact_buffer_if_model_revision
+import jadren.app.table.read_cell_exact_if_model_revision
+import jadren.app.table.read_column_name_exact_buffer_if_model_revision
+import jadren.app.table.read_column_name_exact_if_model_revision
+import jadren.app.table.read_uint_exact_buffer_if_model_revision
+import jadren.app.table.read_uint_exact_buffer_if_revision
+import jadren.app.table.set_bool
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+import jadren.app.table.set_float
+import jadren.app.table.set_int
+import jadren.app.table.set_uint
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    app_table_clear(0)
+    if ! set_column_type(0,
+    0,
+    1) {
+        return 1
+    }
+    if ! set_column_type(0,
+    1,
+    2) {
+        return 2
+    }
+    if ! set_column_type(0,
+    2,
+    4) {
+        return 3
+    }
+    if ! set_column_type(0,
+    3,
+    3) {
+        return 4
+    }
+    if ! set_column_name(0,
+    0,
+    "id") {
+        return 5
+    }
+    if ! set_column_name(0,
+    1,
+    "total") {
+        return 6
+    }
+    if ! set_column_name(0,
+    2,
+    "rate") {
+        return 7
+    }
+    if ! set_column_name(0,
+    3,
+    "done") {
+        return 8
+    }
+    if ! set_column_type(0,
+    4,
+    0) {
+        return 42
+    }
+    if ! set_column_name(0,
+    4,
+    "note") {
+        return 43
+    }
+    if ! append_row(0) {
+        return 9
+    }
+    if ! set_int(0,
+    0,
+    0,
+    - 7i64) {
+        return 10
+    }
+    if ! set_uint(0,
+    0,
+    1,
+    0u64) {
+        return 11
+    }
+    if ! set_float(0,
+    0,
+    2,
+    1.5f64) {
+        return 12
+    }
+    if ! set_bool(0,
+    0,
+    3,
+    false) {
+        return 13
+    }
+    if ! set_cell(0,
+    0,
+    4,
+    "hello") {
+        return 44
+    }
+    let current: UInt64 = revision()
+    let signed_created: Result<Buffer<Int64>,
+    Int32> = buffer_create(1usize)
+    let stale_created: Result<Buffer<Int64>,
+    Int32> = buffer_create(1usize)
+    let unsigned_created: Result<Buffer<UInt64>,
+    Int32> = buffer_create(1usize)
+    let float_created: Result<Buffer<Float64>,
+    Int32> = buffer_create(1usize)
+    let bool_created: Result<Buffer<Bool>,
+    Int32> = buffer_create(1usize)
+    var status: Int32 = 0
+    match signed_created {
+        Error(error) => {
+            status = error
+        }
+        Ok(signed) => {
+            if ! buffer_resize(signed,
+            1usize) {
+                status = 14
+            }
+            if status == 0 {
+                if ! read_int_exact_buffer_if_revision(0,
+                0,
+                0,
+                signed,
+                1usize,
+                current) {
+                    status = 15
+                }
+            }
+            if status == 0 {
+                if signed[0] != - 7i64 {
+                    status = 16
+                }
+            }
+            if status == 0 {
+                if ! read_named_int_exact_buffer_if_revision(0,
+                0,
+                "id",
+                signed,
+                1usize,
+                current) {
+                    status = 17
+                }
+            }
+            if status == 0 {
+                if signed[0] != - 7i64 {
+                    status = 18
+                }
+            }
+            if status == 0 {
+                if ! read_int_exact_buffer_if_model_revision(0,
+                0,
+                0,
+                signed,
+                1usize,
+                current) {
+                    status = 45
+                }
+            }
+            if status == 0 {
+                if ! read_named_int_exact_buffer_if_model_revision(0,
+                0,
+                "id",
+                signed,
+                1usize,
+                current) {
+                    status = 46
+                }
+            }
+            if status == 0 {
+                signed[0] = 99i64
+                if read_int_exact_buffer_if_revision(0,
+                0,
+                0,
+                signed,
+                0usize,
+                current) {
+                    status = 19
+                }
+            }
+            if status == 0 {
+                if signed[0] != 99i64 {
+                    status = 20
+                }
+            }
+            if status == 0 {
+                if read_named_int_exact_buffer_if_revision(0,
+                0,
+                "total",
+                signed,
+                1usize,
+                current) {
+                    status = 21
+                }
+            }
+            if status == 0 {
+                if signed[0] != 99i64 {
+                    status = 22
+                }
+            }
+        }
+    }
+    match unsigned_created {
+        Error(error) => {
+            if status == 0 {
+                status = error
+            }
+        }
+        Ok(unsigned) => {
+            if status == 0 {
+                if ! buffer_resize(unsigned,
+                1usize) {
+                    status = 23
+                }
+            }
+            if status == 0 {
+                if ! read_uint_exact_buffer_if_revision(0,
+                0,
+                1,
+                unsigned,
+                1usize,
+                current) {
+                    status = 24
+                }
+            }
+            if status == 0 {
+                if unsigned[0] != 0u64 {
+                    status = 25
+                }
+            }
+            if status == 0 {
+                if ! read_named_uint_exact_buffer_if_revision(0,
+                0,
+                "total",
+                unsigned,
+                1usize,
+                current) {
+                    status = 26
+                }
+            }
+            if status == 0 {
+                if unsigned[0] != 0u64 {
+                    status = 27
+                }
+            }
+            if status == 0 {
+                if ! read_uint_exact_buffer_if_model_revision(0,
+                0,
+                1,
+                unsigned,
+                1usize,
+                current) {
+                    status = 47
+                }
+            }
+            if status == 0 {
+                if ! read_named_uint_exact_buffer_if_model_revision(0,
+                0,
+                "total",
+                unsigned,
+                1usize,
+                current) {
+                    status = 48
+                }
+            }
+        }
+    }
+    match float_created {
+        Error(error) => {
+            if status == 0 {
+                status = error
+            }
+        }
+        Ok(value) => {
+            if status == 0 {
+                if ! buffer_resize(value,
+                1usize) {
+                    status = 28
+                }
+            }
+            if status == 0 {
+                if ! read_float_exact_buffer_if_revision(0,
+                0,
+                2,
+                value,
+                1usize,
+                current) {
+                    status = 29
+                }
+            }
+            if status == 0 {
+                if value[0] != 1.5f64 {
+                    status = 30
+                }
+            }
+            if status == 0 {
+                if ! read_named_float_exact_buffer_if_revision(0,
+                0,
+                "rate",
+                value,
+                1usize,
+                current) {
+                    status = 31
+                }
+            }
+            if status == 0 {
+                if value[0] != 1.5f64 {
+                    status = 32
+                }
+            }
+            if status == 0 {
+                if ! read_float_exact_buffer_if_model_revision(0,
+                0,
+                2,
+                value,
+                1usize,
+                current) {
+                    status = 49
+                }
+            }
+            if status == 0 {
+                if ! read_named_float_exact_buffer_if_model_revision(0,
+                0,
+                "rate",
+                value,
+                1usize,
+                current) {
+                    status = 50
+                }
+            }
+        }
+    }
+    match bool_created {
+        Error(error) => {
+            if status == 0 {
+                status = error
+            }
+        }
+        Ok(value) => {
+            if status == 0 {
+                if ! buffer_resize(value,
+                1usize) {
+                    status = 33
+                }
+            }
+            if status == 0 {
+                if ! read_bool_exact_buffer_if_revision(0,
+                0,
+                3,
+                value,
+                1usize,
+                current) {
+                    status = 34
+                }
+            }
+            if status == 0 {
+                if value[0] {
+                    status = 35
+                }
+            }
+            if status == 0 {
+                if ! read_named_bool_exact_buffer_if_revision(0,
+                0,
+                "done",
+                value,
+                1usize,
+                current) {
+                    status = 36
+                }
+            }
+            if status == 0 {
+                if value[0] {
+                    status = 37
+                }
+            }
+            if status == 0 {
+                if ! read_bool_exact_buffer_if_model_revision(0,
+                0,
+                3,
+                value,
+                1usize,
+                current) {
+                    status = 51
+                }
+            }
+            if status == 0 {
+                if ! read_named_bool_exact_buffer_if_model_revision(0,
+                0,
+                "done",
+                value,
+                1usize,
+                current) {
+                    status = 52
+                }
+            }
+        }
+    }
+    var text_output:[UInt8;
+    8] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var text_length:[UIntSize;
+    1] =[0usize]
+    let text_created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(8usize)
+    match text_created {
+        Error(error) => {
+            if status == 0 {
+                status = error
+            }
+        }
+        Ok(text) => {
+            if status == 0 {
+                if ! buffer_resize(text,
+                8usize) {
+                    status = 53
+                }
+            }
+            if status == 0 {
+                if ! read_column_name_exact_if_model_revision(0,
+                4,
+                text_output,
+                text_length,
+                current) {
+                    status = 54
+                }
+            }
+            if status == 0 {
+                if text_length[0] != 4usize {
+                    status = 55
+                }
+            }
+            if status == 0 {
+                if ! read_column_name_exact_buffer_if_model_revision(0,
+                4,
+                text,
+                8usize,
+                text_length,
+                current) {
+                    status = 56
+                }
+            }
+            if status == 0 {
+                if ! read_cell_exact_if_model_revision(0,
+                0,
+                4,
+                text_output,
+                text_length,
+                current) {
+                    status = 57
+                }
+            }
+            if status == 0 {
+                if ! read_cell_exact_buffer_if_model_revision(0,
+                0,
+                4,
+                text,
+                8usize,
+                text_length,
+                current) {
+                    status = 58
+                }
+            }
+            if status == 0 {
+                if ! read_named_cell_exact_if_model_revision(0,
+                0,
+                "note",
+                text_output,
+                text_length,
+                current) {
+                    status = 59
+                }
+            }
+            if status == 0 {
+                if ! read_named_cell_exact_buffer_if_model_revision(0,
+                0,
+                "note",
+                text,
+                8usize,
+                text_length,
+                current) {
+                    status = 60
+                }
+            }
+        }
+    }
+    if status == 0 {
+        if ! set_int(0,
+        0,
+        0,
+        - 8i64) {
+            status = 38
+        }
+    }
+    match stale_created {
+        Error(error) => {
+            if status == 0 {
+                status = error
+            }
+        }
+        Ok(stale) => {
+            if status == 0 {
+                if ! buffer_resize(stale,
+                1usize) {
+                    status = 39
+                }
+            }
+            if status == 0 {
+                stale[0] = 101i64
+                if read_int_exact_buffer_if_revision(0,
+                0,
+                0,
+                stale,
+                1usize,
+                current) {
+                    status = 40
+                }
+            }
+            if status == 0 {
+                if stale[0] != 101i64 {
+                    status = 41
+                }
+            }
+            if status == 0 {
+                if read_int_exact_buffer_if_model_revision(0,
+                0,
+                0,
+                stale,
+                1usize,
+                current) {
+                    status = 61
+                }
+            }
+            if status == 0 {
+                if stale[0] != 101i64 {
+                    status = 62
+                }
+            }
+        }
+    }
+    app_table_clear(0)
+    return status
+}

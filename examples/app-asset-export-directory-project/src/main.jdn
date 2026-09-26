@@ -1,0 +1,187 @@
+module app_asset_export_directory_project.main
+
+import jadren.app.assets.AssetKind
+import jadren.app.assets.AssetStatus
+import jadren.app.assets.configure
+import jadren.app.assets.configure_history
+import jadren.app.assets.export_json_durable_directory
+import jadren.app.assets.export_json_durable_directory_if_revision
+import jadren.app.assets.transition_if_current_durable_directory
+import jadren.app.assets.transition_with_history_durable_directory
+import jadren.app.assets.transition_with_history_durable_directory_if_revision
+import jadren.app.assets.upsert
+import jadren.app.data.revision
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.dir_exists
+import jadren.app.fs.exists
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    if !dir_exists("target/app-asset-export-directory") {
+        if !dir_create("target/app-asset-export-directory") { return 1 }
+    }
+    delete("target/app-asset-export-directory/catalog.json")
+    delete("target/app-asset-export-directory/catalog.json.tmp")
+    delete("target/app-asset-export-directory/plain.json")
+    delete("target/app-asset-export-directory/plain.json.tmp")
+    delete("target/app-asset-export-directory/transition.json")
+    delete("target/app-asset-export-directory/transition.json.tmp")
+    delete("target/app-asset-export-directory/stale.json")
+    delete("target/app-asset-export-directory/stale.json.tmp")
+    delete("target/app-asset-export-directory/history-catalog.json")
+    delete("target/app-asset-export-directory/history-catalog.json.tmp")
+    delete("target/app-asset-export-directory/history.json")
+    delete("target/app-asset-export-directory/history.json.tmp")
+    delete("target/app-asset-export-directory/stale-history-catalog.json")
+    delete("target/app-asset-export-directory/stale-history-catalog.json.tmp")
+    delete("target/app-asset-export-directory/stale-history.json")
+    delete("target/app-asset-export-directory/stale-history.json.tmp")
+
+    if !configure(0) { return 2 }
+    if !configure_history(1) { return 3 }
+    let row: Int32 = upsert(
+        0,
+        7001i64,
+        AssetKind.Data,
+        "assets/catalog.json",
+        128u64,
+        1700000000000000000u64,
+        AssetStatus.Ready)
+    if row < 0i32 { return 4 }
+
+    let current_revision: UInt64 = revision()
+    if !export_json_durable_directory_if_revision(
+        0,
+        "target/app-asset-export-directory/catalog.json",
+        "target/app-asset-export-directory/catalog.json.tmp",
+        "target/app-asset-export-directory",
+        current_revision) { return 5 }
+    if !exists("target/app-asset-export-directory/catalog.json") { return 6 }
+    if exists("target/app-asset-export-directory/catalog.json.tmp") { return 7 }
+
+    let second_row: Int32 = upsert(
+        0,
+        7002i64,
+        AssetKind.Prefab,
+        "assets/player.prefab",
+        256u64,
+        1700000000000000001u64,
+         AssetStatus.Discovered)
+    if second_row < 0i32 { return 8 }
+    if export_json_durable_directory_if_revision(
+        0,
+        "target/app-asset-export-directory/stale.json",
+        "target/app-asset-export-directory/stale.json.tmp",
+        "target/app-asset-export-directory",
+        current_revision) { return 9 }
+    if exists("target/app-asset-export-directory/stale.json") { return 10 }
+    if exists("target/app-asset-export-directory/stale.json.tmp") { return 11 }
+
+    if !export_json_durable_directory(
+        0,
+        "target/app-asset-export-directory/plain.json",
+        "target/app-asset-export-directory/plain.json.tmp",
+         "target/app-asset-export-directory") { return 12 }
+    if !exists("target/app-asset-export-directory/plain.json") { return 13 }
+    if exists("target/app-asset-export-directory/plain.json.tmp") { return 14 }
+
+    if !transition_if_current_durable_directory(
+        0,
+        row,
+        AssetStatus.Ready,
+        AssetStatus.Missing,
+        "target/app-asset-export-directory/transition.json",
+        "target/app-asset-export-directory/transition.json.tmp",
+         "target/app-asset-export-directory") { return 15 }
+    if !exists("target/app-asset-export-directory/transition.json") { return 16 }
+    if exists("target/app-asset-export-directory/transition.json.tmp") { return 17 }
+
+    if !transition_with_history_durable_directory(
+        0,
+        1,
+        second_row,
+        AssetStatus.Discovered,
+        AssetStatus.Ready,
+        1u64,
+        "scan-ready",
+        "target/app-asset-export-directory/history-catalog.json",
+        "target/app-asset-export-directory/history-catalog.json.tmp",
+        "target/app-asset-export-directory/history.json",
+        "target/app-asset-export-directory/history.json.tmp",
+        "target/app-asset-export-directory") { return 18 }
+    if !exists("target/app-asset-export-directory/history-catalog.json") { return 19 }
+    if !exists("target/app-asset-export-directory/history.json") { return 20 }
+    if exists("target/app-asset-export-directory/history-catalog.json.tmp") { return 21 }
+    if exists("target/app-asset-export-directory/history.json.tmp") { return 22 }
+
+    let stale_history_revision: UInt64 = revision()
+    let third_row: Int32 = upsert(
+        0,
+        7003i64,
+        AssetKind.Texture,
+        "assets/player.png",
+        512u64,
+        1700000000000000002u64,
+        AssetStatus.Discovered)
+    if third_row < 0i32 { return 28 }
+    if transition_with_history_durable_directory_if_revision(
+        0,
+        1,
+        third_row,
+        AssetStatus.Discovered,
+        AssetStatus.Ready,
+        2u64,
+        "stale-scan",
+        "target/app-asset-export-directory/stale-history-catalog.json",
+        "target/app-asset-export-directory/stale-history-catalog.json.tmp",
+        "target/app-asset-export-directory/stale-history.json",
+        "target/app-asset-export-directory/stale-history.json.tmp",
+        "target/app-asset-export-directory",
+        stale_history_revision) { return 29 }
+    if exists("target/app-asset-export-directory/stale-history-catalog.json") { return 30 }
+    if exists("target/app-asset-export-directory/stale-history.json") { return 31 }
+    if exists("target/app-asset-export-directory/stale-history-catalog.json.tmp") { return 32 }
+    if exists("target/app-asset-export-directory/stale-history.json.tmp") { return 33 }
+    let current_history_revision: UInt64 = revision()
+    if !transition_with_history_durable_directory_if_revision(
+        0,
+        1,
+        third_row,
+        AssetStatus.Discovered,
+        AssetStatus.Ready,
+        2u64,
+        "scan-ready",
+        "target/app-asset-export-directory/history-catalog.json",
+        "target/app-asset-export-directory/history-catalog.json.tmp",
+        "target/app-asset-export-directory/history.json",
+        "target/app-asset-export-directory/history.json.tmp",
+        "target/app-asset-export-directory",
+        current_history_revision) { return 34 }
+    if !exists("target/app-asset-export-directory/history-catalog.json") { return 35 }
+    if !exists("target/app-asset-export-directory/history.json") { return 36 }
+    if exists("target/app-asset-export-directory/history-catalog.json.tmp") { return 37 }
+    if exists("target/app-asset-export-directory/history.json.tmp") { return 38 }
+
+    if !delete("target/app-asset-export-directory/catalog.json") { return 23 }
+    if !delete("target/app-asset-export-directory/plain.json") { return 24 }
+    if !delete("target/app-asset-export-directory/transition.json") { return 25 }
+    if !delete("target/app-asset-export-directory/history-catalog.json") { return 26 }
+    if !delete("target/app-asset-export-directory/history.json") { return 27 }
+    delete("target/app-asset-export-directory/stale.json")
+    delete("target/app-asset-export-directory/catalog.json.tmp")
+    delete("target/app-asset-export-directory/plain.json.tmp")
+    delete("target/app-asset-export-directory/stale.json.tmp")
+    delete("target/app-asset-export-directory/transition.json.tmp")
+    delete("target/app-asset-export-directory/history-catalog.json.tmp")
+    delete("target/app-asset-export-directory/history.json.tmp")
+    delete("target/app-asset-export-directory/stale-history-catalog.json")
+    delete("target/app-asset-export-directory/stale-history-catalog.json.tmp")
+    delete("target/app-asset-export-directory/stale-history.json")
+    delete("target/app-asset-export-directory/stale-history.json.tmp")
+    return 0
+}

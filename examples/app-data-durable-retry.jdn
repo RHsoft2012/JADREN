@@ -1,0 +1,105 @@
+module examples.app_data_durable_retry
+
+// Exercises a bounded durable model commit retry. The holder keeps the
+// separate sidecar lock temporarily; timeout verifies transaction rollback and
+// the normal mode waits for release, commits, and reloads the promoted model.
+fn selected_mode() -> Int32 {
+    if process_arg_count() != 2usize { return 0 }
+    var argument: [UInt8; 9] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = process_arg_read(1usize, argument)
+    if length == 6usize {
+        if argument[0usize] != 45u8 { return 0 }
+        if argument[1usize] != 45u8 { return 0 }
+        if argument[2usize] != 104u8 { return 0 }
+        if argument[3usize] != 111u8 { return 0 }
+        if argument[4usize] != 108u8 { return 0 }
+        if argument[5usize] == 100u8 { return 1 }
+    }
+    if length == 9usize {
+        if argument[0usize] != 45u8 { return 0 }
+        if argument[1usize] != 45u8 { return 0 }
+        if argument[2usize] != 116u8 { return 0 }
+        if argument[3usize] != 105u8 { return 0 }
+        if argument[4usize] != 109u8 { return 0 }
+        if argument[5usize] != 101u8 { return 0 }
+        if argument[6usize] != 111u8 { return 0 }
+        if argument[7usize] != 117u8 { return 0 }
+        if argument[8usize] == 116u8 { return 2 }
+    }
+    return 0
+}
+
+fn initialize_transaction() -> Bool {
+    app_state_clear()
+    if !app_state_set_text("theme", "dark") { return false }
+    if !app_data_tx_begin() { return false }
+    return app_state_set_text("theme", "light")
+}
+
+fn state_is_dark() -> Bool {
+    var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = app_state_read_text("theme", output)
+    if length != 4usize { return false }
+    if output[0usize] != 100u8 { return false }
+    if output[1usize] != 97u8 { return false }
+    if output[2usize] != 114u8 { return false }
+    if output[3usize] != 107u8 { return false }
+    return true
+}
+
+fn state_is_light() -> Bool {
+    var output: [UInt8; 5] = [0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = app_state_read_text("theme", output)
+    if length != 5usize { return false }
+    if output[0usize] != 108u8 { return false }
+    if output[1usize] != 105u8 { return false }
+    if output[2usize] != 103u8 { return false }
+    if output[3usize] != 104u8 { return false }
+    if output[4usize] != 116u8 { return false }
+    return true
+}
+
+fn main() -> Int32 {
+    let mode: Int32 = selected_mode()
+    if mode == 1 {
+        let token: UIntSize = file_lock("target/app-data-durable-retry.lock")
+        if token == 0usize { return 10 }
+        if file_write_text("target/app-data-durable-retry.ready", "ready") != 5usize {
+            file_unlock(token)
+            return 11
+        }
+        let started: UInt64 = time_now_monotonic_ms()
+        while time_now_monotonic_ms() < started + 1200u64 { }
+        if !file_unlock(token) { return 12 }
+        return 0
+    }
+
+    if mode == 2 {
+        if !initialize_transaction() { return 20 }
+        let started: UInt64 = time_now_monotonic_ms()
+        if app_data_tx_commit_durable_retry(
+            "target/app-data-durable-retry.tmp",
+            "target/app-data-durable-retry.data",
+            "target/app-data-durable-retry.lock",
+            3usize,
+            50usize
+        ) { return 21 }
+        let elapsed: UInt64 = time_now_monotonic_ms() - started
+        if elapsed < 80u64 { return 22 }
+        if !state_is_dark() { return 23 }
+        return 0
+    }
+
+    if !initialize_transaction() { return 30 }
+    if !app_data_tx_commit_durable_retry(
+        "target/app-data-durable-retry.tmp",
+        "target/app-data-durable-retry.data",
+        "target/app-data-durable-retry.lock",
+        50usize,
+        50usize
+    ) { return 31 }
+    if !app_state_set_text("theme", "mutated") { return 32 }
+    if !app_data_load("target/app-data-durable-retry.data") { return 33 }
+    if !state_is_light() { return 34 }
+    return 0
+}

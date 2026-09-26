@@ -1,0 +1,292 @@
+module app_directory_list_buffer_project.main
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.dir_delete
+import jadren.app.fs.dir_list_ex_exact_buffer
+import jadren.app.fs.write_text
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn cleanup() -> Bool {
+    delete("target/app-directory-list-buffer-project-smoke/a.txt")
+    dir_delete("target/app-directory-list-buffer-project-smoke/empty")
+    dir_delete("target/app-directory-list-buffer-project-smoke/z")
+    dir_delete("target/app-directory-list-buffer-project-smoke")
+    return true
+}
+fn main() -> Int32 {
+    cleanup()
+    if ! dir_create("target/app-directory-list-buffer-project-smoke") {
+        return 1
+    }
+    if ! dir_create("target/app-directory-list-buffer-project-smoke/empty") {
+        return 2
+    }
+    if ! dir_create("target/app-directory-list-buffer-project-smoke/z") {
+        return 3
+    }
+    if write_text("target/app-directory-list-buffer-project-smoke/a.txt",
+    "A") != 1usize {
+        return 4
+    }
+    let names_created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(32usize)
+    let kinds_created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(4usize)
+    var status: Int32 = 0
+    match names_created {
+        Error(_) => {
+            status = 5
+        }
+        Ok(names) => {
+            if ! buffer_resize(names,
+            32usize) {
+                status = 6
+            }
+            match kinds_created {
+                Error(_) => {
+                    if status == 0 {
+                        status = 7
+                    }
+                }
+                Ok(kinds) => {
+                    if ! buffer_resize(kinds,
+                    4usize) {
+                        if status == 0 {
+                            status = 8
+                        }
+                    }
+                    var names_length:[UIntSize;
+                    1] =[777usize]
+                    var item_count:[UIntSize;
+                    1] =[778usize]
+                    if status == 0 {
+                        if ! dir_list_ex_exact_buffer("target/app-directory-list-buffer-project-smoke",
+                        names,
+                        32usize,
+                        names_length,
+                        kinds,
+                        4usize,
+                        item_count) {
+                            status = 9
+                        }
+                    }
+                    if status == 0 {
+                        if names_length[0] != 13usize {
+                            status = 10
+                        }
+                    }
+                    if status == 0 {
+                        if item_count[0] != 3usize {
+                            status = 11
+                        }
+                    }
+                    if status == 0 {
+                        if names[0] != 97u8 {
+                            status = 12
+                        }
+                    }
+                    if status == 0 {
+                        if names[5] != 10u8 {
+                            status = 13
+                        }
+                    }
+                    if status == 0 {
+                        if kinds[0] != 1u8 {
+                            status = 14
+                        }
+                    }
+                    if status == 0 {
+                        if kinds[1] != 2u8 {
+                            status = 15
+                        }
+                    }
+                    let short_created: Result<Buffer<UInt8>,
+                    Int32> = buffer_create(8usize)
+                    match short_created {
+                        Error(_) => {
+                            if status == 0 {
+                                status = 16
+                            }
+                        }
+                        Ok(short_names) => {
+                            if ! buffer_resize(short_names,
+                            8usize) {
+                                if status == 0 {
+                                    status = 17
+                                }
+                            }
+                            short_names[0] = 91u8
+                            short_names[1] = 92u8
+                            short_names[2] = 93u8
+                            short_names[7] = 94u8
+                            kinds[0] = 96u8
+                            kinds[1] = 97u8
+                            kinds[2] = 98u8
+                            names_length[0] = 779usize
+                            item_count[0] = 780usize
+                            if status == 0 {
+                                if dir_list_ex_exact_buffer("target/app-directory-list-buffer-project-smoke",
+                                short_names,
+                                8usize,
+                                names_length,
+                                kinds,
+                                4usize,
+                                item_count) {
+                                    status = 18
+                                }
+                            }
+                            if status == 0 {
+                                if short_names[0] != 91u8 {
+                                    status = 19
+                                }
+                            }
+                            if status == 0 {
+                                if short_names[1] != 92u8 {
+                                    status = 20
+                                }
+                            }
+                            if status == 0 {
+                                if short_names[2] != 93u8 {
+                                    status = 21
+                                }
+                            }
+                            if status == 0 {
+                                if short_names[7] != 94u8 {
+                                    status = 22
+                                }
+                            }
+                            if status == 0 {
+                                if kinds[0] != 96u8 {
+                                    status = 23
+                                }
+                            }
+                            if status == 0 {
+                                if kinds[1] != 97u8 {
+                                    status = 24
+                                }
+                            }
+                            if status == 0 {
+                                if kinds[2] != 98u8 {
+                                    status = 25
+                                }
+                            }
+                            if status == 0 {
+                                if names_length[0] != 779usize {
+                                    status = 26
+                                }
+                            }
+                            if status == 0 {
+                                if item_count[0] != 780usize {
+                                    status = 27
+                                }
+                            }
+                            names_length[0] = 781usize
+                            item_count[0] = 782usize
+                            if status == 0 {
+                                if dir_list_ex_exact_buffer("target/app-directory-list-buffer-project-smoke",
+                                short_names,
+                                9usize,
+                                names_length,
+                                kinds,
+                                4usize,
+                                item_count) {
+                                    status = 28
+                                }
+                            }
+                            if status == 0 {
+                                if short_names[0] != 91u8 {
+                                    status = 29
+                                }
+                            }
+                            if status == 0 {
+                                if short_names[7] != 94u8 {
+                                    status = 30
+                                }
+                            }
+                            if status == 0 {
+                                if kinds[0] != 96u8 {
+                                    status = 31
+                                }
+                            }
+                            if status == 0 {
+                                if kinds[2] != 98u8 {
+                                    status = 32
+                                }
+                            }
+                            if status == 0 {
+                                if names_length[0] != 781usize {
+                                    status = 33
+                                }
+                            }
+                            if status == 0 {
+                                if item_count[0] != 782usize {
+                                    status = 34
+                                }
+                            }
+                        }
+                    }
+                    names[0] = 94u8
+                    kinds[0] = 95u8
+                    names_length[0] = 781usize
+                    item_count[0] = 782usize
+                    if status == 0 {
+                        if dir_list_ex_exact_buffer("target/app-directory-list-buffer-project-smoke/missing",
+                        names,
+                        32usize,
+                        names_length,
+                        kinds,
+                        4usize,
+                        item_count) {
+                            status = 22
+                        }
+                    }
+                    if status == 0 {
+                        if names[0] != 94u8 {
+                            status = 23
+                        }
+                    }
+                    if status == 0 {
+                        if kinds[0] != 95u8 {
+                            status = 24
+                        }
+                    }
+                    if status == 0 {
+                        if names_length[0] != 781usize {
+                            status = 25
+                        }
+                    }
+                    if status == 0 {
+                        if item_count[0] != 782usize {
+                            status = 26
+                        }
+                    }
+                    if status == 0 {
+                        if ! dir_list_ex_exact_buffer("target/app-directory-list-buffer-project-smoke/empty",
+                        names,
+                        32usize,
+                        names_length,
+                        kinds,
+                        4usize,
+                        item_count) {
+                            status = 27
+                        }
+                    }
+                    if status == 0 {
+                        if names_length[0] != 0usize {
+                            status = 28
+                        }
+                    }
+                    if status == 0 {
+                        if item_count[0] != 0usize {
+                            status = 29
+                        }
+                    }
+                }
+            }
+        }
+    }
+    cleanup()
+    return status
+}

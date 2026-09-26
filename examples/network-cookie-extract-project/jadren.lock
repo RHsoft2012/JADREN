@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "a8051ae764580e30"
+
+[package]
+name = "network-cookie-extract-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

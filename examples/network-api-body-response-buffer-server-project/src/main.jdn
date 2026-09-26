@@ -1,0 +1,67 @@
+module network_api_body_response_buffer_server_project.main
+
+import jadren.network.api.serve_requests_body_buffers
+import jadren.network.router.add
+import jadren.network.router.clear
+
+fn verify_body(values: read Buffer<UInt8>) -> Int32 {
+    let body: read Slice<UInt8> = buffer_slice(values, 0usize, 4usize)
+    if body[0usize] != 74u8 { return 1 }
+    if body[1usize] != 65u8 { return 2 }
+    if body[2usize] != 68u8 { return 3 }
+    if body[3usize] != 33u8 { return 4 }
+    return 0
+}
+
+fn main() -> Int32 {
+    clear()
+    var response_body: [UInt8; 2] = [79u8, 75u8]
+    if !add("POST", "/echo", 200u16, "text/plain", response_body) { return 1 }
+
+    var request: [UInt8; 115] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var body_length: [UIntSize; 1] = [99usize]
+    var status: Int32 = 0
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    match created {
+        Error(error) => { status = error }
+        Ok(body) => {
+            if !buffer_resize(body, 16usize) { status = 2 }
+            if status == 0 {
+                let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(128usize)
+                match response_created {
+                    Error(error) => { status = error }
+                    Ok(response) => {
+                        if !buffer_resize(response, 128usize) {
+                            status = 3
+                        } else {
+                            status = serve_requests_body_buffers(
+                                38162u16,
+                                3000u32,
+                                2usize,
+                                request,
+                                body,
+                                16usize,
+                                body_length,
+                                response,
+                                128usize,
+                            )
+                            if status == 2 {
+                                if body_length[0] != 4usize { status = 4 }
+                                if status == 2 {
+                                    let body_status: Int32 = verify_body(body)
+                                    if body_status != 0 { status = body_status }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if status != 2 { return status }
+    if file_write_text(
+        "target/jadren/network-api-body-response-buffer-server.result",
+        "body-response-buffer-server:2 final:JAD! response:Buffer\n"
+    ) == 0usize { return 5 }
+    return 0
+}

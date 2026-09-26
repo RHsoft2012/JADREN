@@ -264,6 +264,9 @@ pub enum MirStatement {
         source: Place,
         /// Shared or exclusive capability.
         kind: BorrowKind,
+        /// Keeps a runtime call result already stored in `destination`.
+        /// Compiler-only result loans must not overwrite that value.
+        preserve_value: bool,
         /// Source range.
         span: Span,
     },
@@ -483,6 +486,11 @@ pub fn specialize_generic_functions(
             functions.push(function.clone());
             continue;
         }
+        // A materialized package must expose only concrete native instances.
+        // Keeping the unspecialized template here would force the backend to
+        // lower generic parameter types (including generic callback
+        // signatures) that have no native representation. Call sites are
+        // rewritten to the deterministic specialized symbols below.
         for (index, specification) in matching {
             found[index] = true;
             let mut substitution = Substitution::new();
@@ -539,6 +547,7 @@ pub fn specialize_generic_call_types(
                     statement,
                     types,
                     &substitution,
+                    owner,
                     function_name,
                     call_span,
                 )?;
@@ -547,6 +556,7 @@ pub fn specialize_generic_call_types(
                 &mut block.terminator,
                 types,
                 &substitution,
+                owner,
                 function_name,
                 call_span,
             )?;
@@ -565,6 +575,7 @@ fn specialize_statement_call_site(
     statement: &mut MirStatement,
     types: &mut TypeStore,
     substitution: &Substitution,
+    owner: Fingerprint,
     function_name: &str,
     call_span: Span,
 ) -> Result<(), String> {
@@ -579,17 +590,32 @@ fn specialize_statement_call_site(
                     operand,
                     types,
                     substitution,
+                    owner,
                     function_name,
                     call_span,
                 )?;
             }
             if let Some(value) = value {
-                specialize_call_site_operand(value, types, substitution, function_name, call_span)?;
+                specialize_call_site_operand(
+                    value,
+                    types,
+                    substitution,
+                    owner,
+                    function_name,
+                    call_span,
+                )?;
             }
         }
         MirStatement::Evaluate { value, .. } => {
             if let Some(value) = value {
-                specialize_call_site_operand(value, types, substitution, function_name, call_span)?;
+                specialize_call_site_operand(
+                    value,
+                    types,
+                    substitution,
+                    owner,
+                    function_name,
+                    call_span,
+                )?;
             }
         }
         MirStatement::StorageLive { .. }
@@ -606,17 +632,32 @@ fn specialize_terminator_call_site(
     terminator: &mut Terminator,
     types: &mut TypeStore,
     substitution: &Substitution,
+    owner: Fingerprint,
     function_name: &str,
     call_span: Span,
 ) -> Result<(), String> {
     match terminator {
         Terminator::Switch { value, .. } | Terminator::Return { value, .. } => {
             if let Some(value) = value {
-                specialize_call_site_operand(value, types, substitution, function_name, call_span)?;
+                specialize_call_site_operand(
+                    value,
+                    types,
+                    substitution,
+                    owner,
+                    function_name,
+                    call_span,
+                )?;
             }
         }
         Terminator::Match { value, .. } | Terminator::Propagate { value, .. } => {
-            specialize_call_site_operand(value, types, substitution, function_name, call_span)?;
+            specialize_call_site_operand(
+                value,
+                types,
+                substitution,
+                owner,
+                function_name,
+                call_span,
+            )?;
         }
         Terminator::Goto { .. } | Terminator::Unreachable { .. } => {}
     }
@@ -627,19 +668,38 @@ fn specialize_call_site_operand(
     operand: &mut MirOperand,
     types: &mut TypeStore,
     substitution: &Substitution,
+    owner: Fingerprint,
     function_name: &str,
     call_span: Span,
 ) -> Result<(), String> {
     if let MirOperandKind::Call { callee, arguments } = &mut operand.kind {
         if let MirOperandKind::Function { name, .. } = &callee.kind
             && name == function_name
-            && spans_overlap(operand.span, call_span)
+            && {
+                let by_span = spans_overlap(operand.span, call_span);
+                let by_type = generic_call_arguments_match(
+                    types,
+                    callee.ty,
+                    operand.ty,
+                    arguments,
+                    substitution,
+                    owner,
+                );
+                by_span || by_type
+            }
         {
             callee.ty = specialize_type(types, substitution, callee.ty)?;
         }
-        specialize_call_site_operand(callee, types, substitution, function_name, call_span)?;
+        specialize_call_site_operand(callee, types, substitution, owner, function_name, call_span)?;
         for argument in arguments {
-            specialize_call_site_operand(argument, types, substitution, function_name, call_span)?;
+            specialize_call_site_operand(
+                argument,
+                types,
+                substitution,
+                owner,
+                function_name,
+                call_span,
+            )?;
         }
     } else {
         match &mut operand.kind {
@@ -650,13 +710,28 @@ fn specialize_call_site_operand(
                     operand,
                     types,
                     substitution,
+                    owner,
                     function_name,
                     call_span,
                 )?;
             }
             MirOperandKind::Binary { left, right, .. } => {
-                specialize_call_site_operand(left, types, substitution, function_name, call_span)?;
-                specialize_call_site_operand(right, types, substitution, function_name, call_span)?;
+                specialize_call_site_operand(
+                    left,
+                    types,
+                    substitution,
+                    owner,
+                    function_name,
+                    call_span,
+                )?;
+                specialize_call_site_operand(
+                    right,
+                    types,
+                    substitution,
+                    owner,
+                    function_name,
+                    call_span,
+                )?;
             }
             MirOperandKind::RegionAllocate { arguments, .. } | MirOperandKind::Array(arguments) => {
                 for argument in arguments {
@@ -664,17 +739,39 @@ fn specialize_call_site_operand(
                         argument,
                         types,
                         substitution,
+                        owner,
                         function_name,
                         call_span,
                     )?;
                 }
             }
             MirOperandKind::Index { base, index } => {
-                specialize_call_site_operand(base, types, substitution, function_name, call_span)?;
-                specialize_call_site_operand(index, types, substitution, function_name, call_span)?;
+                specialize_call_site_operand(
+                    base,
+                    types,
+                    substitution,
+                    owner,
+                    function_name,
+                    call_span,
+                )?;
+                specialize_call_site_operand(
+                    index,
+                    types,
+                    substitution,
+                    owner,
+                    function_name,
+                    call_span,
+                )?;
             }
             MirOperandKind::Field { base, .. } => {
-                specialize_call_site_operand(base, types, substitution, function_name, call_span)?;
+                specialize_call_site_operand(
+                    base,
+                    types,
+                    substitution,
+                    owner,
+                    function_name,
+                    call_span,
+                )?;
             }
             MirOperandKind::Struct { fields, .. } => {
                 for (_, field) in fields {
@@ -682,6 +779,7 @@ fn specialize_call_site_operand(
                         field,
                         types,
                         substitution,
+                        owner,
                         function_name,
                         call_span,
                     )?;
@@ -694,6 +792,7 @@ fn specialize_call_site_operand(
                         index,
                         types,
                         substitution,
+                        owner,
                         function_name,
                         call_span,
                     )?;
@@ -709,6 +808,180 @@ fn specialize_call_site_operand(
         }
     }
     Ok(())
+}
+
+/// Checks whether a concrete call's argument and result types select this
+/// generic instance.
+/// Type-checking deduplicates monomorphizations by `(declaration, arguments)`
+/// and therefore retains only one source span. Matching the generic function
+/// signature lets every repeated call site receive the right specialization,
+/// while still distinguishing `identity(1)` from `identity(true)`.
+fn generic_call_arguments_match(
+    types: &TypeStore,
+    callee: TypeId,
+    result: TypeId,
+    arguments: &[MirOperand],
+    substitution: &Substitution,
+    owner: Fingerprint,
+) -> bool {
+    // A single caller can contain several materializations of the same
+    // generic function. Once the first instance rewrites the callee type,
+    // that concrete signature must not match later instances and get
+    // overwritten by a different substitution.
+    if !callee.contains_generic_parameter(types, owner) {
+        return false;
+    }
+    let Some(TypeKind::Function {
+        parameters,
+        result: generic_result,
+    }) = types.kind(callee)
+    else {
+        return false;
+    };
+    parameters.len() == arguments.len()
+        && parameters
+            .iter()
+            .zip(arguments)
+            .all(|(parameter, argument)| {
+                generic_type_matches(types, *parameter, argument.ty, substitution, owner)
+            })
+        && generic_type_matches(types, *generic_result, result, substitution, owner)
+}
+
+fn generic_type_matches(
+    types: &TypeStore,
+    pattern: TypeId,
+    actual: TypeId,
+    substitution: &Substitution,
+    owner: Fingerprint,
+) -> bool {
+    let Some(pattern_kind) = types.kind(pattern) else {
+        return false;
+    };
+    if let TypeKind::GenericParameter(parameter) = pattern_kind {
+        return parameter.owner != owner
+            || substitution
+                .get(*parameter)
+                .is_some_and(|expected| expected == actual);
+    }
+    let Some(actual_kind) = types.kind(actual) else {
+        return false;
+    };
+    match (pattern_kind, actual_kind) {
+        (
+            TypeKind::Capability {
+                capability: expected_capability,
+                inner: expected_inner,
+            },
+            TypeKind::Capability {
+                capability: actual_capability,
+                inner: actual_inner,
+            },
+        ) => {
+            expected_capability == actual_capability
+                && generic_type_matches(types, *expected_inner, *actual_inner, substitution, owner)
+        }
+        (TypeKind::Capability { inner, .. }, _) => {
+            // Source call MIR can carry an owned place while the declaration
+            // records its implicit read/write capability. The ordinary call
+            // lowerer inserts that borrow, so instance matching accepts the
+            // same source-level shape.
+            generic_type_matches(types, *inner, actual, substitution, owner)
+        }
+        (_, TypeKind::Capability { inner, .. }) => {
+            generic_type_matches(types, pattern, *inner, substitution, owner)
+        }
+        (
+            TypeKind::Array {
+                element: expected,
+                length: expected_length,
+            },
+            TypeKind::Array {
+                element: actual,
+                length: actual_length,
+            },
+        ) => {
+            expected_length == actual_length
+                && generic_type_matches(types, *expected, *actual, substitution, owner)
+        }
+        (
+            TypeKind::Vector {
+                element: expected,
+                lanes: expected_lanes,
+            },
+            TypeKind::Vector {
+                element: actual,
+                lanes: actual_lanes,
+            },
+        ) => {
+            expected_lanes == actual_lanes
+                && generic_type_matches(types, *expected, *actual, substitution, owner)
+        }
+        (TypeKind::Buffer(expected), TypeKind::Buffer(actual))
+        | (TypeKind::Slice(expected), TypeKind::Slice(actual))
+        | (TypeKind::Pointer(expected), TypeKind::Pointer(actual))
+        | (TypeKind::Option(expected), TypeKind::Option(actual)) => {
+            generic_type_matches(types, *expected, *actual, substitution, owner)
+        }
+        (
+            TypeKind::Result {
+                ok: expected_ok,
+                error: expected_error,
+            },
+            TypeKind::Result {
+                ok: actual_ok,
+                error: actual_error,
+            },
+        ) => {
+            generic_type_matches(types, *expected_ok, *actual_ok, substitution, owner)
+                && generic_type_matches(types, *expected_error, *actual_error, substitution, owner)
+        }
+        (
+            TypeKind::Nominal {
+                constructor: expected_constructor,
+                arguments: expected_arguments,
+            },
+            TypeKind::Nominal {
+                constructor: actual_constructor,
+                arguments: actual_arguments,
+            },
+        ) => {
+            expected_constructor == actual_constructor
+                && expected_arguments.len() == actual_arguments.len()
+                && expected_arguments
+                    .iter()
+                    .zip(actual_arguments)
+                    .all(|(expected, actual)| {
+                        generic_type_matches(types, *expected, *actual, substitution, owner)
+                    })
+        }
+        (
+            TypeKind::Function {
+                parameters: expected_parameters,
+                result: expected_result,
+            },
+            TypeKind::Function {
+                parameters: actual_parameters,
+                result: actual_result,
+            },
+        ) => {
+            expected_parameters.len() == actual_parameters.len()
+                && expected_parameters
+                    .iter()
+                    .zip(actual_parameters)
+                    .all(|(expected, actual)| {
+                        generic_type_matches(types, *expected, *actual, substitution, owner)
+                    })
+                && generic_type_matches(
+                    types,
+                    *expected_result,
+                    *actual_result,
+                    substitution,
+                    owner,
+                )
+        }
+        _ => pattern == actual,
+    }
 }
 
 trait ContainsGenericParameter {
@@ -1051,20 +1324,52 @@ impl<'a> Builder<'a> {
                         TypeKind::Capability { capability, .. } => Some(*capability),
                         _ => None,
                     });
-                    if let (Some(capability), Some(source)) =
-                        (capability, self.expression_place(value))
-                        && matches!(capability, Capability::Read | Capability::Write)
+                    let direct_source = self.expression_place(value);
+                    let borrowed_call_source = self.borrowed_result_call_source(value);
+                    if let (Some(capability), Some(source)) = (
+                        capability,
+                        direct_source.clone().or(borrowed_call_source.clone()),
+                    ) && matches!(capability, Capability::Read | Capability::Write)
                     {
-                        self.push_statement(MirStatement::Borrow {
-                            destination: id,
-                            source,
-                            kind: if capability == Capability::Read {
-                                BorrowKind::Read
-                            } else {
-                                BorrowKind::Write
-                            },
-                            span: *span,
-                        });
+                        if direct_source.is_some() {
+                            self.push_statement(MirStatement::Borrow {
+                                destination: id,
+                                source,
+                                kind: if capability == Capability::Read {
+                                    BorrowKind::Read
+                                } else {
+                                    BorrowKind::Write
+                                },
+                                preserve_value: false,
+                                span: *span,
+                            });
+                        } else {
+                            // A builtin can return a borrowed view produced by a
+                            // runtime call. Keep the call result in `id`, then
+                            // create a compiler-only loan that ties the source
+                            // Buffer to the view's lexical scope. The loan has
+                            // no native instruction of its own.
+                            let lowered = self.lower_value_with_inline_move_materialization(value);
+                            let accesses = self.operand_accesses(&lowered);
+                            self.push_statement(MirStatement::Assign {
+                                destination: Place::local(id),
+                                destination_indices: Vec::new(),
+                                value: Some(lowered),
+                                accesses,
+                                span: *span,
+                            });
+                            self.push_statement(MirStatement::Borrow {
+                                destination: id,
+                                source,
+                                kind: if capability == Capability::Read {
+                                    BorrowKind::Read
+                                } else {
+                                    BorrowKind::Write
+                                },
+                                preserve_value: true,
+                                span: *span,
+                            });
+                        }
                     } else {
                         let lowered = self.lower_value_with_inline_move_materialization(value);
                         let accesses = self.operand_accesses(&lowered);
@@ -2240,9 +2545,84 @@ impl<'a> Builder<'a> {
                         MirOperandKind::Function { name, .. } => match name.as_str() {
                             "string_length" if index == 0 => Some(Capability::Read),
                             "string_equals" if index < 2 => Some(Capability::Read),
-                            "buffer_length" | "buffer_capacity" if index == 0 => {
+                            "file_delete"
+                            | "file_delete_path"
+                            | "file_flush"
+                            | "file_flush_path"
+                            | "directory_flush"
+                            | "file_exists"
+                            | "file_exists_path"
+                            | "file_path_valid"
+                            | "directory_create"
+                            | "directory_exists"
+                            | "directory_delete"
+                            | "file_lock"
+                            | "file_lock_path"
+                            | "file_lock_path_retry"
+                            | "directory_list"
+                            | "directory_list_ex"
+                            | "directory_list_ex_exact"
+                            | "ui_file_open_exact"
+                            | "ui_file_open_extension_exact"
+                            | "ui_file_save_exact"
+                            | "ui_file_save_suggested_exact"
+                            | "ui_file_save_extension_exact"
+                            | "file_size"
+                            | "file_size_path"
+                            | "file_read"
+                            | "file_read_text"
+                            | "file_read_exact"
+                            | "file_read_text_exact"
+                            | "file_read_at"
+                            | "file_write"
+                            | "file_write_prefix"
+                            | "file_write_prefix_path"
+                            | "file_write_at"
+                            | "file_append"
+                                if index == 0 =>
+                            {
                                 Some(Capability::Read)
                             }
+                            "file_replace_atomic" | "file_copy" if index < 2 => {
+                                Some(Capability::Read)
+                            }
+                            "file_replace_atomic_paths" if index == 0 || index == 2 => {
+                                Some(Capability::Read)
+                            }
+                            "file_write_text" | "file_append_text" if index < 2 => {
+                                Some(Capability::Read)
+                            }
+                            "file_write" | "file_write_prefix" | "file_append" if index == 1 => {
+                                Some(Capability::Read)
+                            }
+                            "file_write_prefix_path" if index == 0 || index == 2 => {
+                                Some(Capability::Read)
+                            }
+                            "file_write_at" if index == 2 => Some(Capability::Read),
+                            "ui_file_open_exact" | "ui_file_save_exact" if index == 0 => {
+                                Some(Capability::Read)
+                            }
+                            "ui_file_open_exact" | "ui_file_save_exact"
+                                if index == 1 || index == 2 =>
+                            {
+                                Some(Capability::Write)
+                            }
+                            "ui_file_open_extension_exact" if index <= 1 => Some(Capability::Read),
+                            "ui_file_open_extension_exact" if index == 2 || index == 3 => {
+                                Some(Capability::Write)
+                            }
+                            "ui_file_save_suggested_exact" if index <= 2 => Some(Capability::Read),
+                            "ui_file_save_suggested_exact" if index == 3 || index == 4 => {
+                                Some(Capability::Write)
+                            }
+                            "ui_file_save_extension_exact" if index <= 2 => Some(Capability::Read),
+                            "ui_file_save_extension_exact" if index == 3 || index == 4 => {
+                                Some(Capability::Write)
+                            }
+                            "buffer_slice" | "buffer_length" | "buffer_capacity" if index == 0 => {
+                                Some(Capability::Read)
+                            }
+                            "buffer_slice_write" if index == 0 => Some(Capability::Write),
                             "buffer_clear" | "buffer_clear_status" if index == 0 => {
                                 Some(Capability::Write)
                             }
@@ -2706,6 +3086,21 @@ impl<'a> Builder<'a> {
             HirExpressionKind::Group(inner) => self.expression_place(inner),
             _ => None,
         }
+    }
+
+    fn borrowed_result_call_source(&self, expression: &HirExpression) -> Option<Place> {
+        let HirExpressionKind::Call { callee, arguments } = &expression.kind else {
+            return None;
+        };
+        let HirExpressionKind::Name { name, .. } = &callee.kind else {
+            return None;
+        };
+        if !matches!(name.as_str(), "buffer_slice" | "buffer_slice_write") {
+            return None;
+        }
+        arguments
+            .first()
+            .and_then(|argument| self.expression_place(argument))
     }
 
     fn expression_contains_index(expression: &HirExpression) -> bool {
@@ -3400,6 +3795,7 @@ fn materialize_function_returns(function: &mut MirFunction, types: &TypeStore) {
                         }) => BorrowKind::Write,
                         _ => BorrowKind::Read,
                     },
+                    preserve_value: false,
                     span,
                 },
             ],
@@ -4261,6 +4657,7 @@ fn analyze_function_borrows(function: &MirFunction, types: &TypeStore) -> Vec<Mi
                     source,
                     kind,
                     span,
+                    ..
                 } => {
                     loans.retain(|loan| loan.holder != *destination);
                     let access = PlaceAccess {
@@ -4715,19 +5112,49 @@ fn error(code: &'static str, span: Span, message: &str) -> MirError {
 
 #[cfg(test)]
 mod tests {
+    use jadren_determinism::Fingerprint;
     use jadren_hir::lower_hir;
     use jadren_lexer::lex;
     use jadren_parser::parse;
     use jadren_resolve::resolve;
     use jadren_source::SourceManager;
     use jadren_typeck::check_types;
-    use jadren_types::TypeStore;
+    use jadren_types::{GenericParameterId, Substitution, TypeKind, TypeStore};
 
     use super::{
         AccessKind, BasicBlockId, MirModule, Place, Terminator, analyze_borrows,
         analyze_definite_initialization, analyze_lifetimes, analyze_moves, analyze_regions,
         elaborate_drops, elaborate_region_cleanup, infer_lifetimes, lower_mir, verify_mir,
     };
+
+    #[test]
+    fn matches_generic_callback_function_types_for_repeated_calls() {
+        let mut types = TypeStore::new();
+        let owner = Fingerprint::from_u64(42);
+        let parameter = types.intern(TypeKind::GenericParameter(GenericParameterId {
+            owner,
+            index: 0,
+        }));
+        let expected = types.intern(TypeKind::Function {
+            parameters: vec![parameter].into_boxed_slice(),
+            result: parameter,
+        });
+        let concrete = types.core().int32;
+        let actual = types.intern(TypeKind::Function {
+            parameters: vec![concrete].into_boxed_slice(),
+            result: concrete,
+        });
+        let mut substitution = Substitution::new();
+        substitution.insert(GenericParameterId { owner, index: 0 }, concrete);
+
+        assert!(super::generic_type_matches(
+            &types,
+            expected,
+            actual,
+            &substitution,
+            owner,
+        ));
+    }
 
     #[test]
     fn lowers_places_and_verifies_initial_mir() {

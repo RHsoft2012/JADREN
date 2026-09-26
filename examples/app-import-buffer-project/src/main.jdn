@@ -1,0 +1,348 @@
+module app_import_buffer_project.main
+import jadren.app.list
+import jadren.app.data.revision
+import jadren.app.state
+import jadren.app.table
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    let buffers_created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(256usize)
+    match buffers_created {
+        Error(error) => {
+            status = error
+        }
+        Ok(payload) => {
+            if ! buffer_resize(payload, 256usize) {
+                status = -1i32
+            }
+            list.clear(0)
+            if ! list.push_text(0,
+            "A") {
+                status = 1
+            }
+            if status == 0 {
+                if ! list.push_text(0,
+                "B,C") {
+                    status = 2
+                }
+            }
+            var length:[UIntSize;
+            1] =[777usize]
+            if status == 0 {
+                if ! list.export_json_exact_buffer(0,
+                payload,
+                256usize,
+                length) {
+                    status = 3
+                }
+            }
+            let list_json_length: UIntSize = length[0]
+            if status == 0 {
+                list.clear(0)
+                if ! list.import_json_exact_buffer(0,
+                payload,
+                list_json_length) {
+                    status = 4
+                }
+            }
+            if status == 0 {
+                if list.count(0) != 2 {
+                    status = 5
+                }
+            }
+            var readback:[UInt8;
+            16] =[0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8]
+            var readback_length:[UIntSize;
+            1] =[778usize]
+            if status == 0 {
+                if ! list.read_text_exact(0,
+                1,
+                readback,
+                readback_length) {
+                    status = 6
+                }
+            }
+            if status == 0 {
+                if readback_length[0] != 3usize {
+                    status = 7
+                }
+            }
+            if status == 0 {
+                if readback[0] != 66u8 {
+                    status = 8
+                }
+            }
+            if status == 0 {
+                if readback[1] != 44u8 {
+                    status = 8
+                }
+            }
+            if status == 0 {
+                if readback[2] != 67u8 {
+                    status = 8
+                }
+            }
+            let stale_list_revision: UInt64 = revision()
+            list.clear(0)
+            if status == 0 {
+                if list.import_json_exact_buffer_if_revision(0,
+                payload,
+                list_json_length,
+                stale_list_revision) {
+                    status = 9
+                }
+            }
+            if status == 0 {
+                if list.count(0) != 0 {
+                    status = 10
+                }
+            }
+            if status == 0 {
+                if ! list.import_json_exact_buffer(0,
+                payload,
+                list_json_length) {
+                    status = 11
+                }
+            }
+            if status == 0 {
+                if ! list.export_csv_exact_buffer(0,
+                payload,
+                256usize,
+                length) {
+                    status = 12
+                }
+            }
+            let list_csv_length: UIntSize = length[0]
+            if status == 0 {
+                list.clear(0)
+                let current_list_revision: UInt64 = revision()
+                if ! list.import_csv_exact_buffer_if_revision(0,
+                payload,
+                list_csv_length,
+                current_list_revision) {
+                    status = 13
+                }
+            }
+            if status == 0 {
+                if list.count(0) != 2 {
+                    status = 14
+                }
+            }
+            if status == 0 {
+                payload[0] = 120u8
+                if list.import_json_exact_buffer(0,
+                payload,
+                list_json_length) {
+                    status = 15
+                }
+            }
+            if status == 0 {
+                if list.count(0) != 2 {
+                    status = 16
+                }
+            }
+            table.clear(0)
+            if status == 0 {
+                if ! table.set_column_name(0,
+                0,
+                "name") {
+                    status = 17
+                }
+            }
+            if status == 0 {
+                if ! table.append_row(0) {
+                    status = 18
+                }
+            }
+            if status == 0 {
+                if ! table.set_cell(0,
+                0,
+                0,
+                "Alpha") {
+                    status = 19
+                }
+            }
+            if status == 0 {
+                if ! table.export_json_exact_buffer(0,
+                payload,
+                256usize,
+                length) {
+                    status = 20
+                }
+            }
+            let table_json_length: UIntSize = length[0]
+            if status == 0 {
+                if ! table.remove_row(0,
+                0) {
+                    status = 21
+                }
+            }
+            if status == 0 {
+                if ! table.import_json_exact_buffer(0,
+                payload,
+                table_json_length) {
+                    status = 22
+                }
+            }
+            if status == 0 {
+                if table.row_count(0) != 1 {
+                    status = 23
+                }
+            }
+            var cell:[UInt8;
+            16] =[0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8]
+            var cell_length:[UIntSize;
+            1] =[781usize]
+            if status == 0 {
+                if ! table.read_cell_exact(0,
+                0,
+                0,
+                cell,
+                cell_length) {
+                    status = 24
+                }
+            }
+            if status == 0 {
+                if cell_length[0] != 5usize {
+                    status = 25
+                }
+            }
+            if status == 0 {
+                if cell[0] != 65u8 {
+                    status = 26
+                }
+            }
+            let stale_table_revision: UInt64 = revision()
+            if status == 0 {
+                if ! table.remove_row(0,
+                0) {
+                    status = 27
+                }
+            }
+            if status == 0 {
+                if table.import_json_exact_buffer_if_revision(0,
+                payload,
+                table_json_length,
+                stale_table_revision) {
+                    status = 28
+                }
+            }
+            if status == 0 {
+                if table.row_count(0) != 0 {
+                    status = 29
+                }
+            }
+            if status == 0 {
+                if ! table.import_json_exact_buffer(0,
+                payload,
+                table_json_length) {
+                    status = 30
+                }
+            }
+            if status == 0 {
+                if ! table.export_csv_exact_buffer(0,
+                payload,
+                256usize,
+                length) {
+                    status = 31
+                }
+            }
+            let table_csv_length: UIntSize = length[0]
+            if status == 0 {
+                if ! table.remove_row(0,
+                0) {
+                    status = 32
+                }
+            }
+            if status == 0 {
+                let current_table_revision: UInt64 = revision()
+                if ! table.import_csv_exact_buffer_if_revision(0,
+                payload,
+                table_csv_length,
+                current_table_revision) {
+                    status = 33
+                }
+            }
+            if status == 0 {
+                if table.row_count(0) != 1 {
+                    status = 34
+                }
+            }
+            let short_created: Result<Buffer<UInt8>,
+            Int32> = buffer_create(4usize)
+            match short_created {
+                Error(error) => {
+                    if status == 0 {
+                        status = error
+                    }
+                }
+                Ok(short) => {
+                    if ! buffer_resize(short, 4usize) {
+                        if status == 0 { status = 35 }
+                    }
+                    if status == 0 {
+                        if list.import_json_exact_buffer(0,
+                        short,
+                        5usize) {
+                            status = 35
+                        }
+                    }
+                    if status == 0 {
+                        if list.count(0) != 2 {
+                            status = 36
+                        }
+                    }
+                    if status == 0 {
+                        if table.import_json_exact_buffer(0,
+                        short,
+                        table_json_length) {
+                            status = 37
+                        }
+                    }
+                    if status == 0 {
+                        if table.row_count(0) != 1 {
+                            status = 38
+                        }
+                    }
+                }
+            }
+        }
+    }
+    list.clear(0)
+    table.clear(0)
+    return status
+}

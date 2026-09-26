@@ -1,0 +1,60 @@
+module examples.app_collections_json_file_roundtrip
+
+// File imports are transactional: a complete bounded document is read and
+// validated before the live list or table is replaced.
+fn main() -> Int32 {
+    file_delete("target/app-collections-json-file-list.json")
+    file_delete("target/app-collections-json-file-list.tmp")
+    file_delete("target/app-collections-json-file-table.json")
+    file_delete("target/app-collections-json-file-table.tmp")
+
+    app_list_clear(0)
+    if !app_list_push_text(0, "A") { return 1 }
+    if !app_list_push_text(0, "B,C") { return 2 }
+    if !app_list_export_json_file_durable(0, "target/app-collections-json-file-list.json", "target/app-collections-json-file-list.tmp") { return 3 }
+    app_list_clear(0)
+    if !app_list_import_json_file(0, "target/app-collections-json-file-list.json") { return 4 }
+    if app_list_count(0) != 2 { return 5 }
+    var list_value: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var list_value_length: [UIntSize; 1] = [0usize]
+    if !app_list_read_text_exact(0, 1, list_value, list_value_length) { return 6 }
+    if list_value_length[0] != 3usize { return 7 }
+    if list_value[0] != 66u8 { return 8 }
+    if list_value[1] != 44u8 { return 9 }
+    if list_value[2] != 67u8 { return 10 }
+
+    if file_write_text("target/app-collections-json-file-list.json", "[") != 1usize { return 11 }
+    if app_list_import_json_file(0, "target/app-collections-json-file-list.json") { return 12 }
+    if app_list_count(0) != 2 { return 13 }
+    if app_list_import_json_file(4, "target/app-collections-json-file-list.json") { return 14 }
+
+    app_table_clear(0)
+    if !app_table_set_column_name(0, 0, "name") { return 15 }
+    if !app_table_append_row(0) { return 16 }
+    if !app_table_set_cell(0, 0, 0, "Alice") { return 17 }
+    if !app_table_export_json_file_durable(0, "target/app-collections-json-file-table.json", "target/app-collections-json-file-table.tmp") { return 18 }
+    if !app_table_set_cell(0, 0, 0, "Changed") { return 19 }
+    if !app_table_import_json_file(0, "target/app-collections-json-file-table.json") { return 20 }
+
+    var table_value: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var table_value_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, 0, 0, table_value, table_value_length) { return 21 }
+    if table_value_length[0] != 5usize { return 22 }
+    if table_value[0] != 65u8 { return 23 }
+    if table_value[4] != 101u8 { return 24 }
+
+    if file_write_text("target/app-collections-json-file-table.json", "{") != 1usize { return 25 }
+    if app_table_import_json_file(0, "target/app-collections-json-file-table.json") { return 26 }
+    if !app_table_read_cell_exact(0, 0, 0, table_value, table_value_length) { return 27 }
+    if table_value_length[0] != 5usize { return 28 }
+    if table_value[0] != 65u8 { return 29 }
+    if app_table_import_json_file(4, "target/app-collections-json-file-table.json") { return 30 }
+
+    file_delete("target/app-collections-json-file-list.json")
+    file_delete("target/app-collections-json-file-list.tmp")
+    file_delete("target/app-collections-json-file-table.json")
+    file_delete("target/app-collections-json-file-table.tmp")
+    app_list_clear(0)
+    app_table_clear(0)
+    return 0
+}

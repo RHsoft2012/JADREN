@@ -1,0 +1,18 @@
+module selfhost.typed_statement_assignment_float64_same_module_body_binary_call_sequence;
+
+// JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS
+// The nested sibling is referenced only from helper's body. The argument
+// expression exercises the bounded same-module body-call AST remap.
+fn local_value() -> Float64 {
+    let first: Float64 = helper(1.5f64);
+    first = helper(first);
+    return helper(first);
+}
+
+fn helper(value: Float64) -> Float64 {
+    return nested(value + 1.0f64) + 1.0f64;
+}
+
+fn nested(value: Float64) -> Float64 {
+    return value * 2.0f64;
+}

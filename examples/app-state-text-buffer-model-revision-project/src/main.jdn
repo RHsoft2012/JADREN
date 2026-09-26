@@ -1,0 +1,98 @@
+module app_state_text_buffer_model_revision_project.main
+
+import jadren.app.data.revision
+import jadren.app.state.clear
+import jadren.app.state.read_text_exact_buffer_if_model_revision
+import jadren.app.state.set_text
+import jadren.app.state.set_text_buffer_if_model_revision
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear()
+    app_list_clear(0)
+    if !set_text("name", "before") { return 1 }
+
+    let input_created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    let output_created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    var status: Int32 = 0
+    match input_created {
+        Error(error) => { status = error }
+        Ok(input) => {
+            match output_created {
+                Error(error) => { status = error }
+                Ok(output) => {
+                    if !buffer_resize(input, 16usize) { status = 2 }
+                    if !buffer_resize(output, 16usize) { status = 3 }
+                    input[0] = 78u8
+                    input[1] = 97u8
+                    input[2] = 116u8
+                    input[3] = 105u8
+                    input[4] = 118u8
+                    input[5] = 101u8
+
+                    let stale_write: UInt64 = revision()
+                    if status == 0 {
+                        if !app_list_push_text(0, "changed") { status = 4 }
+                    }
+                    if status == 0 {
+                        if set_text_buffer_if_model_revision("name", input, 6usize, stale_write) {
+                            status = 5
+                        }
+                    }
+
+                    let current_write: UInt64 = revision()
+                    if status == 0 {
+                        if !set_text_buffer_if_model_revision("name", input, 6usize, current_write) {
+                            status = 6
+                        }
+                    }
+                    var length: [UIntSize; 1] = [777usize]
+                    let current_read: UInt64 = revision()
+                    if status == 0 {
+                        if !read_text_exact_buffer_if_model_revision("name", output, 16usize, length, current_read) {
+                            status = 7
+                        }
+                    }
+                    if status == 0 {
+                        if length[0] != 6usize { status = 8 }
+                    }
+                    if status == 0 {
+                        if output[0] != 78u8 { status = 9 }
+                    }
+                    if status == 0 {
+                        if output[5] != 101u8 { status = 10 }
+                    }
+
+                    let stale_read: UInt64 = revision()
+                    if status == 0 {
+                        if !app_list_push_text(0, "changed-again") { status = 11 }
+                    }
+                    output[0] = 201u8
+                    output[1] = 202u8
+                    length[0] = 778usize
+                    if status == 0 {
+                        if read_text_exact_buffer_if_model_revision("name", output, 16usize, length, stale_read) {
+                            status = 12
+                        }
+                    }
+                    if status == 0 {
+                        if output[0] != 201u8 { status = 13 }
+                    }
+                    if status == 0 {
+                        if output[1] != 202u8 { status = 14 }
+                    }
+                    if status == 0 {
+                        if length[0] != 778usize { status = 15 }
+                    }
+                }
+            }
+        }
+    }
+    clear()
+    app_list_clear(0)
+    return status
+}

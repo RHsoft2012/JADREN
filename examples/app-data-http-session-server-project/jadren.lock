@@ -1,0 +1,17 @@
+version = 1
+manifest_fingerprint = "b082f302eafef8fb"
+
+[package]
+name = "app-data-http-session-server-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

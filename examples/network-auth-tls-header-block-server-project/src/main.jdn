@@ -1,0 +1,109 @@
+module network_auth_tls_header_block_server_project.main
+
+import jadren.app.fs.write_text
+import jadren.network.auth.bearer_token_matches_exact
+import jadren.network.http.request_header_exact
+import jadren.network.http.request_keep_alive
+import jadren.network.http.write_response_ex
+import jadren.network.session.accept
+import jadren.network.session.close
+import jadren.network.session.close_connection
+import jadren.network.session.open_tls
+import jadren.network.session.receive_request
+import jadren.network.session.send
+import jadren.network.tcp.listen
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 { return event_id }
+
+fn run(request: write Buffer<UInt8>, scratch: write Buffer<UInt8>, response: write Buffer<UInt8>) -> Int32 {
+    if !buffer_resize(request, 2048usize) { return 1 }
+    if !buffer_resize(scratch, 64usize) { return 2 }
+    if !buffer_resize(response, 256usize) { return 3 }
+    let listener: UIntSize = listen(38165u16)
+    if listener == 0usize { return 10 }
+    let session: UIntSize = open_tls(listener, 1u32, 2048u32, 256u32,
+        "target/jadren-tls-auth-header-block/server.pfx", "testpass")
+    if session == 0usize { return 11 }
+    let connection: UIntSize = accept(session, 5000u32)
+    if connection == 0usize { close(session); return 12 }
+    var expected: [UInt8; 6] = [97u8, 98u8, 99u8, 49u8, 50u8, 51u8]
+    var unauthorized: [UInt8; 12] = [85u8, 110u8, 97u8, 117u8, 116u8, 104u8, 111u8, 114u8, 105u8, 122u8, 101u8, 100u8]
+    var ok: [UInt8; 2] = [79u8, 75u8]
+    var trace: [UInt8; 11] = [116u8, 108u8, 115u8, 45u8, 98u8, 108u8, 111u8, 99u8, 107u8, 45u8, 49u8]
+    var header_length: [UIntSize; 1] = [0usize]
+    var statuses: [UInt8; 2] = [0u8, 0u8]
+    var request_index: UIntSize = 0usize
+    while request_index < 2usize {
+        let received: UIntSize = receive_request(connection, 5000u32, buffer_slice_write(request, 0usize, 2048usize))
+        if received == 0usize { close_connection(connection); close(session); return 13 }
+        let request_view = buffer_slice(request, 0usize, received)
+        let keep_alive: Bool = request_keep_alive(request_view)
+        let authorized: Bool = bearer_token_matches_exact(request_view, expected, 6usize,
+            buffer_slice_write(scratch, 0usize, 64usize), 64usize)
+        let trace_present: Bool = request_header_exact(request_view, "X-Jadren-Trace",
+            buffer_slice_write(scratch, 0usize, 64usize), header_length)
+        var trace_valid: Bool = false
+        if trace_present {
+            if header_length[0] == 11usize {
+                trace_valid = true
+                var trace_index: UIntSize = 0usize
+                while trace_index < 11usize {
+                    if scratch[trace_index] != trace[trace_index] { trace_valid = false }
+                    trace_index = trace_index + 1usize
+                }
+            }
+        }
+        var written: UIntSize = 0usize
+        if authorized {
+            if trace_valid {
+                written = write_response_ex(200u16, "text/plain", ok, keep_alive,
+                    buffer_slice_write(response, 0usize, 256usize))
+                statuses[request_index] = 50u8
+            } else {
+                written = write_response_ex(401u16, "text/plain", unauthorized, keep_alive,
+                    buffer_slice_write(response, 0usize, 256usize))
+                statuses[request_index] = 52u8
+            }
+        } else {
+            written = write_response_ex(401u16, "text/plain", unauthorized, keep_alive,
+                buffer_slice_write(response, 0usize, 256usize))
+            statuses[request_index] = 52u8
+        }
+        if written == 0usize { close_connection(connection); close(session); return 14 }
+        if !send(connection, buffer_slice(response, 0usize, written)) { close_connection(connection); close(session); return 14 }
+        if !keep_alive { break }
+        request_index = request_index + 1usize
+    }
+    let connection_closed: Bool = close_connection(connection)
+    let session_closed: Bool = close(session)
+    if !connection_closed { return 15 }
+    if !session_closed { return 15 }
+    if statuses[0] != 52u8 { return 15 }
+    if statuses[1] != 50u8 { return 15 }
+    if write_text("target/jadren/network-auth-tls-header-block-server.result",
+        "tls-auth-header-block-server:401,200 keep_alive:true,close:true\n") == 0usize { return 16 }
+    return 0
+}
+
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    let request_created: Result<Buffer<UInt8>, Int32> = buffer_create(2048usize)
+    match request_created {
+        Ok(request) => {
+            let scratch_created: Result<Buffer<UInt8>, Int32> = buffer_create(64usize)
+            match scratch_created {
+                Ok(scratch) => {
+                    let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(256usize)
+                    match response_created {
+                        Ok(response) => { status = run(request, scratch, response) }
+                        Error(error) => { status = error }
+                    }
+                }
+                Error(error) => { status = error }
+            }
+        }
+        Error(error) => { status = error }
+    }
+    return status
+}

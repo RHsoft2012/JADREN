@@ -1,0 +1,39 @@
+module examples.dynamic_array_owned_string
+
+// DynamicArray<T> preserves the owning Buffer<T> contract for move-only text.
+// Every descriptor is moved explicitly or consumed by a move-aware operation.
+fn main() -> Int32 {
+    let created: Result<DynamicArray<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 1
+    match created {
+        Ok(values) => {
+            let first: Result<OwnedString, Int32> = string_owned_from("Jadren")
+            match first {
+                Ok(value) => {
+                    if !buffer_append(values, value) { result_code = 2 }
+                }
+                Error(status) => { result_code = status }
+            }
+            let second: Result<OwnedString, Int32> = string_owned_from("UI")
+            match second {
+                Ok(value) => {
+                    if !buffer_insert_move(values, 0usize, value) { result_code = 3 }
+                }
+                Error(status) => { result_code = status }
+            }
+            let removed: Result<OwnedString, Int32> = buffer_remove_move(values, 0usize)
+            match removed {
+                Ok(value) => {
+                    if string_owned_length(value) != 2usize { result_code = 4 }
+                }
+                Error(status) => { result_code = status }
+            }
+            if !buffer_resize_move(values, 2usize) { result_code = 5 }
+            if !buffer_clear_move(values) { result_code = 6 }
+            if buffer_length(values) != 0usize { result_code = 7 }
+            if result_code == 1 { result_code = 0 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

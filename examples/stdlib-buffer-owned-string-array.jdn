@@ -1,0 +1,53 @@
+module examples.stdlib_buffer_owned_string_array
+
+// A dynamic Buffer element may contain a fixed inline array of owning
+// strings. Cleanup must flatten both UTF-8 descriptor offsets before remove.
+fn main() -> Int32 {
+    let values_created: Result<Buffer<[OwnedString; 2]>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match values_created {
+        Ok(values) => {
+            let first_created: Result<OwnedString, Int32> = string_owned_from("first")
+            let second_created: Result<OwnedString, Int32> = string_owned_from("second")
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            let item: [OwnedString; 2] = [first, second]
+                            if !buffer_append(values, item) { result_code = 1 }
+                            if buffer_length(values) != 1usize { result_code = 2 }
+                            if !buffer_remove_drop(values, 0usize) { result_code = 3 }
+                            if buffer_length(values) != 0usize { result_code = 4 }
+                            let third_created: Result<OwnedString, Int32> = string_owned_from("third")
+                            let fourth_created: Result<OwnedString, Int32> = string_owned_from("fourth")
+                            match third_created {
+                                Ok(third) => {
+                                    match fourth_created {
+                                        Ok(fourth) => {
+                                            let second_item: [OwnedString; 2] = [third, fourth]
+                                            if !buffer_append(values, second_item) { result_code = 6 }
+                                            let grown: Int32 = buffer_resize_move_status(values, 2usize)
+                                            if grown != 0 { result_code = 7 }
+                                            let cleared: Bool = buffer_clear_move(values)
+                                            if !cleared { result_code = 8 }
+                                            if buffer_length(values) != 0usize { result_code = 9 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                            let status: Int32 = buffer_remove_drop_status(values, 0usize)
+                            if status != -20 { result_code = 10 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

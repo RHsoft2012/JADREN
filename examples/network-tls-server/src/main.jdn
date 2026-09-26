@@ -1,11 +1,14 @@
 module examples.network_tls_server
+import jadren.core.process.arg_count
+import jadren.core.process.arg_read
 import jadren.network.tcp.accept
 import jadren.network.tcp.close_socket
 import jadren.network.tcp.listen
 import jadren.network.tls.close
-import jadren.network.tls.open_server
+import jadren.network.tls.open_server_paths
 import jadren.network.tls.receive
 import jadren.network.tls.send
+import jadren.network.tls.send_all_prefix
 import jadren.network.tls.state
 import jadren.network.tls.step
 fn main() -> Int32 {
@@ -18,9 +21,30 @@ fn main() -> Int32 {
         close_socket(listener)
         return 11
     }
-    let tls = open_server(socket,
-    "target/network-tls-smoke/server.pfx",
-    "testpass")
+    if arg_count() < 3usize {
+        close_socket(socket)
+        close_socket(listener)
+        return 12
+    }
+    var certificate_path: [UInt8; 73] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var private_key_path: [UInt8; 69] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let certificate_length = arg_read(1usize, certificate_path)
+    let private_key_length = arg_read(2usize, private_key_path)
+    if certificate_length == 0usize {
+        close_socket(socket)
+        close_socket(listener)
+        return 12
+    }
+    if private_key_length == 0usize {
+        close_socket(socket)
+        close_socket(listener)
+        return 12
+    }
+    let tls = open_server_paths(socket,
+    certificate_path,
+    certificate_length,
+    private_key_path,
+    private_key_length)
     if tls == 0usize {
         close_socket(socket)
         close_socket(listener)
@@ -76,13 +100,18 @@ fn main() -> Int32 {
         return 15
     }
     var response:[UInt8;
-    5] =[74u8,
+    9] =[74u8,
     65u8,
     68u8,
     82u8,
-    78u8]
-    if send(tls,
-    response) != 5usize {
+    78u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    if send_all_prefix(tls,
+    response,
+    5usize) != 5usize {
         return 16
     }
     if ! close(tls) {

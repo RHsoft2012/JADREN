@@ -1,0 +1,209 @@
+module app_data_file_persistence.main
+
+import jadren.app.data.load_file
+import jadren.app.data.load_file_if_revision
+import jadren.app.data.load_exact
+import jadren.app.data.save_atomic_durable
+import jadren.app.data.save_atomic_durable_if_revision
+import jadren.app.data.snapshot_length
+import jadren.app.data.revision
+import jadren.app.fs.delete
+import jadren.app.fs.exists
+import jadren.app.list.count
+import jadren.app.list.push_text
+import jadren.app.state.clear
+import jadren.app.state.get_int
+import jadren.app.state.set_int
+import jadren.app.state.set_text
+import jadren.app.table.append_row
+import jadren.app.table.read_cell
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    if exists("target/app-data-file-persistence-smoke/model.data") {
+        if !delete("target/app-data-file-persistence-smoke/model.data") { return 33 }
+    }
+    if exists("target/app-data-file-persistence-smoke/model.tmp") {
+        if !delete("target/app-data-file-persistence-smoke/model.tmp") { return 34 }
+    }
+    if exists("target/app-data-file-persistence-smoke/guarded.data") {
+        if !delete("target/app-data-file-persistence-smoke/guarded.data") { return 35 }
+    }
+    if exists("target/app-data-file-persistence-smoke/guarded.tmp") {
+        if !delete("target/app-data-file-persistence-smoke/guarded.tmp") { return 36 }
+    }
+    clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    if !set_int("selected", 7i64) { return 1 }
+    if !set_text("mode", "focus") { return 2 }
+    if !push_text(0, "First task") { return 3 }
+    if !push_text(0, "Second task") { return 4 }
+    if !set_column_name(0, 0, "title") { return 5 }
+    if !append_row(0) { return 6 }
+    if !set_cell(0, 0, 0, "Build") { return 7 }
+
+    let expected_length: UIntSize = snapshot_length()
+    if expected_length == 0usize { return 8 }
+    if expected_length > 1024usize { return 9 }
+
+    var snapshot: [UInt8; 1024] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    if !save_atomic_durable(
+        "target/app-data-file-persistence-smoke/model.tmp",
+        "target/app-data-file-persistence-smoke/model.data",
+        "target/app-data-file-persistence-smoke",
+        snapshot,
+    ) { return 10 }
+    if !exists("target/app-data-file-persistence-smoke/model.data") { return 11 }
+
+    let expected_revision: UInt64 = revision()
+    if !save_atomic_durable_if_revision(
+        "target/app-data-file-persistence-smoke/guarded.tmp",
+        "target/app-data-file-persistence-smoke/guarded.data",
+        "target/app-data-file-persistence-smoke",
+        snapshot,
+        expected_revision,
+    ) { return 12 }
+    if !exists("target/app-data-file-persistence-smoke/guarded.data") { return 13 }
+    if !set_int("selected", 8i64) { return 14 }
+    if save_atomic_durable_if_revision(
+        "target/app-data-file-persistence-smoke/guarded.tmp",
+        "target/app-data-file-persistence-smoke/guarded.data",
+        "target/app-data-file-persistence-smoke",
+        snapshot,
+        expected_revision,
+    ) { return 15 }
+    if !exists("target/app-data-file-persistence-smoke/guarded.data") { return 16 }
+    let current_revision: UInt64 = revision()
+    if !save_atomic_durable_if_revision(
+        "target/app-data-file-persistence-smoke/guarded.tmp",
+        "target/app-data-file-persistence-smoke/guarded.data",
+        "target/app-data-file-persistence-smoke",
+        snapshot,
+        current_revision,
+    ) { return 17 }
+
+    let guarded_load_revision: UInt64 = revision()
+    if !set_int("selected", 9i64) { return 18 }
+    if load_file_if_revision(
+        "target/app-data-file-persistence-smoke/guarded.data",
+        snapshot,
+        guarded_load_revision,
+    ) { return 19 }
+    if get_int("selected") != 9i64 { return 20 }
+    let current_load_revision: UInt64 = revision()
+    if !load_file_if_revision(
+        "target/app-data-file-persistence-smoke/guarded.data",
+        snapshot,
+        current_load_revision,
+    ) { return 21 }
+    if get_int("selected") != 8i64 { return 22 }
+
+    clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    if !load_file(
+        "target/app-data-file-persistence-smoke/model.data",
+        snapshot,
+    ) { return 23 }
+    if get_int("selected") != 7i64 { return 24 }
+    if count(0) != 2 { return 25 }
+    var cell: [UInt8; 5] = [0u8, 0u8, 0u8, 0u8, 0u8]
+    if read_cell(0, 0, 0, cell) != 5usize { return 26 }
+    if cell[0] != 66u8 { return 27 }
+
+    clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    if !load_file(
+        "target/app-data-file-persistence-smoke/guarded.data",
+        snapshot,
+    ) { return 28 }
+    if get_int("selected") != 8i64 { return 29 }
+    if count(0) != 2 { return 30 }
+
+    snapshot[0] = 0u8
+    if load_exact(snapshot, expected_length) { return 31 }
+    if get_int("selected") != 8i64 { return 32 }
+    if count(0) != 2 { return 33 }
+
+    clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    if !delete("target/app-data-file-persistence-smoke/model.data") { return 34 }
+    if !delete("target/app-data-file-persistence-smoke/guarded.data") { return 35 }
+    if exists("target/app-data-file-persistence-smoke/model.data") { return 36 }
+    if exists("target/app-data-file-persistence-smoke/guarded.data") { return 37 }
+    return 0
+}

@@ -1,0 +1,100 @@
+module ui_app_collection_remove_project.main
+
+import jadren.app.state.clear
+import jadren.app.state.set_text
+import jadren.app.data.revision
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.panel
+import jadren.app.ui.list
+import jadren.app.ui.list_item
+import jadren.app.ui.list_index
+import jadren.app.ui.list_set_index
+import jadren.app.ui.list_count
+import jadren.app.ui.list_remove_item
+import jadren.app.ui.list_remove_item_if_revision
+import jadren.app.ui.list_read_item_exact_if_revision
+import jadren.app.ui.table
+import jadren.app.ui.table_column
+import jadren.app.ui.table_cell
+import jadren.app.ui.table_selected_row
+import jadren.app.ui.table_set_selected_row
+import jadren.app.ui.table_row_count
+import jadren.app.ui.table_remove_row
+import jadren.app.ui.table_remove_row_if_revision
+import jadren.app.ui.table_read_cell_exact_if_revision
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear()
+    if !set_text("revision_seed", "ready") { return 1 }
+
+    let root: Int32 = begin("Retained collection removals", 640, 420, 0xF6F8FCu32)
+    if root == 0 { return 2 }
+    let panel_node: Int32 = panel(root, 580, 320, 0xFFFFFFu32, 12, 12, 8, 0, 1)
+    if panel_node == 0 { return 3 }
+    let list_node: Int32 = list(panel_node, 61, 320, 96, 0x111827u32, 0xFFFFFFu32, 8, 1)
+    if list_node == 0 { return 4 }
+    if !list_item(list_node, "First") { return 5 }
+    if !list_item(list_node, "Second") { return 6 }
+    if !list_item(list_node, "Third") { return 7 }
+    if !list_set_index(list_node, 2) { return 8 }
+
+    let table_node: Int32 = table(panel_node, 62, 520, 140, 0x111827u32, 0xFFFFFFu32, 8, 1)
+    if table_node == 0 { return 9 }
+    if !table_column(table_node, 0, "Name", 240) { return 10 }
+    if !table_column(table_node, 1, "State", 180) { return 11 }
+    if !table_cell(table_node, 0, 0, "First") { return 12 }
+    if !table_cell(table_node, 0, 1, "Open") { return 13 }
+    if !table_cell(table_node, 1, 0, "Second") { return 14 }
+    if !table_cell(table_node, 1, 1, "Ready") { return 15 }
+    if !table_cell(table_node, 2, 0, "Third") { return 16 }
+    if !table_cell(table_node, 2, 1, "Done") { return 17 }
+    if !table_set_selected_row(table_node, 2) { return 18 }
+
+    let current: UInt64 = revision()
+    if !list_remove_item_if_revision(list_node, 0, current) { return 19 }
+    if list_count(list_node) != 2 { return 20 }
+    if list_index(list_node) != 1 { return 21 }
+    if !table_remove_row_if_revision(table_node, 0, current) { return 22 }
+    if table_row_count(table_node) != 2 { return 23 }
+    if table_selected_row(table_node) != 1 { return 24 }
+
+    var bytes: [UInt8; 32] = [90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8, 90u8,
+        90u8, 90u8, 90u8, 90u8, 90u8, 90u8]
+    var length: [UIntSize; 1] = [77usize]
+    if !list_read_item_exact_if_revision(list_node, 0, bytes, length, current) { return 25 }
+    if length[0] != 6usize { return 26 }
+    if bytes[0] != 83u8 { return 27 }
+    if bytes[5] != 100u8 { return 28 }
+    length[0] = 78usize
+    if !table_read_cell_exact_if_revision(table_node, 0, 0, bytes, length, current) { return 29 }
+    if length[0] != 6usize { return 30 }
+    if bytes[0] != 83u8 { return 31 }
+    if bytes[5] != 100u8 { return 32 }
+
+    let stale: UInt64 = revision()
+    if !set_text("revision_seed", "changed") { return 33 }
+    if list_remove_item_if_revision(list_node, 0, stale) { return 34 }
+    if table_remove_row_if_revision(table_node, 0, stale) { return 35 }
+    if list_count(list_node) != 2 { return 36 }
+    if table_row_count(table_node) != 2 { return 37 }
+
+    if !list_remove_item(list_node, 1) { return 38 }
+    if !table_remove_row(table_node, 1) { return 39 }
+    if list_count(list_node) != 1 { return 40 }
+    if table_row_count(table_node) != 1 { return 41 }
+    if list_remove_item(list_node, 4) { return 42 }
+    if table_remove_row(table_node, 4) { return 43 }
+
+    if !finish(panel_node) { return 44 }
+    if !finish(root) { return 45 }
+    clear()
+    return 0
+}

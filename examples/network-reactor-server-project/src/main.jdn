@@ -12,7 +12,7 @@ import jadren.network.reactor.event_socket
 import jadren.network.reactor.open
 import jadren.network.reactor.poll
 import jadren.network.reactor.submit_accept
-import jadren.network.reactor.submit_receive_buffer
+import jadren.network.reactor.submit_receive_buffer_into
 import jadren.network.router.add
 import jadren.network.router.clear
 import jadren.network.tcp.close_socket
@@ -110,53 +110,56 @@ fn main() -> Int32 {
         close_socket(listener)
         return 19
     }
-    var pending_buffer:[UInt8;
-    4] =[0u8,
-    0u8,
-    0u8,
-    0u8]
-    let pending_receive = submit_receive_buffer(reactor,
-    pending_server,
-    pending_buffer,
-    301usize)
-    if pending_receive == 0usize {
-        close_socket(pending_server)
-        close_socket(pending_client)
-        close(reactor)
-        close_socket(listener)
-        return 20
+    var pending_status: Int32 = 0
+    let pending_created: Result<Buffer<UInt8>, Int32> = buffer_create(4usize)
+    match pending_created {
+        Error(error) => { pending_status = error }
+        Ok(pending_buffer) => {
+            if ! buffer_resize(pending_buffer,
+            4usize) {
+                pending_status = 21
+            }
+            if pending_status == 0 {
+                let pending_receive = submit_receive_buffer_into(reactor,
+                pending_server,
+                pending_buffer,
+                301usize)
+                if pending_receive == 0usize {
+                    pending_status = 22
+                }
+                if pending_status == 0 {
+                    if ! cancel(reactor,
+                    pending_receive) {
+                        pending_status = 23
+                    }
+                }
+                if pending_status == 0 {
+                    if poll(reactor,
+                    1000u32) == 0u32 {
+                        pending_status = 24
+                    }
+                }
+                if pending_status == 0 {
+                    if event_operation(reactor,
+                    0u32) != pending_receive {
+                        pending_status = 25
+                    }
+                }
+                if pending_status == 0 {
+                    if event_flags(reactor,
+                    0u32) != 32u32 {
+                        pending_status = 26
+                    }
+                }
+            }
+        }
     }
-    if ! cancel(reactor,
-    pending_receive) {
+    if pending_status != 0 {
         close_socket(pending_server)
         close_socket(pending_client)
         close(reactor)
         close_socket(listener)
-        return 21
-    }
-    if poll(reactor,
-    1000u32) == 0u32 {
-        close_socket(pending_server)
-        close_socket(pending_client)
-        close(reactor)
-        close_socket(listener)
-        return 22
-    }
-    if event_operation(reactor,
-    0u32) != pending_receive {
-        close_socket(pending_server)
-        close_socket(pending_client)
-        close(reactor)
-        close_socket(listener)
-        return 23
-    }
-    if event_flags(reactor,
-    0u32) != 32u32 {
-        close_socket(pending_server)
-        close_socket(pending_client)
-        close(reactor)
-        close_socket(listener)
-        return 24
+        return pending_status
     }
     if event_bytes(reactor,
     0u32) != 0usize {
@@ -199,6 +202,6 @@ fn main() -> Int32 {
     ) == 0usize {
         return 32
     }
-    print("bounded reactor server handled two connections and one cancellation")
+    print("bounded reactor server handled two connections and one dynamic-buffer cancellation")
     return 0
 }

@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "d02a6d9bd9596e50"
+
+[package]
+name = "generic-buffer-is-sorted-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-core"
+requirement = ""
+source = "path:../../stdlib/core"

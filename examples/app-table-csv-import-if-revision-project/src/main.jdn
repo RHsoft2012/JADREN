@@ -1,0 +1,54 @@
+module app_table_csv_import_if_revision.main
+
+import jadren.app.data.revision
+import jadren.app.table.clear
+import jadren.app.table.find_text
+import jadren.app.table.import_csv_if_revision
+import jadren.app.table.read_named_int
+import jadren.app.table.row_count
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+import jadren.app.table.set_named_int
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_table_clear(0)
+    if !set_column_name(0, 0, "task_id") { return 1 }
+    if !set_column_name(0, 1, "title") { return 2 }
+    if !set_column_type(0, 0, 1) { return 3 }
+    if !set_column_type(0, 1, 0) { return 4 }
+    if !set_named_int(0, 0, "task_id", 7 as Int64) { return 5 }
+
+    var csv: [UInt8; 32] = [
+        116u8, 97u8, 115u8, 107u8, 95u8, 105u8, 100u8, 44u8,
+        116u8, 105u8, 116u8, 108u8, 101u8, 10u8, 49u8, 44u8,
+        34u8, 65u8, 44u8, 66u8, 34u8, 10u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+
+    let stale_revision: UInt64 = revision()
+    if !set_named_int(0, 0, "task_id", 9 as Int64) { return 6 }
+    if import_csv_if_revision(0, csv, 22usize, stale_revision) { return 7 }
+    if read_named_int(0, 0, "task_id") != (9 as Int64) { return 8 }
+
+    let current_revision: UInt64 = revision()
+    if !import_csv_if_revision(0, csv, 22usize, current_revision) { return 9 }
+    if row_count(0) != 1 { return 10 }
+    if read_named_int(0, 0, "task_id") != (1 as Int64) { return 11 }
+    if find_text(0, 1, "A,B", 0) != 0 { return 12 }
+
+    var malformed: [UInt8; 20] = [
+        116u8, 97u8, 115u8, 107u8, 95u8, 105u8, 100u8, 44u8,
+        116u8, 105u8, 116u8, 108u8, 101u8, 10u8, 111u8, 111u8,
+        112u8, 115u8, 44u8, 120u8
+    ]
+    let malformed_revision: UInt64 = revision()
+    if import_csv_if_revision(0, malformed, 20usize, malformed_revision) { return 13 }
+    if row_count(0) != 1 { return 14 }
+    if read_named_int(0, 0, "task_id") != (1 as Int64) { return 15 }
+    return 0
+}

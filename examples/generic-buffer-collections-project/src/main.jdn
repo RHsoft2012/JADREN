@@ -1,0 +1,252 @@
+module generic_buffer_collections.main
+import jadren.core.collections.append
+import jadren.core.collections.append_status
+import jadren.core.collections.append_grow
+import jadren.core.collections.append_grow_status
+import jadren.core.collections.capacity
+import jadren.core.collections.clear
+import jadren.core.collections.clear_status
+import jadren.core.collections.clear_move
+import jadren.core.collections.create
+import jadren.core.collections.length
+import jadren.core.collections.insert
+import jadren.core.collections.insert_status
+import jadren.core.collections.is_empty
+import jadren.core.collections.last_index
+import jadren.core.collections.resize
+import jadren.core.collections.resize_status
+import jadren.core.collections.reserve
+import jadren.core.collections.resize_move
+import jadren.core.collections.resize_move_status
+import jadren.core.collections.remove_copy
+import jadren.core.collections.remove_copy_status
+import jadren.core.collections.pop_copy
+import jadren.core.collections.pop_copy_status
+fn main() -> Int32 {
+    let outer_created: Result<DynamicArray<Buffer<Int32>>,
+    Int32> = create(0usize)
+    let first_created: Result<Buffer<Int32>,
+    Int32> = create(0usize)
+    let second_created: Result<Buffer<Int32>,
+    Int32> = create(0usize)
+    var result_code: Int32 = 0
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            if !is_empty(first) {
+                                result_code = 1
+                            }
+                            match last_index(first) {
+                                Error(status) => {
+                                    if status != -20 { result_code = 2 }
+                                }
+                                Ok(_) => { result_code = 3 }
+                            }
+                            if ! append(first,
+                            11) {
+                                result_code = 4
+                            }
+                            if append_status(first,
+                            22) != 0 {
+                                result_code = 5
+                            }
+                            if length(first) != 2usize {
+                                result_code = 6
+                            }
+                            if is_empty(first) {
+                                result_code = 7
+                            }
+                            match last_index(first) {
+                                Ok(last) => {
+                                    if last != 1usize { result_code = 8 }
+                                }
+                                Error(_) => { result_code = 9 }
+                            }
+                            if first[0] != 11 {
+                                result_code = 6
+                            }
+                            if first[1] != 22 {
+                                result_code = 6
+                            }
+                            if ! insert(first,
+                            1usize,
+                            15) {
+                                result_code = 10
+                            }
+                            if length(first) != 3usize {
+                                result_code = 11
+                            }
+                            if first[0] != 11 {
+                                result_code = 11
+                            }
+                            if first[1] != 15 {
+                                result_code = 11
+                            }
+                            if first[2] != 22 {
+                                result_code = 11
+                            }
+                            if insert_status(first,
+                            99usize,
+                            44) != -20 {
+                                result_code = 12
+                            }
+                            if length(first) != 3usize {
+                                result_code = 12
+                            }
+                            if ! remove_copy(first,
+                            1usize) {
+                                result_code = 28
+                            }
+                            if length(first) != 2usize {
+                                result_code = 29
+                            }
+                            if first[0] != 11 {
+                                result_code = 29
+                            }
+                            if first[1] != 22 {
+                                result_code = 29
+                            }
+                            if remove_copy_status(first,
+                            99usize) != -20 {
+                                result_code = 30
+                            }
+                            if length(first) != 2usize {
+                                result_code = 30
+                            }
+                            if ! pop_copy(first) {
+                                result_code = 31
+                            }
+                            if length(first) != 1usize {
+                                result_code = 31
+                            }
+                            if first[0] != 11 {
+                                result_code = 31
+                            }
+                            if pop_copy_status(first) != 0 {
+                                result_code = 32
+                            }
+                            if length(first) != 0usize {
+                                result_code = 32
+                            }
+                            if !is_empty(first) {
+                                result_code = 33
+                            }
+                            match last_index(first) {
+                                Error(status) => {
+                                    if status != -20 { result_code = 34 }
+                                }
+                                Ok(_) => { result_code = 35 }
+                            }
+                            if pop_copy_status(first) != -20 {
+                                result_code = 36
+                            }
+                            if ! reserve(first,
+                            4usize) {
+                                result_code = 7
+                            }
+                            if ! resize(first,
+                            4usize) {
+                            result_code = 8
+                            }
+                            if length(first) != 4usize {
+                                result_code = 9
+                            }
+                            first[3] = 0
+                            if first[3] != 0 {
+                                result_code = 10
+                            }
+                            if resize_status(first,
+                            2usize) != 0 {
+                                result_code = 11
+                            }
+                            if ! clear(first) {
+                                result_code = 12
+                            }
+                            if clear_status(first) != 0 {
+                                result_code = 13
+                            }
+                            if length(first) != 0usize {
+                                result_code = 14
+                            }
+                            if ! append(first,
+                            11) {
+                                result_code = 15
+                            }
+                            if append_status(first,
+                            22) != 0 {
+                                result_code = 16
+                            }
+                            if ! append(outer,
+                            first) {
+                                result_code = 17
+                            }
+                            if !append_grow(second,
+                            33) {
+                                result_code = 18
+                            }
+                            if append_grow_status(second,
+                            44) != 0 {
+                                result_code = 19
+                            }
+                            if length(second) != 2usize {
+                                result_code = 19
+                            }
+                            if append_status(outer,
+                            second) != 0 {
+                                result_code = 20
+                            }
+                            if length(outer) != 2usize {
+                                result_code = 21
+                            }
+                            if outer[0][1] != 22 {
+                                result_code = 21
+                            }
+                            if outer[1][0] != 33 {
+                                result_code = 21
+                            }
+                            if capacity(outer) < 2usize {
+                                result_code = 22
+                            }
+                            if resize_move_status(outer,
+                            3usize) != 0 {
+                                result_code = 23
+                            }
+                            if length(outer) != 3usize {
+                                result_code = 24
+                            }
+                            if ! resize_move(outer,
+                            1usize) {
+                                result_code = 25
+                            }
+                            if length(outer) != 1usize {
+                                result_code = 26
+                            }
+                            if outer[0][0] != 11 {
+                                result_code = 26
+                            }
+                            if ! clear_move(outer) {
+                                result_code = 27
+                            }
+                            if length(outer) != 0usize {
+                                result_code = 28
+                            }
+                        }
+                        Error(status) => {
+                            result_code = status
+                        }
+                    }
+                }
+                Error(status) => {
+                    result_code = status
+                }
+            }
+        }
+        Error(status) => {
+            result_code = status
+        }
+    }
+    return result_code
+}

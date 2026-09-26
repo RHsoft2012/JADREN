@@ -1,0 +1,114 @@
+module network_auth_tls_buffer_client_project.main
+
+import jadren.app.fs.write_text
+import jadren.network.client_tls.close_session
+import jadren.network.client_tls.open
+import jadren.network.client_tls.request_exact_header_buffer
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn run(
+    body: write Buffer<UInt8>,
+    request: write Buffer<UInt8>,
+    response: write Buffer<UInt8>,
+    output: write Buffer<UInt8>,
+) -> Int32 {
+    if !buffer_resize(body, 1usize) { return 1 }
+    if !buffer_resize(request, 512usize) { return 2 }
+    if !buffer_resize(response, 512usize) { return 3 }
+    if !buffer_resize(output, 32usize) { return 4 }
+    var response_length: [UIntSize; 1] = [0usize]
+    var body_length: [UIntSize; 1] = [0usize]
+    let tls: UIntSize = open(
+        "localhost",
+        "localhost",
+        38164u16,
+        5000u32,
+        16u32,
+        false,
+    )
+    if tls == 0usize { return 5 }
+    let unauthorized: Int32 = request_exact_header_buffer(
+        tls,
+        "localhost",
+        "GET",
+        "/private",
+        "Authorization",
+        "Bearer wrong",
+        body,
+        0usize,
+        1u32,
+        request,
+        512usize,
+        response,
+        512usize,
+        response_length,
+        output,
+        32usize,
+        body_length,
+    )
+    if unauthorized != 401i32 { close_session(tls); return 6 }
+    if body_length[0] != 12usize { close_session(tls); return 6 }
+    if output[0] != 85u8 { close_session(tls); return 7 }
+    if output[11] != 100u8 { close_session(tls); return 7 }
+    let authorized: Int32 = request_exact_header_buffer(
+        tls,
+        "localhost",
+        "GET",
+        "/private",
+        "Authorization",
+        "Bearer abc123",
+        body,
+        0usize,
+        0u32,
+        request,
+        512usize,
+        response,
+        512usize,
+        response_length,
+        output,
+        32usize,
+        body_length,
+    )
+    if authorized != 200i32 { close_session(tls); return 8 }
+    if body_length[0] != 2usize { close_session(tls); return 8 }
+    if output[0] != 79u8 { close_session(tls); return 9 }
+    if output[1] != 75u8 { close_session(tls); return 9 }
+    if !close_session(tls) { return 10 }
+    if write_text(
+        "target/jadren/network-auth-tls-buffer-client.result",
+        "tls-auth-buffer:401,200 same_tls:true exact:true\n",
+    ) == 0usize { return 11 }
+    return 0
+}
+
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    let body_created: Result<Buffer<UInt8>, Int32> = buffer_create(1usize)
+    match body_created {
+        Ok(body) => {
+            let request_created: Result<Buffer<UInt8>, Int32> = buffer_create(512usize)
+            match request_created {
+                Ok(request) => {
+                    let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(512usize)
+                    match response_created {
+                        Ok(response) => {
+                            let output_created: Result<Buffer<UInt8>, Int32> = buffer_create(32usize)
+                            match output_created {
+                                Ok(output) => { status = run(body, request, response, output) }
+                                Error(error) => { status = error }
+                            }
+                        }
+                        Error(error) => { status = error }
+                    }
+                }
+                Error(error) => { status = error }
+            }
+        }
+        Error(error) => { status = error }
+    }
+    return status
+}

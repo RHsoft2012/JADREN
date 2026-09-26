@@ -1,0 +1,93 @@
+module app_state_add_float.main
+// Floating-point deltas are finite, bounded and revision-guarded. The
+// operation is useful for rates, durations and ratios while keeping the
+// state store process-local and caller-owned.
+fn main() -> Int32 {
+    app_state_clear()
+    if ! app_state_add_float("ratio",
+    1.25f64) {
+        return 1
+    }
+    if app_state_get_float("ratio") != 1.25f64 {
+        return 2
+    }
+    if ! app_state_add_float("ratio",
+    0.75f64) {
+        return 3
+    }
+    if app_state_get_float("ratio") != 2.0f64 {
+        return 4
+    }
+    let snapshot: UInt64 = app_state_revision()
+    if ! app_state_add_float_if_revision("ratio",
+    0.5f64,
+    snapshot) {
+        return 5
+    }
+    if app_state_get_float("ratio") != 2.5f64 {
+        return 6
+    }
+    let current: UInt64 = app_state_revision()
+    if app_state_add_float_if_revision("ratio",
+    1.0f64,
+    snapshot) {
+        return 7
+    }
+    if app_state_get_float("ratio") != 2.5f64 {
+        return 8
+    }
+    if app_state_revision() != current {
+        return 9
+    }
+    if ! app_state_set_int("wrong_kind",
+    1i64) {
+        return 10
+    }
+    let mismatch_revision: UInt64 = app_state_revision()
+    if app_state_add_float_if_revision("wrong_kind",
+    1.0f64,
+    mismatch_revision) {
+        return 11
+    }
+    if app_state_revision() != mismatch_revision {
+        return 12
+    }
+    if ! app_state_set_float("overflow",
+    1e13f64) {
+        return 13
+    }
+    let overflow_revision: UInt64 = app_state_revision()
+    if app_state_add_float("overflow",
+    1e308f64) {
+        return 14
+    }
+    if app_state_add_float_if_revision("overflow",
+    1e308f64,
+    overflow_revision) {
+        return 15
+    }
+    if app_state_get_float("overflow") != 1e13f64 {
+        return 16
+    }
+    if app_state_revision() != overflow_revision {
+        return 17
+    }
+    let invalid_revision: UInt64 = app_state_revision()
+    if app_state_add_float("invalid",
+    1.0f64 / 0.0f64) {
+        return 18
+    }
+    if app_state_revision() != invalid_revision {
+        return 19
+    }
+    var output:[Float64;
+    1] =[0.0f64]
+    if ! app_state_read_float("ratio",
+    output) {
+        return 20
+    }
+    if output[0] != 2.5f64 {
+        return 21
+    }
+    return 0
+}

@@ -1,0 +1,15 @@
+module selfhost.typed_statement_assignment_float64_same_module_two_arg_binary_call_sequence;
+
+// JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS
+// Both argument positions carry bounded binary expressions. The helper is a
+// same-module Internal definition, so the source driver must remap the call
+// and preserve each argument expression during lowering.
+fn local_value() -> Float64 {
+    let first: Float64 = helper(1.5f64 + 2.5f64, 3.0f64 * 2.0f64);
+    first = helper(first + 1.0f64, 2.0f64 * first);
+    return helper(first * 2.0f64, first + 3.0f64);
+}
+
+fn helper(left: Float64, right: Float64) -> Float64 {
+    return left + right;
+}

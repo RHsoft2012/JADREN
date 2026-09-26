@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "c6b9f8dc8fda9ac9"
+
+[package]
+name = "network-health-probe-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

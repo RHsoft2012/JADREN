@@ -2,7 +2,7 @@ module windows_desktop_portable_tooltip.main
 
 // Retained hover help is declared next to the event control. Windows uses its
 // native tooltip controller; Linux/X11 paints the same bounded hint above the
-// hovered button without creating a second child window.
+// hovered retained control without creating a second child window.
 @export(name: "jadren_ui_on_click", abi: "C")
 pub fn on_click(event_id: Int32) -> Int32 {
     if event_id == 1 {
@@ -11,13 +11,25 @@ pub fn on_click(event_id: Int32) -> Int32 {
     if event_id == 2 {
         ui_set_status("Checkbox changed.")
     }
+    if event_id == 3 {
+        ui_set_status("Text input changed.")
+    }
+    if event_id == 4 {
+        ui_set_status("Selection changed.")
+    }
+    if event_id == 5 {
+        ui_set_status("List selection changed.")
+    }
+    if event_id == 6 {
+        ui_set_status("Table selection changed.")
+    }
     return event_id
 }
 
 fn main() -> Int32 {
-    let root: Int32 = ui_app_begin("Jadren Portable Tooltip", 720, 420, 0xF6F8FCu32)
+    let root: Int32 = ui_app_begin("Jadren Portable Tooltip", 720, 680, 0xF6F8FCu32)
     if root == 0 { return 1 }
-    let panel: Int32 = ui_app_panel(root, 640, 260, 0xFFFFFFu32, 16, 12, 8, 0, 1)
+    let panel: Int32 = ui_app_panel(root, 640, 580, 0xFFFFFFu32, 16, 12, 8, 0, 1)
     if panel == 0 { return 2 }
     let title: Int32 = ui_app_label(panel, "Hover a control for help.", 560, 36,
                                      0x111827u32, 0xFFFFFFu32, 8, 1)
@@ -32,13 +44,45 @@ fn main() -> Int32 {
     let checkbox_tip: Bool = ui_app_tooltip(checkbox,
                                             "Toggles the optional feature.",
                                             260, 42, 0xFFFFFFu32, 0x252526u32, 8)
-    if title == 0 { return 3 }
-    if status == 0 { return 3 }
-    if run == 0 { return 3 }
-    if checkbox == 0 { return 3 }
-    if !run_tip { return 4 }
-    if !checkbox_tip { return 4 }
-    if !ui_app_end(panel) { return 5 }
-    if !ui_app_end(root) { return 6 }
+    let input: Int32 = ui_app_text_input(panel, "Type a value", 3, 560, 38,
+                                         0x111827u32, 0xFFFFFFu32, 8, 0)
+    let input_tip: Bool = ui_app_tooltip(input, "Edits a caller-owned text value.",
+                                         260, 42, 0xFFFFFFu32, 0x252526u32, 8)
+    let select: Int32 = ui_app_select(panel, 4, 560, 38,
+                                      0x111827u32, 0xFFFFFFu32, 8, 0)
+    if !ui_app_select_option(select, "First option") { return 3 }
+    if !ui_app_select_option(select, "Second option") { return 3 }
+    let select_tip: Bool = ui_app_tooltip(select, "Opens a retained dropdown.",
+                                          260, 42, 0xFFFFFFu32, 0x252526u32, 8)
+    let list: Int32 = ui_app_list(panel, 5, 560, 82,
+                                  0x111827u32, 0xFFFFFFu32, 8, 0)
+    if !ui_app_list_item(list, "First item") { return 3 }
+    if !ui_app_list_item(list, "Second item") { return 3 }
+    let list_tip: Bool = ui_app_tooltip(list, "Selects one retained list item.",
+                                        260, 42, 0xFFFFFFu32, 0x252526u32, 8)
+    let table: Int32 = ui_app_table(panel, 6, 560, 110,
+                                    0x111827u32, 0xFFFFFFu32, 8, 0)
+    if !ui_app_table_column(table, 0, "Name", 260) { return 3 }
+    if !ui_app_table_column(table, 1, "State", 260) { return 3 }
+    if !ui_app_table_cell(table, 0, 0, "Example") { return 3 }
+    if !ui_app_table_cell(table, 0, 1, "Ready") { return 3 }
+    let table_tip: Bool = ui_app_tooltip(table, "Selects a retained table row.",
+                                         260, 42, 0xFFFFFFu32, 0x252526u32, 8)
+    if title == 0 { return 4 }
+    if status == 0 { return 4 }
+    if run == 0 { return 4 }
+    if checkbox == 0 { return 4 }
+    if input == 0 { return 4 }
+    if select == 0 { return 4 }
+    if list == 0 { return 4 }
+    if table == 0 { return 4 }
+    if !run_tip { return 5 }
+    if !checkbox_tip { return 5 }
+    if !input_tip { return 5 }
+    if !select_tip { return 5 }
+    if !list_tip { return 5 }
+    if !table_tip { return 5 }
+    if !ui_app_end(panel) { return 6 }
+    if !ui_app_end(root) { return 7 }
     return ui_app_run()
 }

@@ -1,0 +1,14 @@
+module examples.native_linux_file_runtime_prefix_only
+
+// Linux must link the file runtime when this is the only imported runtime symbol.
+fn main() -> Int32 {
+    var destination: [UInt8; 2] = [0u8, 0u8]
+    let source: [UInt8; 2] = [65u8, 66u8]
+    let written: UIntSize = string_builder_append_bytes_prefix(
+        source, 2usize, destination, 0usize
+    )
+    if written != 2usize { return 1 }
+    if destination[0] != 65u8 { return 2 }
+    if destination[1] != 66u8 { return 3 }
+    return 0
+}

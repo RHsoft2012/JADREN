@@ -1,0 +1,66 @@
+module examples.stdlib_buffer_nested_owned_string_reserve
+
+// Generic reserve must preserve every owning descriptor when both the inner
+// and outer buffers grow. The inner buffers are moved into the outer owner;
+// after outer reallocation the text payloads must remain valid for clear_move.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<OwnedString>>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            if !buffer_reserve(outer, 3usize) { result_code = 1 }
+            match first_created {
+                Ok(first) => {
+                    if !buffer_reserve(first, 2usize) { result_code = 2 }
+                    let one: Result<OwnedString, Int32> = string_owned_from("first")
+                    match one {
+                        Ok(text) => {
+                            if !buffer_append(first, text) { result_code = 3 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                    let two: Result<OwnedString, Int32> = string_owned_from("inner")
+                    match two {
+                        Ok(text) => {
+                            if !buffer_append(first, text) { result_code = 4 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                    if !buffer_append(outer, first) { result_code = 5 }
+                }
+                Error(status) => { result_code = status }
+            }
+            match second_created {
+                Ok(second) => {
+                    if !buffer_reserve(second, 1usize) { result_code = 6 }
+                    let three: Result<OwnedString, Int32> = string_owned_from("second")
+                    match three {
+                        Ok(text) => {
+                            if !buffer_append(second, text) { result_code = 7 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                    if !buffer_append(outer, second) { result_code = 8 }
+                }
+                Error(status) => { result_code = status }
+            }
+            if buffer_length(outer) != 2usize { result_code = 9 }
+            if buffer_capacity(outer) < 3usize { result_code = 10 }
+            if string_owned_length(outer[0][0]) != 5usize { result_code = 11 }
+            if string_owned_length(outer[0][1]) != 5usize { result_code = 12 }
+            if string_owned_length(outer[1][0]) != 6usize { result_code = 13 }
+            if !buffer_reserve(outer, 6usize) { result_code = 14 }
+            if buffer_capacity(outer) < 6usize { result_code = 15 }
+            if string_owned_length(outer[0][0]) != 5usize { result_code = 16 }
+            if string_owned_length(outer[0][1]) != 5usize { result_code = 17 }
+            if string_owned_length(outer[1][0]) != 6usize { result_code = 18 }
+            if !buffer_clear_move(outer) { result_code = 19 }
+            if buffer_length(outer) != 0usize { result_code = 20 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

@@ -1,0 +1,90 @@
+module examples.stdlib_buffer_owning_enum_record_payload_move_into
+
+// Caller-owned move/pop must transfer the complete named enum value when a
+// variant carries an owning C-layout record (including a fixed record array).
+// The output starts with a non-owning Empty variant and is cleaned at scope
+// exit through the same bounded enum field table as the source buffer.
+@repr(C)
+struct Detail {
+    id: Int32,
+    values: Buffer<Int32>
+}
+
+@repr(C)
+enum Payload {
+    Empty,
+    Detail(Detail),
+    Pair([Detail; 2]),
+    Done
+}
+
+@repr(C)
+struct Entry {
+    id: Int32,
+    payload: Payload
+}
+
+fn main() -> Int32 {
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let third_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let fourth_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match entries_created {
+        Ok(entries) => {
+            match first_created {
+                Ok(first) => {
+                    if !buffer_append(first, 11) { result_code = 1 }
+                    let direct: Detail = Detail { id: 1, values: first }
+                    let first_item: Entry = Entry { id: 1, payload: Payload.Detail(direct) }
+                    if !buffer_append(entries, first_item) { result_code = 2 }
+
+                    match second_created {
+                        Ok(second) => {
+                            match third_created {
+                                Ok(third) => {
+                                    match fourth_created {
+                                        Ok(fourth) => {
+                                            if !buffer_append(second, 22) { result_code = 3 }
+                                            if !buffer_append(third, 33) { result_code = 4 }
+                                            if !buffer_append(fourth, 44) { result_code = 5 }
+                                            let left: Detail = Detail { id: 2, values: second }
+                                            let right: Detail = Detail { id: 3, values: third }
+                                            let spare: Detail = Detail { id: 4, values: fourth }
+                                            let pair: [Detail; 2] = [left, right]
+                                            let second_item: Entry = Entry { id: 2, payload: Payload.Pair(pair) }
+                                            if !buffer_append(entries, second_item) { result_code = 6 }
+
+                                            var moved_direct: Entry = Entry { id: 0, payload: Payload.Empty }
+                                            if !buffer_remove_move_into(entries, 0usize, moved_direct) { result_code = 7 }
+                                            if moved_direct.id != 1 { result_code = 8 }
+                                            if buffer_length(entries) != 1usize { result_code = 9 }
+                                            let invalid_remove: Int32 = buffer_remove_move_into_status(entries, 99usize, moved_direct)
+                                            if invalid_remove != -20 { result_code = 10 }
+
+                                            var moved_pair: Entry = Entry { id: 0, payload: Payload.Empty }
+                                            if !buffer_pop_move_into(entries, moved_pair) { result_code = 11 }
+                                            if moved_pair.id != 2 { result_code = 12 }
+                                            if buffer_length(entries) != 0usize { result_code = 13 }
+                                            let invalid_pop: Int32 = buffer_pop_move_into_status(entries, moved_pair)
+                                            if invalid_pop != -20 { result_code = 14 }
+                                            if spare.id != 4 { result_code = 15 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

@@ -1,0 +1,28 @@
+module examples.http_request_target_decode_exact
+
+// Percent-encoded request targets are decoded only after complete validation.
+// The exact API distinguishes malformed input and short output without a
+// partial write, while allowing ordinary mobile/browser asset URLs.
+fn main() -> Int32 {
+    var request: [UInt8; 66] = [71u8, 69u8, 84u8, 32u8, 47u8, 100u8, 111u8, 99u8, 115u8, 37u8, 50u8, 70u8, 103u8, 101u8, 116u8, 116u8, 105u8, 110u8, 103u8, 45u8, 115u8, 116u8, 97u8, 114u8, 116u8, 101u8, 100u8, 46u8, 104u8, 116u8, 109u8, 108u8, 63u8, 120u8, 61u8, 49u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 13u8, 10u8]
+    var output: [UInt8; 32] = [77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8]
+    var length: [UIntSize; 1] = [99usize]
+    if !http_request_target_decode_exact(request, output, length) { return 1 }
+    if length[0] != 30usize { return 2 }
+    if output[0] != 47u8 { return 3 }
+    if output[5] != 47u8 { return 3 }
+    if output[6] != 103u8 { return 3 }
+    if output[9] != 116u8 { return 3 }
+    if output[29] != 49u8 { return 4 }
+
+    var too_small: [UInt8; 4] = [55u8, 55u8, 55u8, 55u8]
+    var unchanged: [UIntSize; 1] = [123usize]
+    if http_request_target_decode_exact(request, too_small, unchanged) { return 5 }
+    if too_small[0] != 55u8 { return 6 }
+    if unchanged[0] != 123usize { return 6 }
+
+    var malformed: [UInt8; 42] = [71u8, 69u8, 84u8, 32u8, 47u8, 100u8, 111u8, 99u8, 115u8, 37u8, 90u8, 90u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 13u8, 10u8]
+    if http_request_target_decode_exact(malformed, output, unchanged) { return 7 }
+    if unchanged[0] != 123usize { return 8 }
+    return 0
+}

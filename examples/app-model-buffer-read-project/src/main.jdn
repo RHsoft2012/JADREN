@@ -1,0 +1,106 @@
+module app_model_buffer_read_project.main
+
+import jadren.app.list.clear
+import jadren.app.list.count
+import jadren.app.list.push_bytes_buffer
+import jadren.app.list.read_text_exact_buffer
+import jadren.app.table.append_row
+import jadren.app.table.read_cell_exact_buffer
+import jadren.app.table.set_cell_bytes_buffer
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    app_table_clear(0)
+    let input_created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    let output_created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    var status: Int32 = 0
+    match input_created {
+        Error(error) => { status = error }
+        Ok(input) => {
+            match output_created {
+                Error(error) => { status = error }
+                Ok(output) => {
+                    if !buffer_resize(input, 16usize) { status = 1 }
+                    if status == 0 { if !buffer_resize(output, 16usize) { status = 2 } }
+                    if status == 0 {
+                        input[0] = 74u8
+                        input[1] = 97u8
+                        input[2] = 100u8
+                        input[3] = 114u8
+                        input[4] = 101u8
+                        input[5] = 110u8
+                        if !push_bytes_buffer(0, input, 6usize) { status = 3 }
+                    }
+                    if status == 0 { if count(0) != 1 { status = 4 } }
+                    if status == 0 { if !push_bytes_buffer(0, input, 0usize) { status = 5 } }
+                    if status == 0 { if count(0) != 2 { status = 6 } }
+
+                    if status == 0 {
+                        if !set_column_name(0, 0, "title") { status = 7 }
+                    }
+                    if status == 0 { if !set_column_type(0, 0, 0) { status = 8 } }
+                    if status == 0 { if !append_row(0) { status = 9 } }
+                    if status == 0 {
+                        if !set_cell_bytes_buffer(0, 0, 0, input, 6usize) { status = 10 }
+                    }
+
+                    var length: [UIntSize; 1] = [777usize]
+                    if status == 0 {
+                        if !read_text_exact_buffer(0, 0, output, 16usize, length) { status = 11 }
+                    }
+                    if status == 0 { if length[0] != 6usize { status = 12 } }
+                    if status == 0 { if output[0] != 74u8 { status = 13 } }
+                    if status == 0 { if output[5] != 110u8 { status = 14 } }
+
+                    if status == 0 {
+                        length[0] = 778usize
+                        if !read_text_exact_buffer(0, 1, output, 16usize, length) { status = 15 }
+                    }
+                    if status == 0 { if length[0] != 0usize { status = 16 } }
+
+                    if status == 0 {
+                        if !buffer_resize(output, 4usize) { status = 17 }
+                    }
+                    if status == 0 {
+                        output[0] = 201u8
+                        output[1] = 202u8
+                        output[2] = 203u8
+                        output[3] = 204u8
+                        length[0] = 779usize
+                        if read_text_exact_buffer(0, 0, output, 4usize, length) { status = 18 }
+                    }
+                    if status == 0 { if length[0] != 779usize { status = 19 } }
+                    if status == 0 { if output[0] != 201u8 { status = 20 } }
+                    if status == 0 { if output[3] != 204u8 { status = 21 } }
+
+                    if status == 0 {
+                        if !buffer_resize(output, 16usize) { status = 22 }
+                    }
+                    if status == 0 {
+                        length[0] = 780usize
+                        if !read_cell_exact_buffer(0, 0, 0, output, 16usize, length) { status = 23 }
+                    }
+                    if status == 0 { if length[0] != 6usize { status = 24 } }
+                    if status == 0 { if output[0] != 74u8 { status = 25 } }
+                    if status == 0 { if output[5] != 110u8 { status = 26 } }
+
+                    if status == 0 {
+                        length[0] = 781usize
+                        if read_cell_exact_buffer(0, 0, 0, output, 17usize, length) { status = 27 }
+                    }
+                    if status == 0 { if length[0] != 781usize { status = 28 } }
+                }
+            }
+        }
+    }
+    clear(0)
+    app_table_clear(0)
+    return status
+}

@@ -1,0 +1,105 @@
+module network_session_chunked_body_buffer_client_project.main
+
+import jadren.network.http.response_status_prefix
+import jadren.network.http.response_body_exact
+import jadren.network.http.response_body_chunked_exact
+import jadren.network.tcp.close_socket
+import jadren.network.tcp.connect_dns
+import jadren.network.tcp.receive
+import jadren.network.tcp.send_all_prefix
+import jadren.network.tcp.set_timeout
+
+fn response_ok(response: read Slice<UInt8>, received: UIntSize) -> Bool {
+    if response_status_prefix(response, received) != 200u16 { return false }
+    return true
+}
+
+fn response_ok_buffer(response: write Buffer<UInt8>, received: UIntSize) -> Bool {
+    return response_ok(buffer_slice(response, 0usize, received), received)
+}
+
+fn response_body_chunked_ok_buffer(response: write Buffer<UInt8>, received: UIntSize) -> Bool {
+    var body: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var body_length: [UIntSize; 1] = [0usize]
+    if !response_body_chunked_exact(
+        buffer_slice(response, 0usize, received),
+        body,
+        body_length,
+    ) { return false }
+    if body_length[0] != 4usize { return false }
+    if body[0usize] != 74u8 { return false }
+    if body[1usize] != 65u8 { return false }
+    if body[2usize] != 68u8 { return false }
+    if body[3usize] != 33u8 { return false }
+    return true
+}
+
+fn receive_response(socket: UIntSize, response: write Buffer<UInt8>, chunked: Bool) -> UIntSize {
+    var total: UIntSize = 0usize
+    var attempts: UIntSize = 0usize
+    var body: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var body_length: [UIntSize; 1] = [0usize]
+    while attempts < 8usize {
+        if total >= 256usize { return 0usize }
+        let received: UIntSize = receive(socket, buffer_slice_write(response, total, 256usize - total))
+        if received == 0usize { return 0usize }
+        total = total + received
+        if response_status_prefix(buffer_slice(response, 0usize, total), total) == 0u16 {
+            attempts = attempts + 1usize
+        } else if chunked {
+            if response_body_chunked_exact(buffer_slice(response, 0usize, total), body, body_length) { return total }
+            attempts = attempts + 1usize
+        } else {
+            if response_body_exact(buffer_slice(response, 0usize, total), body, body_length) { return total }
+            attempts = attempts + 1usize
+        }
+    }
+    return 0usize
+}
+
+fn run_exchange(
+    socket: UIntSize,
+    first_request: read Slice<UInt8>,
+    second_request: read Slice<UInt8>,
+    response: write Buffer<UInt8>,
+) -> Int32 {
+    if !buffer_resize(response, 256usize) { return 3 }
+    if send_all_prefix(socket, first_request, 106usize) != 106usize { return 4 }
+    let first_received: UIntSize = receive_response(socket, response, false)
+    if first_received == 0usize { return 5 }
+    if !response_ok_buffer(response, first_received) { return 6 }
+    if send_all_prefix(socket, second_request, 101usize) != 101usize { return 7 }
+    let second_received: UIntSize = receive_response(socket, response, true)
+    if second_received == 0usize { return 8 }
+    if !response_ok_buffer(response, second_received) { return 9 }
+    if !response_body_chunked_ok_buffer(response, second_received) { return 10 }
+    return 0
+}
+
+fn main() -> Int32 {
+    var first_request: [UInt8; 106] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 101u8, 99u8, 104u8, 111u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 84u8, 114u8, 97u8, 110u8, 115u8, 102u8, 101u8, 114u8, 45u8, 69u8, 110u8, 99u8, 111u8, 100u8, 105u8, 110u8, 103u8, 58u8, 32u8, 99u8, 104u8, 117u8, 110u8, 107u8, 101u8, 100u8, 13u8, 10u8, 67u8, 111u8, 110u8, 110u8, 101u8, 99u8, 116u8, 105u8, 111u8, 110u8, 58u8, 32u8, 107u8, 101u8, 101u8, 112u8, 45u8, 97u8, 108u8, 105u8, 118u8, 101u8, 13u8, 10u8, 13u8, 10u8, 52u8, 13u8, 10u8, 74u8, 68u8, 78u8, 33u8, 13u8, 10u8, 48u8, 13u8, 10u8, 13u8, 10u8]
+    var second_request: [UInt8; 101] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 101u8, 99u8, 104u8, 111u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 84u8, 114u8, 97u8, 110u8, 115u8, 102u8, 101u8, 114u8, 45u8, 69u8, 110u8, 99u8, 111u8, 100u8, 105u8, 110u8, 103u8, 58u8, 32u8, 99u8, 104u8, 117u8, 110u8, 107u8, 101u8, 100u8, 13u8, 10u8, 67u8, 111u8, 110u8, 110u8, 101u8, 99u8, 116u8, 105u8, 111u8, 110u8, 58u8, 32u8, 99u8, 108u8, 111u8, 115u8, 101u8, 13u8, 10u8, 13u8, 10u8, 52u8, 13u8, 10u8, 74u8, 65u8, 68u8, 33u8, 13u8, 10u8, 48u8, 13u8, 10u8, 13u8, 10u8]
+    var response: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let socket: UIntSize = connect_dns("localhost", 38165u16)
+    if socket == 0usize { return 1 }
+    if !set_timeout(socket, 5000u32) {
+        close_socket(socket)
+        return 2
+    }
+    let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(256usize)
+    var status: Int32 = 0
+    match response_created {
+        Ok(response_buffer) => { status = run_exchange(socket, first_request, second_request, response_buffer) }
+        Error(error) => { status = error }
+    }
+    if status != 0 {
+        close_socket(socket)
+        return status
+    }
+    if !close_socket(socket) { return 11 }
+    if file_write_text(
+        "target/jadren/network-session-chunked-body-buffer-client.result",
+        "session-chunked-body-buffer-client:2 same_connection:true response_chunked:true\n",
+    ) == 0usize { return 12 }
+    return 0
+}

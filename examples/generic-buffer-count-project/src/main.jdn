@@ -1,0 +1,65 @@
+module generic_buffer_count.main
+import jadren.core.collections.append
+import jadren.core.collections.count_buffer_i32
+import jadren.core.collections.create
+import jadren.core.collections.length
+fn main() -> Int32 {
+    let created: Result<Buffer<Int32>,
+    Int32> = create(4usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            if ! append(values,
+            7) {
+                result_code = 1
+            }
+            if ! append(values,
+            3) {
+                result_code = 2
+            }
+            if ! append(values,
+            7) {
+                result_code = 3
+            }
+            if ! append(values,
+            7) {
+                result_code = 4
+            }
+            if length(values) != 4usize {
+                result_code = 5
+            }
+            if count_buffer_i32(values,
+            7,
+            0usize) != 3usize {
+                result_code = 6
+            }
+            if count_buffer_i32(values,
+            7,
+            1usize) != 2usize {
+                result_code = 7
+            }
+            if count_buffer_i32(values,
+            7,
+            3usize) != 1usize {
+                result_code = 8
+            }
+            if count_buffer_i32(values,
+            7,
+            4usize) != 0usize {
+                result_code = 9
+            }
+            if count_buffer_i32(values,
+            99,
+            0usize) != 0usize {
+                result_code = 10
+            }
+            if length(values) != 4usize {
+                result_code = 11
+            }
+        }
+        Error(status) => {
+            result_code = status
+        }
+    }
+    return result_code
+}

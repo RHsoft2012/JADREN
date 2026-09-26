@@ -1380,6 +1380,18 @@ fn remap_instruction_operands(kind: &mut InstructionKind, values: &BTreeMap<Valu
             remap(descriptor, values);
             remap(index, values);
         }
+        InstructionKind::BufferRemoveDropNestedBuffer {
+            descriptor, index, ..
+        } => {
+            remap(descriptor, values);
+            remap(index, values);
+        }
+        InstructionKind::BufferRemoveDropNestedOwnedString {
+            descriptor, index, ..
+        } => {
+            remap(descriptor, values);
+            remap(index, values);
+        }
         InstructionKind::Load { pointer, .. } => remap(pointer, values),
         InstructionKind::Store { pointer, value, .. } => {
             remap(pointer, values);
@@ -1559,6 +1571,12 @@ fn instruction_operands(kind: &InstructionKind) -> Vec<ValueId> {
             descriptor, index, ..
         } => vec![*descriptor, *index],
         InstructionKind::BufferRemoveDropNestedRecordFields {
+            descriptor, index, ..
+        } => vec![*descriptor, *index],
+        InstructionKind::BufferRemoveDropNestedBuffer {
+            descriptor, index, ..
+        } => vec![*descriptor, *index],
+        InstructionKind::BufferRemoveDropNestedOwnedString {
             descriptor, index, ..
         } => vec![*descriptor, *index],
         InstructionKind::Load { pointer, .. } => vec![*pointer],

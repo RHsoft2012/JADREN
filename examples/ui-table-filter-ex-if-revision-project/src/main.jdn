@@ -1,0 +1,353 @@
+module ui_table_filter_ex_if_revision_project.main
+import jadren.app.data.revision
+import jadren.app.table.append_row
+import jadren.app.table.clear
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+import jadren.app.table.row_count
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.panel
+import jadren.app.ui.table
+import jadren.app.ui.table_bind
+import jadren.app.ui.table_column
+import jadren.app.ui.table_filter_text_ex
+import jadren.app.ui.table_filter_text_ex_if_revision
+import jadren.app.ui.table_filter_text_ex_if_model_revision
+import jadren.app.ui.table_read_cell_exact
+import jadren.app.ui.table_row_count
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear(0)
+    clear(1)
+    if ! set_column_type(0,
+    0,
+    0) {
+        return 1
+    }
+    if ! set_column_name(0,
+    0,
+    "Value") {
+        return 2
+    }
+    if ! append_row(0) {
+        return 3
+    }
+    if ! append_row(0) {
+        return 4
+    }
+    if ! append_row(0) {
+        return 5
+    }
+    if ! append_row(0) {
+        return 6
+    }
+    if ! set_cell(0,
+    0,
+    0,
+    "Alpha") {
+        return 7
+    }
+    if ! set_cell(0,
+    1,
+    0,
+    "Open ticket") {
+        return 8
+    }
+    if ! set_cell(0,
+    2,
+    0,
+    "Closed") {
+        return 9
+    }
+    if ! set_cell(0,
+    3,
+    0,
+    "Reopen") {
+        return 10
+    }
+    if ! set_column_type(1,
+    0,
+    0) {
+        return 11
+    }
+    if ! set_column_name(1,
+    0,
+    "Value") {
+        return 12
+    }
+    if ! append_row(1) {
+        return 13
+    }
+    if ! set_cell(1,
+    0,
+    0,
+    "Sentinel") {
+        return 14
+    }
+    let root: Int32 = begin("Jadren table mode filter",
+    720,
+    460,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 15
+    }
+    let panel_node: Int32 = panel(root,
+    660,
+    340,
+    0xFFFFFFu32,
+    16,
+    12,
+    8,
+    0,
+    1)
+    if panel_node == 0 {
+        return 16
+    }
+    let source_node: Int32 = table(panel_node,
+    30,
+    600,
+    120,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    let destination_node: Int32 = table(panel_node,
+    31,
+    600,
+    120,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    let mirror_node: Int32 = table(panel_node,
+    32,
+    600,
+    120,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if source_node == 0 {
+        return 17
+    }
+    if destination_node == 0 {
+        return 18
+    }
+    if mirror_node == 0 {
+        return 19
+    }
+    if ! table_column(source_node,
+    0,
+    "Value",
+    300) {
+        return 20
+    }
+    if ! table_column(destination_node,
+    0,
+    "Value",
+    300) {
+        return 21
+    }
+    if ! table_column(mirror_node,
+    0,
+    "Value",
+    300) {
+        return 22
+    }
+    if ! table_bind(source_node,
+    0,
+    1) {
+        return 23
+    }
+    if ! table_bind(destination_node,
+    1,
+    1) {
+        return 24
+    }
+    if ! table_bind(mirror_node,
+    1,
+    1) {
+        return 25
+    }
+    var output:[UInt8;
+    32] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8
+    ]
+    var length:[UIntSize;
+    1] =[99usize]
+    let stale: UInt64 = revision()
+    if ! set_cell(0,
+    0,
+    0,
+    "Alpha-open") {
+        return 26
+    }
+    if table_filter_text_ex_if_model_revision(source_node,
+    1,
+    0,
+    "open",
+    5,
+    stale) {
+        return 27
+    }
+    if row_count(1) != 1 {
+        return 28
+    }
+    if table_row_count(destination_node) != 1 {
+        return 29
+    }
+    if table_row_count(mirror_node) != 1 {
+        return 30
+    }
+    if ! table_read_cell_exact(destination_node,
+    0,
+    0,
+    output,
+    length) {
+        return 31
+    }
+    if length[0] != 8usize {
+        return 32
+    }
+    if output[0] != 83u8 {
+        return 33
+    }
+    let current: UInt64 = revision()
+    if ! table_filter_text_ex_if_model_revision(source_node,
+    1,
+    0,
+    "open",
+    5,
+    current) {
+        return 34
+    }
+    if row_count(1) != 3 {
+        return 35
+    }
+    if table_row_count(destination_node) != 3 {
+        return 36
+    }
+    if table_row_count(mirror_node) != 3 {
+        return 37
+    }
+    if ! table_read_cell_exact(destination_node,
+    0,
+    0,
+    output,
+    length) {
+        return 38
+    }
+    if length[0] != 10usize {
+        return 39
+    }
+    if output[0] != 65u8 {
+        return 40
+    }
+    if ! table_read_cell_exact(mirror_node,
+    2,
+    0,
+    output,
+    length) {
+        return 41
+    }
+    if length[0] != 6usize {
+        return 42
+    }
+    if output[0] != 82u8 {
+        return 43
+    }
+    if ! table_filter_text_ex(source_node,
+    1,
+    0,
+    "open",
+    7) {
+        return 44
+    }
+    if table_row_count(destination_node) != 2 {
+        return 45
+    }
+    if ! table_read_cell_exact(destination_node,
+    0,
+    0,
+    output,
+    length) {
+        return 46
+    }
+    if length[0] != 10usize {
+        return 47
+    }
+    if output[0] != 65u8 {
+        return 48
+    }
+    if ! table_read_cell_exact(destination_node,
+    1,
+    0,
+    output,
+    length) {
+        return 49
+    }
+    if length[0] != 6usize {
+        return 50
+    }
+    if output[0] != 82u8 {
+        return 51
+    }
+    if table_filter_text_ex_if_model_revision(source_node,
+    1,
+    0,
+    "open",
+    8,
+    revision()) {
+        return 52
+    }
+    if table_filter_text_ex_if_model_revision(source_node,
+    0,
+    0,
+    "open",
+    5,
+    revision()) {
+        return 53
+    }
+    if ! finish(panel_node) {
+        return 54
+    }
+    if ! finish(root) {
+        return 55
+    }
+    return 0
+}

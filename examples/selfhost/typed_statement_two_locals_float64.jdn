@@ -1,0 +1,9 @@
+module examples.selfhost.typed_statement_two_locals_float64
+
+// The source-driver Float64 slice keeps two immutable locals homogeneous and
+// forwards their typed AST directly to the Rust Stage-2 scalar lowerer.
+fn local_value() -> Float64 {
+    let first: Float64 = 1.5f64;
+    let next: Float64 = first + 2.5f64;
+    return next;
+}

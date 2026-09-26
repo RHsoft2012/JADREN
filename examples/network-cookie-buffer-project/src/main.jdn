@@ -1,0 +1,182 @@
+module examples.network_cookie_buffer_project
+
+import jadren.network.cookies.clear
+import jadren.network.cookies.put
+import jadren.network.cookies.snapshot_length
+import jadren.network.cookies.snapshot_load_exact_buffer
+import jadren.network.cookies.snapshot_write_exact_buffer
+
+fn check_loaded(input: write Buffer<UInt8>) -> Int32 {
+    var names: [UInt8; 16] = [17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8]
+    var values: [UInt8; 32] = [17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8]
+    var name_lengths: [UIntSize; 2] = [999usize, 999usize]
+    var value_lengths: [UIntSize; 2] = [999usize, 999usize]
+    var expires_at: [Int64; 2] = [999i64, 999i64]
+    var flags: [UInt32; 2] = [999u32, 999u32]
+    if !snapshot_load_exact_buffer(
+        input,
+        names,
+        16usize,
+        values,
+        32usize,
+        name_lengths,
+        2usize,
+        value_lengths,
+        2usize,
+        expires_at,
+        2usize,
+        flags,
+        2usize,
+        2usize,
+        8usize,
+        16usize,
+    ) { return 10 }
+    if names[0] != 115u8 { return 11 }
+    if names[2] != 100u8 { return 12 }
+    if values[0] != 120u8 { return 13 }
+    if values[2] != 122u8 { return 14 }
+    if name_lengths[0] != 3usize { return 15 }
+    if value_lengths[0] != 3usize { return 16 }
+    if expires_at[0] != 160i64 { return 17 }
+    if flags[0] != 1u32 { return 18 }
+    if names[8] != 116u8 { return 19 }
+    if values[16] != 100u8 { return 20 }
+    if name_lengths[1] != 5usize { return 21 }
+    if value_lengths[1] != 4usize { return 22 }
+
+    input[0] = 88u8
+    var malformed_names: [UInt8; 16] = [31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8]
+    var malformed_values: [UInt8; 32] = [31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8]
+    var malformed_name_lengths: [UIntSize; 2] = [313usize, 313usize]
+    var malformed_value_lengths: [UIntSize; 2] = [313usize, 313usize]
+    var malformed_expires_at: [Int64; 2] = [313i64, 313i64]
+    var malformed_flags: [UInt32; 2] = [313u32, 313u32]
+    if snapshot_load_exact_buffer(
+        input,
+        malformed_names,
+        16usize,
+        malformed_values,
+        32usize,
+        malformed_name_lengths,
+        2usize,
+        malformed_value_lengths,
+        2usize,
+        malformed_expires_at,
+        2usize,
+        malformed_flags,
+        2usize,
+        2usize,
+        8usize,
+        16usize,
+    ) { return 23 }
+    if malformed_names[0] != 31u8 { return 24 }
+    if malformed_values[0] != 31u8 { return 25 }
+    if malformed_name_lengths[0] != 313usize { return 26 }
+    if malformed_value_lengths[0] != 313usize { return 27 }
+    if malformed_expires_at[0] != 313i64 { return 28 }
+    if malformed_flags[0] != 313u32 { return 29 }
+    return 0
+}
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    let slot_count: UIntSize = 2usize
+    let name_width: UIntSize = 8usize
+    let value_width: UIntSize = 16usize
+    let expected_length: UIntSize = snapshot_length(slot_count, name_width, value_width)
+    if expected_length != 235usize { return 1 }
+
+    var names: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var values: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var name_lengths: [UIntSize; 2] = [0usize, 0usize]
+    var value_lengths: [UIntSize; 2] = [0usize, 0usize]
+    var expires_at: [Int64; 2] = [0i64, 0i64]
+    var flags: [UInt32; 2] = [0u32, 0u32]
+    if !clear(slot_count, name_width, value_width, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) { return 2 }
+
+    var sid_name: [UInt8; 3] = [115u8, 105u8, 100u8]
+    var sid_value: [UInt8; 3] = [120u8, 121u8, 122u8]
+    var theme_name: [UInt8; 5] = [116u8, 104u8, 101u8, 109u8, 101u8]
+    var theme_value: [UInt8; 4] = [100u8, 97u8, 114u8, 107u8]
+    if put(sid_name, 3usize, 3usize, sid_value, 3usize, 3usize, 160i64, 1u32, slot_count, name_width, value_width, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) != 0 { return 3 }
+    if put(theme_name, 5usize, 5usize, theme_value, 4usize, 4usize, 0i64, 0u32, slot_count, name_width, value_width, names, 16usize, values, 32usize, name_lengths, 2usize, value_lengths, 2usize, expires_at, 2usize, flags, 2usize) != 1 { return 4 }
+
+    var status: Int32 = 0i32
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(expected_length)
+    match created {
+        Error(error) => { status = error }
+        Ok(snapshot) => {
+            if status == 0 {
+                if !buffer_resize(snapshot, expected_length) { status = 5 }
+            }
+            var output_length: [UIntSize; 1] = [777usize]
+            if status == 0 {
+                if !snapshot_write_exact_buffer(
+                    names,
+                    16usize,
+                    values,
+                    32usize,
+                    name_lengths,
+                    2usize,
+                    value_lengths,
+                    2usize,
+                    expires_at,
+                    2usize,
+                    flags,
+                    2usize,
+                    slot_count,
+                    name_width,
+                    value_width,
+                    snapshot,
+                    output_length,
+                ) { status = 6 }
+            }
+            if status == 0 {
+                if output_length[0] != expected_length { status = 7 }
+            }
+            if status == 0 {
+                let loaded_status: Int32 = check_loaded(snapshot)
+                if loaded_status != 0 { status = loaded_status }
+            }
+        }
+    }
+    if status != 0 { return status }
+
+    let short_created: Result<Buffer<UInt8>, Int32> = buffer_create(expected_length - 1usize)
+    match short_created {
+        Error(error) => { status = error }
+        Ok(short) => {
+            if status == 0 {
+                if !buffer_resize(short, expected_length - 1usize) { status = 30 }
+            }
+            var short_length: [UIntSize; 1] = [888usize]
+            if status == 0 {
+                if snapshot_write_exact_buffer(
+                    names,
+                    16usize,
+                    values,
+                    32usize,
+                    name_lengths,
+                    2usize,
+                    value_lengths,
+                    2usize,
+                    expires_at,
+                    2usize,
+                    flags,
+                    2usize,
+                    slot_count,
+                    name_width,
+                    value_width,
+                    short,
+                    short_length,
+                ) { status = 31 }
+            }
+            if short_length[0] != 888usize { status = 32 }
+        }
+    }
+    return status
+}

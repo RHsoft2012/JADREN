@@ -1,0 +1,79 @@
+module examples.windows_desktop_retained_app_state_exact
+
+// Retained node-id exact binding/refresh keeps the model authoritative while
+// preserving each native projection when a later typed read fails.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    if !app_state_set_text("name", "Model") { return 1 }
+    if !app_state_set_bool("enabled", true) { return 2 }
+    if !app_state_set_int("choice", 1 as Int64) { return 3 }
+    if !app_state_set_int("list_choice", 1 as Int64) { return 4 }
+    if !app_state_set_int("table_choice", 1 as Int64) { return 5 }
+
+    let root: Int32 = ui_app_begin("Retained exact state", 720, 620, 0xF6F8FCu32)
+    if root == 0 { return 6 }
+    let panel: Int32 = ui_app_panel(root, 640, 540, 0xFFFFFFu32, 12, 12, 8, 0, 1)
+    if panel == 0 { return 7 }
+    let input: Int32 = ui_app_text_input(panel, "Placeholder", 10, 560, 36,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    let checkbox: Int32 = ui_app_checkbox(panel, "Enabled", 20, 560, 36,
+        0x111827u32, 0x18C964u32, 8, 0, 0)
+    let select: Int32 = ui_app_select(panel, 30, 560, 36,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if input == 0 { return 8 }
+    if checkbox == 0 { return 8 }
+    if select == 0 { return 8 }
+    if !ui_app_select_option(select, "First") { return 9 }
+    if !ui_app_select_option(select, "Second") { return 10 }
+    let list: Int32 = ui_app_list(panel, 40, 560, 92,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if list == 0 { return 11 }
+    if !ui_app_list_item(list, "First") { return 12 }
+    if !ui_app_list_item(list, "Second") { return 13 }
+    let table: Int32 = ui_app_table(panel, 50, 560, 120,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if table == 0 { return 14 }
+    if !ui_app_table_column(table, 0, "Name", 240) { return 15 }
+    if !ui_app_table_cell(table, 0, 0, "First") { return 16 }
+    if !ui_app_table_cell(table, 1, 0, "Second") { return 17 }
+
+    if !ui_app_bind_app_state_exact(input, "name") { return 18 }
+    if !ui_app_bind_app_state_exact(checkbox, "enabled") { return 19 }
+    if !ui_app_bind_app_state_exact(select, "choice") { return 20 }
+    if !ui_app_bind_app_state_exact(list, "list_choice") { return 21 }
+    if !ui_app_bind_app_state_exact(table, "table_choice") { return 22 }
+    if ui_input_length(10) != 5usize { return 23 }
+    if ui_checked(20) != 1 { return 24 }
+    if ui_app_select_index(select) != 1 { return 25 }
+    if ui_app_list_index(list) != 1 { return 26 }
+    if ui_app_table_selected_row(table) != 1 { return 27 }
+
+    // A failed exact bind must not replace the existing input binding.
+    if !app_state_set_int("bad_name", 7 as Int64) { return 28 }
+    if ui_app_bind_app_state_exact(input, "bad_name") { return 29 }
+    if !ui_app_refresh_app_state_exact(input) { return 30 }
+    if ui_input_length(10) != 5usize { return 31 }
+
+    // Wrong kind and invalid indexes must preserve all retained projections.
+    if !app_state_set_int("enabled", 7 as Int64) { return 32 }
+    if ui_app_refresh_app_state_exact(checkbox) { return 33 }
+    if ui_checked(20) != 1 { return 34 }
+    if !app_state_set_int("choice", 99 as Int64) { return 35 }
+    if ui_app_refresh_app_state_exact(select) { return 36 }
+    if ui_app_select_index(select) != 1 { return 37 }
+    if !app_state_set_int("list_choice", 99 as Int64) { return 38 }
+    if ui_app_refresh_app_state_exact(list) { return 39 }
+    if ui_app_list_index(list) != 1 { return 40 }
+    if !app_state_set_int("table_choice", 99 as Int64) { return 41 }
+    if ui_app_refresh_app_state_exact(table) { return 42 }
+    if ui_app_table_selected_row(table) != 1 { return 43 }
+
+    if !ui_app_end(panel) { return 44 }
+    if !ui_app_end(root) { return 45 }
+    return 0
+}

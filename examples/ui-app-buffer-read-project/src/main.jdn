@@ -1,0 +1,401 @@
+module ui_app_buffer_read_project.main
+import jadren.app.state.clear
+import jadren.app.state.set_int
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.input_read_exact_buffer
+import jadren.app.ui.input_read_exact_buffer_if_revision
+import jadren.app.ui.input_read_exact_buffer_if_model_revision
+import jadren.app.ui.list
+import jadren.app.ui.list_item
+import jadren.app.ui.list_read_item_exact_buffer
+import jadren.app.ui.list_read_item_exact_buffer_if_revision
+import jadren.app.ui.list_read_item_exact_buffer_if_model_revision
+import jadren.app.ui.panel
+import jadren.app.ui.table
+import jadren.app.ui.table_cell
+import jadren.app.ui.table_column
+import jadren.app.ui.table_read_cell_exact_buffer
+import jadren.app.ui.table_read_cell_exact_buffer_if_revision
+import jadren.app.ui.table_read_cell_exact_buffer_if_model_revision
+import jadren.app.ui.text_input
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear()
+    let root: Int32 = begin("Jadren Buffer read",
+    720,
+    460,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 1
+    }
+    let panel_node: Int32 = panel(root,
+    660,
+    340,
+    0xFFFFFFu32,
+    16,
+    12,
+    8,
+    0,
+    1)
+    if panel_node == 0 {
+        return 2
+    }
+    let input_node: Int32 = text_input(panel_node,
+    "Hello",
+    41,
+    280,
+    38,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if input_node == 0 {
+        return 3
+    }
+    let list_node: Int32 = list(panel_node,
+    42,
+    280,
+    100,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if list_node == 0 {
+        return 4
+    }
+    if ! list_item(list_node,
+    "Alpha") {
+        return 5
+    }
+    if ! list_item(list_node,
+    "Beta") {
+        return 6
+    }
+    let table_node: Int32 = table(panel_node,
+    43,
+    560,
+    160,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if table_node == 0 {
+        return 7
+    }
+    if ! table_column(table_node,
+    0,
+    "State",
+    240) {
+        return 8
+    }
+    if ! table_cell(table_node,
+    0,
+    0,
+    "Done") {
+        return 9
+    }
+    var status: Int32 = 0
+    let output_created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(32usize)
+    match output_created {
+        Error(error) => {
+            status = error
+        }
+        Ok(output) => {
+            var length:[UIntSize;
+            1] =[777usize]
+            if status == 0 {
+                if ! input_read_exact_buffer(input_node,
+                output,
+                32usize,
+                length) {
+                    status = 10
+                }
+            }
+            if status == 0 {
+                if length[0] != 5usize {
+                    status = 11
+                }
+            }
+            if status == 0 {
+                if output[0] != 72u8 {
+                    status = 12
+                }
+            }
+            if status == 0 {
+                if output[4] != 111u8 {
+                    status = 12
+                }
+            }
+            length[0] = 777usize
+            if status == 0 {
+                if ! list_read_item_exact_buffer(list_node,
+                1,
+                output,
+                32usize,
+                length) {
+                    status = 13
+                }
+            }
+            if status == 0 {
+                if length[0] != 4usize {
+                    status = 14
+                }
+            }
+            if status == 0 {
+                if output[0] != 66u8 {
+                    status = 15
+                }
+            }
+            if status == 0 {
+                if output[3] != 97u8 {
+                    status = 15
+                }
+            }
+            length[0] = 777usize
+            if status == 0 {
+                if ! table_read_cell_exact_buffer(table_node,
+                0,
+                0,
+                output,
+                32usize,
+                length) {
+                    status = 16
+                }
+            }
+            if status == 0 {
+                if length[0] != 4usize {
+                    status = 17
+                }
+            }
+            if status == 0 {
+                if output[0] != 68u8 {
+                    status = 18
+                }
+            }
+            if status == 0 {
+                if output[3] != 101u8 {
+                    status = 18
+                }
+            }
+            // Complete-model aliases preserve the dynamic Buffer contract on
+            // the current snapshot before the stale-token checks below.
+            let current_model: UInt64 = app_data_revision()
+            length[0] = 779usize
+            if status == 0 {
+                if ! list_read_item_exact_buffer_if_model_revision(list_node,
+                1,
+                output,
+                32usize,
+                length,
+                current_model) {
+                    status = 59
+                }
+            }
+            if status == 0 {
+                if length[0] != 4usize {
+                    status = 60
+                }
+            }
+            length[0] = 780usize
+            if status == 0 {
+                if ! table_read_cell_exact_buffer_if_model_revision(table_node,
+                0,
+                0,
+                output,
+                32usize,
+                length,
+                current_model) {
+                    status = 61
+                }
+            }
+            if status == 0 {
+                if length[0] != 4usize {
+                    status = 62
+                }
+            }
+            // UI Buffer reads reject a capacity beyond the current logical
+            // Buffer extent without touching the prefix or length output.
+            output[0] = 89u8
+            length[0] = 501usize
+            if status == 0 {
+                if input_read_exact_buffer(input_node,
+                output,
+                33usize,
+                length) {
+                    status = 50
+                }
+            }
+            if status == 0 {
+                if output[0] != 89u8 {
+                    status = 51
+                }
+            }
+            if status == 0 {
+                if length[0] != 501usize {
+                    status = 52
+                }
+            }
+            if status == 0 {
+                if list_read_item_exact_buffer(list_node,
+                1,
+                output,
+                33usize,
+                length) {
+                    status = 53
+                }
+            }
+            if status == 0 {
+                if output[0] != 89u8 {
+                    status = 54
+                }
+            }
+            if status == 0 {
+                if length[0] != 501usize {
+                    status = 55
+                }
+            }
+            if status == 0 {
+                if table_read_cell_exact_buffer(table_node,
+                0,
+                0,
+                output,
+                33usize,
+                length) {
+                    status = 56
+                }
+            }
+            if status == 0 {
+                if output[0] != 89u8 {
+                    status = 57
+                }
+            }
+            if status == 0 {
+                if length[0] != 501usize {
+                    status = 58
+                }
+            }
+            // A revision change rejects all three dynamic-Buffer reads before
+            // touching either the Buffer prefix or the length output.
+            output[0] = 90u8
+            length[0] = 778usize
+            let stale: UInt64 = app_data_revision()
+            if status == 0 {
+                if ! set_int("probe",
+                1i64) {
+                    status = 19
+                }
+            }
+            if status == 0 {
+                if input_read_exact_buffer_if_model_revision(input_node,
+                output,
+                32usize,
+                length,
+                stale) {
+                    status = 20
+                }
+            }
+            if status == 0 {
+                if output[0] != 90u8 {
+                    status = 21
+                }
+            }
+            if status == 0 {
+                if length[0] != 778usize {
+                    status = 21
+                }
+            }
+            if status == 0 {
+                if list_read_item_exact_buffer_if_model_revision(list_node,
+                1,
+                output,
+                32usize,
+                length,
+                stale) {
+                    status = 22
+                }
+            }
+            if status == 0 {
+                if output[0] != 90u8 {
+                    status = 23
+                }
+            }
+            if status == 0 {
+                if length[0] != 778usize {
+                    status = 23
+                }
+            }
+            if status == 0 {
+                if table_read_cell_exact_buffer_if_model_revision(table_node,
+                0,
+                0,
+                output,
+                32usize,
+                length,
+                stale) {
+                    status = 24
+                }
+            }
+            if status == 0 {
+                if output[0] != 90u8 {
+                    status = 25
+                }
+            }
+            if status == 0 {
+                if length[0] != 778usize {
+                    status = 25
+                }
+            }
+            // Explicitly smaller capacity must not partially write output.
+            let short_created: Result<Buffer<UInt8>,
+            Int32> = buffer_create(2usize)
+            match short_created {
+                Error(error) => {
+                    if status == 0 {
+                        status = error
+                    }
+                }
+                Ok(short) => {
+                    if status == 0 {
+                        short[0] = 91u8
+                        short[1] = 92u8
+                        length[0] = 779usize
+                        if input_read_exact_buffer(input_node,
+                        short,
+                        2usize,
+                        length) {
+                            status = 26
+                        }
+                    }
+                    if status == 0 {
+                        if short[0] != 91u8 {
+                            status = 27
+                        }
+                    }
+                    if status == 0 {
+                        if short[1] != 92u8 {
+                            status = 27
+                        }
+                    }
+                    if status == 0 {
+                        if length[0] != 779usize {
+                            status = 27
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if ! finish(panel_node) {
+        return 28
+    }
+    if ! finish(root) {
+        return 29
+    }
+    clear()
+    return status
+}

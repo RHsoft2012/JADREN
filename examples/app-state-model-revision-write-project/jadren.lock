@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "a83d16fc60de242d"
+
+[package]
+name = "app-state-model-revision-write-project"
+version = "0.1.3"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

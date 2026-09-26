@@ -1,0 +1,117 @@
+module generic_buffer_remove_move.main
+import jadren.core.collections.length
+import jadren.core.collections.pop_move_into_status
+import jadren.core.collections.remove_move_into_status
+@repr(C)
+struct Row<T> {
+    id: Int32,
+    value: T
+}
+fn main() -> Int32 {
+    let rows_created: Result<DynamicArray<Row<Buffer<Int32>>>,
+    Int32> = buffer_create(0usize)
+    let first_values_created: Result<Buffer<Int32>,
+    Int32> = buffer_create(0usize)
+    let second_values_created: Result<Buffer<Int32>,
+    Int32> = buffer_create(0usize)
+    let output_values_created: Result<Buffer<Int32>,
+    Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match rows_created {
+        Ok(rows) => {
+            match first_values_created {
+                Ok(first) => {
+                    match second_values_created {
+                        Ok(second) => {
+                            match output_values_created {
+                                Ok(output_values) => {
+                                    if ! buffer_append(first,
+                                    11) {
+                                        result_code = 1
+                                    }
+                                    if ! buffer_append(second,
+                                    22) {
+                                        result_code = 2
+                                    }
+                                    let first_row: Row<Buffer<Int32>> = Row {
+                                        id: 1,
+                                        value: first
+                                    }
+                                    let second_row: Row<Buffer<Int32>> = Row {
+                                        id: 2,
+                                        value: second
+                                    }
+                                    if ! buffer_append(rows,
+                                    first_row) {
+                                        result_code = 3
+                                    }
+                                    if ! buffer_append(rows,
+                                    second_row) {
+                                        result_code = 4
+                                    }
+                                    let output: Row<Buffer<Int32>> = Row {
+                                        id: 0,
+                                        value: output_values
+                                    }
+                                    let remove_status: Int32 = remove_move_into_status(rows,
+                                    0usize,
+                                    output)
+                                    if remove_status != 0 {
+                                        result_code = remove_status
+                                    }
+                                    if output.id != 1 {
+                                        result_code = 5
+                                    }
+                                    if output.value[0] != 11 {
+                                        result_code = 6
+                                    }
+                                    if ! buffer_clear(output.value) {
+                                        result_code = 7
+                                    }
+                                    if length(rows) != 1usize {
+                                        result_code = 8
+                                    }
+                                    let pop_status: Int32 = pop_move_into_status(rows,
+                                    output)
+                                    if pop_status != 0 {
+                                        result_code = pop_status
+                                    }
+                                    if output.id != 2 {
+                                        result_code = 9
+                                    }
+                                    if output.value[0] != 22 {
+                                        result_code = 10
+                                    }
+                                    if ! buffer_clear(output.value) {
+                                        result_code = 11
+                                    }
+                                    if length(rows) != 0usize {
+                                        result_code = 12
+                                    }
+                                    let empty_status: Int32 = pop_move_into_status(rows,
+                                    output)
+                                    if empty_status != - 20 {
+                                        result_code = 13
+                                    }
+                                }
+                                Error(status) => {
+                                    result_code = status
+                                }
+                            }
+                        }
+                        Error(status) => {
+                            result_code = status
+                        }
+                    }
+                }
+                Error(status) => {
+                    result_code = status
+                }
+            }
+        }
+        Error(status) => {
+            result_code = status
+        }
+    }
+    return result_code
+}

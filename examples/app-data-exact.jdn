@@ -82,30 +82,48 @@ fn main() -> Int32 {
         0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
         0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
     ]
+        let expected_revision: UInt64 = app_data_revision()
+        let stale_revision: UInt64 = expected_revision + 1u64
+        let guarded_snapshot_length: UIntSize = app_data_snapshot_length_if_revision(expected_revision)
+        if guarded_snapshot_length == 0usize { return 8 }
+        if app_data_snapshot_length_if_revision(stale_revision) != 0usize { return 9 }
+        if app_data_revision() != expected_revision { return 10 }
+        let planned_snapshot_length: UIntSize = app_data_snapshot_length()
+        if planned_snapshot_length != guarded_snapshot_length { return 11 }
+        if planned_snapshot_length > 1024usize { return 11 }
         var snapshot_length: [UIntSize; 1] = [777usize]
-        if !app_data_write_exact(snapshot, snapshot_length) { return 8 }
-        if snapshot_length[0] < 20usize { return 9 }
-        if snapshot[0] != 74u8 { return 10 }
-        if snapshot[1] != 65u8 { return 10 }
+        if !app_data_write_exact_if_revision(snapshot, snapshot_length, expected_revision) { return 12 }
+        if snapshot_length[0] != guarded_snapshot_length { return 13 }
+        if snapshot_length[0] < 20usize { return 14 }
+        if snapshot[0] != 74u8 { return 15 }
+        if snapshot[1] != 65u8 { return 15 }
+
+        // A one-byte output proves the sizing query is useful and that the
+        // existing no-partial-write contract remains intact.
+        var short_output: [UInt8; 1] = [91u8]
+        var short_length: [UIntSize; 1] = [333usize]
+        if app_data_write_exact(short_output, short_length) { return 24 }
+        if short_output[0] != 91u8 { return 25 }
+        if short_length[0] != 333usize { return 25 }
 
         // Clear the live model and restore it from memory without a file.
         app_state_clear()
         app_list_clear(0)
         app_table_clear(0)
-        if !app_data_load_exact(snapshot, snapshot_length[0]) { return 11 }
-        if app_state_get_int("selected") != 7 as Int64 { return 12 }
-        if app_list_count(0) != 2 { return 13 }
-        if app_table_row_count(0) != 1 { return 14 }
+        if !app_data_load_exact(snapshot, snapshot_length[0]) { return 16 }
+        if app_state_get_int("selected") != 7 as Int64 { return 17 }
+        if app_list_count(0) != 2 { return 18 }
+        if app_table_row_count(0) != 1 { return 19 }
 
         var cell: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
-        if app_table_read_cell(0, 0, 0, cell) != 5usize { return 15 }
-        if cell[0] != 66u8 { return 16 }
+        if app_table_read_cell(0, 0, 0, cell) != 5usize { return 20 }
+        if cell[0] != 66u8 { return 21 }
 
         // A truncated prefix is rejected atomically and cannot erase state.
-        if app_data_load_exact(snapshot, snapshot_length[0] - 1usize) { return 17 }
-        if app_state_get_int("selected") != 7 as Int64 { return 18 }
-        if app_list_count(0) != 2 { return 19 }
-        if app_table_row_count(0) != 1 { return 20 }
+        if app_data_load_exact(snapshot, snapshot_length[0] - 1usize) { return 22 }
+        if app_state_get_int("selected") != 7 as Int64 { return 23 }
+        if app_list_count(0) != 2 { return 26 }
+        if app_table_row_count(0) != 1 { return 27 }
     return 0
 }

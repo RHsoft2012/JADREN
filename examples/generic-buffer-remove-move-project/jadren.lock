@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "4cdffa1b84260eba"
+
+[package]
+name = "generic-buffer-remove-move-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-core"
+requirement = ""
+source = "path:../../stdlib/core"

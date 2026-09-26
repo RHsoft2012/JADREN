@@ -1,0 +1,19 @@
+module generic_buffer_equatable_owning_fill.main
+
+import jadren.core.collections.fill
+
+fn fill_equatable<T: Equatable>(values: write Buffer<T>, value: T) -> Bool {
+    return fill(values, value)
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            if fill_equatable(values, "rejected") { result_code = 1 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

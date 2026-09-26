@@ -1,0 +1,27 @@
+module examples.dynamic_array
+
+// DynamicArray<T> is the source-level growable collection spelling.  It uses
+// the same owning Buffer<T> descriptor and bounded mutation ABI, so existing
+// append/insert/resize/index/clear operations work without a second runtime.
+fn main() -> Int32 {
+    let created: Result<DynamicArray<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match created {
+        Ok(values) => {
+            if !buffer_append(values, 7) { result_code = 1 }
+            if !buffer_insert(values, 0usize, 3) { result_code = 2 }
+            if buffer_length(values) != 2usize { result_code = 3 }
+            if values[0] != 3 { result_code = 4 }
+            if values[1] != 7 { result_code = 5 }
+            if !buffer_reserve(values, 4usize) { result_code = 6 }
+            if !buffer_resize(values, 4usize) { result_code = 7 }
+            if buffer_capacity(values) < 4usize { result_code = 8 }
+            if !buffer_remove(values, 0usize) { result_code = 9 }
+            if !buffer_clear(values) { result_code = 10 }
+            if buffer_length(values) != 0usize { result_code = 11 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

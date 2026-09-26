@@ -12,8 +12,9 @@ use jadren_codegen_llvm::{
 #[cfg(windows)]
 use jadren_codegen_llvm::{WindowsLinkOptions, link_windows_executable};
 use jadren_selfhost_api::{
-    ExpressionAstArgumentHeader, TYPE_KIND_INTEGER, TypedCallBindingHeader,
-    TypedExpressionAstNodeHeader, TypedNameBindingHeader,
+    ExpressionAstArgumentHeader, STAGE2_TYPED_CALL_MAX_ARGUMENTS, TYPE_KIND_FLOAT,
+    TYPE_KIND_INTEGER, TypedCallBindingHeader, TypedExpressionAstNodeHeader,
+    TypedNameBindingHeader,
 };
 use jadren_selfhost_stage2::{
     TypedLocalFunctionDefinition, decode_stage2_capture, decode_typed_if_return_capture,
@@ -26,6 +27,7 @@ use jadren_selfhost_stage2::{
     lower_typed_nested_while_local, lower_typed_nested_while_local_with_conditional_control,
     lower_typed_nested_while_local_with_conditional_controls,
     lower_typed_nested_while_local_with_ordered_inner_body, lower_typed_statement_sequence,
+    lower_typed_statement_sequence_with_calls, lower_typed_while_float_local_with_statements,
     lower_typed_while_local, lower_typed_while_local_with_statements,
     materialize_typed_local_function_definitions,
 };
@@ -83,7 +85,7 @@ fn dynamic_while_call_argument_nodes(
             cursor += 1;
             continue;
         }
-        if argument_start.is_none() {
+        if argument_start.is_none() && byte != b')' {
             argument_start = Some(cursor);
         }
         match byte {
@@ -184,6 +186,8 @@ fn dynamic_while_call_argument_nodes(
 fn dynamic_while_call_metadata(
     source: &str,
     ast: &[TypedExpressionAstNodeHeader],
+    return_type_kind: u8,
+    allow_zero_argument: bool,
 ) -> Result<
     (
         Vec<TypedCallBindingHeader>,
@@ -197,8 +201,17 @@ fn dynamic_while_call_metadata(
         if call.syntax_kind != 5 {
             continue;
         }
-        if call.aux == 0 || call.aux > 2 {
-            return Err("dynamic while call currently requires one or two arguments".to_owned());
+        let maximum_arguments = STAGE2_TYPED_CALL_MAX_ARGUMENTS;
+        if call.aux > maximum_arguments || (call.aux == 0 && !allow_zero_argument) {
+            return Err(if allow_zero_argument {
+                format!(
+                    "typed statement call currently requires zero through {maximum_arguments} arguments"
+                )
+            } else {
+                format!(
+                    "dynamic while call currently requires one through {maximum_arguments} arguments"
+                )
+            });
         }
         let callee_index = usize::try_from(call.left)
             .map_err(|_| "dynamic while call callee index is not representable".to_owned())?;
@@ -226,8 +239,7 @@ fn dynamic_while_call_metadata(
                 _ => false,
             }
         }) {
-            if existing.parameter_count != call.aux
-                || existing.return_type_kind != TYPE_KIND_INTEGER
+            if existing.parameter_count != call.aux || existing.return_type_kind != return_type_kind
             {
                 return Err(
                     "dynamic while call reuses a signature name with incompatible metadata"
@@ -239,7 +251,7 @@ fn dynamic_while_call_metadata(
                 name_start: callee.start,
                 name_end: callee.end,
                 parameter_count: call.aux,
-                return_type_kind: TYPE_KIND_INTEGER,
+                return_type_kind,
             });
         }
         let argument_nodes = dynamic_while_call_argument_nodes(source, ast, call_index, call)?;
@@ -289,139 +301,186 @@ fn dynamic_while_call_metadata(
 
 /// Parses the deliberately small same-module definition slice used by the
 /// dynamic typed-call proof.  The producer already owns the full source; this
-/// host-side parser only admits `fn name(Int32 params...) -> Int32 { return
-/// <Int32 expression>; }` bodies and emits the same caller-owned post-order
-/// AST shape consumed by Stage-2.  It is intentionally not a replacement for
-/// the Jadren parser and rejects unsupported function bodies loudly.
+/// host-side parser only admits `fn name(Int32|Float64 params...) ->
+/// Int32|Float64 { return <scalar expression>; }` bodies and emits the same
+/// caller-owned post-order AST shape consumed by Stage-2. Definitions reached
+/// from a body call are discovered in source order so sibling declarations can
+/// be predeclared and remapped deterministically. It is intentionally not a
+/// replacement for the Jadren parser and rejects unsupported function bodies
+/// loudly.
 fn dynamic_while_local_function_definitions(
     source: &str,
     call_bindings: &[TypedCallBindingHeader],
+    scalar_kind: u8,
 ) -> Result<Vec<TypedLocalFunctionDefinition>, String> {
-    call_bindings
-        .iter()
-        .map(|binding| {
-            let name_start = usize::try_from(binding.name_start)
-                .map_err(|_| "same-module function name start is not representable".to_owned())?;
-            let name_end = usize::try_from(binding.name_end)
-                .map_err(|_| "same-module function name end is not representable".to_owned())?;
-            let name = source
-                .get(name_start..name_end)
-                .ok_or_else(|| "same-module function name span is outside source".to_owned())?;
-            let mut found = None;
-            for (offset, _) in source.match_indices("fn") {
-                let mut cursor = offset + 2;
-                if cursor >= source.len()
-                    || !source.as_bytes()[offset..cursor]
-                        .iter()
-                        .all(|byte| byte.is_ascii_alphabetic())
-                {
-                    continue;
-                }
-                while cursor < source.len() && source.as_bytes()[cursor].is_ascii_whitespace() {
-                    cursor += 1;
-                }
-                let candidate_start = cursor;
-                while cursor < source.len()
-                    && (source.as_bytes()[cursor].is_ascii_alphanumeric()
-                        || source.as_bytes()[cursor] == b'_')
-                {
-                    cursor += 1;
-                }
-                if source.get(candidate_start..cursor) != Some(name) {
-                    continue;
-                }
-                found = Some((offset, candidate_start, cursor));
-                break;
-            }
-            let (_, candidate_start, candidate_end) = found
-                .ok_or_else(|| format!("same-module function definition `{name}` was not found"))?;
-            let mut cursor = candidate_end;
-            while cursor < source.len() && source.as_bytes()[cursor].is_ascii_whitespace() {
-                cursor += 1;
-            }
-            if source.as_bytes().get(cursor) != Some(&b'(') {
-                return Err("same-module function definition has no parameter list".to_owned());
-            }
-            let parameter_open = cursor;
-            let parameter_close = matching_delimiter(source, parameter_open, b'(', b')')?;
-            let parameters =
-                parse_same_module_parameters(source, parameter_open + 1, parameter_close)?;
-            if parameters.len()
-                != usize::try_from(binding.parameter_count).map_err(|_| {
-                    "same-module function parameter count is not representable".to_owned()
-                })?
+    let mut pending = call_bindings.to_vec();
+    let mut definitions = Vec::with_capacity(pending.len());
+    let mut binding_index = 0usize;
+    while binding_index < pending.len() {
+        let binding = pending[binding_index];
+        let name_start = usize::try_from(binding.name_start)
+            .map_err(|_| "same-module function name start is not representable".to_owned())?;
+        let name_end = usize::try_from(binding.name_end)
+            .map_err(|_| "same-module function name end is not representable".to_owned())?;
+        let name = source
+            .get(name_start..name_end)
+            .ok_or_else(|| "same-module function name span is outside source".to_owned())?;
+        let mut found = None;
+        for (offset, _) in source.match_indices("fn") {
+            let mut cursor = offset + 2;
+            if cursor >= source.len()
+                || !source.as_bytes()[offset..cursor]
+                    .iter()
+                    .all(|byte| byte.is_ascii_alphabetic())
             {
-                return Err("same-module function parameter count does not match call".to_owned());
-            }
-            cursor = parameter_close + 1;
-            while cursor < source.len() && source.as_bytes()[cursor].is_ascii_whitespace() {
-                cursor += 1;
-            }
-            if !source[cursor..].starts_with("->") {
-                return Err("same-module function definition has no return arrow".to_owned());
-            }
-            cursor += 2;
-            while cursor < source.len() && source.as_bytes()[cursor].is_ascii_whitespace() {
-                cursor += 1;
-            }
-            let return_start = cursor;
-            while cursor < source.len() && source.as_bytes()[cursor].is_ascii_alphanumeric() {
-                cursor += 1;
-            }
-            if source.get(return_start..cursor) != Some("Int32") {
-                return Err("same-module function definition must return Int32".to_owned());
+                continue;
             }
             while cursor < source.len() && source.as_bytes()[cursor].is_ascii_whitespace() {
                 cursor += 1;
             }
-            if source.as_bytes().get(cursor) != Some(&b'{') {
-                return Err("same-module function definition has no body".to_owned());
-            }
-            let body_open = cursor;
-            let body_close = matching_delimiter(source, body_open, b'{', b'}')?;
-            let body_inner_start = body_open + 1;
-            let body_inner_end = body_close;
-            let body = source
-                .get(body_inner_start..body_inner_end)
-                .ok_or_else(|| "same-module function body span is outside source".to_owned())?;
-            let body_trim_start = body_inner_start + body.len() - body.trim_start().len();
-            let body_trim = &source[body_trim_start..body_inner_end];
-            if !body_trim.starts_with("return") {
-                return Err("same-module function body must contain one return".to_owned());
-            }
-            let mut expression_start = body_trim_start + "return".len();
-            while expression_start < body_inner_end
-                && source.as_bytes()[expression_start].is_ascii_whitespace()
+            let candidate_start = cursor;
+            while cursor < source.len()
+                && (source.as_bytes()[cursor].is_ascii_alphanumeric()
+                    || source.as_bytes()[cursor] == b'_')
             {
-                expression_start += 1;
+                cursor += 1;
             }
-            let semicolon = source[expression_start..body_inner_end]
-                .rfind(';')
-                .map(|offset| expression_start + offset)
-                .ok_or_else(|| "same-module function return has no semicolon".to_owned())?;
-            if !source[semicolon + 1..body_inner_end].trim().is_empty() {
-                return Err("same-module function body has statements after return".to_owned());
+            if source.get(candidate_start..cursor) != Some(name) {
+                continue;
             }
-            let expression_end = semicolon;
-            if expression_start >= expression_end {
-                return Err("same-module function return expression is empty".to_owned());
+            found = Some((offset, candidate_start, cursor));
+            break;
+        }
+        let (_, candidate_start, candidate_end) = found
+            .ok_or_else(|| format!("same-module function definition `{name}` was not found"))?;
+        let mut cursor = candidate_end;
+        while cursor < source.len() && source.as_bytes()[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if source.as_bytes().get(cursor) != Some(&b'(') {
+            return Err("same-module function definition has no parameter list".to_owned());
+        }
+        let parameter_open = cursor;
+        let parameter_close = matching_delimiter(source, parameter_open, b'(', b')')?;
+        let parameters =
+            parse_same_module_parameters(source, parameter_open + 1, parameter_close, scalar_kind)?;
+        if parameters.len()
+            != usize::try_from(binding.parameter_count).map_err(|_| {
+                "same-module function parameter count is not representable".to_owned()
+            })?
+        {
+            return Err("same-module function parameter count does not match call".to_owned());
+        }
+        cursor = parameter_close + 1;
+        while cursor < source.len() && source.as_bytes()[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if !source[cursor..].starts_with("->") {
+            return Err("same-module function definition has no return arrow".to_owned());
+        }
+        cursor += 2;
+        while cursor < source.len() && source.as_bytes()[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        let return_start = cursor;
+        while cursor < source.len() && source.as_bytes()[cursor].is_ascii_alphanumeric() {
+            cursor += 1;
+        }
+        let expected_return_type = match scalar_kind {
+            TYPE_KIND_INTEGER => "Int32",
+            TYPE_KIND_FLOAT => "Float64",
+            _ => return Err("same-module function scalar type is unsupported".to_owned()),
+        };
+        if source.get(return_start..cursor) != Some(expected_return_type) {
+            return Err(format!(
+                "same-module function definition must return {expected_return_type}"
+            ));
+        }
+        while cursor < source.len() && source.as_bytes()[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if source.as_bytes().get(cursor) != Some(&b'{') {
+            return Err("same-module function definition has no body".to_owned());
+        }
+        let body_open = cursor;
+        let body_close = matching_delimiter(source, body_open, b'{', b'}')?;
+        let body_inner_start = body_open + 1;
+        let body_inner_end = body_close;
+        let body = source
+            .get(body_inner_start..body_inner_end)
+            .ok_or_else(|| "same-module function body span is outside source".to_owned())?;
+        let body_trim_start = body_inner_start + body.len() - body.trim_start().len();
+        let body_trim = &source[body_trim_start..body_inner_end];
+        if !body_trim.starts_with("return") {
+            return Err("same-module function body must contain one return".to_owned());
+        }
+        let mut expression_start = body_trim_start + "return".len();
+        while expression_start < body_inner_end
+            && source.as_bytes()[expression_start].is_ascii_whitespace()
+        {
+            expression_start += 1;
+        }
+        let semicolon = source[expression_start..body_inner_end]
+            .rfind(';')
+            .map(|offset| expression_start + offset)
+            .ok_or_else(|| "same-module function return has no semicolon".to_owned())?;
+        if !source[semicolon + 1..body_inner_end].trim().is_empty() {
+            return Err("same-module function body has statements after return".to_owned());
+        }
+        let expression_end = semicolon;
+        if expression_start >= expression_end {
+            return Err("same-module function return expression is empty".to_owned());
+        }
+        let mut parser =
+            SameModuleExpressionParser::new(source, expression_start, expression_end, scalar_kind);
+        let parsed = parser.parse()?;
+        for discovered in &parsed.call_bindings {
+            if !pending.iter().any(|existing| {
+                let existing_start = usize::try_from(existing.name_start).ok();
+                let existing_end = usize::try_from(existing.name_end).ok();
+                let discovered_start = usize::try_from(discovered.name_start).ok();
+                let discovered_end = usize::try_from(discovered.name_end).ok();
+                match (
+                    existing_start,
+                    existing_end,
+                    discovered_start,
+                    discovered_end,
+                ) {
+                    (
+                        Some(existing_start),
+                        Some(existing_end),
+                        Some(discovered_start),
+                        Some(discovered_end),
+                    ) if existing_start <= existing_end
+                        && existing_end <= source.len()
+                        && discovered_start <= discovered_end
+                        && discovered_end <= source.len() =>
+                    {
+                        source[existing_start..existing_end]
+                            == source[discovered_start..discovered_end]
+                            && existing.parameter_count == discovered.parameter_count
+                            && existing.return_type_kind == discovered.return_type_kind
+                    }
+                    _ => false,
+                }
+            }) {
+                pending.push(*discovered);
             }
-            let mut parser =
-                SameModuleExpressionParser::new(source, expression_start, expression_end);
-            let parsed = parser.parse()?;
-            Ok(TypedLocalFunctionDefinition {
-                name_start: candidate_start as u64,
-                name_end: candidate_end as u64,
-                body_start: body_open as u64,
-                body_end: (body_close + 1) as u64,
-                return_type_kind: TYPE_KIND_INTEGER,
-                parameters,
-                ast: parsed.ast,
-                call_bindings: parsed.call_bindings,
-                arguments: parsed.arguments,
-            })
-        })
-        .collect()
+        }
+        definitions.push(TypedLocalFunctionDefinition {
+            name_start: candidate_start as u64,
+            name_end: candidate_end as u64,
+            body_start: body_open as u64,
+            body_end: (body_close + 1) as u64,
+            return_type_kind: scalar_kind,
+            parameters,
+            ast: parsed.ast,
+            call_bindings: parsed.call_bindings,
+            arguments: parsed.arguments,
+        });
+        binding_index += 1;
+    }
+    Ok(definitions)
 }
 
 fn matching_delimiter(
@@ -448,6 +507,7 @@ fn parse_same_module_parameters(
     source: &str,
     start: usize,
     end: usize,
+    scalar_kind: u8,
 ) -> Result<Vec<TypedNameBindingHeader>, String> {
     let content = source
         .get(start..end)
@@ -470,15 +530,22 @@ fn parse_same_module_parameters(
             .ok_or_else(|| "same-module parameter has no type".to_owned())?;
         let name = segment[..colon].trim();
         let ty = segment[colon + 1..].trim();
-        if ty != "Int32" || name.is_empty() {
-            return Err("same-module parameters currently require named Int32 values".to_owned());
+        let expected_type = match scalar_kind {
+            TYPE_KIND_INTEGER => "Int32",
+            TYPE_KIND_FLOAT => "Float64",
+            _ => return Err("same-module parameter scalar type is unsupported".to_owned()),
+        };
+        if ty != expected_type || name.is_empty() {
+            return Err(format!(
+                "same-module parameters currently require named {expected_type} values"
+            ));
         }
         let name_start =
             absolute_start + segment[..colon].len() - segment[..colon].trim_start().len();
         parameters.push(TypedNameBindingHeader {
             name_start: name_start as u64,
             name_end: (name_start + name.len()) as u64,
-            type_kind: TYPE_KIND_INTEGER,
+            type_kind: scalar_kind,
         });
         segment_start = cursor + 1;
     }
@@ -489,6 +556,7 @@ struct SameModuleExpressionParser<'a> {
     source: &'a str,
     end: usize,
     cursor: usize,
+    scalar_kind: u8,
     ast: Vec<TypedExpressionAstNodeHeader>,
     call_bindings: Vec<TypedCallBindingHeader>,
     arguments: Vec<ExpressionAstArgumentHeader>,
@@ -501,11 +569,12 @@ struct SameModuleExpressionParse {
 }
 
 impl<'a> SameModuleExpressionParser<'a> {
-    fn new(source: &'a str, start: usize, end: usize) -> Self {
+    fn new(source: &'a str, start: usize, end: usize, scalar_kind: u8) -> Self {
         Self {
             source,
             end,
             cursor: start,
+            scalar_kind,
             ast: Vec::new(),
             call_bindings: Vec::new(),
             arguments: Vec::new(),
@@ -570,7 +639,7 @@ impl<'a> SameModuleExpressionParser<'a> {
             let index = self.ast.len();
             self.ast.push(TypedExpressionAstNodeHeader {
                 syntax_kind: 6,
-                type_kind: TYPE_KIND_INTEGER,
+                type_kind: self.scalar_kind,
                 flags: 1,
                 reserved: 0,
                 left: operand as u64,
@@ -619,10 +688,35 @@ impl<'a> SameModuleExpressionParser<'a> {
                 {
                     self.cursor += 1;
                 }
+                if self.scalar_kind == TYPE_KIND_FLOAT {
+                    if self.source.as_bytes().get(self.cursor) != Some(&b'.') {
+                        return Err(
+                            "same-module Float64 literal requires a decimal point".to_owned()
+                        );
+                    }
+                    self.cursor += 1;
+                    let fraction_start = self.cursor;
+                    while self
+                        .source
+                        .as_bytes()
+                        .get(self.cursor)
+                        .is_some_and(|byte| byte.is_ascii_digit())
+                    {
+                        self.cursor += 1;
+                    }
+                    if self.cursor == fraction_start {
+                        return Err(
+                            "same-module Float64 literal requires fractional digits".to_owned()
+                        );
+                    }
+                    if self.source[self.cursor..].starts_with("f64") {
+                        self.cursor += 3;
+                    }
+                }
                 let index = self.ast.len();
                 self.ast.push(TypedExpressionAstNodeHeader {
                     syntax_kind: 2,
-                    type_kind: TYPE_KIND_INTEGER,
+                    type_kind: self.scalar_kind,
                     flags: 1,
                     reserved: 0,
                     left: 0,
@@ -647,7 +741,7 @@ impl<'a> SameModuleExpressionParser<'a> {
                 let identifier_index = self.ast.len();
                 self.ast.push(TypedExpressionAstNodeHeader {
                     syntax_kind: 1,
-                    type_kind: TYPE_KIND_INTEGER,
+                    type_kind: self.scalar_kind,
                     flags: 1,
                     reserved: 0,
                     left: 0,
@@ -664,7 +758,7 @@ impl<'a> SameModuleExpressionParser<'a> {
                 self.cursor += 1;
                 self.skip_whitespace();
                 if self.source.as_bytes().get(self.cursor) == Some(&b')') {
-                    return Err("same-module calls require at least one Int32 argument".to_owned());
+                    return Err("same-module calls require at least one scalar argument".to_owned());
                 }
                 let mut argument_nodes = Vec::new();
                 loop {
@@ -695,7 +789,7 @@ impl<'a> SameModuleExpressionParser<'a> {
                 let first_argument = argument_nodes[0];
                 self.ast.push(TypedExpressionAstNodeHeader {
                     syntax_kind: 5,
-                    type_kind: TYPE_KIND_INTEGER,
+                    type_kind: self.scalar_kind,
                     flags: 1,
                     reserved: 0,
                     left: identifier_index as u64,
@@ -708,7 +802,7 @@ impl<'a> SameModuleExpressionParser<'a> {
                     name_start: start as u64,
                     name_end: identifier_end as u64,
                     parameter_count: argument_nodes.len() as u64,
-                    return_type_kind: TYPE_KIND_INTEGER,
+                    return_type_kind: self.scalar_kind,
                 };
                 let duplicate = self.call_bindings.iter().any(|existing| {
                     existing.parameter_count == binding.parameter_count
@@ -730,7 +824,7 @@ impl<'a> SameModuleExpressionParser<'a> {
                 }
                 Ok(call_index)
             }
-            _ => Err("same-module expression requires an Int32 literal or identifier".to_owned()),
+            _ => Err("same-module expression requires a scalar literal or identifier".to_owned()),
         }
     }
 
@@ -744,7 +838,7 @@ impl<'a> SameModuleExpressionParser<'a> {
         let index = self.ast.len();
         self.ast.push(TypedExpressionAstNodeHeader {
             syntax_kind,
-            type_kind: TYPE_KIND_INTEGER,
+            type_kind: self.scalar_kind,
             flags: 1,
             reserved: 0,
             left: left as u64,
@@ -981,31 +1075,48 @@ fn run() -> Result<(), String> {
         let source_id = sources
             .add(arguments.capture.clone(), source_text.clone())
             .map_err(|error| error.to_string())?;
+        let scalar_kind = capture.binding.type_kind;
         let (call_bindings, call_arguments) =
             if source_text.contains("JADREN_STAGE2_DYNAMIC_TYPED_CALL") {
-                dynamic_while_call_metadata(&source_text, &capture.ast)?
+                dynamic_while_call_metadata(&source_text, &capture.ast, scalar_kind, false)?
             } else {
                 (Vec::new(), Vec::new())
             };
         let same_module_definitions =
             if source_text.contains("JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS") {
-                dynamic_while_local_function_definitions(&source_text, &call_bindings)?
+                dynamic_while_local_function_definitions(&source_text, &call_bindings, scalar_kind)?
             } else {
                 Vec::new()
             };
-        let module = lower_typed_while_local_with_statements(
-            &source_text,
-            source_id,
-            &capture.ast,
-            &[],
-            capture.initializer_node,
-            &capture.binding,
-            &capture.control,
-            &capture.body,
-            &call_bindings,
-            &[],
-            &call_arguments,
-        )
+        let module = if scalar_kind == TYPE_KIND_FLOAT {
+            lower_typed_while_float_local_with_statements(
+                &source_text,
+                source_id,
+                &capture.ast,
+                &[],
+                capture.initializer_node,
+                &capture.binding,
+                &capture.control,
+                &capture.body,
+                &call_bindings,
+                &[],
+                &call_arguments,
+            )
+        } else {
+            lower_typed_while_local_with_statements(
+                &source_text,
+                source_id,
+                &capture.ast,
+                &[],
+                capture.initializer_node,
+                &capture.binding,
+                &capture.control,
+                &capture.body,
+                &call_bindings,
+                &[],
+                &call_arguments,
+            )
+        }
         .map_err(|error| error.to_string())?;
         let module = materialize_typed_local_function_definitions(
             &source_text,
@@ -1132,14 +1243,52 @@ fn run() -> Result<(), String> {
         let source_id = sources
             .add(arguments.capture.clone(), source_text.clone())
             .map_err(|error| error.to_string())?;
-        let module = lower_typed_statement_sequence(
-            &source_text,
-            source_id,
-            &capture.ast,
-            &[],
-            &capture.statements,
-        )
-        .map_err(|error| error.to_string())?;
+        let has_call = capture.ast.iter().any(|node| node.syntax_kind == 5);
+        let module = if has_call {
+            let type_kind = capture
+                .statements
+                .first()
+                .map(|statement| statement.type_kind)
+                .ok_or_else(|| "typed statement call capture has no statements".to_owned())?;
+            let (call_bindings, call_arguments) =
+                dynamic_while_call_metadata(&source_text, &capture.ast, type_kind, true)?;
+            let module = lower_typed_statement_sequence_with_calls(
+                &source_text,
+                source_id,
+                &capture.ast,
+                &[],
+                &capture.statements,
+                &call_bindings,
+                &[],
+                &call_arguments,
+            )
+            .map_err(|error| error.to_string())?;
+            if source_text.contains("JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS") {
+                let definitions = dynamic_while_local_function_definitions(
+                    &source_text,
+                    &call_bindings,
+                    type_kind,
+                )?;
+                materialize_typed_local_function_definitions(
+                    &source_text,
+                    source_id,
+                    module,
+                    &definitions,
+                )
+                .map_err(|error| error.to_string())?
+            } else {
+                module
+            }
+        } else {
+            lower_typed_statement_sequence(
+                &source_text,
+                source_id,
+                &capture.ast,
+                &[],
+                &capture.statements,
+            )
+            .map_err(|error| error.to_string())?
+        };
         (source_text, module, 0usize)
     } else {
         let capture = decode_stage2_capture(&capture_bytes).map_err(|error| error.to_string())?;
@@ -1160,7 +1309,9 @@ fn run() -> Result<(), String> {
         .filter(|instruction| {
             matches!(
                 instruction.kind,
-                jadren_jir::InstructionKind::Constant(jadren_jir::Constant::Integer { .. })
+                jadren_jir::InstructionKind::Constant(
+                    jadren_jir::Constant::Integer { .. } | jadren_jir::Constant::FloatBits { .. }
+                )
             )
         })
         .count();
@@ -1552,4 +1703,72 @@ fn usage() -> String {
 fn capture_usage() -> String {
     "usage: jadren-selfhost-driver capture <provider.dll> <producer.dll> <source.jdn> <capture.bin>"
         .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jadren_selfhost_api::{TYPE_KIND_FLOAT, TYPE_KIND_INTEGER};
+
+    #[test]
+    fn accepts_zero_argument_call_metadata_without_forged_argument() {
+        let source = "helper()";
+        let ast = [
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 1,
+                type_kind: TYPE_KIND_FLOAT,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: 0,
+                end: 6,
+            },
+            TypedExpressionAstNodeHeader {
+                syntax_kind: 5,
+                type_kind: TYPE_KIND_FLOAT,
+                flags: 1,
+                reserved: 0,
+                left: 0,
+                right: 0,
+                aux: 0,
+                start: 0,
+                end: 8,
+            },
+        ];
+
+        let argument_nodes = dynamic_while_call_argument_nodes(source, &ast, 1, &ast[1])
+            .expect("zero-argument call has an empty argument list");
+        assert!(argument_nodes.is_empty());
+
+        let (bindings, arguments) =
+            dynamic_while_call_metadata(source, &ast, TYPE_KIND_FLOAT, true)
+                .expect("zero-argument call metadata should be accepted");
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].parameter_count, 0);
+        assert!(arguments.is_empty());
+    }
+
+    #[test]
+    fn rejects_dynamic_while_call_above_shared_argument_budget() {
+        let ast = [TypedExpressionAstNodeHeader {
+            syntax_kind: 5,
+            type_kind: TYPE_KIND_INTEGER,
+            flags: 1,
+            reserved: 0,
+            left: 0,
+            right: 0,
+            aux: STAGE2_TYPED_CALL_MAX_ARGUMENTS + 1,
+            start: 0,
+            end: 0,
+        }];
+
+        let error = dynamic_while_call_metadata("helper()", &ast, TYPE_KIND_INTEGER, false)
+            .expect_err("dynamic while calls above the shared budget must be rejected");
+        assert_eq!(
+            error,
+            "dynamic while call currently requires one through 32 arguments"
+        );
+    }
 }

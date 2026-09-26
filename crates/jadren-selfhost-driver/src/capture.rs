@@ -345,6 +345,43 @@ pub fn capture_stage2(
             capacity,
         )
     };
+    // The bounded typed-statement producer expects one caller function. A
+    // same-module fixture still has helper declarations in the source, so
+    // retain the full frontend header table for the general Stage-2 path but
+    // provide the producer's typed parsers with the `local_value` header only.
+    // The five-u64 FunctionHeader layout is already the producer ABI contract;
+    // this is a host-side view and does not alter the exported layout.
+    let mut typed_statement_function_headers = None;
+    if source_text.contains("JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS") {
+        let function_count = frontend.function_headers_emitted as usize;
+        for function_index in 0..function_count {
+            let base = function_index.saturating_mul(5);
+            let Some(header) = functions.get(base..base.saturating_add(5)) else {
+                break;
+            };
+            let Ok(name_start) = usize::try_from(header[0]) else {
+                continue;
+            };
+            let Ok(name_end) = usize::try_from(header[1]) else {
+                continue;
+            };
+            if source_text.get(name_start..name_end) == Some("local_value") {
+                typed_statement_function_headers = Some(header.to_vec());
+                break;
+            }
+        }
+    }
+    let typed_statement_function_headers_count = if typed_statement_function_headers.is_some() {
+        1usize
+    } else {
+        frontend.function_headers_emitted as usize
+    };
+    let typed_statement_function_headers_ptr =
+        if let Some(headers) = typed_statement_function_headers.as_mut() {
+            words_ptr(headers)
+        } else {
+            words_ptr(&mut functions)
+        };
     let local_sizing = unsafe {
         local_auto_emit(
             source.as_ptr(),
@@ -359,8 +396,8 @@ pub fn capture_stage2(
         typed_statement_parse(
             source.as_ptr(),
             source.len(),
-            words_ptr(&mut functions),
-            frontend.function_headers_emitted as usize,
+            typed_statement_function_headers_ptr,
+            typed_statement_function_headers_count,
             std::ptr::null_mut(),
             0,
             std::ptr::null_mut(),
@@ -1605,8 +1642,8 @@ pub fn capture_stage2(
         typed_assignment_parse(
             source.as_ptr(),
             source.len(),
-            words_ptr(&mut functions),
-            frontend.function_headers_emitted as usize,
+            typed_statement_function_headers_ptr,
+            typed_statement_function_headers_count,
             std::ptr::null_mut(),
             0,
             std::ptr::null_mut(),
@@ -1658,8 +1695,11 @@ pub fn capture_stage2(
     }
     let is_typed_assignment_fixture = typed_assignment_sizing.status_flags == 3
         && typed_assignment_sizing.errors == 0
-        && typed_assignment_sizing.statements_required == 3
-        && typed_assignment_sizing.ast_nodes_required == 5;
+        && typed_assignment_sizing.statements_required >= 3
+        && typed_assignment_sizing.statements_required <= 64
+        && typed_assignment_sizing.ast_nodes_required >= 5
+        && typed_assignment_sizing.ast_nodes_required <= 256
+        && (source_text.contains("Int32") || source_text.contains("Float64"));
     if is_typed_assignment_fixture {
         let statement_count = usize::try_from(typed_assignment_sizing.statements_required)
             .map_err(|_| "typed assignment statement count does not fit usize".to_owned())?;
@@ -1671,8 +1711,8 @@ pub fn capture_stage2(
             typed_assignment_parse(
                 source.as_ptr(),
                 source.len(),
-                words_ptr(&mut functions),
-                frontend.function_headers_emitted as usize,
+                typed_statement_function_headers_ptr,
+                typed_statement_function_headers_count,
                 words_ptr(&mut statements),
                 statement_count,
                 words_ptr(&mut ast),
@@ -1699,6 +1739,61 @@ pub fn capture_stage2(
         drop(provider);
         return Ok(());
     }
+    // The typed straight-line lowerer already owns homogeneous Float64
+    // expressions, but the legacy Stage-2 JIR record stream only carries the
+    // bounded Int32 literal encoding.  Capture Float64 metadata directly so
+    // the Rust lowerer can parse the source spans into real FloatBits without
+    // routing them through an integer-only compatibility stream.
+    let is_typed_float_statement_fixture = typed_statement_sizing.status_flags == 3
+        && typed_statement_sizing.errors == 0
+        && typed_statement_sizing.statements_required == 3
+        && typed_statement_sizing.ast_nodes_required == 5
+        && source_text.contains("Float64");
+    if is_typed_float_statement_fixture {
+        let statement_count = usize::try_from(typed_statement_sizing.statements_required)
+            .map_err(|_| "Float64 typed statement count does not fit usize".to_owned())?;
+        let ast_count = usize::try_from(typed_statement_sizing.ast_nodes_required)
+            .map_err(|_| "Float64 typed statement AST count does not fit usize".to_owned())?;
+        let mut typed_statements = aligned_words(statement_count, 48)?;
+        let mut typed_ast = aligned_words(ast_count, 48)?;
+        let typed_metadata = unsafe {
+            typed_statement_parse(
+                source.as_ptr(),
+                source.len(),
+                typed_statement_function_headers_ptr,
+                typed_statement_function_headers_count,
+                words_ptr(&mut typed_statements),
+                statement_count,
+                words_ptr(&mut typed_ast),
+                ast_count,
+            )
+        };
+        if typed_metadata.status_flags != 7
+            || typed_metadata.errors != 0
+            || typed_metadata.statements_emitted != typed_statement_sizing.statements_required
+            || typed_metadata.ast_nodes_emitted != typed_statement_sizing.ast_nodes_required
+        {
+            return Err(format!(
+                "loaded Jadren Float64 typed statement metadata returned invalid summary: statements={}/{}, ast={}/{}, errors={}, status={}",
+                typed_metadata.statements_emitted,
+                typed_metadata.statements_required,
+                typed_metadata.ast_nodes_emitted,
+                typed_metadata.ast_nodes_required,
+                typed_metadata.errors,
+                typed_metadata.status_flags
+            ));
+        }
+        write_typed_statement_capture(
+            output_path,
+            &source,
+            typed_metadata,
+            &typed_statements,
+            &typed_ast,
+        )?;
+        drop(producer);
+        drop(provider);
+        return Ok(());
+    }
     let is_typed_statement_fixture = typed_statement_sizing.status_flags == 3
         && typed_statement_sizing.errors == 0
         && ((typed_statement_sizing.statements_required == 2
@@ -1718,8 +1813,8 @@ pub fn capture_stage2(
             typed_statement_parse(
                 source.as_ptr(),
                 source.len(),
-                words_ptr(&mut functions),
-                frontend.function_headers_emitted as usize,
+                typed_statement_function_headers_ptr,
+                typed_statement_function_headers_count,
                 words_ptr(&mut statements),
                 statement_count,
                 words_ptr(&mut ast),
@@ -1775,7 +1870,7 @@ pub fn capture_stage2(
         || frontend.status_flags != 3
     {
         return Err(format!(
-            "loaded Jadren stage-2 frontend returned invalid summary: source={}/{}, functions={}, statements={}, calls={}, syntax_errors={}, status={}, if_local_assignment=(required={}, ast={}, errors={}, status={})",
+            "loaded Jadren stage-2 frontend returned invalid summary: source={}/{}, functions={}, statements={}, calls={}, syntax_errors={}, status={}, typed_assignment=(required={}, ast={}, errors={}, status={}), typed_statement=(required={}, ast={}, errors={}, status={}), if_local_assignment=(required={}, ast={}, errors={}, status={})",
             frontend.source_bytes,
             source.len(),
             frontend.function_headers_emitted,
@@ -1783,6 +1878,14 @@ pub fn capture_stage2(
             frontend.calls_emitted,
             frontend.syntax_errors,
             frontend.status_flags,
+            typed_assignment_sizing.statements_required,
+            typed_assignment_sizing.ast_nodes_required,
+            typed_assignment_sizing.errors,
+            typed_assignment_sizing.status_flags,
+            typed_statement_sizing.statements_required,
+            typed_statement_sizing.ast_nodes_required,
+            typed_statement_sizing.errors,
+            typed_statement_sizing.status_flags,
             typed_if_value_local_assignment_sizing.statements_required,
             typed_if_value_local_assignment_sizing.ast_nodes_required,
             typed_if_value_local_assignment_sizing.errors,

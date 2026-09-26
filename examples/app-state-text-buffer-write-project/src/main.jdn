@@ -1,0 +1,204 @@
+module app_state_text_buffer_write_project.main
+import jadren.app.state.clear
+import jadren.app.state.read_text_exact
+import jadren.app.state.revision
+import jadren.app.state.set_text_buffer
+import jadren.app.state.set_text_buffer_if_revision
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear()
+    let created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(16usize)
+    var status: Int32 = 0
+    match created {
+        Error(error) => {
+            status = error
+        }
+        Ok(input) => {
+            if ! buffer_resize(input,
+            16usize) {
+                status = 1
+            }
+            input[0] = 74u8
+            input[1] = 97u8
+            input[2] = 100u8
+            input[3] = 114u8
+            input[4] = 101u8
+            input[5] = 110u8
+            if status == 0 {
+                if ! set_text_buffer("name",
+                input,
+                6usize) {
+                    status = 2
+                }
+            }
+            var output:[UInt8;
+            32] =[0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8]
+            var length:[UIntSize;
+            1] =[0usize]
+            if status == 0 {
+                if ! read_text_exact("name",
+                output,
+                length) {
+                    status = 3
+                }
+            }
+            if status == 0 {
+                if length[0] != 6usize {
+                    status = 4
+                }
+            }
+            if status == 0 {
+                if output[0] != 74u8 {
+                    status = 4
+                }
+            }
+            if status == 0 {
+                if output[5] != 110u8 {
+                    status = 4
+                }
+            }
+            if status == 0 {
+                if set_text_buffer("name",
+                input,
+                17usize) {
+                    status = 5
+                }
+            }
+            if status == 0 {
+                if ! read_text_exact("name",
+                output,
+                length) {
+                    status = 6
+                }
+            }
+            if status == 0 {
+                if length[0] != 6usize {
+                    status = 7
+                }
+            }
+            if status == 0 {
+                if output[0] != 74u8 {
+                    status = 7
+                }
+            }
+            if status == 0 {
+                if output[5] != 110u8 {
+                    status = 7
+                }
+            }
+            let expected: UInt64 = revision()
+            input[0] = 78u8
+            input[1] = 97u8
+            input[2] = 116u8
+            input[3] = 105u8
+            input[4] = 118u8
+            input[5] = 101u8
+            if status == 0 {
+                if ! set_text_buffer_if_revision("name",
+                input,
+                6usize,
+                expected) {
+                    status = 8
+                }
+            }
+            if status == 0 {
+                if set_text_buffer_if_revision("name",
+                input,
+                17usize,
+                expected) {
+                    status = 9
+                }
+            }
+            if status == 0 {
+                if ! read_text_exact("name",
+                output,
+                length) {
+                    status = 10
+                }
+            }
+            if status == 0 {
+                if length[0] != 6usize {
+                    status = 11
+                }
+            }
+            if status == 0 {
+                if output[0] != 78u8 {
+                    status = 11
+                }
+            }
+            if status == 0 {
+                if output[5] != 101u8 {
+                    status = 11
+                }
+            }
+            input[0] = 83u8
+            if status == 0 {
+                if set_text_buffer_if_revision("name",
+                input,
+                1usize,
+                expected) {
+                    status = 12
+                }
+            }
+            if status == 0 {
+                if ! read_text_exact("name",
+                output,
+                length) {
+                    status = 13
+                }
+            }
+            if status == 0 {
+                if length[0] != 6usize {
+                    status = 14
+                }
+            }
+            if status == 0 {
+                if output[0] != 78u8 {
+                    status = 14
+                }
+            }
+            if status == 0 {
+                if output[5] != 101u8 {
+                    status = 14
+                }
+            }
+        }
+    }
+    clear()
+    return status
+}

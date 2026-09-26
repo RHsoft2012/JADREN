@@ -1,0 +1,7 @@
+module selfhost.typed_statement_assignment_float64_two_arg_call_sequence;
+
+fn local_value() -> Float64 {
+    let first: Float64 = helper(1.5f64 + 2.5f64, 2.5f64);
+    first = helper(first, first + 3.5f64);
+    return helper(first, 4.5f64);
+}
