@@ -4,10 +4,12 @@ Jadren is an experimental systems and compute programming language focused on
 safe native performance, predictable memory behaviour, data-parallel workloads,
 and practical Unity integration.
 
-The current implementation is the **0.1.3-preview.11 public preview**. It is
+The current implementation is the **0.1.3-preview.13 public preview**. It is
 suitable for evaluation, local experiments, and integration testing. It is not
-yet a stable language or a production-supported release, and the Windows
-installer is unsigned.
+yet a stable language or a production-supported release. Public preview
+artifacts remain manifest-verified `signed-local` downloads and are not trusted
+Authenticode releases; local Windows developer copies may use the documented
+self-signed identity `Roman Hladky, C=SK`.
 
 ## What Jadren is for
 
@@ -82,6 +84,7 @@ build and launch command.
 - [Unity project guide](docs/UNITY_PROJECT_GUIDE.md) — scene setup and testing;
 - [Jadren Animation System](docs/ANIMATION_SYSTEM.md) — bounded animation path;
 - [VS Code extension](docs/VSCODE_EXTENSION.md) — editor support;
+- [Getting started](docs/GETTING_STARTED.md#important-limitations) — installation, native build, and current signing status;
 - [Public roadmap](docs/ROADMAP.md) — user-facing next steps;
 - [Security](SECURITY.md) — responsible reporting;
 - [Contributing](CONTRIBUTING.md) — changes and development expectations.

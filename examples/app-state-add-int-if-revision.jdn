@@ -1,0 +1,72 @@
+module app_state_add_int_if_revision.main
+// An optimistic state update accepts a delta only for the revision that the
+// caller observed. Stale and invalid calls must not mutate value or revision.
+fn main() -> Int32 {
+    app_state_clear()
+    if ! app_state_set_int("downloads",
+    10i64) {
+        return 1
+    }
+    let snapshot: UInt64 = app_state_revision()
+    if ! app_state_add_int_if_revision("downloads",
+    5i64,
+    snapshot) {
+        return 2
+    }
+    if app_state_get_int("downloads") != 15i64 {
+        return 3
+    }
+    let current: UInt64 = app_state_revision()
+    if app_state_add_int_if_revision("downloads",
+    1i64,
+    snapshot) {
+        return 4
+    }
+    if app_state_get_int("downloads") != 15i64 {
+        return 5
+    }
+    if app_state_revision() != current {
+        return 6
+    }
+    if ! app_state_add_int_if_revision("missing",
+    2i64,
+    current) {
+        return 7
+    }
+    if app_state_get_int("missing") != 2i64 {
+        return 8
+    }
+    if ! app_state_set_text("wrong_kind",
+    "text") {
+        return 9
+    }
+    let mismatch_revision: UInt64 = app_state_revision()
+    if app_state_add_int_if_revision("wrong_kind",
+    1i64,
+    mismatch_revision) {
+        return 10
+    }
+    if app_state_revision() != mismatch_revision {
+        return 11
+    }
+    if app_state_get_int("wrong_kind") != 0i64 {
+        return 12
+    }
+    if ! app_state_set_int("maximum",
+    9223372036854775807i64) {
+        return 13
+    }
+    let overflow_revision: UInt64 = app_state_revision()
+    if app_state_add_int_if_revision("maximum",
+    1i64,
+    overflow_revision) {
+        return 14
+    }
+    if app_state_get_int("maximum") != 9223372036854775807i64 {
+        return 15
+    }
+    if app_state_revision() != overflow_revision {
+        return 16
+    }
+    return 0
+}

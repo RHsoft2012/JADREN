@@ -1,0 +1,20 @@
+module selfhost.typed_while_local_dynamic_same_module_32_arg_native_stage2;
+
+// JADREN_STAGE2_DYNAMIC_TYPED_CALL
+// JADREN_STAGE2_DYNAMIC_MUTABLE_BODY_LET
+// JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS
+// The dynamic while call uses the shared caller-owned 32-argument budget.
+fn local_value() -> Int32 {
+    var counter: Int32 = 0;
+    while counter < 4 {
+        var step: Int32 = helper(counter, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1);
+        step = step + 0;
+        counter = counter + step;
+        if counter < 0 { continue; }
+    }
+    return counter;
+}
+
+fn helper(first: Int32, second: Int32, third: Int32, fourth: Int32, fifth: Int32, sixth: Int32, seventh: Int32, eighth: Int32, ninth: Int32, tenth: Int32, eleventh: Int32, twelfth: Int32, thirteenth: Int32, fourteenth: Int32, fifteenth: Int32, sixteenth: Int32, seventeenth: Int32, eighteenth: Int32, nineteenth: Int32, twentieth: Int32, twenty_first: Int32, twenty_second: Int32, twenty_third: Int32, twenty_fourth: Int32, twenty_fifth: Int32, twenty_sixth: Int32, twenty_seventh: Int32, twenty_eighth: Int32, twenty_ninth: Int32, thirtieth: Int32, thirty_first: Int32, thirty_second: Int32) -> Int32 {
+    return first + second + third + fourth + fifth + sixth + seventh + eighth + ninth + tenth + eleventh + twelfth + thirteenth + fourteenth + fifteenth + sixteenth + seventeenth + eighteenth + nineteenth + twentieth + twenty_first + twenty_second + twenty_third + twenty_fourth + twenty_fifth + twenty_sixth + twenty_seventh + twenty_eighth + twenty_ninth + thirtieth + thirty_first + thirty_second;
+}

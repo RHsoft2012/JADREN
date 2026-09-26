@@ -1,0 +1,45 @@
+module examples.stdlib_buffer_owning_carrier_array_insert_move_from
+
+// Insert caller-owned fixed carrier arrays. Each Option slot keeps its own
+// tag and the field table must clean only active Some payloads.
+fn main() -> Int32 {
+    let values_created: Result<Buffer<[Option<OwnedString>; 2]>, Int32> = buffer_create(0usize)
+    let first_created: Result<OwnedString, Int32> = string_owned_from("first")
+    let second_created: Result<OwnedString, Int32> = string_owned_from("second")
+    let status_created: Result<OwnedString, Int32> = string_owned_from("status")
+    var result_code: Int32 = 0
+
+    match values_created {
+        Ok(values) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            match status_created {
+                                Ok(status) => {
+                                    let first_item: [Option<OwnedString>; 2] = [Some(first), None]
+                                    let second_item: [Option<OwnedString>; 2] = [None, Some(second)]
+                                    let status_item: [Option<OwnedString>; 2] = [Some(status), None]
+                                    if !buffer_append(values, first_item) { result_code = 1 }
+                                    if !buffer_insert_move_from(values, 0usize, second_item) { result_code = 2 }
+                                    if buffer_length(values) != 2usize { result_code = 3 }
+                                    let status_code: Int32 = buffer_insert_move_from_status(values, 99usize, status_item)
+                                    if status_code != -20 { result_code = 4 }
+                                    if buffer_length(values) != 2usize { result_code = 5 }
+                                    if !buffer_remove_drop(values, 0usize) { result_code = 6 }
+                                    if !buffer_clear_move(values) { result_code = 7 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

@@ -10,13 +10,85 @@ import jadren.network.reactor.event_socket
 import jadren.network.reactor.poll
 import jadren.network.reactor.submit_accept
 import jadren.network.reactor.submit_receive_buffer
-import jadren.network.reactor.submit_send_buffer_prefix
+import jadren.network.reactor.submit_send_buffer_from
+import jadren.network.reactor.submit_send_buffer_from_prefix
 import jadren.network.tcp.close_socket
 import jadren.network.tcp.connect
 import jadren.network.tcp.receive
 import jadren.network.tcp.send_prefix
 import jadren.network.tcp.set_timeout
 import jadren.network.router.respond
+
+fn submit_dynamic_response(reactor: UIntSize, accepted: UIntSize, request: read Slice<UInt8>, user_data: UIntSize, use_prefix: Bool) -> UIntSize {
+    var status: UIntSize = 1usize
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(128usize)
+    match created {
+        Error(error) => { status = 0usize }
+        Ok(response) => {
+            if ! buffer_resize(response,
+            128usize) {
+                status = 0usize
+            }
+            if status == 1usize {
+                let response_length = respond(request,
+                buffer_slice_write(response,
+                0usize,
+                128usize))
+                if response_length == 0usize {
+                    status = 0usize
+                }
+                if status == 1usize {
+                    var send_operation: UIntSize = 0usize
+                    if use_prefix {
+                        send_operation = submit_send_buffer_from_prefix(reactor,
+                        accepted,
+                        response,
+                        response_length,
+                        user_data)
+                    }
+                    if ! use_prefix {
+                        if ! buffer_resize(response,
+                        response_length) {
+                            status = 0usize
+                        }
+                        if status == 1usize {
+                            send_operation = submit_send_buffer_from(reactor,
+                            accepted,
+                            response,
+                            user_data)
+                        }
+                    }
+                    if send_operation == 0usize {
+                        status = 0usize
+                    }
+                    if status == 1usize {
+                        if poll(reactor,
+                        3000u32) == 0u32 {
+                            status = 0usize
+                        }
+                    }
+                    if status == 1usize {
+                        if event_operation(reactor,
+                        0u32) != send_operation {
+                            status = 0usize
+                        }
+                    }
+                    if status == 1usize {
+                        if event_bytes(reactor,
+                        0u32) != response_length {
+                            status = 0usize
+                        }
+                    }
+                }
+                if status == 1usize {
+                    status = response_length
+                }
+            }
+        }
+    }
+    return status
+}
+
 pub fn run_exchange(reactor: UIntSize, listener: UIntSize, user_data: UIntSize) -> Int32 {
     let accept_operation = submit_accept(reactor,
     listener,
@@ -244,169 +316,15 @@ pub fn run_exchange(reactor: UIntSize, listener: UIntSize, user_data: UIntSize) 
         close_socket(client)
         return 23
     }
-    var response:[UInt8;
-    128] =[0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8]
-    let response_length = respond(request,
-    response)
+    let response_length = submit_dynamic_response(reactor,
+    accepted,
+    request,
+    user_data + 2usize,
+    user_data == 100usize)
     if response_length == 0usize {
         close_socket(accepted)
         close_socket(client)
         return 24
-    }
-    let send_operation = submit_send_buffer_prefix(reactor,
-    accepted,
-    response,
-    response_length,
-    user_data + 2usize)
-    if send_operation == 0usize {
-        close_socket(accepted)
-        close_socket(client)
-        return 25
-    }
-    if poll(reactor,
-    3000u32) == 0u32 {
-        close_socket(accepted)
-        close_socket(client)
-        return 26
-    }
-    if event_operation(reactor,
-    0u32) != send_operation {
-        close_socket(accepted)
-        close_socket(client)
-        return 27
-    }
-    if event_bytes(reactor,
-    0u32) != response_length {
-        close_socket(accepted)
-        close_socket(client)
-        return 28
     }
     var client_response:[UInt8;
     128] =[0u8,

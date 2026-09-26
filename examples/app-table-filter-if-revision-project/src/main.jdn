@@ -1,0 +1,171 @@
+module app_table_filter_if_revision_project.main
+
+import jadren.app.data.revision
+import jadren.app.table.append_row
+import jadren.app.table.clear
+import jadren.app.table.filter_text_if_revision
+import jadren.app.table.filter_text_if_model_revision
+import jadren.app.table.filter_text_ex_if_model_revision
+import jadren.app.table.filter_text_bytes_if_model_revision
+import jadren.app.table.filter_int_if_revision
+import jadren.app.table.filter_int_if_model_revision
+import jadren.app.table.filter_uint_if_revision
+import jadren.app.table.filter_uint_if_model_revision
+import jadren.app.table.filter_float_if_revision
+import jadren.app.table.filter_float_if_model_revision
+import jadren.app.table.filter_bool_if_revision
+import jadren.app.table.filter_bool_if_model_revision
+import jadren.app.table.filter_callback_if_model_revision
+import jadren.app.table.read_cell_exact
+import jadren.app.table.row_count
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn keep_first_row(source: Int32, row_index: Int32) -> Bool {
+    return row_index == 0
+}
+
+fn main() -> Int32 {
+    clear(0)
+    clear(1)
+    if ! set_column_type(0, 0, 0) { return 1 }
+    if ! set_column_name(0, 0, "Name") { return 2 }
+    if ! append_row(0) { return 3 }
+    if ! append_row(0) { return 4 }
+    if ! append_row(0) { return 5 }
+    if ! set_cell(0, 0, 0, "Alpha") { return 6 }
+    if ! set_cell(0, 1, 0, "Beta") { return 7 }
+    if ! set_cell(0, 2, 0, "Gamma") { return 8 }
+
+    if ! set_column_type(1, 0, 0) { return 9 }
+    if ! set_column_name(1, 0, "Name") { return 10 }
+    if ! append_row(1) { return 11 }
+    if ! set_cell(1, 0, 0, "Sentinel") { return 12 }
+
+    let stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "Open") { return 13 }
+    if filter_text_if_revision(0, 1, 0, "Open", stale) { return 14 }
+    if row_count(1) != 1 { return 15 }
+
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var length: [UIntSize; 1] = [99usize]
+    if ! read_cell_exact(1, 0, 0, output, length) { return 16 }
+    if length[0] != 8usize { return 17 }
+    if output[0] != 83u8 { return 18 }
+
+    let current: UInt64 = revision()
+    if ! filter_text_if_revision(0, 1, 0, "Open", current) { return 19 }
+    if row_count(1) != 1 { return 20 }
+    if ! read_cell_exact(1, 0, 0, output, length) { return 21 }
+    if length[0] != 4usize { return 22 }
+    if output[0] != 79u8 { return 23 }
+
+    let after_filter: UInt64 = revision()
+    if filter_text_if_revision(0, 1, 1, "Open", after_filter) { return 24 }
+    if row_count(1) != 1 { return 25 }
+    if filter_text_if_revision(0, 0, 0, "Open", after_filter) { return 26 }
+    if row_count(1) != 1 { return 27 }
+
+    // Typed filters use the same stale/current boundary.
+    clear(2)
+    clear(3)
+    if ! set_column_type(2, 0, 1) { return 28 }
+    if ! set_column_type(2, 1, 2) { return 29 }
+    if ! set_column_type(2, 2, 4) { return 30 }
+    if ! set_column_type(2, 3, 3) { return 31 }
+    if ! set_column_name(2, 0, "Signed") { return 32 }
+    if ! set_column_name(2, 1, "Unsigned") { return 33 }
+    if ! set_column_name(2, 2, "Ratio") { return 34 }
+    if ! set_column_name(2, 3, "Enabled") { return 35 }
+    if ! append_row(2) { return 36 }
+    if ! set_cell(2, 0, 0, "7") { return 37 }
+    if ! set_cell(2, 0, 1, "11") { return 38 }
+    if ! set_cell(2, 0, 2, "1.5") { return 39 }
+    if ! set_cell(2, 0, 3, "true") { return 40 }
+
+    if ! set_column_type(3, 0, 1) { return 41 }
+    if ! set_column_type(3, 1, 2) { return 42 }
+    if ! set_column_type(3, 2, 4) { return 43 }
+    if ! set_column_type(3, 3, 3) { return 44 }
+    if ! append_row(3) { return 45 }
+    if ! set_cell(3, 0, 0, "0") { return 46 }
+
+    let int_stale: UInt64 = revision()
+    if ! set_cell(2, 0, 0, "99") { return 47 }
+    if filter_int_if_revision(2, 3, 0, 99 as Int64, int_stale) { return 48 }
+    if row_count(3) != 1 { return 49 }
+    let int_current: UInt64 = revision()
+    if ! filter_int_if_revision(2, 3, 0, 99 as Int64, int_current) { return 50 }
+    if row_count(3) != 1 { return 51 }
+
+    let uint_stale: UInt64 = revision()
+    if ! set_cell(2, 0, 1, "77") { return 52 }
+    if filter_uint_if_revision(2, 3, 1, 77u64, uint_stale) { return 53 }
+    let uint_current: UInt64 = revision()
+    if ! filter_uint_if_revision(2, 3, 1, 77u64, uint_current) { return 54 }
+
+    let float_stale: UInt64 = revision()
+    if ! set_cell(2, 0, 2, "9.5") { return 55 }
+    if filter_float_if_revision(2, 3, 2, 9.5f64, float_stale) { return 56 }
+    let float_current: UInt64 = revision()
+    if ! filter_float_if_revision(2, 3, 2, 9.5f64, float_current) { return 57 }
+
+    let bool_stale: UInt64 = revision()
+    if ! set_cell(2, 0, 3, "false") { return 58 }
+    if filter_bool_if_revision(2, 3, 3, false, bool_stale) { return 59 }
+    let bool_current: UInt64 = revision()
+    if ! filter_bool_if_revision(2, 3, 3, false, bool_current) { return 60 }
+
+    // The explicit complete-model spellings cover the same current/stale
+    // boundary while keeping the caller API independent of builtin names.
+    let model_text_stale: UInt64 = revision()
+    if ! set_cell(0, 1, 0, "Other") { return 61 }
+    if filter_text_if_model_revision(0, 1, 0, "Other", model_text_stale) { return 62 }
+    if ! filter_text_if_model_revision(0, 1, 0, "Other", revision()) { return 63 }
+    if row_count(1) != 1 { return 64 }
+
+    let model_mode_stale: UInt64 = revision()
+    if ! set_cell(0, 2, 0, "Other suffix") { return 65 }
+    if filter_text_ex_if_model_revision(0, 1, 0, "Other", 1, model_mode_stale) { return 66 }
+    if ! filter_text_ex_if_model_revision(0, 1, 0, "Other", 1, revision()) { return 67 }
+    if row_count(1) != 2 { return 68 }
+
+    var query_bytes: [UInt8; 5] = [79u8, 116u8, 104u8, 101u8, 114u8]
+    let model_bytes_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "Nope") { return 69 }
+    if filter_text_bytes_if_model_revision(0, 1, 0, query_bytes, 5usize, 0, model_bytes_stale) { return 70 }
+    if ! filter_text_bytes_if_model_revision(0, 1, 0, query_bytes, 5usize, 0, revision()) { return 71 }
+    // Mode 0 is exact: only the row equal to "Other" remains.
+    if row_count(1) != 1 { return 72 }
+
+    let model_int_stale: UInt64 = revision()
+    if ! set_cell(2, 0, 0, "101") { return 73 }
+    if filter_int_if_model_revision(2, 3, 0, 101 as Int64, model_int_stale) { return 74 }
+    if ! filter_int_if_model_revision(2, 3, 0, 101 as Int64, revision()) { return 75 }
+    let model_uint_stale: UInt64 = revision()
+    if ! set_cell(2, 0, 1, "101") { return 76 }
+    if filter_uint_if_model_revision(2, 3, 1, 101u64, model_uint_stale) { return 77 }
+    if ! filter_uint_if_model_revision(2, 3, 1, 101u64, revision()) { return 78 }
+    let model_float_stale: UInt64 = revision()
+    if ! set_cell(2, 0, 2, "10.5") { return 79 }
+    if filter_float_if_model_revision(2, 3, 2, 10.5f64, model_float_stale) { return 80 }
+    if ! filter_float_if_model_revision(2, 3, 2, 10.5f64, revision()) { return 81 }
+    let model_bool_stale: UInt64 = revision()
+    if ! set_cell(2, 0, 3, "true") { return 82 }
+    if filter_bool_if_model_revision(2, 3, 3, true, model_bool_stale) { return 83 }
+    if ! filter_bool_if_model_revision(2, 3, 3, true, revision()) { return 84 }
+
+    let model_callback_stale: UInt64 = revision()
+    if ! set_cell(0, 1, 0, "Callback") { return 85 }
+    if filter_callback_if_model_revision(0, 1, keep_first_row, model_callback_stale) { return 86 }
+    if ! filter_callback_if_model_revision(0, 1, keep_first_row, revision()) { return 87 }
+    if row_count(1) != 1 { return 88 }
+    return 0
+}

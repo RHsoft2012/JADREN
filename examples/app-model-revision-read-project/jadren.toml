@@ -1,0 +1,10 @@
+[package]
+name = "app-model-revision-read-project"
+version = "0.1.3"
+edition = "2026"
+
+[dependencies]
+jadren-app = { path = "../../stdlib/app" }
+
+[targets]
+library = true

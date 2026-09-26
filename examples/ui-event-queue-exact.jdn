@@ -1,0 +1,93 @@
+module examples.ui_event_queue_exact
+
+// The native host records each accepted event before invoking the callback.
+// This fixture reads that bounded FIFO outside the callback and verifies the
+// exact no-partial-write and overflow contracts on the Windows/X11 backends.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id != 7 {
+        if event_id != 8 { return 2 }
+    }
+    if !app_state_set_int("callbacks", app_state_get_int("callbacks") + 1 as Int64) {
+        return 3
+    }
+    return 0
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    let root: Int32 = ui_app_begin("Jadren event queue", 420, 240, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+    let first: Int32 = ui_app_button(root, "First", 7, 120, 36,
+                                      0xFFFFFFu32, 0x168EF5u32, 8, 0)
+    if first == 0 { return 2 }
+    let second: Int32 = ui_app_button(root, "Second", 8, 120, 36,
+                                       0xFFFFFFu32, 0x168EF5u32, 8, 0)
+    if second == 0 { return 3 }
+
+    ui_event_queue_clear()
+    let capacity: UIntSize = ui_event_queue_capacity()
+    if capacity != 64usize { return 4 }
+    if ui_event_queue_count() != 0usize { return 5 }
+    if ui_event_queue_dropped() != 0usize { return 6 }
+    if ui_dispatch_event(99) { return 7 }
+    if ui_event_queue_count() != 0usize { return 8 }
+
+    if !ui_dispatch_event(7) { return 9 }
+    if !ui_dispatch_event(8) { return 10 }
+    if app_state_get_int("callbacks") != 2 as Int64 { return 11 }
+    if ui_event_queue_count() != 2usize { return 12 }
+
+    var output: [Int32; 2] = [55, 66]
+    var count: [UIntSize; 1] = [99usize]
+    if !ui_event_queue_poll_exact(output, count) { return 12 }
+    if count[0] != 2usize { return 13 }
+    if output[0] != 7 { return 14 }
+    if output[1] != 8 { return 14 }
+    if ui_event_queue_count() != 0usize { return 15 }
+    if !ui_event_queue_poll_exact(output, count) { return 16 }
+    if count[0] != 0usize { return 17 }
+
+    // A short output rejects the whole read and preserves the queue and both
+    // caller-owned outputs.
+    if !ui_dispatch_event(7) { return 18 }
+    if !ui_dispatch_event(8) { return 19 }
+    var short_output: [Int32; 1] = [77]
+    var short_count: [UIntSize; 1] = [123usize]
+    if ui_event_queue_poll_exact(short_output, short_count) { return 20 }
+    if short_output[0] != 77 { return 21 }
+    if short_count[0] != 123usize { return 21 }
+    if ui_event_queue_count() != 2usize { return 22 }
+    if !ui_event_queue_poll_exact(output, count) { return 23 }
+    if count[0] != 2usize { return 24 }
+    if output[0] != 7 { return 24 }
+    if output[1] != 8 { return 24 }
+
+    // The fixed queue keeps the oldest 64 events and exposes the one dropped
+    // newest event rather than silently hiding overflow.
+    ui_event_queue_clear()
+    var index: UIntSize = 0usize
+    while index < capacity + 1usize {
+        if !ui_dispatch_event(7) { return 25 }
+        index = index + 1usize
+    }
+    if ui_event_queue_count() != capacity { return 26 }
+    if ui_event_queue_dropped() != 1usize { return 27 }
+    var full_output: [Int32; 64] = [0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0]
+    if !ui_event_queue_poll_exact(full_output, count) { return 28 }
+    if count[0] != capacity { return 29 }
+    if full_output[0] != 7 { return 29 }
+    if full_output[63] != 7 { return 29 }
+    if ui_event_queue_count() != 0usize { return 30 }
+    if ui_event_queue_dropped() != 1usize { return 31 }
+
+    if !ui_app_end(root) { return 32 }
+    return 0
+}

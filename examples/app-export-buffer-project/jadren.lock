@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "5fc7fd6cd1a9d241"
+
+[package]
+name = "app-export-buffer-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

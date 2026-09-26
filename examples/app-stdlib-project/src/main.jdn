@@ -7,13 +7,20 @@ import jadren.app.data.save_atomic
 import jadren.app.list.count
 import jadren.app.list.push_text
 import jadren.app.list.read_text
+import jadren.app.list.set_bytes_if_revision
 import jadren.app.list.sort_text
 import jadren.app.state.clear
+import jadren.app.state.count_if_model_revision
+import jadren.app.state.count_if_revision
 import jadren.app.state.exists
 import jadren.app.state.get_int
 import jadren.app.state.revision
+import jadren.app.state.remove_if_revision
+import jadren.app.state.save_atomic_durable
 import jadren.app.state.set_int
 import jadren.app.state.set_text
+import jadren.app.state.type_at_if_model_revision
+import jadren.app.state.type_at_if_revision
 import jadren.app.data.load
 import jadren.app.export.escape_csv
 import jadren.app.export.int_text
@@ -25,9 +32,16 @@ import jadren.app.table.read_cell
 import jadren.app.table.read_int
 import jadren.app.table.row_count
 import jadren.app.table.set_cell
+import jadren.app.table.set_cell_bytes_if_revision
 import jadren.app.table.set_column_name
 import jadren.app.table.set_column_type
 import jadren.app.table.sort_int
+import jadren.app.table.tx_begin
+import jadren.app.table.tx_begin_all
+import jadren.app.table.tx_commit
+import jadren.app.table.tx_commit_all
+import jadren.app.table.tx_rollback
+import jadren.app.table.tx_rollback_all
 
 @export(name: "jadren_ui_on_click", abi: "C")
 pub fn on_click(event_id: Int32) -> Int32 {
@@ -42,6 +56,20 @@ fn main() -> Int32 {
     if !set_int("runs", 7i64) { return 2 }
     if !exists("project") { return 3 }
     if get_int("runs") != 7i64 { return 4 }
+    let state_revision: UInt64 = revision()
+    if count_if_revision(state_revision) != 2 { return 63 }
+    if type_at_if_revision(0, state_revision) != 4 { return 67 }
+    let model_revision: UInt64 = app_data_revision()
+    if count_if_model_revision(model_revision) != 2 { return 64 }
+    if type_at_if_model_revision(1, model_revision) != 1 { return 68 }
+    if !set_int("temporary", 1i64) { return 54 }
+    if count_if_revision(state_revision) != -1 { return 65 }
+    if count_if_model_revision(model_revision) != -1 { return 66 }
+    if type_at_if_revision(0, state_revision) != -1 { return 69 }
+    if type_at_if_model_revision(1, model_revision) != -1 { return 70 }
+    let temporary_revision: UInt64 = revision()
+    if !remove_if_revision("temporary", temporary_revision) { return 55 }
+    if exists("temporary") { return 56 }
 
     if !push_text(0, "Beta") { return 5 }
     if !push_text(0, "Alpha") { return 6 }
@@ -50,6 +78,11 @@ fn main() -> Int32 {
     var list_output: [UInt8; 5] = [0u8, 0u8, 0u8, 0u8, 0u8]
     if read_text(0, 0, list_output) != 5usize { return 9 }
     if list_output[0] != 65u8 { return 10 }
+    var list_bytes: [UInt8; 5] = [66u8, 121u8, 116u8, 101u8, 115u8]
+    let list_data_revision: UInt64 = app_data_revision()
+    if !set_bytes_if_revision(0, 0, list_bytes, 5usize, list_data_revision) { return 57 }
+    if read_text(0, 0, list_output) != 5usize { return 58 }
+    if list_output[0] != 66u8 { return 59 }
 
     if !set_column_name(0, 0, "name") { return 11 }
     if !append_row(0) { return 12 }
@@ -59,6 +92,10 @@ fn main() -> Int32 {
     var table_output: [UInt8; 5] = [0u8, 0u8, 0u8, 0u8, 0u8]
     if read_cell(0, 0, 0, table_output) != 5usize { return 16 }
     if table_output[0] != 65u8 { return 17 }
+    let table_data_revision: UInt64 = app_data_revision()
+    if !set_cell_bytes_if_revision(0, 0, 0, list_bytes, 5usize, table_data_revision) { return 60 }
+    if read_cell(0, 0, 0, table_output) != 5usize { return 61 }
+    if table_output[0] != 66u8 { return 62 }
 
     if !set_column_name(1, 0, "rank") { return 18 }
     if !set_column_type(1, 0, 1) { return 19 }
@@ -68,6 +105,18 @@ fn main() -> Int32 {
     if !app_table_set_int(1, 1, 0, 2i64) { return 23 }
     if !sort_int(1, 0, false) { return 24 }
     if read_int(1, 0, 0) != 2i64 { return 25 }
+    if !tx_begin(1) { return 41 }
+    if !app_table_set_int(1, 0, 0, 11i64) { return 42 }
+    if !tx_rollback() { return 43 }
+    if read_int(1, 0, 0) != 2i64 { return 44 }
+    if !tx_begin_all() { return 45 }
+    if !app_table_set_int(1, 0, 0, 12i64) { return 46 }
+    if !tx_rollback_all() { return 47 }
+    if read_int(1, 0, 0) != 2i64 { return 48 }
+    if !tx_begin(1) { return 49 }
+    if !app_table_set_int(1, 0, 0, 3i64) { return 50 }
+    if !tx_commit() { return 51 }
+    if read_int(1, 0, 0) != 3i64 { return 52 }
 
     var csv_field: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
     if escape_csv("A,B", csv_field) != 5usize { return 26 }
@@ -82,6 +131,11 @@ fn main() -> Int32 {
         "target/jadren/app-stdlib-project.tmp",
         "target/jadren/app-stdlib-project.data"
     ) { return 32 }
+    if !save_atomic_durable(
+        "target/app-stdlib-project.durable.tmp",
+        "target/app-stdlib-project.durable.data",
+        "target"
+    ) { return 53 }
     if !set_text("project", "mutated") { return 33 }
     if !load("target/jadren/app-stdlib-project.data") { return 34 }
     var state_output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]

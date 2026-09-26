@@ -1,0 +1,25 @@
+{
+  "schema": "jadren-server-routes-0.1",
+  "listen": {
+    "bind": "127.0.0.1",
+    "port": 8080
+  },
+  "reject_unknown_host": true,
+  "routes": [
+    {
+      "hostname": "site.example.com",
+      "kind": "static",
+      "root": "C:/Jadren/site"
+    },
+    {
+      "hostname": "web.example.com",
+      "kind": "http-proxy",
+      "upstream": "http://127.0.0.1:8090"
+    },
+    {
+      "hostname": "api.example.com",
+      "kind": "http-proxy",
+      "upstream": "http://127.0.0.1:8090"
+    }
+  ]
+}

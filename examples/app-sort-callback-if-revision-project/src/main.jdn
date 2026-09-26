@@ -1,0 +1,70 @@
+module app_sort_callback_if_revision_project.main
+
+import jadren.app.data.revision
+
+fn reverse_by_source_index(source: Int32, left: Int32, right: Int32) -> Int32 {
+    return right - left
+}
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_list_clear(0)
+    if ! app_list_push_text(0, "Zulu") { return 1 }
+    if ! app_list_push_text(0, "Alpha") { return 2 }
+    if ! app_list_push_text(0, "Bravo") { return 3 }
+
+    var output: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var length: [UIntSize; 1] = [99usize]
+
+    let stale_list: UInt64 = revision()
+    if ! app_list_set_text(0, 0, "Omega") { return 4 }
+    if app_list_sort_callback_if_revision(0, reverse_by_source_index, stale_list) { return 5 }
+    if ! app_list_read_text_exact(0, 0, output, length) { return 6 }
+    if length[0] != 5usize { return 7 }
+    if output[0] != 79u8 { return 7 }
+    if ! app_list_read_text_exact(0, 1, output, length) { return 8 }
+    if output[0] != 65u8 { return 9 }
+
+    let current_list: UInt64 = revision()
+    if ! app_list_sort_callback_if_revision(0, reverse_by_source_index, current_list) { return 10 }
+    if ! app_list_read_text_exact(0, 0, output, length) { return 11 }
+    if output[0] != 66u8 { return 12 }
+    if ! app_list_read_text_exact(0, 2, output, length) { return 13 }
+    if output[0] != 79u8 { return 14 }
+    if app_list_sort_callback_if_revision(99, reverse_by_source_index, revision()) { return 15 }
+
+    app_table_clear(1)
+    if ! app_table_set_column_type(1, 0, 0) { return 16 }
+    if ! app_table_set_column_name(1, 0, "Value") { return 17 }
+    if ! app_table_append_row(1) { return 18 }
+    if ! app_table_append_row(1) { return 19 }
+    if ! app_table_append_row(1) { return 20 }
+    if ! app_table_set_cell(1, 0, 0, "Zulu") { return 21 }
+    if ! app_table_set_cell(1, 1, 0, "Alpha") { return 22 }
+    if ! app_table_set_cell(1, 2, 0, "Bravo") { return 23 }
+
+    let stale_table: UInt64 = revision()
+    if ! app_table_set_cell(1, 0, 0, "Omega") { return 24 }
+    if app_table_sort_callback_if_revision(1, reverse_by_source_index, stale_table) { return 25 }
+    if ! app_table_read_cell_exact(1, 0, 0, output, length) { return 26 }
+    if length[0] != 5usize { return 27 }
+    if output[0] != 79u8 { return 27 }
+    if ! app_table_read_cell_exact(1, 1, 0, output, length) { return 28 }
+    if output[0] != 65u8 { return 29 }
+
+    let current_table: UInt64 = revision()
+    if ! app_table_sort_callback_if_revision(1, reverse_by_source_index, current_table) { return 30 }
+    if ! app_table_read_cell_exact(1, 0, 0, output, length) { return 31 }
+    if output[0] != 66u8 { return 32 }
+    if ! app_table_read_cell_exact(1, 2, 0, output, length) { return 33 }
+    if output[0] != 79u8 { return 34 }
+    if app_table_sort_callback_if_revision(99, reverse_by_source_index, revision()) { return 35 }
+    return 0
+}

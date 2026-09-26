@@ -6,6 +6,7 @@ import jadren.network.pool.pool_acquire
 import jadren.network.pool.pool_active_count
 import jadren.network.pool.pool_get
 import jadren.network.pool.pool_release
+import jadren.network.pool.pool_release_close
 import jadren.network.tcp.close_socket
 import jadren.network.tcp.connect
 import jadren.network.tcp.receive
@@ -610,19 +611,25 @@ fn main() -> Int32 {
         close_socket(released_one)
         return 29
     }
-    let released_two = pool_release(handles,
-    slot_two)
-    let released_one = pool_release(handles,
-    slot_one)
-    close_socket(released_two)
-    close_socket(released_one)
-    let active_after = pool_active_count(handles)
-    if active_after != 0usize {
+    if pool_release_close(handles,
+    0usize) {
         return 30
     }
-    if file_write_text("target/jadren/network-pool.ok",
-    "active_before=2\nactive_after=0\nresponses=2\n") == 0usize {
+    if !pool_release_close(handles,
+    slot_two) {
+        return 30
+    }
+    if !pool_release_close(handles,
+    slot_one) {
+        return 30
+    }
+    let active_after = pool_active_count(handles)
+    if active_after != 0usize {
         return 31
+    }
+    if file_write_text("target/jadren/network-pool.ok",
+    "active_before=2\nactive_after=0\nresponses=2\nclosed_with_pool_helper=2\n") == 0usize {
+        return 32
     }
     print("network pool client handled two explicit pooled connections")
     return 0

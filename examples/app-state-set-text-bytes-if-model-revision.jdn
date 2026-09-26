@@ -1,0 +1,62 @@
+module app_state_set_text_bytes_if_model_revision.main
+
+// Caller-owned text input can use the complete app_data_revision token. A
+// mutation in a dynamic list invalidates a pending state write, while a
+// current token still publishes the bounded prefix.
+fn main() -> Int32 {
+    app_state_clear()
+    app_list_clear(0)
+    if ! app_state_set_text("name", "old") { return 1 }
+
+    var value: [UInt8; 8] = [110u8, 101u8, 119u8, 33u8, 0u8, 0u8, 0u8, 0u8]
+    let snapshot: UInt64 = app_data_revision()
+    if ! app_state_set_text_bytes_if_model_revision("name",
+    value,
+    4usize,
+    snapshot) {
+        return 2
+    }
+    var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if app_state_read_text("name", output) != 4usize { return 3 }
+    if output[0] != 110u8 { return 4 }
+    if output[3] != 33u8 { return 4 }
+
+    let stale: UInt64 = app_data_revision()
+    if ! app_list_push_text(0, "other") { return 5 }
+    if app_state_set_text_bytes_if_model_revision("name",
+    value,
+    4usize,
+    stale) {
+        return 6
+    }
+    if app_state_read_text("name", output) != 4usize { return 7 }
+    if output[0] != 110u8 { return 8 }
+    if output[3] != 33u8 { return 8 }
+
+    var updated_value: [UInt8; 8] = [111u8, 107u8, 33u8, 33u8, 0u8, 0u8, 0u8, 0u8]
+    let current: UInt64 = app_data_revision()
+    if ! app_state_set_text_bytes_if_model_revision("name",
+    updated_value,
+    4usize,
+    current) {
+        return 9
+    }
+    let after: UInt64 = app_data_revision()
+    if after == current { return 10 }
+    if app_state_set_text_bytes_if_model_revision("name",
+    updated_value,
+    9usize,
+    after) {
+        return 11
+    }
+    if app_state_read_text("name", output) != 4usize { return 12 }
+    if output[0] != 111u8 { return 13 }
+    if output[3] != 33u8 { return 13 }
+    if app_state_set_text_bytes_if_model_revision("",
+    value,
+    4usize,
+    after) {
+        return 14
+    }
+    return 0
+}

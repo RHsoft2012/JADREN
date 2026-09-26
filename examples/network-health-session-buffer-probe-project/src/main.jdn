@@ -1,0 +1,71 @@
+module network_health_session_buffer_probe_project.main
+
+import jadren.network.health.probe_session_buffer
+
+fn run(
+    request: write Buffer<UInt8>,
+    response: write Buffer<UInt8>,
+    body: write Buffer<UInt8>,
+) -> Int32 {
+    if !buffer_resize(request, 96usize) { return 1 }
+    if !buffer_resize(response, 192usize) { return 2 }
+    if !buffer_resize(body, 64usize) { return 3 }
+
+    let status: Int32 = probe_session_buffer(
+        "localhost",
+        "localhost",
+        38163u16,
+        3000u32,
+        2u32,
+        request,
+        response,
+        body,
+    )
+    if status != 200 { return 4 }
+    if response[0] != 72u8 { return 5 }
+
+    response[0] = 77u8
+    if !buffer_resize(body, 0usize) { return 6 }
+    let short_status: Int32 = probe_session_buffer(
+        "localhost",
+        "localhost",
+        38163u16,
+        3000u32,
+        2u32,
+        request,
+        response,
+        body,
+    )
+    if short_status != -12 { return 7 }
+    if response[0] != 77u8 { return 8 }
+
+    if file_write_text(
+        "target/jadren/network-health-session-buffer-probe.result",
+        "native-health-session-buffer-probe:200 checks:2 body:redacted schema:jadren-health-0.1\n"
+    ) == 0usize {
+        return 9
+    }
+    return 0
+}
+
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    let request_created: Result<Buffer<UInt8>, Int32> = buffer_create(96usize)
+    match request_created {
+        Ok(request) => {
+            let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(192usize)
+            match response_created {
+                Ok(response) => {
+                    let body_created: Result<Buffer<UInt8>, Int32> = buffer_create(64usize)
+                    match body_created {
+                        Ok(body) => { status = run(request, response, body) }
+                        Error(error) => { status = error }
+                    }
+                }
+                Error(error) => { status = error }
+            }
+        }
+        Error(error) => { status = error }
+    }
+    return status
+}

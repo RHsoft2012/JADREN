@@ -1,0 +1,30 @@
+module examples.http_request_body_exact
+
+// Exact request-body read-back distinguishes Content-Length: 0 from invalid
+// framing and never mutates the output length on failure.
+fn main() -> Int32 {
+    var request: [UInt8; 42] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 52u8, 13u8, 10u8, 13u8, 10u8, 65u8, 104u8, 111u8, 106u8]
+    var output: [UInt8; 4] = [77u8, 77u8, 77u8, 77u8]
+    var length: [UIntSize; 1] = [99usize]
+
+    if !http_request_body_exact(request, output, length) { return 1 }
+    if length[0] != 4usize { return 2 }
+    if output[0] != 65u8 { return 3 }
+    if output[3] != 106u8 { return 3 }
+
+    var empty_request: [UInt8; 38] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 48u8, 13u8, 10u8, 13u8, 10u8]
+    if !http_request_body_exact(empty_request, output, length) { return 4 }
+    if length[0] != 0usize { return 5 }
+    if output[0] != 65u8 { return 6 }
+
+    var too_small: [UInt8; 3] = [55u8, 55u8, 55u8]
+    var unchanged: [UIntSize; 1] = [123usize]
+    if http_request_body_exact(request, too_small, unchanged) { return 7 }
+    if too_small[0] != 55u8 { return 8 }
+    if unchanged[0] != 123usize { return 8 }
+
+    var chunked: [UInt8; 47] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 84u8, 114u8, 97u8, 110u8, 115u8, 102u8, 101u8, 114u8, 45u8, 69u8, 110u8, 99u8, 111u8, 100u8, 105u8, 110u8, 103u8, 58u8, 32u8, 99u8, 104u8, 117u8, 110u8, 107u8, 101u8, 100u8, 13u8, 10u8, 13u8, 10u8]
+    if http_request_body_exact(chunked, output, unchanged) { return 9 }
+    if unchanged[0] != 123usize { return 10 }
+    return 0
+}

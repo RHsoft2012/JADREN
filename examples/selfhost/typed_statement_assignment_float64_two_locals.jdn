@@ -1,0 +1,7 @@
+fn local_value() -> Float64 {
+    let first: Float64 = 1.5f64;
+    let second: Float64 = 2.5f64;
+    first = first + 0.5f64;
+    second = first - 0.5f64;
+    return second;
+}

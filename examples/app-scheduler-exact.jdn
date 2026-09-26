@@ -1,0 +1,51 @@
+module examples.app_scheduler_exact
+
+// Exact polling distinguishes a valid empty poll from a short output buffer.
+// Queue mutation happens only after the output capacity and length slot pass
+// the full preflight.
+fn main() -> Int32 {
+    app_scheduler_clear()
+    if !app_scheduler_set(41, 500 as Int64, 0u64) { return 1 }
+    var due: [Int32; 2] = [77, 77]
+    var count: [UIntSize; 1] = [99usize]
+    var next_due: [Int64; 1] = [777 as Int64]
+    var has_due: [Bool; 1] = [false]
+
+    if !app_scheduler_next_due_exact(next_due, has_due) { return 14 }
+    if !has_due[0] { return 15 }
+    if next_due[0] != 500 as Int64 { return 16 }
+
+    if !app_scheduler_poll_exact(499 as Int64, due, count) { return 2 }
+    if count[0] != 0usize { return 3 }
+    if due[0] != 77 { return 4 }
+    if due[1] != 77 { return 4 }
+    if app_scheduler_count() != 1usize { return 5 }
+
+    if !app_scheduler_poll_exact(500 as Int64, due, count) { return 6 }
+    if count[0] != 1usize { return 7 }
+    if due[0] != 41 { return 7 }
+    if app_scheduler_count() != 0usize { return 8 }
+
+    next_due[0] = 777 as Int64
+    has_due[0] = true
+    if !app_scheduler_next_due_exact(next_due, has_due) { return 17 }
+    if has_due[0] { return 18 }
+    if next_due[0] != 777 as Int64 { return 19 }
+
+    if !app_scheduler_set(51, 600 as Int64, 0u64) { return 9 }
+    if !app_scheduler_set(52, 600 as Int64, 0u64) { return 10 }
+    next_due[0] = 777 as Int64
+    has_due[0] = false
+    if !app_scheduler_next_due_exact(next_due, has_due) { return 20 }
+    if !has_due[0] { return 21 }
+    if next_due[0] != 600 as Int64 { return 22 }
+    var short: [Int32; 1] = [88]
+    var unchanged: [UIntSize; 1] = [123usize]
+    if app_scheduler_poll_exact(600 as Int64, short, unchanged) { return 11 }
+    if short[0] != 88 { return 12 }
+    if unchanged[0] != 123usize { return 12 }
+    if app_scheduler_count() != 2usize { return 13 }
+    app_scheduler_clear()
+    print("app scheduler exact ok")
+    return 0
+}

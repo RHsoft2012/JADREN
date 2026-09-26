@@ -1,0 +1,49 @@
+module examples.app_collection_clear_if_revision_project.main
+
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.clear_if_model_revision
+import jadren.app.list.count
+import jadren.app.list.push_text
+import jadren.app.table.append_row
+import jadren.app.table.row_count
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import examples.app_collection_clear_if_revision_project.table_probe.clear_table_if_model_revision
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    app_table_clear(0)
+    if ! push_text(0, "keep") { return 1 }
+    if ! push_text(0, "sentinel") { return 2 }
+    if ! set_column_name(0, 0, "name") { return 3 }
+    if ! append_row(0) { return 4 }
+    if ! set_cell(0, 0, 0, "keep") { return 5 }
+
+    let stale_list: UInt64 = revision()
+    if ! push_text(0, "changed") { return 6 }
+    if clear_if_model_revision(0, stale_list) { return 7 }
+    if count(0) != 3 { return 8 }
+
+    let current_list: UInt64 = revision()
+    if ! clear_if_model_revision(0, current_list) { return 9 }
+    if count(0) != 0 { return 10 }
+
+    let stale_table: UInt64 = revision()
+    if ! append_row(0) { return 11 }
+    if clear_table_if_model_revision(0, stale_table) { return 12 }
+    if row_count(0) != 2 { return 13 }
+
+    let current_table: UInt64 = revision()
+    if ! clear_table_if_model_revision(0, current_table) { return 14 }
+    if row_count(0) != 0 { return 15 }
+
+    if clear_if_model_revision(99, revision()) { return 16 }
+    if clear_table_if_model_revision(-1, revision()) { return 17 }
+    return 0
+}

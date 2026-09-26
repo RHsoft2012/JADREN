@@ -1,0 +1,30 @@
+module core_io_buffer.main
+import jadren.core.io.write_stderr_buffer
+import jadren.core.io.write_stdout_buffer
+fn main() -> Int32 {
+    var status: Int32 = 0
+    let created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(4usize)
+    match created {
+        Error(_) => {
+            status = 1
+        }
+        Ok(output) => {
+            if ! buffer_resize(output,
+            3usize) {
+                status = 2
+            }
+            if status == 0 {
+                output[0] = 79u8
+                output[1] = 75u8
+                output[2] = 10u8
+                if write_stdout_buffer(output) != 3usize {
+                    status = 3
+                } else if write_stderr_buffer(output) != 3usize {
+                    status = 4
+                }
+            }
+        }
+    }
+    return status
+}

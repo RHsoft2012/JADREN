@@ -1,0 +1,57 @@
+module generic_buffer_all.main
+
+import jadren.core.collections.all
+import jadren.core.collections.append
+import jadren.core.collections.capacity
+import jadren.core.collections.create
+import jadren.core.collections.length
+
+fn main() -> Int32 {
+    var result_code: Int32 = 0
+
+    let integers: Result<Buffer<Int32>, Int32> = create(6usize)
+    match integers {
+        Ok(values) => {
+            if ! append(values, 7) { result_code = 1 }
+            if ! append(values, 7) { result_code = 2 }
+            if ! append(values, 3) { result_code = 3 }
+            let initial_capacity: UIntSize = capacity(values)
+            if all(values, 7, 0usize) { result_code = 4 }
+            if all(values, 7, 1usize) { result_code = 5 }
+            if ! all(values, 3, 2usize) { result_code = 6 }
+            if ! all(values, 3, 3usize) { result_code = 7 }
+            if ! all(values, 99, 4usize) { result_code = 8 }
+            if all(values, 99, 0usize) { result_code = 9 }
+            if length(values) != 3usize { result_code = 10 }
+            if capacity(values) != initial_capacity { result_code = 11 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let bools: Result<Buffer<Bool>, Int32> = create(4usize)
+    match bools {
+        Ok(values) => {
+            if ! append(values, true) { result_code = 12 }
+            if ! append(values, true) { result_code = 13 }
+            if ! append(values, false) { result_code = 14 }
+            if all(values, true, 0usize) { result_code = 15 }
+            if all(values, true, 1usize) { result_code = 16 }
+            if ! all(values, false, 2usize) { result_code = 17 }
+            if ! all(values, true, 3usize) { result_code = 18 }
+            if all(values, false, 0usize) { result_code = 19 }
+            if length(values) != 3usize { result_code = 20 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let empty: Result<Buffer<Int32>, Int32> = create(0usize)
+    match empty {
+        Ok(values) => {
+            if ! all(values, 1, 0usize) { result_code = 21 }
+            if ! all(values, 1, 8usize) { result_code = 22 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

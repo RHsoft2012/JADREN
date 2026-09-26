@@ -1,0 +1,18 @@
+module selfhost.typed_statement_assignment_float64_same_module_body_call_sequence;
+
+// JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS
+// Both helper and nested are materialized from this source unit. The helper
+// body calls nested, exercising same-module call identity remapping.
+fn local_value() -> Float64 {
+    let first: Float64 = helper(1.5f64);
+    first = helper(first);
+    return helper(first);
+}
+
+fn helper(value: Float64) -> Float64 {
+    return nested(value) + 1.0f64;
+}
+
+fn nested(value: Float64) -> Float64 {
+    return value * 2.0f64;
+}

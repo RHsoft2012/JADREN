@@ -1,0 +1,65 @@
+module examples.dynamic_array_triple_nested
+
+// DynamicArray<T> composes through a third owning descriptor level.  This is
+// still the existing Buffer ABI: every successful append moves one descriptor
+// into its parent and clear/remove recursively release the complete chain.
+fn main() -> Int32 {
+    let outer_created: Result<DynamicArray<DynamicArray<DynamicArray<Int32>>>, Int32> = buffer_create(0usize)
+    let first_middle_created: Result<DynamicArray<DynamicArray<Int32>>, Int32> = buffer_create(0usize)
+    let second_middle_created: Result<DynamicArray<DynamicArray<Int32>>, Int32> = buffer_create(0usize)
+    let first_leaf_created: Result<DynamicArray<Int32>, Int32> = buffer_create(0usize)
+    let second_leaf_created: Result<DynamicArray<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_middle_created {
+                Ok(first_middle) => {
+                    match second_middle_created {
+                        Ok(second_middle) => {
+                            match first_leaf_created {
+                                Ok(first_leaf) => {
+                                    match second_leaf_created {
+                                        Ok(second_leaf) => {
+                                            if !buffer_append(first_leaf, 31) { result_code = 1 }
+                                            if !buffer_append(second_leaf, 47) { result_code = 2 }
+                                            if !buffer_append(first_middle, first_leaf) { result_code = 3 }
+                                            if !buffer_append(second_middle, second_leaf) { result_code = 4 }
+                                            if !buffer_append(outer, first_middle) { result_code = 5 }
+                                            if !buffer_append(outer, second_middle) { result_code = 6 }
+                                            if buffer_length(outer) != 2usize { result_code = 7 }
+                                            if buffer_length(outer[0]) != 1usize { result_code = 8 }
+                                            if buffer_length(outer[0][0]) != 1usize { result_code = 9 }
+                                            if outer[0][0][0] != 31 { result_code = 10 }
+                                            if outer[1][0][0] != 47 { result_code = 11 }
+
+                                            let removed: Result<DynamicArray<DynamicArray<Int32>>, Int32> = buffer_remove_move(outer, 0usize)
+                                            match removed {
+                                                Ok(moved) => {
+                                                    if buffer_length(moved) != 1usize { result_code = 12 }
+                                                    if moved[0][0] != 31 { result_code = 13 }
+                                                    if !buffer_clear_move(moved) { result_code = 14 }
+                                                }
+                                                Error(status) => { result_code = status }
+                                            }
+                                            if buffer_length(outer) != 1usize { result_code = 15 }
+                                            if outer[0][0][0] != 47 { result_code = 16 }
+                                            if !buffer_clear_move(outer) { result_code = 17 }
+                                            if buffer_length(outer) != 0usize { result_code = 18 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

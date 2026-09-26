@@ -1,0 +1,32 @@
+module core_process_buffer.main
+import jadren.core.process.arg_count
+import jadren.core.process.arg_read_buffer
+fn main() -> Int32 {
+    var status: Int32 = 0
+    if arg_count() == 0usize {
+        return 1
+    }
+    let created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(8usize)
+    match created {
+        Error(error) => {
+            status = error
+        }
+        Ok(output) => {
+            if ! buffer_resize(output,
+            8usize) {
+                status = 2
+            } else {
+                output[0] = 90u8
+                if arg_read_buffer(0usize,
+                output,
+                9usize) != 0usize {
+                    status = 3
+                } else if output[0] != 90u8 {
+                    status = 4
+                }
+            }
+        }
+    }
+    return status
+}

@@ -1,0 +1,278 @@
+module ui_list_filter_callback_project.main
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.count
+import jadren.app.list.push_text
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.list
+import jadren.app.ui.list_bind
+import jadren.app.ui.list_count
+import jadren.app.ui.list_filter_callback_if_revision
+import jadren.app.ui.list_filter_callback_if_model_revision
+import jadren.app.ui.list_filter_callback
+import jadren.app.ui.list_read_item_exact
+import jadren.app.ui.panel
+fn keep_even_slots(source: Int32, index: Int32) -> Bool {
+    if index == 0 {
+        return true
+    }
+    if index == 2 {
+        return true
+    }
+    return false
+}
+fn keep_last_slot(source: Int32, index: Int32) -> Bool {
+    return index == 3
+}
+fn mutate_source(source: Int32, index: Int32) -> Bool {
+    if index == 0 {
+        if ! push_text(source,
+        "unexpected") {
+            return false
+        }
+    }
+    return true
+}
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear(0)
+    clear(1)
+    if ! push_text(0,
+    "Keep A") {
+        return 1
+    }
+    if ! push_text(0,
+    "Drop") {
+        return 2
+    }
+    if ! push_text(0,
+    "Keep B") {
+        return 3
+    }
+    if ! push_text(1,
+    "Sentinel") {
+        return 4
+    }
+    let root: Int32 = begin("Jadren list callback filter",
+    720,
+    420,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 5
+    }
+    let panel_node: Int32 = panel(root,
+    660,
+    300,
+    0xFFFFFFu32,
+    16,
+    12,
+    8,
+    0,
+    1)
+    if panel_node == 0 {
+        return 6
+    }
+    let source_node: Int32 = list(panel_node,
+    30,
+    600,
+    110,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    let destination_node: Int32 = list(panel_node,
+    31,
+    600,
+    110,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    let mirror_node: Int32 = list(panel_node,
+    32,
+    600,
+    110,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if source_node == 0 {
+        return 7
+    }
+    if destination_node == 0 {
+        return 8
+    }
+    if mirror_node == 0 {
+        return 9
+    }
+    if ! list_bind(source_node,
+    0) {
+        return 10
+    }
+    if ! list_bind(destination_node,
+    1) {
+        return 11
+    }
+    if ! list_bind(mirror_node,
+    1) {
+        return 12
+    }
+    var output:[UInt8;
+    32] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8
+    ]
+    var length:[UIntSize;
+    1] =[99usize]
+    let stale: UInt64 = revision()
+    if ! push_text(0,
+    "Keep C") {
+        return 13
+    }
+    if list_filter_callback_if_model_revision(source_node,
+    1,
+    keep_even_slots,
+    stale) {
+        return 14
+    }
+    if count(1) != 1 {
+        return 15
+    }
+    if list_count(destination_node) != 1 {
+        return 16
+    }
+    if list_count(mirror_node) != 1 {
+        return 17
+    }
+    if ! list_read_item_exact(destination_node,
+    0,
+    output,
+    length) {
+        return 18
+    }
+    if length[0] != 8usize {
+        return 19
+    }
+    if output[0] != 83u8 {
+        return 20
+    }
+    let current: UInt64 = revision()
+    if ! list_filter_callback_if_model_revision(source_node,
+    1,
+    keep_even_slots,
+    current) {
+        return 21
+    }
+    if count(1) != 2 {
+        return 22
+    }
+    if list_count(destination_node) != 2 {
+        return 23
+    }
+    if list_count(mirror_node) != 2 {
+        return 24
+    }
+    if ! list_read_item_exact(destination_node,
+    0,
+    output,
+    length) {
+        return 25
+    }
+    if length[0] != 6usize {
+        return 26
+    }
+    if output[0] != 75u8 {
+        return 27
+    }
+    if ! list_read_item_exact(mirror_node,
+    1,
+    output,
+    length) {
+        return 28
+    }
+    if length[0] != 6usize {
+        return 29
+    }
+    if output[0] != 75u8 {
+        return 30
+    }
+    if ! list_filter_callback(source_node,
+    1,
+    keep_last_slot) {
+        return 31
+    }
+    if list_count(destination_node) != 1 {
+        return 32
+    }
+    if ! list_read_item_exact(destination_node,
+    0,
+    output,
+    length) {
+        return 33
+    }
+    if length[0] != 6usize {
+        return 34
+    }
+    if output[0] != 75u8 {
+        return 35
+    }
+    let mutation_revision: UInt64 = revision()
+    if list_filter_callback_if_model_revision(source_node,
+    1,
+    mutate_source,
+    mutation_revision) {
+        return 36
+    }
+    if list_filter_callback_if_model_revision(0,
+    1,
+    keep_even_slots,
+    revision()) {
+        return 37
+    }
+    if list_filter_callback_if_model_revision(source_node,
+    0,
+    keep_even_slots,
+    revision()) {
+        return 38
+    }
+    if ! finish(panel_node) {
+        return 39
+    }
+    if ! finish(root) {
+        return 40
+    }
+    return 0
+}

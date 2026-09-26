@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "ed09b4baf905a226"
+
+[package]
+name = "network-csrf-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

@@ -1,0 +1,35 @@
+module examples.stdlib_buffer_owning_reserve
+
+// Generic create/reserve must preserve owning descriptors when the outer
+// buffer reallocates.  The outer record is moved as bytes; its inner Buffer
+// allocation remains owned by the record field table until clear_move.
+@repr(C)
+struct Entry {
+    id: Int32,
+    values: Buffer<Int32>
+}
+
+fn main() -> Int32 {
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match entries_created {
+        Ok(entries) => {
+            match values_created {
+                Ok(values) => {
+                    if !buffer_append(values, 17) { result_code = 1 }
+                    let item: Entry = Entry { id: 7, values: values }
+                    if !buffer_append(entries, item) { result_code = 2 }
+                    if !buffer_reserve(entries, 4usize) { result_code = 3 }
+                    if buffer_length(entries) != 1usize { result_code = 4 }
+                    if buffer_capacity(entries) < 4usize { result_code = 5 }
+                    if !buffer_clear_move(entries) { result_code = 6 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

@@ -1,0 +1,21 @@
+module examples.native_file_delete_path
+
+// Deletes a caller-owned temporary path without converting the file-dialog
+// bytes to String. An invalid explicit length must leave the existing file.
+fn main() -> Int32 {
+    var path: [UInt8; 29] = [116u8, 97u8, 114u8, 103u8, 101u8, 116u8, 47u8,
+        106u8, 97u8, 100u8, 114u8, 101u8, 110u8, 45u8, 100u8, 101u8,
+        108u8, 101u8, 116u8, 101u8, 45u8, 112u8, 97u8, 116u8, 104u8,
+        46u8, 98u8, 105u8, 110u8]
+    var before: [UInt8; 3] = [0u8, 0u8, 0u8]
+
+    if file_delete_path(path, 30usize) { return 1 }
+    if file_read_at_path(path, 29usize, 0usize, before) != 3usize { return 2 }
+    if before[0] != 79u8 { return 3 }
+    if before[1] != 76u8 { return 4 }
+    if before[2] != 68u8 { return 5 }
+
+    if !file_delete_path(path, 29usize) { return 6 }
+    if file_size_path(path, 29usize) != 0usize { return 7 }
+    return 0
+}

@@ -1,0 +1,371 @@
+module app_data_model_revision_project.main
+import jadren.app.data.load_file_if_model_revision_buffer
+import jadren.app.data.load_exact_if_model_revision_buffer
+import jadren.app.data.revision
+import jadren.app.data.save_atomic_durable_if_model_revision_buffer
+import jadren.app.data.snapshot_length_if_model_revision
+import jadren.app.data.tx_begin_if_model_revision
+import jadren.app.data.tx_commit_durable_directory_if_model_revision
+import jadren.app.data.tx_commit_durable_if_model_revision
+import jadren.app.data.tx_commit_durable_retry_if_model_revision
+import jadren.app.data.tx_rollback
+import jadren.app.data.write_exact_if_model_revision_buffer
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.exists
+import jadren.app.state.clear
+import jadren.app.state.read_text_exact
+import jadren.app.state.set_text
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn cleanup() -> Bool {
+    delete("target/app-data-model-revision-smoke/model.data")
+    delete("target/app-data-model-revision-smoke/model.tmp")
+    delete("target/app-data-model-revision-smoke/tx.data")
+    delete("target/app-data-model-revision-smoke/tx.tmp")
+    delete("target/app-data-model-revision-smoke/tx.lock")
+    delete("target/app-data-model-revision-smoke/tx-dir.data")
+    delete("target/app-data-model-revision-smoke/tx-dir.tmp")
+    delete("target/app-data-model-revision-smoke/tx-dir.lock")
+    return true
+}
+fn main() -> Int32 {
+    dir_create("target/app-data-model-revision-smoke")
+    cleanup()
+    clear()
+    let initial_set: Bool = app_state_set_text("mode",
+    "dark")
+    if ! initial_set {
+        return 1
+    }
+    let initial_revision: UInt64 = revision()
+    if snapshot_length_if_model_revision(initial_revision) == 0usize {
+        return 2
+    }
+    let created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(4096usize)
+    var status: Int32 = 0
+    match created {
+        Error(error) => {
+            status = error
+        }
+        Ok(snapshot) => {
+            if ! buffer_resize(snapshot,
+            4096usize) {
+                status = 3
+            }
+            var length:[UIntSize;
+            1] =[777usize]
+            if status == 0 {
+                if ! write_exact_if_model_revision_buffer(snapshot,
+                4096usize,
+                length,
+                initial_revision) {
+                    status = 4
+                }
+            }
+            if status == 0 {
+                if length[0] == 0usize {
+                    status = 5
+                }
+            }
+            let snapshot_length_value: UIntSize = length[0]
+            if status == 0 {
+                if ! save_atomic_durable_if_model_revision_buffer("target/app-data-model-revision-smoke/model.tmp",
+                "target/app-data-model-revision-smoke/model.data",
+                "target/app-data-model-revision-smoke",
+                snapshot,
+                4096usize,
+                initial_revision
+                ) {
+                    status = 6
+                }
+            }
+            if status == 0 {
+                if ! exists("target/app-data-model-revision-smoke/model.data") {
+                    status = 7
+                }
+            }
+            let stale_length_revision: UInt64 = revision()
+            if status == 0 {
+                if ! set_text("mode",
+                "light") {
+                    status = 8
+                }
+            }
+            snapshot[0] = 77u8
+            length[0] = 888usize
+            if status == 0 {
+                if write_exact_if_model_revision_buffer(snapshot,
+                4096usize,
+                length,
+                stale_length_revision) {
+                    status = 9
+                }
+            }
+            if status == 0 {
+                if snapshot[0] != 77u8 {
+                    status = 10
+                }
+            }
+            if status == 0 {
+                if length[0] != 888usize {
+                    status = 11
+                }
+            }
+            if status == 0 {
+                if save_atomic_durable_if_model_revision_buffer("target/app-data-model-revision-smoke/model.tmp",
+                "target/app-data-model-revision-smoke/model.data",
+                "target/app-data-model-revision-smoke",
+                snapshot,
+                4096usize,
+                initial_revision
+                ) {
+                    status = 12
+                }
+            }
+            if status == 0 {
+                if ! load_file_if_model_revision_buffer("target/app-data-model-revision-smoke/model.data",
+                snapshot,
+                4096usize,
+                revision()
+                ) {
+                    status = 13
+                }
+            }
+            var mode:[UInt8;
+            8] =[0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8]
+            var mode_length:[UIntSize;
+            1] =[999usize]
+            if status == 0 {
+                if ! read_text_exact("mode",
+                mode,
+                mode_length) {
+                    status = 14
+                }
+            }
+            if status == 0 {
+                if mode_length[0] != 4usize {
+                    status = 15
+                }
+            }
+            if status == 0 {
+                if mode[0] != 100u8 {
+                    status = 16
+                }
+            }
+            if status == 0 {
+                if mode[3] != 107u8 {
+                    status = 17
+                }
+            }
+            if status == 0 {
+                if ! set_text("mode",
+                "manual") {
+                    status = 40
+                }
+            }
+            let exact_restore_revision: UInt64 = revision()
+            if status == 0 {
+                if ! load_exact_if_model_revision_buffer(snapshot,
+                snapshot_length_value,
+                exact_restore_revision) {
+                    status = 41
+                }
+            }
+            if status == 0 {
+                if ! read_text_exact("mode",
+                mode,
+                mode_length) {
+                    status = 42
+                }
+            }
+            if status == 0 {
+                if mode_length[0] != 4usize {
+                    status = 43
+                }
+            }
+            if status == 0 {
+                if mode[0] != 100u8 {
+                    status = 44
+                }
+            }
+            if status == 0 {
+                if mode[3] != 107u8 {
+                    status = 45
+                }
+            }
+            let stale_exact_revision: UInt64 = revision()
+            if status == 0 {
+                if ! set_text("mode",
+                "stale") {
+                    status = 46
+                }
+            }
+            if status == 0 {
+                if load_exact_if_model_revision_buffer(snapshot,
+                snapshot_length_value,
+                stale_exact_revision) {
+                    status = 47
+                }
+            }
+            if status == 0 {
+                if ! read_text_exact("mode",
+                mode,
+                mode_length) {
+                    status = 48
+                }
+            }
+            if status == 0 {
+                if mode_length[0] != 5usize {
+                    status = 49
+                }
+            }
+            if status == 0 {
+                if mode[0] != 115u8 {
+                    status = 50
+                }
+            }
+            if status == 0 {
+                if mode[4] != 101u8 {
+                    status = 51
+                }
+            }
+            if status == 0 {
+                if ! set_text("mode",
+                "dark") {
+                    status = 52
+                }
+            }
+            if status == 0 {
+                let stale_transaction_revision: UInt64 = revision()
+                if ! tx_begin_if_model_revision(stale_transaction_revision) {
+                    status = 18
+                }
+                if status == 0 {
+                    if ! set_text("mode",
+                    "stale") {
+                        status = 19
+                    }
+                }
+                if status == 0 {
+                    if tx_commit_durable_if_model_revision("target/app-data-model-revision-smoke/tx.tmp",
+                    "target/app-data-model-revision-smoke/tx.data",
+                    "target/app-data-model-revision-smoke/tx.lock",
+                    stale_transaction_revision) {
+                        status = 20
+                    }
+                }
+                if status == 0 {
+                    if exists("target/app-data-model-revision-smoke/tx.data") {
+                        status = 21
+                    }
+                }
+                if status == 0 {
+                    if ! tx_rollback() {
+                        status = 22
+                    }
+                }
+            }
+            if status == 0 {
+                let retry_transaction_revision: UInt64 = revision()
+                if ! tx_begin_if_model_revision(retry_transaction_revision) {
+                    status = 23
+                }
+                if status == 0 {
+                    if ! set_text("mode",
+                    "saved") {
+                        status = 24
+                    }
+                }
+                let committed_transaction_revision: UInt64 = revision()
+                if status == 0 {
+                    if ! tx_commit_durable_retry_if_model_revision("target/app-data-model-revision-smoke/tx.tmp",
+                    "target/app-data-model-revision-smoke/tx.data",
+                    "target/app-data-model-revision-smoke/tx.lock",
+                    committed_transaction_revision,
+                    2usize,
+                    0usize) {
+                        status = 25
+                    }
+                }
+                if status == 0 {
+                    if ! exists("target/app-data-model-revision-smoke/tx.data") {
+                        status = 26
+                    }
+                }
+                if status == 0 {
+                    if ! load_file_if_model_revision_buffer("target/app-data-model-revision-smoke/tx.data",
+                    snapshot,
+                    4096usize,
+                    revision()) {
+                        status = 27
+                    }
+                }
+                if status == 0 {
+                    if ! read_text_exact("mode",
+                    mode,
+                    mode_length) {
+                        status = 28
+                    }
+                }
+                if status == 0 {
+                    if mode_length[0] != 5usize {
+                        status = 29
+                    }
+                }
+                if status == 0 {
+                    if mode[0] != 115u8 {
+                        status = 30
+                    }
+                }
+                if status == 0 {
+                    if mode[4] != 100u8 {
+                        status = 31
+                    }
+                }
+            }
+            if status == 0 {
+                let directory_transaction_revision: UInt64 = revision()
+                if ! tx_begin_if_model_revision(directory_transaction_revision) {
+                    status = 32
+                }
+                if status == 0 {
+                    if ! set_text("mode",
+                    "final") {
+                        status = 33
+                    }
+                }
+                let committed_directory_revision: UInt64 = revision()
+                if status == 0 {
+                    if ! tx_commit_durable_directory_if_model_revision("target/app-data-model-revision-smoke/tx-dir.tmp",
+                    "target/app-data-model-revision-smoke/tx-dir.data",
+                    "target/app-data-model-revision-smoke",
+                    "target/app-data-model-revision-smoke/tx-dir.lock",
+                    committed_directory_revision) {
+                        status = 34
+                    }
+                }
+                if status == 0 {
+                    if ! exists("target/app-data-model-revision-smoke/tx-dir.data") {
+                        status = 35
+                    }
+                }
+            }
+        }
+    }
+    cleanup()
+    clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    return status
+}

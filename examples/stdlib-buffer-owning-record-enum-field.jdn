@@ -1,0 +1,64 @@
+module examples.stdlib_buffer_owning_record_enum_field
+
+// A C-layout record may contain a named owning enum field.  The enum is
+// deliberately bounded to direct Buffer payloads so the record field table
+// can select the enum tag without hidden metadata.
+@repr(C)
+enum Payload {
+    Empty,
+    Values(Buffer<Int32>),
+    Nested(Buffer<Buffer<Int32>>),
+    Done
+}
+
+@repr(C)
+struct Entry {
+    id: Int32,
+    payload: Payload
+}
+
+fn main() -> Int32 {
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let leaf_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let nested_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match entries_created {
+        Ok(entries) => {
+            match values_created {
+                Ok(values) => {
+                    if !buffer_append(values, 7) { result_code = 1 }
+                    let item: Entry = Entry {
+                        id: 1,
+                        payload: Payload.Values(values)
+                    }
+                    if !buffer_append(entries, item) { result_code = 2 }
+                    match leaf_created {
+                        Ok(leaf) => {
+                            if !buffer_append(leaf, 9) { result_code = 3 }
+                            match nested_created {
+                                Ok(nested) => {
+                                    if !buffer_append(nested, leaf) { result_code = 4 }
+                                    let nested_item: Entry = Entry {
+                                        id: 2,
+                                        payload: Payload.Nested(nested)
+                                    }
+                                    if !buffer_append(entries, nested_item) { result_code = 5 }
+                                    if buffer_length(entries) != 2usize { result_code = 6 }
+                                    if !buffer_remove_drop(entries, 0usize) { result_code = 7 }
+                                    if !buffer_clear_move(entries) { result_code = 8 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

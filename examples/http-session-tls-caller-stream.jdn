@@ -1,0 +1,79 @@
+module examples.http_session_tls_caller_stream
+
+// Caller-driven TLS session: accept one connection, read one request, build a
+// dynamic chunked response and close both the connection and session.
+fn main() -> Int32 {
+    let listener: UIntSize = net_tcp_listen(38153u16)
+    if listener == 0usize { return 10 }
+    let session: UIntSize = http_session_open_tls(
+        listener,
+        1u32,
+        1024u32,
+        1024u32,
+        "target/jadren-tls-caller-stream/server.pfx",
+        "testpass")
+    if session == 0usize {
+        net_socket_close(listener)
+        return 11
+    }
+    let connection: UIntSize = http_session_accept(session, 5000u32)
+    if connection == 0usize {
+        http_session_close(session)
+        return 12
+    }
+    var request: [UInt8; 128] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let request_length: UIntSize = http_session_receive_request(
+        connection, 5000u32, request)
+    if request_length == 0usize {
+        http_session_close_connection(connection)
+        http_session_close(session)
+        return 13
+    }
+    var wire: [UInt8; 128] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let header_length: UIntSize = http_response_write_chunked_header(
+        200u16, "text/plain", wire)
+    if header_length == 0usize {
+        http_session_close_connection(connection)
+        http_session_close(session)
+        return 14
+    }
+    if !http_session_send_prefix(connection, wire, header_length) {
+        http_session_close_connection(connection)
+        http_session_close(session)
+        return 14
+    }
+    var chunk: [UInt8; 10] = [84u8, 76u8, 83u8, 32u8, 74u8, 97u8, 100u8,
+        114u8, 101u8, 110u8]
+    let chunk_length: UIntSize = http_response_write_chunk(chunk, true, wire)
+    if chunk_length == 0usize {
+        http_session_close_connection(connection)
+        http_session_close(session)
+        return 15
+    }
+    if !http_session_send_prefix(connection, wire, chunk_length) {
+        http_session_close_connection(connection)
+        http_session_close(session)
+        return 15
+    }
+    let connection_closed: Bool = http_session_close_connection(connection)
+    let session_closed: Bool = http_session_close(session)
+    if !connection_closed { return 17 }
+    if !session_closed { return 17 }
+    return 0
+}

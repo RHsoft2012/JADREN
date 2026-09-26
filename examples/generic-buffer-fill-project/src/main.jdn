@@ -1,0 +1,71 @@
+module generic_buffer_fill.main
+
+import jadren.core.collections.append
+import jadren.core.collections.capacity
+import jadren.core.collections.create
+import jadren.core.collections.fill
+import jadren.core.collections.length
+
+fn main() -> Int32 {
+    let integers: Result<Buffer<Int32>, Int32> = create(8usize)
+    var result_code: Int32 = 0
+    match integers {
+        Ok(values) => {
+            if !append(values, 4) { result_code = 1 }
+            if !append(values, 7) { result_code = 2 }
+            if !append(values, 9) { result_code = 3 }
+            let before_capacity: UIntSize = capacity(values)
+            if !fill(values, 42) { result_code = 4 }
+            if length(values) != 3usize { result_code = 5 }
+            if capacity(values) != before_capacity { result_code = 6 }
+            if values[0] != 42 { result_code = 7 }
+            if values[1] != 42 { result_code = 8 }
+            if values[2] != 42 { result_code = 9 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let floats: Result<Buffer<Float32>, Int32> = create(4usize)
+    match floats {
+        Ok(values) => {
+            if !append(values, 1.5f32) { result_code = 10 }
+            if !append(values, -2.0f32) { result_code = 11 }
+            if !fill(values, 3.25f32) { result_code = 12 }
+            if length(values) != 2usize { result_code = 13 }
+            if values[0] != 3.25f32 { result_code = 14 }
+            if values[1] != 3.25f32 { result_code = 15 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let booleans: Result<Buffer<Bool>, Int32> = create(4usize)
+    match booleans {
+        Ok(values) => {
+            if !append(values, true) { result_code = 16 }
+            if !append(values, false) { result_code = 17 }
+            let before_capacity: UIntSize = capacity(values)
+            if !fill(values, true) { result_code = 18 }
+            if length(values) != 2usize { result_code = 19 }
+            if capacity(values) != before_capacity { result_code = 20 }
+            if !values[0] { result_code = 21 }
+            if !values[1] { result_code = 22 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let chars: Result<Buffer<Char>, Int32> = create(4usize)
+    match chars {
+        Ok(values) => {
+            if !append(values, 'a') { result_code = 23 }
+            if !append(values, 'z') { result_code = 24 }
+            let before_capacity: UIntSize = capacity(values)
+            if !fill(values, 'm') { result_code = 25 }
+            if length(values) != 2usize { result_code = 26 }
+            if capacity(values) != before_capacity { result_code = 27 }
+            if values[0] != 'm' { result_code = 28 }
+            if values[1] != 'm' { result_code = 29 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

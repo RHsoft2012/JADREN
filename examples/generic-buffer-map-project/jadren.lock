@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "1ffeb0ca9a642e76"
+
+[package]
+name = "generic-buffer-map-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-core"
+requirement = ""
+source = "path:../../stdlib/core"

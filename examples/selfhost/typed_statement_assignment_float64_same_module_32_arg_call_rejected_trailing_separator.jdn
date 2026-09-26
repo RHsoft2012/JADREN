@@ -1,0 +1,11 @@
+module selfhost.typed_statement_assignment_float64_same_module_32_arg_call_rejected_trailing_separator;
+
+// JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS
+fn local_value() -> Float64 {
+    let first: Float64 = helper(1.0f64, 2.0f64, 3.0f64, 4.0f64, 5.0f64, 6.0f64, 7.0f64, 8.0f64, 9.0f64, 10.0f64, 11.0f64, 12.0f64, 13.0f64, 14.0f64, 15.0f64, 16.0f64, 17.0f64, 18.0f64, 19.0f64, 20.0f64, 21.0f64, 22.0f64, 23.0f64, 24.0f64, 25.0f64, 26.0f64, 27.0f64, 28.0f64, 29.0f64, 30.0f64, 31.0f64, 32.0f64,);
+    return first;
+}
+
+fn helper(first: Float64, second: Float64, third: Float64, fourth: Float64, fifth: Float64, sixth: Float64, seventh: Float64, eighth: Float64, ninth: Float64, tenth: Float64, eleventh: Float64, twelfth: Float64, thirteenth: Float64, fourteenth: Float64, fifteenth: Float64, sixteenth: Float64, seventeenth: Float64, eighteenth: Float64, nineteenth: Float64, twentieth: Float64, twenty_first: Float64, twenty_second: Float64, twenty_third: Float64, twenty_fourth: Float64, twenty_fifth: Float64, twenty_sixth: Float64, twenty_seventh: Float64, twenty_eighth: Float64, twenty_ninth: Float64, thirtieth: Float64, thirty_first: Float64, thirty_second: Float64) -> Float64 {
+    return first + second + third + fourth + fifth + sixth + seventh + eighth + ninth + tenth + eleventh + twelfth + thirteenth + fourteenth + fifteenth + sixteenth + seventeenth + eighteenth + nineteenth + twentieth + twenty_first + twenty_second + twenty_third + twenty_fourth + twenty_fifth + twenty_sixth + twenty_seventh + twenty_eighth + twenty_ninth + thirtieth + thirty_first + thirty_second;
+}

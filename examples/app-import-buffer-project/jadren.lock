@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "0b4edda9be1c0af4"
+
+[package]
+name = "app-import-buffer-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

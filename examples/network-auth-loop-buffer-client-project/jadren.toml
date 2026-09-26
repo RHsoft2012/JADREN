@@ -1,0 +1,12 @@
+[package]
+name = "network-auth-loop-buffer-client-project"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+jadren-network = { path = "../../stdlib/network" }
+jadren-app = { path = "../../stdlib/app" }
+jadren-core = { path = "../../stdlib/core" }
+
+[targets]
+library = true

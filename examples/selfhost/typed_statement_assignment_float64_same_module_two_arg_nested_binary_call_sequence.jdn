@@ -1,0 +1,20 @@
+module selfhost.typed_statement_assignment_float64_same_module_two_arg_nested_binary_call_sequence;
+
+// JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS
+fn local_value() -> Float64 {
+    let first: Float64 = helper(left_value(1.0f64 + 2.0f64), right_value(2.0f64 * 3.0f64));
+    first = helper(left_value(first * 2.0f64), right_value(3.0f64 + 4.0f64));
+    return helper(left_value(first - 1.0f64), right_value(5.0f64 + first));
+}
+
+fn helper(left: Float64, right: Float64) -> Float64 {
+    return left + right;
+}
+
+fn left_value(value: Float64) -> Float64 {
+    return value + 10.0f64;
+}
+
+fn right_value(value: Float64) -> Float64 {
+    return value * 2.0f64;
+}

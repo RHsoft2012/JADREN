@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "a3c8a0f6663399bc"
+
+[package]
+name = "ui-list-filter-callback-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

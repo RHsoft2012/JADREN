@@ -1,0 +1,88 @@
+module examples.stdlib_buffer_owning_record_nested_enum_insert_move_from
+
+// Caller-owned insert must move a complete record into the requested list
+// position when its named enum payload contains another named enum with an
+// owning Buffer leaf. The source is consumed only on success; an invalid
+// index leaves both the list and the source owner untouched.
+@repr(C)
+enum Inner {
+    Empty,
+    Values(Buffer<Int32>),
+    Done
+}
+
+@repr(C)
+enum Outer {
+    Idle,
+    Nested(Inner),
+    Done
+}
+
+@repr(C)
+struct Entry {
+    id: Int32,
+    payload: Outer
+}
+
+fn main() -> Int32 {
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let existing_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let inserted_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let status_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let invalid_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match entries_created {
+        Ok(entries) => {
+            match existing_values_created {
+                Ok(existing_values) => {
+                    match inserted_values_created {
+                        Ok(inserted_values) => {
+                            match status_values_created {
+                                Ok(status_values) => {
+                                    match invalid_values_created {
+                                        Ok(invalid_values) => {
+                                            if !buffer_append(existing_values, 3) { result_code = 1 }
+                                            if !buffer_append(inserted_values, 7) { result_code = 2 }
+                                            if !buffer_append(status_values, 9) { result_code = 3 }
+                                            if !buffer_append(invalid_values, 11) { result_code = 4 }
+                                            let existing_inner: Inner = Inner.Values(existing_values)
+                                            let inserted_inner: Inner = Inner.Values(inserted_values)
+                                            let existing: Entry = Entry { id: 1, payload: Outer.Nested(existing_inner) }
+                                            let incoming: Entry = Entry { id: 42, payload: Outer.Nested(inserted_inner) }
+                                            if !buffer_append(entries, existing) { result_code = 5 }
+                                            if !buffer_insert_move_from(entries, 0usize, incoming) { result_code = 6 }
+                                            if buffer_length(entries) != 2usize { result_code = 7 }
+                                            if entries[0].id != 42 { result_code = 8 }
+                                            if entries[1].id != 1 { result_code = 9 }
+
+                                            let status_inner: Inner = Inner.Values(status_values)
+                                            let status_source: Entry = Entry { id: 7, payload: Outer.Nested(status_inner) }
+                                            let status: Int32 = buffer_insert_move_from_status(entries, 1usize, status_source)
+                                            if status != 0 { result_code = 10 }
+                                            if buffer_length(entries) != 3usize { result_code = 11 }
+                                            if entries[1].id != 7 { result_code = 12 }
+
+                                            let invalid_inner: Inner = Inner.Values(invalid_values)
+                                            let invalid_source: Entry = Entry { id: 99, payload: Outer.Nested(invalid_inner) }
+                                            let invalid: Int32 = buffer_insert_move_from_status(entries, 99usize, invalid_source)
+                                            if invalid != -20 { result_code = 13 }
+                                            if buffer_length(entries) != 3usize { result_code = 14 }
+                                            if !buffer_clear_move(entries) { result_code = 15 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

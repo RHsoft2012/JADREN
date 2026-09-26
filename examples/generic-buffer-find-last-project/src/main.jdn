@@ -1,0 +1,58 @@
+module generic_buffer_find_last.main
+
+import jadren.core.collections.append
+import jadren.core.collections.capacity
+import jadren.core.collections.create
+import jadren.core.collections.find_last
+import jadren.core.collections.length
+
+fn main() -> Int32 {
+    var result_code: Int32 = 0
+
+    let integers: Result<Buffer<Int32>, Int32> = create(6usize)
+    match integers {
+        Ok(values) => {
+            if ! append(values, 7) { result_code = 1 }
+            if ! append(values, 3) { result_code = 2 }
+            if ! append(values, 7) { result_code = 3 }
+            if ! append(values, 7) { result_code = 4 }
+            let initial_capacity: UIntSize = capacity(values)
+            if find_last(values, 7, 0usize) != 3 { result_code = 5 }
+            if find_last(values, 7, 1usize) != 3 { result_code = 6 }
+            if find_last(values, 7, 3usize) != 3 { result_code = 7 }
+            if find_last(values, 3, 2usize) != -1 { result_code = 8 }
+            if find_last(values, 99, 0usize) != -1 { result_code = 9 }
+            if find_last(values, 7, 4usize) != -1 { result_code = 10 }
+            if length(values) != 4usize { result_code = 11 }
+            if capacity(values) != initial_capacity { result_code = 12 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let bools: Result<Buffer<Bool>, Int32> = create(4usize)
+    match bools {
+        Ok(values) => {
+            if ! append(values, true) { result_code = 13 }
+            if ! append(values, false) { result_code = 14 }
+            if ! append(values, true) { result_code = 15 }
+            if find_last(values, true, 0usize) != 2 { result_code = 16 }
+            if find_last(values, true, 1usize) != 2 { result_code = 17 }
+            if find_last(values, false, 0usize) != 1 { result_code = 18 }
+            if find_last(values, false, 2usize) != -1 { result_code = 19 }
+            if find_last(values, true, 3usize) != -1 { result_code = 20 }
+            if length(values) != 3usize { result_code = 21 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let empty: Result<Buffer<Int32>, Int32> = create(0usize)
+    match empty {
+        Ok(values) => {
+            if find_last(values, 1, 0usize) != -1 { result_code = 22 }
+            if find_last(values, 1, 8usize) != -1 { result_code = 23 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

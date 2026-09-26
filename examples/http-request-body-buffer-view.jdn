@@ -1,0 +1,75 @@
+module examples.http_request_body_buffer_view
+
+fn parse_body(request: read Slice<UInt8>, output: write Buffer<UInt8>) -> Int32 {
+    if !buffer_resize(output, 4usize) { return 1 }
+    var length: [UIntSize; 1] = [99usize]
+    if !http_request_body_exact(
+        request,
+        buffer_slice_write(output, 0usize, 4usize),
+        length
+    ) { return 2 }
+    if length[0] != 4usize { return 3 }
+    return 0
+}
+
+fn seed_short(output: write Buffer<UInt8>) -> Int32 {
+    let body: write Slice<UInt8> = buffer_slice_write(output, 0usize, 3usize)
+    body[0usize] = 55u8
+    body[1usize] = 55u8
+    body[2usize] = 55u8
+    return 0
+}
+
+fn inspect_short(values: read Buffer<UInt8>) -> Int32 {
+    let body: read Slice<UInt8> = buffer_slice(values, 0usize, 3usize)
+    if body[0usize] != 55u8 { return 1 }
+    if body[2usize] != 55u8 { return 2 }
+    return 0
+}
+
+fn reject_short(request: read Slice<UInt8>, output: write Buffer<UInt8>) -> Int32 {
+    if !buffer_resize(output, 3usize) { return 1 }
+    if seed_short(output) != 0 { return 2 }
+    var length: [UIntSize; 1] = [123usize]
+    if http_request_body_exact(
+        request,
+        buffer_slice_write(output, 0usize, 3usize),
+        length
+    ) { return 3 }
+    if length[0] != 123usize { return 4 }
+    return 0
+}
+
+fn inspect(values: read Buffer<UInt8>) -> Int32 {
+    let body: read Slice<UInt8> = buffer_slice(values, 0usize, 4usize)
+    if body[0usize] != 65u8 { return 1 }
+    if body[3usize] != 106u8 { return 2 }
+    return 0
+}
+
+fn main() -> Int32 {
+    var request: [UInt8; 42] = [80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 52u8, 13u8, 10u8, 13u8, 10u8, 65u8, 104u8, 111u8, 106u8]
+    var status: Int32 = 0
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(4usize)
+    match created {
+        Ok(output) => {
+            let parse_status: Int32 = parse_body(request, output)
+            if parse_status != 0 { return parse_status }
+            let inspected: Int32 = inspect(output)
+            if inspected != 0 { return inspected + 10 }
+
+            let short_created: Result<Buffer<UInt8>, Int32> = buffer_create(3usize)
+            match short_created {
+                Ok(short_output) => {
+                    let short_status: Int32 = reject_short(request, short_output)
+                    if short_status != 0 { return short_status + 20 }
+                    let short_inspected: Int32 = inspect_short(short_output)
+                    if short_inspected != 0 { return short_inspected + 30 }
+                }
+                Error(error) => { status = error }
+            }
+        }
+        Error(error) => { status = error }
+    }
+    return status
+}

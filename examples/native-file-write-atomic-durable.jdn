@@ -1,0 +1,72 @@
+module examples.native_file_write_atomic_durable
+// Durable local checkpoint: temporary write, temporary flush, atomic replace,
+// promoted-file flush and directory metadata flush.
+fn main() -> Int32 {
+    var input:[UInt8;
+    4] =[65u8,
+    66u8,
+    67u8,
+    88u8]
+    var output:[UInt8;
+    4] =[0u8,
+    0u8,
+    0u8,
+    0u8]
+    if file_write_text("target/jadren-file-write-atomic-durable-target.bin",
+    "OLD") != 3usize {
+        return 1
+    }
+    if ! file_write_atomic_durable("target/jadren-file-write-atomic-durable.tmp",
+    "target/jadren-file-write-atomic-durable-target.bin",
+    "target",
+    input,
+    3usize
+    ) {
+        return 2
+    }
+    if file_read_at("target/jadren-file-write-atomic-durable-target.bin",
+    0usize,
+    output) != 3usize {
+        return 3
+    }
+    if output[0] != 65u8 {
+        return 4
+    }
+    if output[1] != 66u8 {
+        return 4
+    }
+    if output[2] != 67u8 {
+        return 4
+    }
+    if file_write_atomic_durable("target/jadren-file-write-atomic-durable-missing/temp.tmp",
+    "target/jadren-file-write-atomic-durable-target.bin",
+    "target/jadren-file-write-atomic-missing",
+    input,
+    3usize
+    ) {
+        return 5
+    }
+    if file_read_at("target/jadren-file-write-atomic-durable-target.bin",
+    0usize,
+    output) != 3usize {
+        return 6
+    }
+    if output[0] != 65u8 {
+        return 7
+    }
+    if output[1] != 66u8 {
+        return 7
+    }
+    if output[2] != 67u8 {
+        return 7
+    }
+    if file_write_atomic_durable("target/jadren-file-write-atomic-durable-target.bin",
+    "target/jadren-file-write-atomic-durable-target.bin",
+    "target",
+    input,
+    3usize
+    ) {
+        return 8
+    }
+    return 0
+}

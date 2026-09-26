@@ -1,0 +1,45 @@
+module examples.network_session_store_project
+
+import jadren.network.auth.session_put
+import jadren.network.auth.session_lookup
+import jadren.network.auth.session_revoke
+import jadren.network.auth.session_rotate
+
+fn main() -> Int32 {
+    var tokens: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var subjects: [Int64; 2] = [0i64, 0i64]
+    var expires_at: [Int64; 2] = [0i64, 0i64]
+    var output: [Int64; 1] = [777i64]
+    var old_token: [UInt8; 4] = [65u8, 66u8, 67u8, 68u8]
+    var new_token: [UInt8; 4] = [69u8, 70u8, 71u8, 72u8]
+    var second_token: [UInt8; 4] = [87u8, 88u8, 89u8, 90u8]
+    var third_token: [UInt8; 4] = [73u8, 74u8, 75u8, 76u8]
+    var fourth_token: [UInt8; 4] = [77u8, 78u8, 79u8, 80u8]
+    var zero_token: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+
+    if !session_put(tokens, subjects, expires_at, 2usize, 4usize, old_token, 4usize, 42i64, 10i64, 100i64) { return 1 }
+    if !session_put(tokens, subjects, expires_at, 2usize, 4usize, second_token, 4usize, 7i64, 10i64, 200i64) { return 2 }
+
+    if !session_lookup(tokens, subjects, expires_at, 2usize, 4usize, old_token, 4usize, 99i64, output, 1usize) { return 3 }
+    if output[0] != 42i64 { return 4 }
+    output[0] = 777i64
+    if session_lookup(tokens, subjects, expires_at, 2usize, 4usize, old_token, 4usize, 100i64, output, 1usize) { return 5 }
+    if output[0] != 777i64 { return 6 }
+
+    if !session_rotate(tokens, subjects, expires_at, 2usize, 4usize, old_token, 4usize, new_token, 4usize, 20i64, 300i64) { return 7 }
+    if session_lookup(tokens, subjects, expires_at, 2usize, 4usize, old_token, 4usize, 21i64, output, 1usize) { return 8 }
+    if !session_lookup(tokens, subjects, expires_at, 2usize, 4usize, new_token, 4usize, 299i64, output, 1usize) { return 9 }
+    if output[0] != 42i64 { return 10 }
+    if session_rotate(tokens, subjects, expires_at, 2usize, 4usize, new_token, 4usize, second_token, 4usize, 21i64, 400i64) { return 11 }
+
+    if !session_revoke(tokens, subjects, expires_at, 2usize, 4usize, new_token, 4usize) { return 12 }
+    if session_lookup(tokens, subjects, expires_at, 2usize, 4usize, new_token, 4usize, 21i64, output, 1usize) { return 13 }
+    if !session_put(tokens, subjects, expires_at, 2usize, 4usize, third_token, 4usize, 9i64, 21i64, 400i64) { return 14 }
+    if !session_lookup(tokens, subjects, expires_at, 2usize, 4usize, third_token, 4usize, 399i64, output, 1usize) { return 15 }
+    if output[0] != 9i64 { return 16 }
+    if session_put(tokens, subjects, expires_at, 2usize, 4usize, fourth_token, 4usize, 10i64, 21i64, 400i64) { return 17 }
+    if !session_revoke(tokens, subjects, expires_at, 2usize, 4usize, third_token, 4usize) { return 18 }
+    if session_revoke(tokens, subjects, expires_at, 2usize, 4usize, third_token, 4usize) { return 19 }
+    if session_revoke(tokens, subjects, expires_at, 2usize, 4usize, zero_token, 4usize) { return 20 }
+    return 0
+}

@@ -1,0 +1,42 @@
+module examples.windows_desktop_app_bound_exact
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    if !app_state_set_int("list_choice", 1 as Int64) { return 1 }
+    if !app_state_set_int("table_choice", 1 as Int64) { return 2 }
+    app_list_clear(0)
+    if !app_list_push_text(0, "First") { return 3 }
+    if !app_list_push_text(0, "Second") { return 4 }
+    app_table_clear(0)
+    if !app_table_set_column_name(0, 0, "Name") { return 5 }
+    if !app_table_append_row(0) { return 6 }
+    if !app_table_append_row(0) { return 7 }
+    if !app_table_set_named_cell(0, 0, "Name", "First") { return 8 }
+    if !app_table_set_named_cell(0, 1, "Name", "Second") { return 9 }
+
+    let root: Int32 = ui_app_begin("App bound exact", 720, 620, 0xF6F8FCu32)
+    if root == 0 { return 10 }
+    let panel: Int32 = ui_app_panel(root, 640, 540, 0xFFFFFFu32, 12, 12, 8, 0, 1)
+    if panel == 0 { return 11 }
+    let list: Int32 = ui_app_list(panel, 40, 560, 100,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if list == 0 { return 12 }
+    if !ui_app_list_bind_app(list, 0) { return 13 }
+    let table: Int32 = ui_app_table(panel, 50, 560, 140,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if table == 0 { return 14 }
+    if !ui_app_table_column(table, 0, "Name", 240) { return 15 }
+    if !ui_app_table_bind_app(table, 0, 1) { return 16 }
+    if !ui_app_bind_app_state_exact(list, "list_choice") { return 17 }
+    if !ui_app_bind_app_state_exact(table, "table_choice") { return 18 }
+    if ui_app_list_index(list) != 1 { return 19 }
+    if ui_app_table_selected_row(table) != 1 { return 20 }
+    if !ui_app_end(panel) { return 21 }
+    if !ui_app_end(root) { return 22 }
+    return 0
+}

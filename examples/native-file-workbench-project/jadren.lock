@@ -1,0 +1,7 @@
+version = 1
+manifest_fingerprint = "24661de9038d811c"
+
+[package]
+name = "native-file-workbench-project"
+version = "0.1.0"
+edition = "2026"

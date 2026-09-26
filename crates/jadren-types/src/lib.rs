@@ -708,7 +708,7 @@ impl TypeStore {
             return Ok(id);
         }
         match name {
-            "Buffer" => {
+            "Buffer" | "DynamicArray" => {
                 require_arity(name, arguments, 1)?;
                 Ok(self.intern(TypeKind::Buffer(arguments[0])))
             }
@@ -1384,6 +1384,13 @@ mod tests {
             .apply_builtin("Slice", &[core.float32])
             .expect("valid Slice");
         assert_eq!(store.kind(slice), Some(&TypeKind::Slice(core.float32)));
+        let dynamic_array = store
+            .apply_builtin("DynamicArray", &[core.int32])
+            .expect("valid DynamicArray");
+        assert_eq!(
+            store.kind(dynamic_array),
+            Some(&TypeKind::Buffer(core.int32))
+        );
         assert_eq!(
             store.apply_builtin("Result", &[core.int32]),
             Err(BuiltinTypeError::Arity {

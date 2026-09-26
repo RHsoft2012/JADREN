@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "6a1abfb9fba41df1"
+
+[package]
+name = "network-tcp-buffer-client-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

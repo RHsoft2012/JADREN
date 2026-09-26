@@ -1,0 +1,276 @@
+module ui_list_filter_project.main
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.count
+import jadren.app.list.find_text
+import jadren.app.list.push_text
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.list
+import jadren.app.ui.list_bind
+import jadren.app.ui.list_count
+import jadren.app.ui.list_filter_text_ex_if_revision
+import jadren.app.ui.list_filter_text_ex_if_model_revision
+import jadren.app.ui.list_filter_text_if_model_revision
+import jadren.app.ui.list_read_item_exact
+import jadren.app.ui.panel
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear(0)
+    clear(1)
+    if ! push_text(0,
+    "Alpha") {
+        return 1
+    }
+    if ! push_text(0,
+    "beta") {
+        return 2
+    }
+    if ! push_text(0,
+    "Gamma") {
+        return 3
+    }
+    if ! push_text(0,
+    "Beta Gamma") {
+        return 4
+    }
+    if ! push_text(1,
+    "Sentinel") {
+        return 5
+    }
+    let root: Int32 = begin("Jadren list filter",
+    720,
+    420,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 6
+    }
+    let panel_node: Int32 = panel(root,
+    660,
+    300,
+    0xFFFFFFu32,
+    16,
+    12,
+    8,
+    0,
+    1)
+    if panel_node == 0 {
+        return 7
+    }
+    let source_node: Int32 = list(panel_node,
+    10,
+    600,
+    110,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    let destination_node: Int32 = list(panel_node,
+    11,
+    600,
+    110,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if source_node == 0 {
+        return 8
+    }
+    if destination_node == 0 {
+        return 8
+    }
+    if ! list_bind(source_node,
+    0) {
+        return 9
+    }
+    if ! list_bind(destination_node,
+    1) {
+        return 10
+    }
+    var output:[UInt8;
+    32] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8
+    ]
+    var length:[UIntSize;
+    1] =[99usize]
+    if ! list_read_item_exact(destination_node,
+    0,
+    output,
+    length) {
+        return 11
+    }
+    if length[0] != 8usize {
+        return 12
+    }
+    if output[0] != 83u8 {
+        return 12
+    }
+    let stale: UInt64 = revision()
+    if ! push_text(0,
+    "Delta") {
+        return 13
+    }
+    if list_filter_text_ex_if_model_revision(source_node,
+    1,
+    "BETA",
+    5,
+    stale) {
+        return 14
+    }
+    if count(1) != 1 {
+        return 15
+    }
+    if list_count(destination_node) != 1 {
+        return 15
+    }
+    if find_text(1,
+    "Sentinel",
+    0) != 0 {
+        return 16
+    }
+    let current: UInt64 = revision()
+    if ! list_filter_text_ex_if_model_revision(source_node,
+    1,
+    "BETA",
+    5,
+    current) {
+        return 17
+    }
+    if count(1) != 2 {
+        return 18
+    }
+    if list_count(destination_node) != 2 {
+        return 18
+    }
+    if ! list_read_item_exact(destination_node,
+    0,
+    output,
+    length) {
+        return 19
+    }
+    if length[0] != 4usize {
+        return 20
+    }
+    if output[0] != 98u8 {
+        return 20
+    }
+    if ! list_read_item_exact(destination_node,
+    1,
+    output,
+    length) {
+        return 21
+    }
+    if length[0] != 10usize {
+        return 22
+    }
+    if output[0] != 66u8 {
+        return 22
+    }
+    let suffix_revision: UInt64 = revision()
+    if ! list_filter_text_ex_if_model_revision(source_node,
+    1,
+    "GAMMA",
+    7,
+    suffix_revision) {
+        return 23
+    }
+    if count(1) != 2 {
+        return 24
+    }
+    if list_count(destination_node) != 2 {
+        return 24
+    }
+    if ! list_read_item_exact(destination_node,
+    0,
+    output,
+    length) {
+        return 25
+    }
+    if length[0] != 5usize {
+        return 26
+    }
+    if output[0] != 71u8 {
+        return 26
+    }
+    if ! list_read_item_exact(destination_node,
+    1,
+    output,
+    length) {
+        return 27
+    }
+    if length[0] != 10usize {
+        return 28
+    }
+    if output[0] != 66u8 {
+        return 28
+    }
+    if list_filter_text_ex_if_model_revision(source_node,
+    1,
+    "BETA",
+    8,
+    revision()) {
+        return 29
+    }
+    if list_count(destination_node) != 2 {
+        return 30
+    }
+    if list_filter_text_ex_if_model_revision(source_node,
+    0,
+    "BETA",
+    5,
+    revision()) {
+        return 31
+    }
+    if list_count(destination_node) != 2 {
+        return 32
+    }
+    if ! list_filter_text_if_model_revision(source_node,
+    1,
+    "Gamma",
+    revision()) {
+        return 33
+    }
+    if list_count(destination_node) != 1 {
+        return 34
+    }
+    if ! finish(panel_node) {
+        return 35
+    }
+    if ! finish(root) {
+        return 36
+    }
+    return 0
+}

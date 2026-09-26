@@ -1,0 +1,76 @@
+module generic_buffer_query.main
+
+import jadren.core.collections.buffer_index_valid
+import jadren.core.collections.length
+import jadren.core.collections.is_empty
+import jadren.core.collections.last_index
+import jadren.core.collections.capacity
+import jadren.core.collections.clear_move
+import jadren.core.collections.clear_move_status
+import jadren.core.collections.pop_drop
+import jadren.core.collections.pop_drop_status
+import jadren.core.collections.reserve
+import jadren.core.collections.reserve_status
+
+@repr(C)
+struct Row<T> {
+    id: Int32,
+    value: T
+}
+
+fn main() -> Int32 {
+    let rows_created: Result<DynamicArray<Row<OwnedString>>, Int32> = buffer_create(0usize)
+    let text_created: Result<OwnedString, Int32> = string_owned_from("row")
+    var result_code: Int32 = 0
+
+    match rows_created {
+        Ok(rows) => {
+            if !is_empty(rows) { result_code = 13 }
+            match last_index(rows) {
+                Ok(_) => { result_code = 14 }
+                Error(status) => { if status != -20 { result_code = status } }
+            }
+            match text_created {
+                Ok(text) => {
+                    let row: Row<OwnedString> = Row { id: 7, value: text }
+                    if !buffer_append(rows, row) { result_code = 1 }
+                    if !buffer_index_valid(rows, 0usize) { result_code = 2 }
+                    if buffer_index_valid(rows, 1usize) { result_code = 3 }
+                    if is_empty(rows) { result_code = 15 }
+                    match last_index(rows) {
+                        Ok(index) => { if index != 0usize { result_code = 16 } }
+                        Error(status) => { result_code = status }
+                    }
+                    if rows[0].id != 7 { result_code = 4 }
+                    if length(rows) != 1usize { result_code = 5 }
+                    if !reserve(rows, 4usize) { result_code = 6 }
+                    if capacity(rows) < 4usize { result_code = 7 }
+                    let status: Int32 = reserve_status(rows, 4usize)
+                    if status != 0 { result_code = status }
+                    let clear_status: Int32 = clear_move_status(rows)
+                    if clear_status != 0 { result_code = clear_status }
+                    if length(rows) != 0usize { result_code = 8 }
+                    if !is_empty(rows) { result_code = 17 }
+                    match last_index(rows) {
+                        Ok(_) => { result_code = 18 }
+                        Error(status) => { if status != -20 { result_code = status } }
+                    }
+                    if !clear_move(rows) { result_code = 9 }
+                    let pop_text: Result<OwnedString, Int32> = string_owned_from("pop")
+                    match pop_text {
+                        Ok(value) => {
+                            let pop_row: Row<OwnedString> = Row { id: 9, value: value }
+                            if !buffer_append(rows, pop_row) { result_code = 10 }
+                            if !pop_drop(rows) { result_code = 11 }
+                            if pop_drop_status(rows) != -20 { result_code = 12 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

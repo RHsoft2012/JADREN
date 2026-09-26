@@ -1,0 +1,38 @@
+module buffer_write_slice_view
+
+fn write_values(values: write Buffer<UInt8>) -> Int32 {
+    let view: write Slice<UInt8> = buffer_slice_write(values, 1usize, 2usize)
+    view[0usize] = 21u8
+    view[1usize] = 34u8
+    return 0
+}
+
+fn read_values(values: read Buffer<UInt8>) -> Int32 {
+    let read_back: read Slice<UInt8> = buffer_slice(values, 0usize, 4usize)
+    if read_back[1usize] != 21u8 { return 2 }
+    if read_back[2usize] != 34u8 { return 3 }
+    return 0
+}
+
+fn invalid_values(values: read Buffer<UInt8>) -> Int32 {
+    let invalid: read Slice<UInt8> = buffer_slice(values, 3usize, 2usize)
+    var invalid_count: UIntSize = 0usize
+    for _index in invalid.indices { invalid_count = invalid_count + 1usize }
+    if invalid_count != 0usize { return 4 }
+    return 0
+}
+
+fn main() -> Int32 {
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(4usize)
+    var status: Int32 = 0
+    match created {
+        Ok(values) => {
+            if !buffer_resize(values, 4usize) { return 1 }
+            status = write_values(values)
+            if status == 0 { status = read_values(values) }
+            if status == 0 { status = invalid_values(values) }
+        }
+        Error(error) => { status = error }
+    }
+    return status
+}

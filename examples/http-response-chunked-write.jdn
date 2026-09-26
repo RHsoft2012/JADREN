@@ -1,0 +1,322 @@
+module examples.http_response_chunked_write
+// The server-side writer emits one caller-owned data chunk followed by the
+// terminal zero chunk. The response is then decoded by the existing exact
+// reader so the fixture checks the full wire contract, not only a marker.
+fn main() -> Int32 {
+    var body:[UInt8;
+    4] =[74u8,
+    68u8,
+    78u8,
+    33u8]
+    var response:[UInt8;
+    106] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    let written: UIntSize = http_response_write_chunked(200u16,
+    "text/plain",
+    body,
+    response)
+    if written != 106usize {
+        return 1
+    }
+    if response[0] != 72u8 {
+        return 2
+    }
+    if response[43] != 84u8 {
+        return 3
+    }
+    var decoded:[UInt8;
+    4] =[0u8,
+    0u8,
+    0u8,
+    0u8]
+    var decoded_length:[UIntSize;
+    1] =[99usize]
+    if ! http_response_body_chunked_exact(response,
+    decoded,
+    decoded_length) {
+        return 4
+    }
+    if decoded_length[0] != 4usize {
+        return 5
+    }
+    if decoded[0] != 74u8 {
+        return 6
+    }
+    if decoded[3] != 33u8 {
+        return 6
+    }
+    var empty_body:[UInt8;
+    0] =[]
+    var empty_response:[UInt8;
+    105] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    if http_response_write_chunked(204u16,
+    "text/plain",
+    empty_body,
+    empty_response) == 0usize {
+        return 7
+    }
+    var too_small:[UInt8;
+    8] =[77u8,
+    77u8,
+    77u8,
+    77u8,
+    77u8,
+    77u8,
+    77u8,
+    77u8]
+    if http_response_write_chunked(200u16,
+    "text/plain",
+    body,
+    too_small) != 0usize {
+        return 8
+    }
+    if too_small[0] != 77u8 {
+        return 9
+    }
+    var padded_body:[UInt8;
+    8] =[74u8,
+    68u8,
+    78u8,
+    33u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    let prefix_written: UIntSize = http_response_write_chunked_prefix(200u16,
+    "text/plain",
+    padded_body,
+    4usize,
+    response,
+    )
+    if prefix_written != 106usize {
+        return 10
+    }
+    if ! http_response_body_chunked_exact(response,
+    decoded,
+    decoded_length) {
+        return 11
+    }
+    if decoded_length[0] != 4usize {
+        return 12
+    }
+    if http_response_write_chunked_prefix(200u16,
+    "text/plain",
+    padded_body,
+    9usize,
+    response,
+    ) != 0usize {
+        return 13
+    }
+    if response[0] != 72u8 {
+        return 14
+    }
+    return 0
+}

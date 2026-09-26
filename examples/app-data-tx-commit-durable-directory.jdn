@@ -1,0 +1,95 @@
+module examples.app_data_tx_commit_durable_directory
+
+// A native app_data checkpoint with an explicit containing-directory flush.
+// The fixture also proves stale revisions and unsafe path combinations are
+// rejected without destroying the caller-owned active transaction.
+fn state_is(expected: UInt8, expected_length: UIntSize) -> Bool {
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("mode", output, length) { return false }
+    if length[0usize] != expected_length { return false }
+    if expected_length == 9usize {
+        if output[0usize] != 67u8 { return false }
+        if output[1usize] != 79u8 { return false }
+        if output[2usize] != 77u8 { return false }
+        if output[3usize] != 77u8 { return false }
+        if output[4usize] != 73u8 { return false }
+        if output[5usize] != 84u8 { return false }
+        if output[6usize] != 84u8 { return false }
+        if output[7usize] != 69u8 { return false }
+        if output[8usize] != 68u8 { return false }
+        return true
+    }
+    if expected_length == 4usize {
+        if output[0usize] != 100u8 { return false }
+        if output[1usize] != 97u8 { return false }
+        if output[2usize] != 114u8 { return false }
+        if output[3usize] != 107u8 { return false }
+        return true
+    }
+    if expected_length == 5usize {
+        if output[0usize] != 83u8 { return false }
+        if output[1usize] != 84u8 { return false }
+        if output[2usize] != 65u8 { return false }
+        if output[3usize] != 76u8 { return false }
+        if output[4usize] != 69u8 { return false }
+        return true
+    }
+    if expected_length == 0usize {
+        if expected == 0u8 { return true }
+    }
+    return false
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    if !app_state_set_text("mode", "dark") { return 10 }
+    if !app_data_tx_begin() { return 11 }
+    if !app_state_set_text("mode", "COMMITTED") { return 12 }
+    let committed_revision: UInt64 = app_data_revision()
+    if !app_data_tx_commit_durable_directory_if_revision(
+        "target/app-data-durable-directory.tmp",
+        "target/app-data-durable-directory.jdn",
+        "target",
+        "target/app-data-durable-directory.lock",
+        committed_revision
+    ) { return 13 }
+    if !app_state_set_text("mode", "STALE") { return 14 }
+    if !app_data_load("target/app-data-durable-directory.jdn") { return 15 }
+    if !state_is(67u8, 9usize) { return 16 }
+
+    if !app_data_tx_begin() { return 20 }
+    let stale_revision: UInt64 = app_data_revision()
+    if !app_state_set_text("mode", "STALE") { return 21 }
+    if app_data_tx_commit_durable_directory_if_revision(
+        "target/app-data-durable-directory.tmp",
+        "target/app-data-durable-directory.jdn",
+        "target",
+        "target/app-data-durable-directory.lock",
+        stale_revision
+    ) { return 22 }
+    if !app_data_tx_rollback() { return 23 }
+    if !state_is(67u8, 9usize) { return 24 }
+
+    if !app_data_tx_begin() { return 30 }
+    if !app_state_set_text("mode", "STALE") { return 31 }
+    if app_data_tx_commit_durable_directory(
+        "target/app-data-durable-directory.jdn",
+        "target/app-data-durable-directory.jdn",
+        "target",
+        "target/app-data-durable-directory.lock"
+    ) { return 32 }
+    if !app_data_tx_rollback() { return 33 }
+
+    if !app_data_tx_begin() { return 40 }
+    if !app_state_set_text("mode", "STALE") { return 41 }
+    if app_data_tx_commit_durable_directory(
+        "target/app-data-durable-directory.tmp",
+        "target/app-data-durable-directory.jdn",
+        "target/missing-app-data-directory",
+        "target/app-data-durable-directory.lock"
+    ) { return 42 }
+    if !app_data_tx_rollback() { return 43 }
+    return 0
+}

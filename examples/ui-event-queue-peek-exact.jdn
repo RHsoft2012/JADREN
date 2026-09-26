@@ -1,0 +1,48 @@
+module examples.ui_event_queue_peek_exact
+
+// Peek is a non-consuming application snapshot: a reducer may inspect the
+// pending FIFO and then choose whether to consume it with poll_exact.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id < 1 { return 2 }
+    if event_id > 2 { return 2 }
+    return 0
+}
+
+fn main() -> Int32 {
+    let root: Int32 = ui_app_begin("Jadren event peek", 420, 220, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+    if ui_app_button(root, "One", 1, 100, 32,
+                     0xFFFFFFu32, 0x168EF5u32, 8, 0) == 0 { return 2 }
+    if ui_app_button(root, "Two", 2, 100, 32,
+                     0xFFFFFFu32, 0x168EF5u32, 8, 0) == 0 { return 3 }
+
+    ui_event_queue_clear()
+    if !ui_dispatch_event(1) { return 4 }
+    if !ui_dispatch_event(2) { return 5 }
+    if ui_event_queue_count() != 2usize { return 6 }
+
+    var snapshot: [Int32; 2] = [77, 88]
+    var count: [UIntSize; 1] = [99usize]
+    if !ui_event_queue_peek_exact(snapshot, count) { return 7 }
+    if count[0] != 2usize { return 8 }
+    if snapshot[0] != 1 { return 9 }
+    if snapshot[1] != 2 { return 10 }
+    if ui_event_queue_count() != 2usize { return 11 }
+
+    // A short snapshot is rejected without consuming or overwriting output.
+    var short_snapshot: [Int32; 1] = [44]
+    count[0] = 123usize
+    if ui_event_queue_peek_exact(short_snapshot, count) { return 12 }
+    if short_snapshot[0] != 44 { return 13 }
+    if count[0] != 123usize { return 14 }
+    if ui_event_queue_count() != 2usize { return 15 }
+
+    if !ui_event_queue_poll_exact(snapshot, count) { return 16 }
+    if count[0] != 2usize { return 17 }
+    if snapshot[0] != 1 { return 18 }
+    if snapshot[1] != 2 { return 19 }
+    if ui_event_queue_count() != 0usize { return 20 }
+    if !ui_app_end(root) { return 21 }
+    return 0
+}

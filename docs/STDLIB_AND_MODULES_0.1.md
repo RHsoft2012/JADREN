@@ -26,8 +26,12 @@ Its first modules are:
   fallback matching;
 - `jadren.core.outcome` – typed `Result<Int32, CoreError>` helpers without
   exceptions;
-- `jadren.core.collections` – allocation-free `read Slice<Int32>` reduction
-  and an explicit-count first-item helper;
+- `jadren.core.collections` – allocation-free `read Slice<Int32>` reduction,
+  explicit-count first-item helper, bounded `Buffer<Int32>` index/count query
+  and in-place ordered sort, generic `Buffer<T>` index validation, caller-owned
+  `create`/append, Equatable `retain` compaction,
+  move-aware append/insert, length/capacity/reserve wrappers, move-aware resize and destructor-safe
+  `clear_move`/`clear_move_status` wrappers;
 - `jadren.core.utf8` – an ownership boundary for Jadren's validated UTF-8
   `String` value.
 - `jadren.core.simd` – explicit 2/3/4/8-lane slice kernels with scalar

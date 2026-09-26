@@ -1,0 +1,5 @@
+# Keep local npm/build metadata and generated smoke artifacts out of the VSIX.
+.npmignore
+.vscodeignore
+target/**
+*.tgz

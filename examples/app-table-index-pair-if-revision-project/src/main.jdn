@@ -1,0 +1,44 @@
+module app_table_index_pair_if_revision_project.main
+
+import jadren.app.data.revision
+import jadren.app.table.append_row
+import jadren.app.table.clear
+import jadren.app.table.index_build_pair
+import jadren.app.table.index_find_pair_text_if_revision
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_type
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    if ! set_column_type(0, 0, 0) { return 1 }
+    if ! set_column_type(0, 1, 0) { return 2 }
+    if ! append_row(0) { return 3 }
+    if ! append_row(0) { return 4 }
+    if ! append_row(0) { return 5 }
+
+    if ! set_cell(0, 0, 0, "task") { return 6 }
+    if ! set_cell(0, 0, 1, "open") { return 7 }
+    if ! set_cell(0, 1, 0, "task") { return 8 }
+    if ! set_cell(0, 1, 1, "done") { return 9 }
+    if ! set_cell(0, 2, 0, "other") { return 10 }
+    if ! set_cell(0, 2, 1, "open") { return 11 }
+
+    if ! index_build_pair(0, 0, 1) { return 12 }
+    let stale: UInt64 = revision()
+    if ! set_cell(0, 0, 1, "closed") { return 13 }
+    if index_find_pair_text_if_revision(0, 0, 1, "task", "open", stale) != -1 { return 14 }
+
+    if ! set_cell(0, 0, 1, "open") { return 15 }
+    if ! index_build_pair(0, 0, 1) { return 16 }
+    let current: UInt64 = revision()
+    if index_find_pair_text_if_revision(0, 0, 1, "task", "open", current) != 0 { return 17 }
+    if index_find_pair_text_if_revision(0, 0, 1, "task", "done", current) != 1 { return 18 }
+    if index_find_pair_text_if_revision(0, 0, 1, "missing", "open", current) != -1 { return 19 }
+
+    return 0
+}

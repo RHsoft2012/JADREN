@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "ccafa7071757e643"
+
+[package]
+name = "network-session-buffer-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

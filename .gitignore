@@ -24,6 +24,9 @@
 __pycache__/
 *.py[cod]
 
+# Persistent local site snapshots are not public release inputs.
+/backups/site-customization/
+
 # Generated test result exports
 /reports/*.xml
 # New JSON evidence is local by default; canonical evidence must be explicitly

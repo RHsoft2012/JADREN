@@ -1,0 +1,141 @@
+module app_table_csv_file_import_if_revision_project.main
+import jadren.app.data.revision
+import jadren.app.fs.delete
+import jadren.app.fs.write_text
+import jadren.app.table.clear
+import jadren.app.table.find_text
+import jadren.app.table
+import jadren.app.table.import_csv_file_if_revision
+import jadren.app.table.append_row
+import jadren.app.table.read_named_int
+import jadren.app.table.row_count
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+import jadren.app.table.set_named_int
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    file_delete("target/app-table-csv-file-import-if-revision.csv")
+    app_table_clear(0)
+    if ! set_column_name(0,
+    0,
+    "task_id") {
+        return 1
+    }
+    if ! set_column_name(0,
+    1,
+    "title") {
+        return 2
+    }
+    if ! set_column_type(0,
+    0,
+    1) {
+        return 3
+    }
+    if ! set_column_type(0,
+    1,
+    0) {
+        return 4
+    }
+    if ! append_row(0) {
+        return 5
+    }
+    if ! set_named_int(0,
+    0,
+    "task_id",
+    7 as Int64) {
+        return 6
+    }
+    if write_text("target/app-table-csv-file-import-if-revision.csv",
+    "task_id,title\n1,\"A,B\"\n") != 22usize {
+        return 7
+    }
+    let stale_revision: UInt64 = revision()
+    if ! set_named_int(0,
+    0,
+    "task_id",
+    9 as Int64) {
+        return 8
+    }
+    if import_csv_file_if_revision(0,
+    "target/app-table-csv-file-import-if-revision.csv",
+    stale_revision) {
+        return 9
+    }
+    if read_named_int(0,
+    0,
+    "task_id") !=(9 as Int64) {
+        return 10
+    }
+    let current_revision: UInt64 = revision()
+    if ! import_csv_file_if_revision(0,
+    "target/app-table-csv-file-import-if-revision.csv",
+    current_revision) {
+        return 11
+    }
+    if row_count(0) != 1 {
+        return 12
+    }
+    if read_named_int(0,
+    0,
+    "task_id") !=(1 as Int64) {
+        return 13
+    }
+    if find_text(0,
+    1,
+    "A,B",
+    0) != 0 {
+        return 14
+    }
+    let model_stale_revision: UInt64 = revision()
+    if ! set_named_int(0,
+    0,
+    "task_id",
+    11 as Int64) {
+        return 20
+    }
+    if table.import_csv_file_if_model_revision(0,
+    "target/app-table-csv-file-import-if-revision.csv",
+    model_stale_revision) {
+        return 21
+    }
+    if read_named_int(0,
+    0,
+    "task_id") !=(11 as Int64) {
+        return 22
+    }
+    let model_current_revision: UInt64 = revision()
+    if ! table.import_csv_file_if_model_revision(0,
+    "target/app-table-csv-file-import-if-revision.csv",
+    model_current_revision) {
+        return 23
+    }
+    if read_named_int(0,
+    0,
+    "task_id") !=(1 as Int64) {
+        return 24
+    }
+    if write_text("target/app-table-csv-file-import-if-revision.csv",
+    "task_id,title\nmalformed") != 23usize {
+        return 15
+    }
+    let malformed_revision: UInt64 = revision()
+    if import_csv_file_if_revision(0,
+    "target/app-table-csv-file-import-if-revision.csv",
+    malformed_revision) {
+        return 16
+    }
+    if row_count(0) != 1 {
+        return 17
+    }
+    if read_named_int(0,
+    0,
+    "task_id") !=(1 as Int64) {
+        return 18
+    }
+    file_delete("target/app-table-csv-file-import-if-revision.csv")
+    app_table_clear(0)
+    return 0
+}

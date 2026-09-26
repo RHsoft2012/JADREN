@@ -1,0 +1,60 @@
+module examples.windows_desktop_input_refresh_if_revision
+
+// A refresh may project a model value into a native input only when the
+// caller still owns the revision it read. Stale, invalid and type-mismatched
+// refreshes must leave the previous control text unchanged.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    let root: Int32 = ui_app_begin("Input revision", 640, 360, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+    let panel: Int32 = ui_app_panel(root, 560, 240, 0xFFFFFFu32, 16, 12, 8, 0, 1)
+    if panel == 0 { return 2 }
+    let input: Int32 = ui_app_text_input(panel, "Draft", 10, 300, 36,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if input == 0 { return 3 }
+    if !ui_app_end(panel) { return 4 }
+    if !ui_app_end(root) { return 5 }
+    if !ui_input_bind_app_state_exact(10, "note") { return 1 }
+
+    let stale: UInt64 = app_data_revision()
+    if !app_state_set_text("note", "Saved") { return 2 }
+    if ui_input_refresh_app_state_if_revision(10, stale) { return 3 }
+    if ui_input_length(10) != 5usize { return 4 }
+
+    var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8]
+    var output_length: [UIntSize; 1] = [0usize]
+    if !ui_input_read_exact(10, output, output_length) { return 5 }
+    if output_length[0] != 5usize { return 6 }
+    if output[0] != 68u8 { return 6 }
+    if output[4] != 116u8 { return 6 }
+
+    let current: UInt64 = app_data_revision()
+    if !ui_input_refresh_app_state_if_revision(10, current) { return 7 }
+    var refreshed: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8]
+    var refreshed_length: [UIntSize; 1] = [0usize]
+    if !ui_input_read_exact(10, refreshed, refreshed_length) { return 8 }
+    if refreshed_length[0] != 5usize { return 9 }
+    if refreshed[0] != 83u8 { return 9 }
+    if refreshed[4] != 100u8 { return 9 }
+
+    if !app_state_set_text("note", "") { return 10 }
+    let empty_revision: UInt64 = app_data_revision()
+    if !ui_input_refresh_app_state_if_revision(10, empty_revision) { return 11 }
+    if ui_input_length(10) != 0usize { return 12 }
+
+    if !app_state_set_int("note", 7 as Int64) { return 13 }
+    let wrong_kind_revision: UInt64 = app_data_revision()
+    if ui_input_refresh_app_state_if_revision(10, wrong_kind_revision) { return 14 }
+    if ui_input_length(10) != 0usize { return 15 }
+
+    if ui_input_refresh_app_state_if_revision(99, app_data_revision()) { return 16 }
+    app_state_clear()
+    return 0
+}

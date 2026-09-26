@@ -1,0 +1,81 @@
+module network_tcp_buffer_client_project.main
+
+import jadren.network.tcp.close
+import jadren.network.tcp.connect_dns
+import jadren.network.tcp.receive_buffer
+import jadren.network.tcp.send_buffer
+import jadren.network.tcp.set_timeout
+
+fn handle(socket: UIntSize, request: write Buffer<UInt8>) -> Int32 {
+    if send_buffer(socket, request) != 8usize { return 4 }
+
+    let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    var status: Int32 = 0i32
+    match response_created {
+        Error(error) => { status = error }
+        Ok(response) => {
+            if !buffer_resize(response, 16usize) {
+                status = 5
+            }
+            if status == 0i32 {
+                let received: UIntSize = receive_buffer(socket, response)
+                if received != 8usize { status = 6 }
+                if status == 0i32 {
+                    if response[0] != 80u8 { status = 7 }
+                    if response[1] != 79u8 { status = 7 }
+                    if response[2] != 78u8 { status = 7 }
+                    if response[3] != 71u8 { status = 7 }
+                    if response[4] != 45u8 { status = 7 }
+                    if response[5] != 74u8 { status = 7 }
+                    if response[6] != 68u8 { status = 7 }
+                    if response[7] != 33u8 { status = 7 }
+                }
+            }
+        }
+    }
+    return status
+}
+
+fn main() -> Int32 {
+    let socket: UIntSize = connect_dns("localhost", 38172u16)
+    if socket == 0usize { return 1 }
+    if !set_timeout(socket, 3000u32) {
+        close(socket)
+        return 2
+    }
+
+    let request_created: Result<Buffer<UInt8>, Int32> = buffer_create(8usize)
+    var status: Int32 = 0i32
+    match request_created {
+        Error(error) => { status = error }
+        Ok(request) => {
+            if !buffer_append(request, 112u8) { status = 3 }
+            if status == 0i32 {
+                if !buffer_append(request, 105u8) { status = 3 }
+            }
+            if status == 0i32 {
+                if !buffer_append(request, 110u8) { status = 3 }
+            }
+            if status == 0i32 {
+                if !buffer_append(request, 103u8) { status = 3 }
+            }
+            if status == 0i32 {
+                if !buffer_append(request, 49u8) { status = 3 }
+            }
+            if status == 0i32 {
+                if !buffer_append(request, 50u8) { status = 3 }
+            }
+            if status == 0i32 {
+                if !buffer_append(request, 51u8) { status = 3 }
+            }
+            if status == 0i32 {
+                if !buffer_append(request, 52u8) { status = 3 }
+            }
+            if status == 0i32 {
+                status = handle(socket, request)
+            }
+        }
+    }
+    if !close(socket) { return 8 }
+    return status
+}

@@ -1,0 +1,92 @@
+module examples.http_form_param_exact
+
+// Exact form-field read-back validates HTTP framing and publishes no partial
+// output when the field is malformed, duplicated, or larger than the buffer.
+fn main() -> Int32 {
+    var request: [UInt8; 132] = [
+        80u8, 79u8, 83u8, 84u8, 32u8, 47u8, 115u8, 117u8, 98u8, 109u8,
+        105u8, 116u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8,
+        49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8,
+        111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8,
+        67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 84u8, 121u8,
+        112u8, 101u8, 58u8, 32u8, 97u8, 112u8, 112u8, 108u8, 105u8, 99u8,
+        97u8, 116u8, 105u8, 111u8, 110u8, 47u8, 120u8, 45u8, 119u8, 119u8,
+        119u8, 45u8, 102u8, 111u8, 114u8, 109u8, 45u8, 117u8, 114u8, 108u8,
+        101u8, 110u8, 99u8, 111u8, 100u8, 101u8, 100u8, 13u8, 10u8, 67u8,
+        111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8,
+        103u8, 116u8, 104u8, 58u8, 32u8, 50u8, 49u8, 13u8, 10u8, 13u8,
+        10u8, 110u8, 97u8, 109u8, 101u8, 61u8, 74u8, 97u8, 100u8, 114u8,
+        101u8, 110u8, 43u8, 85u8, 73u8, 38u8, 101u8, 109u8, 112u8, 116u8,
+        121u8, 61u8
+    ]
+    var output: [UInt8; 16] = [77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8]
+    var length: [UIntSize; 1] = [91usize]
+
+    if !http_form_param_exact_prefix(request, 132usize, "name", output, length) { return 1 }
+    if length[0] != 9usize { return 2 }
+    if output[0] != 74u8 { return 3 }
+    if output[6] != 32u8 { return 4 }
+    if output[8] != 73u8 { return 5 }
+
+    if !http_form_param_exact_prefix(request, 132usize, "empty", output, length) { return 6 }
+    if length[0] != 0usize { return 7 }
+    if output[0] != 74u8 { return 8 }
+
+    var too_small: [UInt8; 2] = [55u8, 55u8]
+    var unchanged: [UIntSize; 1] = [123usize]
+    if http_form_param_exact_prefix(request, 132usize, "name", too_small, unchanged) { return 9 }
+    if too_small[0] != 55u8 { return 10 }
+    if unchanged[0] != 123usize { return 11 }
+
+    var boundary_output: [UInt8; 4] = [66u8, 66u8, 66u8, 66u8]
+    var boundary_length: [UIntSize; 1] = [222usize]
+    if http_form_param_exact_prefix(request, 131usize, "name", boundary_output, boundary_length) { return 12 }
+    if boundary_output[0] != 66u8 { return 13 }
+    if boundary_length[0] != 222usize { return 14 }
+
+    // Turn the same request body into the malformed value name=%4ZZZ and
+    // reduce Content-Length from 21 to 10.
+    request[105] = 49u8
+    request[106] = 48u8
+    request[116] = 37u8
+    request[117] = 52u8
+    request[118] = 90u8
+    request[119] = 90u8
+    request[120] = 90u8
+    var malformed_output: [UInt8; 8] = [66u8, 66u8, 66u8, 66u8, 66u8, 66u8, 66u8, 66u8]
+    var malformed_length: [UIntSize; 1] = [222usize]
+    if http_form_param_exact_prefix(request, 132usize, "name", malformed_output, malformed_length) { return 15 }
+    if malformed_output[0] != 66u8 { return 16 }
+    if malformed_length[0] != 222usize { return 17 }
+
+    // Turn the body into the duplicate field name=one&name=two.
+    request[105] = 49u8
+    request[106] = 55u8
+    request[116] = 111u8
+    request[117] = 110u8
+    request[118] = 101u8
+    request[119] = 38u8
+    request[120] = 110u8
+    request[121] = 97u8
+    request[122] = 109u8
+    request[123] = 101u8
+    request[124] = 61u8
+    request[125] = 116u8
+    request[126] = 119u8
+    request[127] = 111u8
+    var duplicate_output: [UInt8; 8] = [66u8, 66u8, 66u8, 66u8, 66u8, 66u8, 66u8, 66u8]
+    var duplicate_length: [UIntSize; 1] = [222usize]
+    if http_form_param_exact_prefix(request, 132usize, "name", duplicate_output, duplicate_length) { return 18 }
+    if duplicate_output[0] != 66u8 { return 19 }
+    if duplicate_length[0] != 222usize { return 20 }
+
+    // The first content-type byte is changed from 'a' to 't'.
+    request[54] = 116u8
+    var wrong_type_output: [UInt8; 8] = [66u8, 66u8, 66u8, 66u8, 66u8, 66u8, 66u8, 66u8]
+    var wrong_type_length: [UIntSize; 1] = [222usize]
+    if http_form_param_exact_prefix(request, 132usize, "name", wrong_type_output, wrong_type_length) { return 21 }
+    if wrong_type_output[0] != 66u8 { return 22 }
+    if wrong_type_length[0] != 222usize { return 23 }
+
+    return 0
+}

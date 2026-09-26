@@ -1,0 +1,45 @@
+module examples.stdlib_buffer_owning_string_pop_move_into
+
+// Pop a direct OwnedString into caller-owned storage. The raw move path keeps
+// the native ABI bounded while the output owns the transferred descriptor.
+fn main() -> Int32 {
+    let values_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    let first_created: Result<OwnedString, Int32> = string_owned_from("first")
+    let second_created: Result<OwnedString, Int32> = string_owned_from("second")
+    let output_created: Result<OwnedString, Int32> = string_owned_create(0usize)
+    var result_code: Int32 = 0
+
+    match values_created {
+        Ok(values) => {
+            match first_created {
+                Ok(first) => {
+                    if !buffer_append(values, first) { result_code = 1 }
+                    match second_created {
+                        Ok(second) => {
+                            if !buffer_append(values, second) { result_code = 2 }
+                            match output_created {
+                                Ok(output) => {
+                                    if !buffer_pop_move_into(values, output) { result_code = 3 }
+                                    if string_owned_length(output) != 6usize { result_code = 4 }
+                                    if buffer_length(values) != 1usize { result_code = 5 }
+                                    let status: Int32 = buffer_pop_move_into_status(values, output)
+                                    if status != 0 { result_code = 6 }
+                                    if string_owned_length(output) != 5usize { result_code = 7 }
+                                    if buffer_length(values) != 0usize { result_code = 8 }
+                                    let empty_status: Int32 = buffer_pop_move_into_status(values, output)
+                                    if empty_status != -20 { result_code = 9 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

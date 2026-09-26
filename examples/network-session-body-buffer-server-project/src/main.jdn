@@ -1,0 +1,152 @@
+module network_session_body_buffer_server_project.main
+
+import jadren.network.http.write_response_prefix_ex
+import jadren.network.session.accept
+import jadren.network.session.close
+import jadren.network.session.close_connection
+import jadren.network.session.open
+import jadren.network.session.receive_request_body_buffer
+import jadren.network.session.send_prefix
+import jadren.network.session.send_prefix_buffer
+import jadren.network.tcp.listen
+
+fn fail(connection: UIntSize, session: UIntSize, code: Int32) -> Int32 {
+    if connection != 0usize {
+        let closed_connection: Bool = close_connection(connection)
+    }
+    if session != 0usize {
+        let closed_session: Bool = close(session)
+    }
+    return code
+}
+
+fn verify_body(values: read Buffer<UInt8>, first: UInt8, second: UInt8, third: UInt8, fourth: UInt8) -> Bool {
+    let body: read Slice<UInt8> = buffer_slice(values, 0usize, 4usize)
+    if body[0usize] != first { return false }
+    if body[1usize] != second { return false }
+    if body[2usize] != third { return false }
+    if body[3usize] != fourth { return false }
+    return true
+}
+
+fn send_ok(connection: UIntSize, response: write Slice<UInt8>, keep_alive: Bool) -> Bool {
+    var body: [UInt8; 2] = [79u8, 75u8]
+    let written: UIntSize = write_response_prefix_ex(
+        200u16,
+        "text/plain",
+        body,
+        2usize,
+        keep_alive,
+        response,
+    )
+    if written == 0usize { return false }
+    return send_prefix(connection, response, written)
+}
+
+fn send_ok_buffer(connection: UIntSize, keep_alive: Bool) -> Bool {
+    var body: [UInt8; 2] = [79u8, 75u8]
+    var sent: Bool = false
+    let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(128usize)
+    match response_created {
+        Ok(response) => {
+            if buffer_resize(response, 128usize) {
+                let written: UIntSize = write_response_prefix_ex(
+                    200u16,
+                    "text/plain",
+                    body,
+                    2usize,
+                    keep_alive,
+                    buffer_slice_write(response, 0usize, 128usize),
+                )
+                if written != 0usize {
+                    if buffer_resize(response, written) {
+                        if !send_prefix_buffer(connection, response, written + 1usize) {
+                            sent = send_prefix_buffer(connection, response, written)
+                        }
+                    }
+                }
+            }
+        }
+        Error(_) => { }
+    }
+    return sent
+}
+
+fn main() -> Int32 {
+    let listener: UIntSize = listen(38164u16)
+    if listener == 0usize { return 1 }
+    let session: UIntSize = open(listener, 1u32, 1024u32, 1024u32)
+    if session == 0usize {
+        return 2
+    }
+    let connection: UIntSize = accept(session, 5000u32)
+    if connection == 0usize {
+        close(session)
+        return 3
+    }
+
+    var request: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var response: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var body_length: [UIntSize; 1] = [99usize]
+    var status: Int32 = 0
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(16usize)
+    match created {
+        Ok(body) => {
+            if !buffer_resize(body, 16usize) {
+                return fail(connection, session, 4)
+            }
+            if !receive_request_body_buffer(
+                connection,
+                5000u32,
+                request,
+                body,
+                16usize,
+                body_length,
+            ) {
+                return fail(connection, session, 5)
+            }
+            if body_length[0] != 4usize {
+                return fail(connection, session, 6)
+            }
+            if !verify_body(body, 74u8, 68u8, 78u8, 33u8) {
+                return fail(connection, session, 6)
+            }
+            if !send_ok(connection, response, true) {
+                return fail(connection, session, 7)
+            }
+            if !receive_request_body_buffer(
+                connection,
+                5000u32,
+                request,
+                body,
+                16usize,
+                body_length,
+            ) {
+                return fail(connection, session, 8)
+            }
+            if body_length[0] != 4usize {
+                return fail(connection, session, 9)
+            }
+            if !verify_body(body, 74u8, 65u8, 68u8, 33u8) {
+                return fail(connection, session, 9)
+            }
+            if !send_ok_buffer(connection, false) {
+                return fail(connection, session, 10)
+            }
+        }
+        Error(error) => { status = error }
+    }
+    if status != 0 { return fail(connection, session, status) }
+    if !close_connection(connection) {
+        close(session)
+        return 11
+    }
+    if !close(session) { return 12 }
+    if file_write_text(
+        "target/jadren/network-session-body-buffer-server.result",
+        "session-body-buffer-server:2 final:JAD! keep_alive:true\n",
+    ) == 0usize {
+        return 13
+    }
+    return 0
+}

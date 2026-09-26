@@ -1,0 +1,17 @@
+version = 1
+manifest_fingerprint = "8c2c425e3d2656d8"
+
+[package]
+name = "network-auth-header-block-client-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

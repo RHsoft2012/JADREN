@@ -1,0 +1,401 @@
+module app_state_typed_buffer_project.main
+import jadren.app.state.clear
+import jadren.app.state.read_bool_buffer
+import jadren.app.state.read_float_buffer
+import jadren.app.state.read_int_buffer
+import jadren.app.state.read_uint_buffer
+import jadren.app.state.set_bool
+import jadren.app.state.set_float
+import jadren.app.state.set_int
+import jadren.app.state.set_uint
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn check_int() -> Int32 {
+    let created: Result<Buffer<Int64>,
+    Int32> = buffer_create(1usize)
+    var status: Int32 = 0
+    match created {
+        Error(error) => {
+            status = error
+        }
+        Ok(output) => {
+            if ! buffer_resize(output,
+            1usize) {
+                status = 1
+            }
+            if status == 0 {
+                output[0] = - 11i64
+            }
+            if status == 0 {
+                if ! read_int_buffer("signed",
+                output,
+                1usize) {
+                    status = 1
+                }
+            }
+            if status == 0 {
+                if output[0] != - 42i64 {
+                    status = 2
+                }
+            }
+            if status == 0 {
+                output[0] = 91i64
+            }
+            if status == 0 {
+                if read_int_buffer("missing",
+                output,
+                1usize) {
+                    status = 3
+                }
+            }
+            if status == 0 {
+                if output[0] != 91i64 {
+                    status = 4
+                }
+            }
+            if status == 0 {
+                if read_int_buffer("unsigned",
+                output,
+                1usize) {
+                    status = 5
+                }
+            }
+            if status == 0 {
+                if output[0] != 91i64 {
+                    status = 6
+                }
+            }
+            if status == 0 {
+                output[0] = 92i64
+            }
+            if status == 0 {
+                if read_int_buffer("signed",
+                output,
+                0usize) {
+                    status = 7
+                }
+            }
+            if status == 0 {
+                if output[0] != 92i64 {
+                    status = 8
+                }
+            }
+            if status == 0 {
+                output[0] = 93i64
+            }
+            if status == 0 {
+                if read_int_buffer("signed",
+                output,
+                2usize) {
+                    status = 9
+                }
+            }
+            if status == 0 {
+                if output[0] != 93i64 {
+                    status = 10
+                }
+            }
+        }
+    }
+    return status
+}
+fn check_uint() -> Int32 {
+    let created: Result<Buffer<UInt64>,
+    Int32> = buffer_create(1usize)
+    var status: Int32 = 0
+    match created {
+        Error(error) => {
+            status = error
+        }
+        Ok(output) => {
+            if ! buffer_resize(output,
+            1usize) {
+                status = 11
+            }
+            if status == 0 {
+                output[0] = 11u64
+            }
+            if status == 0 {
+                if ! read_uint_buffer("unsigned",
+                output,
+                1usize) {
+                    status = 11
+                }
+            }
+            if status == 0 {
+                if output[0] != 42u64 {
+                    status = 12
+                }
+            }
+            if status == 0 {
+                output[0] = 93u64
+            }
+            if status == 0 {
+                if read_uint_buffer("missing",
+                output,
+                1usize) {
+                    status = 13
+                }
+            }
+            if status == 0 {
+                if output[0] != 93u64 {
+                    status = 14
+                }
+            }
+            if status == 0 {
+                if read_uint_buffer("signed",
+                output,
+                1usize) {
+                    status = 15
+                }
+            }
+            if status == 0 {
+                if output[0] != 93u64 {
+                    status = 16
+                }
+            }
+            if status == 0 {
+                output[0] = 94u64
+            }
+            if status == 0 {
+                if read_uint_buffer("unsigned",
+                output,
+                0usize) {
+                    status = 17
+                }
+            }
+            if status == 0 {
+                if output[0] != 94u64 {
+                    status = 18
+                }
+            }
+            if status == 0 {
+                output[0] = 95u64
+            }
+            if status == 0 {
+                if read_uint_buffer("unsigned",
+                output,
+                2usize) {
+                    status = 19
+                }
+            }
+            if status == 0 {
+                if output[0] != 95u64 {
+                    status = 20
+                }
+            }
+        }
+    }
+    return status
+}
+fn check_float() -> Int32 {
+    let created: Result<Buffer<Float64>,
+    Int32> = buffer_create(1usize)
+    var status: Int32 = 0
+    match created {
+        Error(error) => {
+            status = error
+        }
+        Ok(output) => {
+            if ! buffer_resize(output,
+            1usize) {
+                status = 21
+            }
+            if status == 0 {
+                output[0] = 0.0f64
+            }
+            if status == 0 {
+                if ! read_float_buffer("ratio",
+                output,
+                1usize) {
+                    status = 21
+                }
+            }
+            if status == 0 {
+                if output[0] != 1.25f64 {
+                    status = 22
+                }
+            }
+            if status == 0 {
+                output[0] = 9.5f64
+            }
+            if status == 0 {
+                if read_float_buffer("missing",
+                output,
+                1usize) {
+                    status = 23
+                }
+            }
+            if status == 0 {
+                if output[0] != 9.5f64 {
+                    status = 24
+                }
+            }
+            if status == 0 {
+                if read_float_buffer("signed",
+                output,
+                1usize) {
+                    status = 25
+                }
+            }
+            if status == 0 {
+                if output[0] != 9.5f64 {
+                    status = 26
+                }
+            }
+            if status == 0 {
+                output[0] = 9.75f64
+            }
+            if status == 0 {
+                if read_float_buffer("ratio",
+                output,
+                0usize) {
+                    status = 27
+                }
+            }
+            if status == 0 {
+                if output[0] != 9.75f64 {
+                    status = 28
+                }
+            }
+            if status == 0 {
+                output[0] = 9.875f64
+            }
+            if status == 0 {
+                if read_float_buffer("ratio",
+                output,
+                2usize) {
+                    status = 29
+                }
+            }
+            if status == 0 {
+                if output[0] != 9.875f64 {
+                    status = 30
+                }
+            }
+        }
+    }
+    return status
+}
+fn check_bool() -> Int32 {
+    let created: Result<Buffer<Bool>,
+    Int32> = buffer_create(1usize)
+    var status: Int32 = 0
+    match created {
+        Error(error) => {
+            status = error
+        }
+        Ok(output) => {
+            if ! buffer_resize(output,
+            1usize) {
+                status = 31
+            }
+            if status == 0 {
+                output[0] = false
+            }
+            if status == 0 {
+                if ! read_bool_buffer("enabled",
+                output,
+                1usize) {
+                    status = 31
+                }
+            }
+            if status == 0 {
+                if ! output[0] {
+                    status = 32
+                }
+            }
+            if status == 0 {
+                output[0] = false
+            }
+            if status == 0 {
+                if read_bool_buffer("missing",
+                output,
+                1usize) {
+                    status = 33
+                }
+            }
+            if status == 0 {
+                if output[0] {
+                    status = 34
+                }
+            }
+            if status == 0 {
+                if read_bool_buffer("signed",
+                output,
+                1usize) {
+                    status = 35
+                }
+            }
+            if status == 0 {
+                if output[0] {
+                    status = 36
+                }
+            }
+            if status == 0 {
+                output[0] = true
+            }
+            if status == 0 {
+                if read_bool_buffer("enabled",
+                output,
+                0usize) {
+                    status = 37
+                }
+            }
+            if status == 0 {
+                if ! output[0] {
+                    status = 38
+                }
+            }
+            if status == 0 {
+                output[0] = false
+            }
+            if status == 0 {
+                if read_bool_buffer("enabled",
+                output,
+                2usize) {
+                    status = 39
+                }
+            }
+            if status == 0 {
+                if output[0] {
+                    status = 40
+                }
+            }
+        }
+    }
+    return status
+}
+fn main() -> Int32 {
+    clear()
+    if ! set_int("signed",
+    - 42i64) {
+        return 1
+    }
+    if ! set_uint("unsigned",
+    42u64) {
+        return 2
+    }
+    if ! set_float("ratio",
+    1.25f64) {
+        return 3
+    }
+    if ! set_bool("enabled",
+    true) {
+        return 4
+    }
+    var status: Int32 = check_int()
+    if status == 0 {
+        status = check_uint()
+    }
+    if status == 0 {
+        status = check_float()
+    }
+    if status == 0 {
+        status = check_bool()
+    }
+    clear()
+    return status
+}

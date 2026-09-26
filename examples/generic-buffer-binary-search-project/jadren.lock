@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "6fb37374718ca7b2"
+
+[package]
+name = "generic-buffer-binary-search-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-core"
+requirement = ""
+source = "path:../../stdlib/core"

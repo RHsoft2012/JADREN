@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "6f357e59a3faa01b"
+
+[package]
+name = "ui-table-filter-callback-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

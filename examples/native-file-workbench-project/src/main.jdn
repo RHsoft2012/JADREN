@@ -1,0 +1,234 @@
+module examples.native_file_workbench_project
+
+// A bounded native file-workbench demonstration. All files belong to this
+// fixture under target/; it deliberately does not accept arbitrary paths.
+
+fn cleanup_artifacts() -> Bool {
+    if file_exists("target/jadren/native-file-workbench/export-preview.tmp") {
+        if !file_delete("target/jadren/native-file-workbench/export-preview.tmp") { return false }
+    }
+    if file_exists("target/jadren/native-file-workbench/export-preview.txt") {
+        if !file_delete("target/jadren/native-file-workbench/export-preview.txt") { return false }
+    }
+    if file_exists("target/jadren/native-file-workbench/budget.txt") {
+        if !file_delete("target/jadren/native-file-workbench/budget.txt") { return false }
+    }
+    if file_exists("target/jadren/native-file-workbench/notes.txt") {
+        if !file_delete("target/jadren/native-file-workbench/notes.txt") { return false }
+    }
+    if directory_exists("target/jadren/native-file-workbench") {
+        if !directory_delete("target/jadren/native-file-workbench") { return false }
+    }
+    return true
+}
+
+fn seed_workspace() -> Int32 {
+    if !cleanup_artifacts() { return 1 }
+    if !directory_create("target") { return 2 }
+    if !directory_create("target/jadren") { return 3 }
+    if !directory_create("target/jadren/native-file-workbench") { return 4 }
+    if file_write_text("target/jadren/native-file-workbench/budget.txt", "Budget 2026\n") != 12usize { return 5 }
+    if file_write_text("target/jadren/native-file-workbench/notes.txt", "Alpha notes\n") != 12usize { return 6 }
+    if !directory_flush("target/jadren/native-file-workbench") { return 7 }
+
+    // The source directory is enumerated through the exact, caller-owned API
+    // before the two known-safe fixture files are projected into the UI list.
+    var names: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var names_length: [UIntSize; 1] = [0usize]
+    var kinds: [UInt8; 2] = [0u8, 0u8]
+    var item_count: [UIntSize; 1] = [0usize]
+    if !directory_list_ex_exact(
+        "target/jadren/native-file-workbench", names, names_length, kinds, item_count
+    ) { return 8 }
+    if names_length[0] != 20usize { return 9 }
+    if item_count[0] != 2usize { return 10 }
+    if names[0] != 98u8 { return 11 }
+    if names[10] != 10u8 { return 11 }
+    if names[11] != 110u8 { return 11 }
+    if kinds[0] != 1u8 { return 12 }
+    if kinds[1] != 1u8 { return 12 }
+
+    app_state_clear()
+    if !app_state_set_int("selected_file", 0 as Int64) { return 13 }
+    if !app_state_set_text("preview", "Choose a file and import.") { return 14 }
+    app_list_clear(0)
+    if !app_list_push_text(0, "budget.txt") { return 15 }
+    if !app_list_push_text(0, "notes.txt") { return 16 }
+    return 0
+}
+
+fn import_selected_file() -> Bool {
+    var selected: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("selected_file", selected) { return false }
+    var content: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var content_length: [UIntSize; 1] = [0usize]
+    if selected[0] == 0 as Int64 {
+        if !file_read_text_exact("target/jadren/native-file-workbench/budget.txt", content, content_length) { return false }
+    } else {
+        if selected[0] != 1 as Int64 { return false }
+        if !file_read_text_exact("target/jadren/native-file-workbench/notes.txt", content, content_length) { return false }
+    }
+    return app_state_set_text_bytes("preview", content, content_length[0])
+}
+
+fn export_preview_atomically() -> Bool {
+    var preview: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var preview_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("preview", preview, preview_length) { return false }
+    if file_write_prefix(
+        "target/jadren/native-file-workbench/export-preview.tmp", preview, preview_length[0]
+    ) != preview_length[0] { return false }
+    if !file_flush("target/jadren/native-file-workbench/export-preview.tmp") { return false }
+    if !file_replace_atomic(
+        "target/jadren/native-file-workbench/export-preview.tmp",
+        "target/jadren/native-file-workbench/export-preview.txt"
+    ) { return false }
+    return directory_flush("target/jadren/native-file-workbench")
+}
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 20 {
+        if !import_selected_file() { return 1 }
+        return 0
+    }
+    if event_id == 21 {
+        if !export_preview_atomically() { return 2 }
+        return 0
+    }
+    return 0
+}
+
+fn build() -> Bool {
+    let root: Int32 = ui_app_begin("Jadren native file workbench", 760, 520, 0xF6F8FCu32)
+    if root == 0 { return false }
+    let panel: Int32 = ui_app_panel(root, 680, 430, 0xFFFFFFu32, 12, 16, 10, 0, 1)
+    if panel == 0 { return false }
+    let heading: Int32 = ui_app_label(panel, "Local file workbench", 640, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 0)
+    if heading == 0 { return false }
+    let files: Int32 = ui_app_list(panel, 10, 640, 90,
+        0x111827u32, 0xF8FAFCu32, 8, 1)
+    if files == 0 { return false }
+    let preview: Int32 = ui_app_text_input(panel, "Imported preview", 11, 640, 42,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if preview == 0 { return false }
+    if !ui_app_list_bind_app(files, 0) { return false }
+    if !ui_app_bind_app_state_exact(files, "selected_file") { return false }
+    if !ui_app_bind_app_state_exact(preview, "preview") { return false }
+    let actions: Int32 = ui_app_row(panel, 640, 42, 0, 10, 0, 1)
+    if actions == 0 { return false }
+    let import_file: Int32 = ui_app_button(actions, "Import selected file", 20, 280, 40,
+        0xFFFFFFu32, 0x168EF5u32, 8, 0)
+    if import_file == 0 { return false }
+    let export_file: Int32 = ui_app_button(actions, "Export preview atomically", 21, 300, 40,
+        0xFFFFFFu32, 0x0F766Eu32, 8, 0)
+    if export_file == 0 { return false }
+    if !ui_app_end(actions) { return false }
+    let scope: Int32 = ui_app_status(panel,
+        "Fixture files stay under target/jadren/native-file-workbench.",
+        640, 42, 0x111827u32, 0xDCFCE7u32, 8, 1)
+    if scope == 0 { return false }
+    if !ui_app_end(panel) { return false }
+    return ui_app_end(root)
+}
+
+fn verify_initial_view() -> Bool {
+    if ui_list_count(10) != 2 { return false }
+    if ui_list_index(10) != 0 { return false }
+    return ui_input_length(11) == 25usize
+}
+
+fn dispatch_import_smoke() -> Bool {
+    ui_list_set_index(10, 1)
+    if !ui_dispatch_event(10) { return false }
+    return ui_dispatch_event(20)
+}
+
+fn verify_import_smoke() -> Bool {
+    if ui_list_index(10) != 1 { return false }
+    if ui_input_length(11) != 12usize { return false }
+    var preview: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var preview_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("preview", preview, preview_length) { return false }
+    if preview_length[0] != 12usize { return false }
+    if preview[0] != 65u8 { return false }
+    if preview[5] != 32u8 { return false }
+    if preview[10] != 115u8 { return false }
+    return preview[11] == 10u8
+}
+
+fn verify_export_smoke() -> Bool {
+    if !file_exists("target/jadren/native-file-workbench/export-preview.txt") { return false }
+    if file_exists("target/jadren/native-file-workbench/export-preview.tmp") { return false }
+    var exported: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var exported_length: [UIntSize; 1] = [0usize]
+    if !file_read_text_exact(
+        "target/jadren/native-file-workbench/export-preview.txt", exported, exported_length
+    ) { return false }
+    if exported_length[0] != 12usize { return false }
+    if exported[0] != 65u8 { return false }
+    if exported[10] != 115u8 { return false }
+    return exported[11] == 10u8
+}
+
+// Windows GUI executables do not reliably propagate a process exit code to a
+// shell parent. The bounded smoke therefore leaves one explicit success proof
+// outside its fixture directory; the PowerShell gate reads and removes it.
+fn write_smoke_result(value: String) -> Bool {
+    return file_write_text("target/jadren/native-file-workbench.result", value) > 0usize
+}
+
+fn has_smoke_flag() -> Bool {
+    if process_arg_count() != 2usize { return false }
+    var value: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = process_arg_read(1usize, value)
+    if length != 7usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 115u8 { return false }
+    if value[3] != 109u8 { return false }
+    if value[4] != 111u8 { return false }
+    if value[5] != 107u8 { return false }
+    return value[6] == 101u8
+}
+
+fn main() -> Int32 {
+    let smoke: Bool = has_smoke_flag()
+    if process_arg_count() > 1usize {
+        if !smoke { return 1 }
+    }
+    let seed_status: Int32 = seed_workspace()
+    if seed_status != 0 { return seed_status }
+    if !build() { return 3 }
+    if smoke {
+        if !verify_initial_view() { return 4 }
+        if !dispatch_import_smoke() { return 5 }
+        if !verify_import_smoke() { return 6 }
+        if !ui_dispatch_event(21) { return 7 }
+        if !verify_export_smoke() { return 8 }
+        if !write_smoke_result("native-file-workbench:ok") { return 9 }
+        if !cleanup_artifacts() { return 10 }
+        return 0
+    }
+    return ui_app_run()
+}

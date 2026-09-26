@@ -1,0 +1,686 @@
+module ui_table_event_index_pair_if_revision_project.main
+import jadren.app.input.read_list_item_exact_if_revision
+import jadren.app.input.read_table_cell_exact_if_revision
+import jadren.app.input.list_count_if_revision
+import jadren.app.input.list_index_if_revision
+import jadren.app.input.table_row_count_if_revision
+import jadren.app.input.table_selected_row_if_revision
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    app_table_clear(0)
+    if ! app_table_set_column_type(0,
+    0,
+    0) {
+        return 2
+    }
+    if ! app_table_set_column_type(0,
+    1,
+    0) {
+        return 3
+    }
+    if ! app_table_set_column_type(0,
+    2,
+    1) {
+        return 4
+    }
+    if ! app_table_set_column_type(0,
+    3,
+    2) {
+        return 5
+    }
+    if ! app_table_set_column_type(0,
+    4,
+    4) {
+        return 6
+    }
+    if ! app_table_set_column_type(0,
+    5,
+    3) {
+        return 7
+    }
+    if ! app_table_append_row(0) {
+        return 4
+    }
+    if ! app_table_append_row(0) {
+        return 5
+    }
+    if ! app_table_append_row(0) {
+        return 6
+    }
+    if ! app_table_set_cell(0,
+    0,
+    0,
+    "task") {
+        return 7
+    }
+    if ! app_table_set_cell(0,
+    0,
+    1,
+    "open") {
+        return 8
+    }
+    if ! app_table_set_int(0,
+    0,
+    2,
+    7i64) {
+        return 9
+    }
+    if ! app_table_set_uint(0,
+    0,
+    3,
+    70u64) {
+        return 10
+    }
+    if ! app_table_set_float(0,
+    0,
+    4,
+    7.25f64) {
+        return 11
+    }
+    if ! app_table_set_bool(0,
+    0,
+    5,
+    true) {
+        return 12
+    }
+    if ! app_table_set_cell(0,
+    1,
+    0,
+    "task") {
+        return 10
+    }
+    if ! app_table_set_cell(0,
+    1,
+    1,
+    "done") {
+        return 11
+    }
+    if ! app_table_set_int(0,
+    1,
+    2,
+    9i64) {
+        return 12
+    }
+    if ! app_table_set_uint(0,
+    1,
+    3,
+    90u64) {
+        return 13
+    }
+    if ! app_table_set_float(0,
+    1,
+    4,
+    9.25f64) {
+        return 14
+    }
+    if ! app_table_set_bool(0,
+    1,
+    5,
+    false) {
+        return 15
+    }
+    if ! app_table_set_cell(0,
+    2,
+    0,
+    "other") {
+        return 13
+    }
+    if ! app_table_set_cell(0,
+    2,
+    1,
+    "open") {
+        return 14
+    }
+    if ! app_table_set_int(0,
+    2,
+    2,
+    11i64) {
+        return 15
+    }
+    if ! app_table_set_uint(0,
+    2,
+    3,
+    110u64) {
+        return 16
+    }
+    if ! app_table_set_float(0,
+    2,
+    4,
+    11.25f64) {
+        return 17
+    }
+    if ! app_table_set_bool(0,
+    2,
+    5,
+    true) {
+        return 18
+    }
+    if ! app_table_index_build_pair(0,
+    0,
+    1) {
+        return 16
+    }
+    if ! app_table_index_build_int(0,
+    2) {
+        return 17
+    }
+    if ! app_table_index_build_uint(0,
+    3) {
+        return 18
+    }
+    if ! app_table_index_build_float(0,
+    4) {
+        return 19
+    }
+    if ! app_table_index_build_bool(0,
+    5) {
+        return 20
+    }
+    let root: Int32 = ui_app_begin("Jadren event pair lookup",
+    640,
+    360,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 18
+    }
+    let panel: Int32 = ui_app_panel(root,
+    560,
+    240,
+    0xFFFFFFu32,
+    16,
+    12,
+    8,
+    0,
+    1)
+    if panel == 0 {
+        return 19
+    }
+    let list: Int32 = ui_app_list(panel,
+    40,
+    240,
+    80,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if list == 0 {
+        return 20
+    }
+    if ! ui_app_list_item(list,
+    "first") {
+        return 21
+    }
+    if ! ui_app_list_item(list,
+    "second") {
+        return 22
+    }
+    let table: Int32 = ui_app_table(panel,
+    30,
+    520,
+    180,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if table == 0 {
+        return 23
+    }
+    if ! ui_app_table_column(table,
+    0,
+    "Task",
+    240) {
+        return 21
+    }
+    if ! ui_app_table_column(table,
+    1,
+    "Status",
+    180) {
+        return 22
+    }
+    if ! ui_app_table_column(table,
+    2,
+    "ID",
+    100) {
+        return 23
+    }
+    if ! ui_app_table_column(table,
+    3,
+    "UID",
+    100) {
+        return 24
+    }
+    if ! ui_app_table_column(table,
+    4,
+    "Rate",
+    100) {
+        return 25
+    }
+    if ! ui_app_table_column(table,
+    5,
+    "Done",
+    100) {
+        return 29
+    }
+    if ! ui_app_table_bind_app(table,
+    0,
+    6) {
+        return 30
+    }
+    let stale: UInt64 = app_data_revision()
+    if ! app_table_set_cell(0,
+    0,
+    1,
+    "closed") {
+        return 25
+    }
+    if ui_table_index_find_pair_text_if_revision(30,
+    0,
+    1,
+    "task",
+    "open",
+    stale
+    ) != - 1 {
+        return 26
+    }
+    if ! app_table_set_cell(0,
+    0,
+    1,
+    "open") {
+        return 27
+    }
+    if ! app_table_index_build_pair(0,
+    0,
+    1) {
+        return 28
+    }
+    let current: UInt64 = app_data_revision()
+    if ui_table_index_find_pair_text_if_revision(30,
+    0,
+    1,
+    "task",
+    "open",
+    current
+    ) != 0 {
+        return 29
+    }
+    if ui_table_index_find_pair_text_if_revision(30,
+    0,
+    1,
+    "task",
+    "done",
+    current
+    ) != 1 {
+        return 30
+    }
+    if ui_table_index_find_pair_text_if_revision(30,
+    0,
+    1,
+    "missing",
+    "open",
+    current
+    ) != - 1 {
+        return 31
+    }
+    let stale_int: UInt64 = app_data_revision()
+    if ! app_table_set_int(0,
+    0,
+    2,
+    42i64) {
+        return 32
+    }
+    if ui_table_index_find_int_if_revision(30,
+    2,
+    7i64,
+    stale_int) != - 1 {
+        return 33
+    }
+    if ! app_table_index_build_int(0,
+    2) {
+        return 34
+    }
+    let current_int: UInt64 = app_data_revision()
+    if ui_table_index_find_int_if_revision(30,
+    2,
+    42i64,
+    current_int) != 0 {
+        return 35
+    }
+    if ui_table_index_find_int_if_revision(30,
+    2,
+    99i64,
+    current_int) != - 1 {
+        return 36
+    }
+    let stale_uint: UInt64 = app_data_revision()
+    if ! app_table_set_uint(0,
+    0,
+    3,
+    420u64) {
+        return 37
+    }
+    if ui_table_index_find_uint_if_revision(30,
+    3,
+    70u64,
+    stale_uint) != - 1 {
+        return 38
+    }
+    if ! app_table_index_build_uint(0,
+    3) {
+        return 39
+    }
+    let current_uint: UInt64 = app_data_revision()
+    if ui_table_index_find_uint_if_revision(30,
+    3,
+    420u64,
+    current_uint) != 0 {
+        return 40
+    }
+    if ui_table_index_find_uint_if_revision(30,
+    3,
+    999u64,
+    current_uint) != - 1 {
+        return 41
+    }
+    let stale_float: UInt64 = app_data_revision()
+    if ! app_table_set_float(0,
+    0,
+    4,
+    42.25f64) {
+        return 42
+    }
+    if ui_table_index_find_float_if_revision(30,
+    4,
+    7.25f64,
+    stale_float) != - 1 {
+        return 43
+    }
+    if ! app_table_index_build_float(0,
+    4) {
+        return 44
+    }
+    let current_float: UInt64 = app_data_revision()
+    if ui_table_index_find_float_if_revision(30,
+    4,
+    42.25f64,
+    current_float) != 0 {
+        return 45
+    }
+    if ui_table_index_find_float_if_revision(30,
+    4,
+    999.25f64,
+    current_float) != - 1 {
+        return 46
+    }
+    let stale_bool: UInt64 = app_data_revision()
+    if ! app_table_set_bool(0,
+    0,
+    5,
+    false) {
+        return 47
+    }
+    if ui_table_index_find_bool_if_revision(30,
+    5,
+    true,
+    stale_bool) != - 1 {
+        return 48
+    }
+    if ! app_table_index_build_bool(0,
+    5) {
+        return 49
+    }
+    let current_bool: UInt64 = app_data_revision()
+    if ui_table_index_find_bool_if_revision(30,
+    5,
+    false,
+    current_bool) != 0 {
+        return 50
+    }
+    if ui_table_index_find_bool_if_revision(30,
+    5,
+    true,
+    current_bool) != 2 {
+        return 51
+    }
+    let stale_list_selection: UInt64 = app_data_revision()
+    if ! app_table_set_cell(0,
+    0,
+    0,
+    "task-selection") {
+        return 52
+    }
+    if ui_list_set_index_if_revision(40,
+    1,
+    stale_list_selection) {
+        return 53
+    }
+    if ui_list_index(40) != - 1 {
+        return 54
+    }
+    let current_list_selection: UInt64 = app_data_revision()
+    if ! ui_list_set_index_if_revision(40,
+    1,
+    current_list_selection) {
+        return 55
+    }
+    if ui_list_index(40) != 1 {
+        return 56
+    }
+    if ui_list_set_index_if_revision(40,
+    99,
+    current_list_selection) {
+        return 57
+    }
+    if ui_list_index(40) != 1 {
+        return 58
+    }
+    let stale_list_selection_read: UInt64 = app_data_revision()
+    if ! app_table_set_cell(0,
+    0,
+    0,
+    "task-selection-read") {
+        return 87
+    }
+    if list_index_if_revision(40,
+    stale_list_selection_read) != - 2 {
+        return 88
+    }
+    if ui_list_index(40) != 1 {
+        return 89
+    }
+    let current_list_selection_read: UInt64 = app_data_revision()
+    if list_index_if_revision(40,
+    current_list_selection_read) != 1 {
+        return 90
+    }
+    let stale_table_selection: UInt64 = app_data_revision()
+    if ! app_table_set_cell(0,
+    0,
+    0,
+    "task-table-selection") {
+        return 59
+    }
+    if ui_table_set_selected_row_if_revision(30,
+    1,
+    stale_table_selection) {
+        return 60
+    }
+    if ui_table_selected_row(30) != - 1 {
+        return 61
+    }
+    let current_table_selection: UInt64 = app_data_revision()
+    if ! ui_table_set_selected_row_if_revision(30,
+    1,
+    current_table_selection) {
+        return 62
+    }
+    if ui_table_selected_row(30) != 1 {
+        return 63
+    }
+    if ui_table_set_selected_row_if_revision(30,
+    99,
+    current_table_selection) {
+        return 64
+    }
+    if ui_table_selected_row(30) != 1 {
+        return 65
+    }
+    let stale_table_selection_read: UInt64 = app_data_revision()
+    if ! app_table_set_cell(0,
+    0,
+    1,
+    "task-table-selection-read") {
+        return 91
+    }
+    if table_selected_row_if_revision(30,
+    stale_table_selection_read) != - 2 {
+        return 92
+    }
+    if ui_table_selected_row(30) != 1 {
+        return 93
+    }
+    let current_table_selection_read: UInt64 = app_data_revision()
+    if table_selected_row_if_revision(30,
+    current_table_selection_read) != 1 {
+        return 94
+    }
+    var read_bytes:[UInt8;
+    16] =[90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8]
+    var read_length:[UIntSize;
+    1] =[777usize]
+    let stale_read: UInt64 = app_data_revision()
+    if ! app_table_set_cell(0,
+    0,
+    1,
+    "closed") {
+        return 66
+    }
+    if read_list_item_exact_if_revision(40,
+    0,
+    read_bytes,
+    read_length,
+    stale_read) {
+        return 67
+    }
+    if read_bytes[0] as Int32 != 90 {
+        return 68
+    }
+    if read_length[0] as Int32 != 777 {
+        return 68
+    }
+    if read_table_cell_exact_if_revision(30,
+    0,
+    1,
+    read_bytes,
+    read_length,
+    stale_read) {
+        return 69
+    }
+    if read_bytes[0] as Int32 != 90 {
+        return 70
+    }
+    if read_length[0] as Int32 != 777 {
+        return 70
+    }
+    if ! app_table_set_cell(0,
+    0,
+    1,
+    "open") {
+        return 71
+    }
+    if ! app_table_index_build_pair(0,
+    0,
+    1) {
+        return 72
+    }
+    let current_read: UInt64 = app_data_revision()
+    if ! read_list_item_exact_if_revision(40,
+    0,
+    read_bytes,
+    read_length,
+    current_read) {
+        return 73
+    }
+    if read_length[0] as Int32 != 5 {
+        return 74
+    }
+    if read_bytes[0] as Int32 != 102 {
+        return 74
+    }
+    if ! read_table_cell_exact_if_revision(30,
+    0,
+    1,
+    read_bytes,
+    read_length,
+    current_read) {
+        return 75
+    }
+    if read_length[0] as Int32 != 4 {
+        return 76
+    }
+    if read_bytes[0] as Int32 != 111 {
+        return 76
+    }
+    let stale_list_count: UInt64 = app_data_revision()
+    if ! app_table_set_cell(0,
+    0,
+    0,
+    "task-count") {
+        return 77
+    }
+    if list_count_if_revision(40,
+    stale_list_count) != - 1 {
+        return 78
+    }
+    if ui_list_count(40) != 2 {
+        return 79
+    }
+    let current_list_count: UInt64 = app_data_revision()
+    if list_count_if_revision(40,
+    current_list_count) != 2 {
+        return 80
+    }
+    let stale_table_count: UInt64 = app_data_revision()
+    if ! app_table_set_cell(0,
+    0,
+    1,
+    "task-table-count") {
+        return 81
+    }
+    if table_row_count_if_revision(30,
+    stale_table_count) != - 1 {
+        return 82
+    }
+    if ui_table_row_count(30) != 3 {
+        return 83
+    }
+    let current_table_count: UInt64 = app_data_revision()
+    if table_row_count_if_revision(30,
+    current_table_count) != 3 {
+        return 84
+    }
+    if ! ui_app_end(panel) {
+        return 85
+    }
+    if ! ui_app_end(root) {
+        return 86
+    }
+    return 0
+}

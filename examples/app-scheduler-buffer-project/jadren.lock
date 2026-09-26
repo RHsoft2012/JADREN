@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "f1cd5fb3289a0867"
+
+[package]
+name = "app-scheduler-buffer-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

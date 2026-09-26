@@ -1,5 +1,4 @@
 module jadren.core.collections
-
 /// Sums a borrowed contiguous Int32 view without allocation.
 @noalloc
 pub fn sum_i32(values: read Slice<Int32>) -> Int32 {
@@ -9,7 +8,6 @@ pub fn sum_i32(values: read Slice<Int32>) -> Int32 {
     }
     return total
 }
-
 /// Returns the first item when the caller-provided view length is non-zero.
 pub fn first_i32(values: read Slice<Int32>, count: UIntSize) -> Option<Int32> {
     if count == 0usize {
@@ -17,7 +15,6 @@ pub fn first_i32(values: read Slice<Int32>, count: UIntSize) -> Option<Int32> {
     }
     return Some(values[0])
 }
-
 /// Sums every initialized element in a caller-owned dynamic buffer.
 ///
 /// The compiler exposes `Buffer<T>.indices` as a checked borrowed view, so the
@@ -30,7 +27,6 @@ pub fn sum_buffer_i32(values: read Buffer<Int32>) -> Int32 {
     }
     return total
 }
-
 /// Updates one element in a dynamic buffer without exposing raw pointers.
 /// Returns `false` when the requested index is outside the current length.
 @noalloc
@@ -42,4 +38,1041 @@ pub fn set_buffer_i32(values: write Buffer<Int32>, index: UIntSize, value: Int32
         }
     }
     return false
+}
+/// Replaces every initialized element with `value` without changing the
+/// buffer's logical length or capacity. The generic body is monomorphized for
+/// the concrete Equatable element and uses no allocation or backing-pointer
+/// access, so callers can reuse it for bounded list/table columns.
+@noalloc
+pub fn fill<T: Equatable>(values: write Buffer<T>, value: T) -> Bool {
+    for index in values.indices {
+        values[index] = value
+    }
+    return true
+}
+/// Returns the first matching index at or after `start`, or `-1` when no
+/// element matches. The search is bounded by the initialized buffer length and
+/// never exposes the backing allocation to the caller.
+@noalloc
+pub fn find_buffer_i32(values: read Buffer<Int32>, needle: Int32, start: UIntSize) -> Int32 {
+    for candidate in values.indices {
+        if candidate >= start {
+            if values[candidate] == needle {
+                return candidate as Int32
+            }
+        }
+    }
+    return - 1
+}
+/// Counts matching initialized elements at or after `start`.
+///
+/// The scan is bounded by the logical buffer length and never exposes the
+/// backing allocation. A zero-length or out-of-range start therefore returns
+/// zero without mutating the buffer or allocating storage.
+@noalloc
+pub fn count_buffer_i32(values: read Buffer<Int32>, needle: Int32, start: UIntSize) -> UIntSize {
+    var matches: UIntSize = 0usize
+    for candidate in values.indices {
+        if candidate >= start {
+            if values[candidate] == needle {
+                matches = matches + 1usize
+            }
+        }
+    }
+    return matches
+}
+/// Sorts initialized `Int32` elements in place using a bounded insertion sort.
+/// `descending = false` produces ascending order. The implementation uses only
+/// caller-owned buffer storage plus one scalar temporary, so it performs no
+/// allocation and preserves the logical length and capacity.
+@noalloc
+pub fn sort_buffer_i32(values: write Buffer<Int32>, descending: Bool) -> Bool {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    if count<2usize {
+        return true
+    }
+    var index: UIntSize = 1usize
+    while index<count {
+        let current: Int32 = values[index]
+        var position: UIntSize = index
+        while position>0usize {
+            let previous: Int32 = values[position - 1usize]
+            var should_shift: Bool = false
+            if descending {
+                should_shift = previous<current
+            } else {
+                should_shift = previous>current
+            }
+            if ! should_shift {
+                break
+            }
+            values[position] = previous
+            position = position - 1usize
+        }
+        values[position] = current
+        index = index + 1usize
+    }
+    return true
+}
+/// Sorts initialized ordered elements in place using a bounded insertion sort.
+/// `descending = false` produces ascending order. The generic body is
+/// monomorphized for the concrete ordered element, uses one scalar temporary,
+/// and preserves the logical length and capacity without allocating.
+@noalloc
+pub fn sort<T: Ordered>(values: write Buffer<T>, descending: Bool) -> Bool {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    if count<2usize {
+        return true
+    }
+    var index: UIntSize = 1usize
+    while index<count {
+        let current: T = values[index]
+        var position: UIntSize = index
+        while position>0usize {
+            let previous: T = values[position - 1usize]
+            var should_shift: Bool = false
+            if descending {
+                should_shift = previous<current
+            } else {
+                should_shift = previous>current
+            }
+            if ! should_shift {
+                break
+            }
+            values[position] = previous
+            position = position - 1usize
+        }
+        values[position] = current
+        index = index + 1usize
+    }
+    return true
+}
+/// Returns the first index whose initialized value is not less than `needle`.
+/// The caller must provide an ascending-sorted buffer; an empty buffer returns
+/// zero. The binary search only reads caller-owned storage and performs no
+/// allocation or mutation, so the returned index is also the insertion point.
+@noalloc
+pub fn lower_bound<T: Ordered>(values: read Buffer<T>, needle: T) -> UIntSize {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    var lower: UIntSize = 0usize
+    var upper: UIntSize = count
+    while lower<upper {
+        let midpoint: UIntSize = lower +(upper - lower) / 2usize
+        if values[midpoint] < needle {
+            lower = midpoint + 1usize
+        } else {
+            upper = midpoint
+        }
+    }
+    return lower
+}
+/// Returns the first index whose initialized value is greater than `needle`.
+/// The caller must provide an ascending-sorted buffer; an empty buffer returns
+/// zero. The binary search only reads caller-owned storage and performs no
+/// allocation or mutation, so the returned index is the upper insertion point
+/// after all values equal to `needle`.
+@noalloc
+pub fn upper_bound<T: Ordered>(values: read Buffer<T>, needle: T) -> UIntSize {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    var lower: UIntSize = 0usize
+    var upper: UIntSize = count
+    while lower<upper {
+        let midpoint: UIntSize = lower +(upper - lower) / 2usize
+        if needle<values[midpoint] {
+            upper = midpoint
+        } else {
+            lower = midpoint + 1usize
+        }
+    }
+    return lower
+}
+/// Returns the first index containing `needle` in an ascending buffer, or
+/// `-1` when the value is absent. The caller must provide an ascending-sorted
+/// buffer. Equality is expressed through the `Ordered` relation so this
+/// helper does not widen the generic contract; it only reads initialized
+/// storage, performs no allocation, and never mutates the descriptor.
+@noalloc
+pub fn binary_search<T: Ordered>(values: read Buffer<T>, needle: T) -> Int32 {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    var lower: UIntSize = 0usize
+    var upper: UIntSize = count
+    while lower<upper {
+        let midpoint: UIntSize = lower +(upper - lower) / 2usize
+        if values[midpoint] < needle {
+            lower = midpoint + 1usize
+        } else {
+            upper = midpoint
+        }
+    }
+    if lower >= count {
+        return - 1
+    }
+    if values[lower] < needle {
+        return - 1
+    }
+    if needle<values[lower] {
+        return - 1
+    }
+    return lower as Int32
+}
+/// Returns the index of the first smallest initialized element.
+///
+/// The scan is bounded by the initialized buffer prefix and never mutates
+/// the descriptor. An empty buffer returns `-1`; equal minima keep the lowest
+/// index, making the result deterministic.
+@noalloc
+pub fn min_index<T: Ordered>(values: read Buffer<T>) -> Int32 {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    if count == 0usize {
+        return - 1
+    }
+    var best: UIntSize = 0usize
+    var candidate: UIntSize = 1usize
+    while candidate<count {
+        if values[candidate] < values[best] {
+            best = candidate
+        }
+        candidate = candidate + 1usize
+    }
+    return best as Int32
+}
+/// Returns the index of the first largest initialized element.
+///
+/// The scan is bounded by the initialized buffer prefix and never mutates
+/// the descriptor. An empty buffer returns `-1`; equal maxima keep the lowest
+/// index, making the result deterministic.
+@noalloc
+pub fn max_index<T: Ordered>(values: read Buffer<T>) -> Int32 {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    if count == 0usize {
+        return - 1
+    }
+    var best: UIntSize = 0usize
+    var candidate: UIntSize = 1usize
+    while candidate<count {
+        if values[best] < values[candidate] {
+            best = candidate
+        }
+        candidate = candidate + 1usize
+    }
+    return best as Int32
+}
+/// Returns whether initialized elements are ordered monotonically.
+/// `descending = false` accepts ascending order and `descending = true`
+/// accepts descending order. The check reads only the initialized prefix,
+/// performs no allocation, and preserves the buffer descriptor.
+@noalloc
+pub fn is_sorted<T: Ordered>(values: read Buffer<T>, descending: Bool) -> Bool {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    if count<2usize {
+        return true
+    }
+    var index: UIntSize = 1usize
+    while index<count {
+        let previous: T = values[index - 1usize]
+        let current: T = values[index]
+        if descending {
+            if previous<current {
+                return false
+            }
+        } else {
+            if previous>current {
+                return false
+            }
+        }
+        index = index + 1usize
+    }
+    return true
+}
+/// Reverses initialized ordered elements in place using a bounded swap loop.
+/// The generic body is monomorphized for the concrete scalar element, uses
+/// two caller-owned temporaries, and preserves the logical length and
+/// allocation capacity without allocating storage.
+@noalloc
+pub fn reverse<T: Ordered>(values: write Buffer<T>) -> Bool {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    if count<2usize {
+        return true
+    }
+    var left: UIntSize = 0usize
+    var right: UIntSize = count - 1usize
+    while left<right {
+        let left_value: T = values[left]
+        let right_value: T = values[right]
+        values[left] = right_value
+        values[right] = left_value
+        left = left + 1usize
+        right = right - 1usize
+    }
+    return true
+}
+/// Returns whether `index` addresses an initialized element of any owning
+/// buffer. The element type stays opaque to the helper, so the same contract
+/// applies to scalar, nominal and owning DynamicArray instantiations.
+@noalloc
+pub fn buffer_index_valid<T>(values: read Buffer<T>, index: UIntSize) -> Bool {
+    for candidate in values.indices {
+        if candidate == index {
+            return true
+        }
+    }
+    return false
+}
+/// Returns the first element index equal to `needle` at or after `start`.
+/// The scan is bounded by the initialized buffer length, does not allocate,
+/// and returns `-1` when no matching element exists. `Equatable` keeps the
+/// comparison explicit at the generic call boundary.
+@noalloc
+pub fn find<T: Equatable>(values: read Buffer<T>, needle: T, start: UIntSize) -> Int32 {
+    for candidate in values.indices {
+        if candidate >= start {
+            if values[candidate] == needle {
+                return candidate as Int32
+            }
+        }
+    }
+    return - 1
+}
+/// Returns the last initialized element index equal to `needle` at or after
+/// `start`, or `-1` when no matching element exists. The scan is bounded by
+/// the logical buffer length, performs no allocation, and never mutates the
+/// caller-owned descriptor.
+@noalloc
+pub fn find_last<T: Equatable>(values: read Buffer<T>, needle: T, start: UIntSize) -> Int32 {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    if start >= count {
+        return - 1
+    }
+    var candidate: UIntSize = count
+    while candidate>start {
+        candidate = candidate - 1usize
+        if values[candidate] == needle {
+            return candidate as Int32
+        }
+    }
+    return - 1
+}
+/// Counts elements equal to `needle` at or after `start`.
+/// The scan is bounded by the initialized buffer length, does not allocate,
+/// and never mutates the caller-owned buffer.
+@noalloc
+pub fn count<T: Equatable>(values: read Buffer<T>, needle: T, start: UIntSize) -> UIntSize {
+    var matches: UIntSize = 0usize
+    for candidate in values.indices {
+        if candidate >= start {
+            if values[candidate] == needle {
+                matches = matches + 1usize
+            }
+        }
+    }
+    return matches
+}
+/// Returns whether an initialized element equal to `needle` exists at or
+/// after `start`. The scan is bounded by the logical buffer length, performs
+/// no allocation, and never mutates the caller-owned buffer.
+@noalloc
+pub fn contains<T: Equatable>(values: read Buffer<T>, needle: T, start: UIntSize) -> Bool {
+    for candidate in values.indices {
+        if candidate >= start {
+            if values[candidate] == needle {
+                return true
+            }
+        }
+    }
+    return false
+}
+/// Returns whether at least one initialized element equal to `needle` exists
+/// at or after `start`. The bounded scan is read-only and performs no
+/// allocation, so the descriptor, length and capacity remain unchanged.
+@noalloc
+pub fn any<T: Equatable>(values: read Buffer<T>, needle: T, start: UIntSize) -> Bool {
+    for candidate in values.indices {
+        if candidate >= start {
+            if values[candidate] == needle {
+                return true
+            }
+        }
+    }
+    return false
+}
+/// Returns whether no initialized element equal to `needle` exists at or
+/// after `start`. An empty or out-of-range suffix therefore succeeds; the
+/// helper only reads caller-owned storage and never mutates the buffer.
+@noalloc
+pub fn none<T: Equatable>(values: read Buffer<T>, needle: T, start: UIntSize) -> Bool {
+    for candidate in values.indices {
+        if candidate >= start {
+            if values[candidate] == needle {
+                return false
+            }
+        }
+    }
+    return true
+}
+/// Returns whether every initialized element at or after `start` equals
+/// `needle`. An empty or out-of-range suffix is a successful vacuous match;
+/// the helper only reads caller-owned storage and never changes the buffer.
+@noalloc
+pub fn all<T: Equatable>(values: read Buffer<T>, needle: T, start: UIntSize) -> Bool {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    var candidate: UIntSize = start
+    while candidate<count {
+        if values[candidate] == needle {
+            candidate = candidate + 1usize
+        } else {
+            return false
+        }
+    }
+    return true
+}
+/// Retains only initialized elements equal to `needle`, preserving their
+/// original order. The compaction writes into the caller-owned buffer from
+/// left to right, so a write can never overwrite a value that has not yet
+/// been inspected. Shrinking the logical length happens only after the
+/// complete pass and does not change the allocation capacity.
+pub fn retain<T: Equatable>(values: write Buffer<T>, needle: T) -> Bool {
+    var read_index: UIntSize = 0usize
+    var write_index: UIntSize = 0usize
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    while read_index<count {
+        let current: T = values[read_index]
+        if current == needle {
+            if write_index != read_index {
+                values[write_index] = current
+            }
+            write_index = write_index + 1usize
+        }
+        read_index = read_index + 1usize
+    }
+    return buffer_resize(values,
+    write_index)
+}
+/// Filters initialized Equatable elements in place with a caller-owned
+/// predicate. Matching elements keep their original order; the logical
+/// length is published only after the complete pass and the allocation
+/// capacity is preserved. The callback receives a value, never the buffer
+/// descriptor, so it cannot alias the collection through this API.
+pub fn filter<T: Equatable>(values: write Buffer<T>, predicate: fn(T) -> Bool) -> Bool {
+    var read_index: UIntSize = 0usize
+    var write_index: UIntSize = 0usize
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    while read_index<count {
+        let current: T = values[read_index]
+        if predicate(current) {
+            if write_index != read_index {
+                values[write_index] = current
+            }
+            write_index = write_index + 1usize
+        }
+        read_index = read_index + 1usize
+    }
+    return buffer_resize(values,
+    write_index)
+}
+/// Concrete callback entry point for `Int32` package callers. This spelling
+/// keeps the callback ABI concrete for native package linking while mirroring
+/// the generic helper's stable in-place compaction contract.
+pub fn filter_i32(values: write Buffer<Int32>, predicate: fn(Int32) -> Bool) -> Bool {
+    var read_index: UIntSize = 0usize
+    var write_index: UIntSize = 0usize
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    while read_index<count {
+        let current: Int32 = values[read_index]
+        if predicate(current) {
+            if write_index != read_index {
+                values[write_index] = current
+            }
+            write_index = write_index + 1usize
+        }
+        read_index = read_index + 1usize
+    }
+    return buffer_resize(values,
+    write_index)
+}
+/// Concrete callback entry point for `Float32` package callers. This spelling
+/// keeps the callback ABI concrete for native package linking while mirroring
+/// the generic helper's stable in-place compaction contract.
+pub fn filter_f32(values: write Buffer<Float32>, predicate: fn(Float32) -> Bool) -> Bool {
+    var read_index: UIntSize = 0usize
+    var write_index: UIntSize = 0usize
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    while read_index<count {
+        let current: Float32 = values[read_index]
+        if predicate(current) {
+            if write_index != read_index {
+                values[write_index] = current
+            }
+            write_index = write_index + 1usize
+        }
+        read_index = read_index + 1usize
+    }
+    return buffer_resize(values,
+    write_index)
+}
+/// Folds initialized numeric elements from left to right with a caller-owned
+/// value combiner. The logical length and capacity remain unchanged; the
+/// helper only keeps the accumulator in a scalar local and performs no
+/// allocation.
+@noalloc
+pub fn fold<T: Numeric>(values: read Buffer<T>, initial: T, combine: fn(T, T) -> T) -> T {
+    var accumulator: T = initial
+    for candidate in values.indices {
+        accumulator = combine(accumulator,
+        values[candidate])
+    }
+    return accumulator
+}
+/// Concrete callback entry point for `Int32` package callers. It mirrors the
+/// generic left-to-right fold while keeping the callback ABI fully concrete.
+@noalloc
+pub fn fold_i32(values: read Buffer<Int32>, initial: Int32, combine: fn(Int32, Int32) -> Int32) -> Int32 {
+    var accumulator: Int32 = initial
+    for candidate in values.indices {
+        accumulator = combine(accumulator,
+        values[candidate])
+    }
+    return accumulator
+}
+/// Concrete callback entry point for `Float32` package callers. It mirrors
+/// the generic left-to-right fold while keeping the callback ABI concrete.
+@noalloc
+pub fn fold_f32(values: read Buffer<Float32>, initial: Float32, combine: fn(Float32, Float32) -> Float32) -> Float32 {
+    var accumulator: Float32 = initial
+    for candidate in values.indices {
+        accumulator = combine(accumulator,
+        values[candidate])
+    }
+    return accumulator
+}
+/// Transforms each initialized Equatable element in place with a caller-owned
+/// callback. The logical length and capacity remain unchanged; the helper
+/// reads one scalar value before writing its transformed replacement, so the
+/// callback never receives the buffer descriptor and cannot alias it through
+/// this API.
+@noalloc
+pub fn map_in_place<T: Equatable>(values: write Buffer<T>, transform: fn(T) -> T) -> Bool {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    var index: UIntSize = 0usize
+    while index<count {
+        let current: T = values[index]
+        values[index] = transform(current)
+        index = index + 1usize
+    }
+    return true
+}
+/// Concrete callback entry point for `Int32` package callers. It mirrors the
+/// generic in-place transform while keeping the callback ABI concrete.
+@noalloc
+pub fn map_i32(values: write Buffer<Int32>, transform: fn(Int32) -> Int32) -> Bool {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    var index: UIntSize = 0usize
+    while index<count {
+        let current: Int32 = values[index]
+        values[index] = transform(current)
+        index = index + 1usize
+    }
+    return true
+}
+/// Concrete callback entry point for `Float32` package callers. It mirrors
+/// the generic in-place transform while keeping the callback ABI concrete.
+@noalloc
+pub fn map_f32(values: write Buffer<Float32>, transform: fn(Float32) -> Float32) -> Bool {
+    var count: UIntSize = 0usize
+    for candidate in values.indices {
+        count = count + 1usize
+    }
+    var index: UIntSize = 0usize
+    while index<count {
+        let current: Float32 = values[index]
+        values[index] = transform(current)
+        index = index + 1usize
+    }
+    return true
+}
+/// Returns the initialized element count without exposing the backing pointer.
+/// The element type remains generic, including owning nominal values.
+pub fn length<T>(values: read Buffer<T>) -> UIntSize {
+    return buffer_length(values)
+}
+/// Returns whether a generic owning buffer has no initialized elements.
+/// This is a read-only convenience over the bounded descriptor length.
+pub fn is_empty<T>(values: read Buffer<T>) -> Bool {
+    return buffer_length(values) == 0usize
+}
+/// Returns the last initialized index, or `Error(-20)` for an empty buffer.
+/// The helper never exposes the backing allocation or mutates the descriptor.
+pub fn last_index<T>(values: read Buffer<T>) -> Result<UIntSize, Int32> {
+    let count: UIntSize = buffer_length(values)
+    if count == 0usize {
+        return Error( - 20)
+    }
+    return Ok(count - 1usize)
+}
+/// Copies one initialized copy-safe element into the first slot of a
+/// caller-owned output buffer. The output must already contain one initialized
+/// slot; the descriptor, logical length and capacity remain unchanged.
+/// Invalid source indices or an empty output return `false` without writing.
+pub fn copy_at<T: Equatable>(values: read Buffer<T>, index: UIntSize, output: write Buffer<T>) -> Bool {
+    if buffer_length(output) == 0usize {
+        return false
+    }
+    for candidate in values.indices {
+        if candidate == index {
+            output[0usize] = values[index]
+            return true
+        }
+    }
+    return false
+}
+/// Status form of `copy_at`; `0` is success, `-20` is an invalid source index
+/// and `-21` means that the output buffer has no initialized slot.
+pub fn copy_at_status<T: Equatable>(values: read Buffer<T>, index: UIntSize, output: write Buffer<T>) -> Int32 {
+    if buffer_length(output) == 0usize {
+        return - 21
+    }
+    for candidate in values.indices {
+        if candidate == index {
+            output[0usize] = values[index]
+            return 0
+        }
+    }
+    return - 20
+}
+/// Returns the current bounded allocation capacity of a mutable generic
+/// buffer. A read-only Buffer view intentionally carries only pointer/length,
+/// so callers that need the backing capacity must retain write access.
+pub fn capacity<T>(values: write Buffer<T>) -> UIntSize {
+    return buffer_capacity(values)
+}
+/// Creates a generic owning buffer with caller-selected initial capacity.
+/// The concrete element layout is materialized at the call site.
+pub fn create<T>(capacity: UIntSize) -> Result<Buffer<T>, Int32> {
+    return buffer_create(capacity)
+}
+/// Appends one generic element to an owning buffer.
+pub fn append<T>(values: write Buffer<T>, value: T) -> Bool {
+    return buffer_append(values,
+    value)
+}
+/// Status form of generic append; `0` is success and negative values are
+/// stable bounded allocation/argument errors.
+pub fn append_status<T>(values: write Buffer<T>, value: T) -> Int32 {
+    return buffer_append_status(values,
+    value)
+}
+/// Inserts one copy-safe generic element at `index` and shifts later slots.
+/// Owning elements must use `insert_move_from` instead.
+pub fn insert<T>(values: write Buffer<T>, index: UIntSize, value: T) -> Bool {
+    return buffer_insert(values,
+    index,
+    value)
+}
+/// Status form of copy-safe generic insertion; `-20` denotes an invalid index.
+pub fn insert_status<T>(values: write Buffer<T>, index: UIntSize, value: T) -> Int32 {
+    return buffer_insert_status(values,
+    index,
+    value)
+}
+/// Inserts one copy-safe generic element, reserving one additional slot when
+/// the current logical length already reaches capacity. Invalid indices are
+/// rejected before a reserve can change the descriptor.
+pub fn insert_grow<T>(values: write Buffer<T>, index: UIntSize, value: T) -> Bool {
+    let count: UIntSize = buffer_length(values)
+    if index>count {
+        return false
+    }
+    if count as UInt64 == 18446744073709551615u64 {
+        return false
+    }
+    if ! buffer_reserve(values,
+    count + 1usize) {
+        return false
+    }
+    return buffer_insert(values,
+    index,
+    value)
+}
+/// Status form of `insert_grow`; `-20` is an invalid index and `-13` is a
+/// representational size overflow. Reserve/insert allocation errors are
+/// propagated without consuming the caller-owned value.
+pub fn insert_grow_status<T>(values: write Buffer<T>, index: UIntSize, value: T) -> Int32 {
+    let count: UIntSize = buffer_length(values)
+    if index>count {
+        return - 20
+    }
+    if count as UInt64 == 18446744073709551615u64 {
+        return - 13
+    }
+    let reserved: Int32 = buffer_reserve_status(values,
+    count + 1usize)
+    if reserved != 0 {
+        return reserved
+    }
+    return buffer_insert_status(values,
+    index,
+    value)
+}
+/// Removes one copy-safe generic element at `index` and shifts later slots.
+/// Move-safe owning elements must use `remove` or `remove_drop` instead.
+pub fn remove_copy<T>(values: write Buffer<T>, index: UIntSize) -> Bool {
+    return buffer_remove(values,
+    index)
+}
+/// Status form of copy-safe generic removal; `-20` denotes an invalid index.
+pub fn remove_copy_status<T>(values: write Buffer<T>, index: UIntSize) -> Int32 {
+    return buffer_remove_status(values,
+    index)
+}
+/// Removes the last copy-safe generic element and shifts no remaining slots.
+/// Move-safe owning elements must use `pop` or `pop_drop` instead.
+pub fn pop_copy<T>(values: write Buffer<T>) -> Bool {
+    let count: UIntSize = buffer_length(values)
+    if count == 0usize {
+        return false
+    }
+    return buffer_remove(values,
+    count - 1usize)
+}
+/// Status form of copy-safe generic pop; an empty buffer returns `-20`.
+pub fn pop_copy_status<T>(values: write Buffer<T>) -> Int32 {
+    let count: UIntSize = buffer_length(values)
+    if count == 0usize {
+        return - 20
+    }
+    return buffer_remove_status(values,
+    count - 1usize)
+}
+/// Appends a compiler-approved move-safe owning value and clears its source
+/// descriptor on success.
+pub fn append_move<T>(values: write Buffer<T>, value: T) -> Bool {
+    return buffer_append_move(values,
+    value)
+}
+/// Status form of generic move-aware append.
+pub fn append_move_status<T>(values: write Buffer<T>, value: T) -> Int32 {
+    return buffer_append_move_status(values,
+    value)
+}
+/// Inserts one move-safe owning value after reserving one additional slot.
+/// Ownership is transferred only after the index and reserve checks succeed.
+pub fn insert_move_from_grow<T>(values: write Buffer<T>, index: UIntSize, value: T) -> Bool {
+    let count: UIntSize = buffer_length(values)
+    if index>count {
+        return false
+    }
+    if count as UInt64 == 18446744073709551615u64 {
+        return false
+    }
+    if ! buffer_reserve(values,
+    count + 1usize) {
+        return false
+    }
+    return buffer_insert_move_from(values,
+    index,
+    value)
+}
+/// Status form of move-aware `insert_move_from_grow`; it preserves `-20` for
+/// invalid indices and `-13` for representational size overflow.
+pub fn insert_move_from_grow_status<T>(values: write Buffer<T>, index: UIntSize, value: T) -> Int32 {
+    let count: UIntSize = buffer_length(values)
+    if index>count {
+        return - 20
+    }
+    if count as UInt64 == 18446744073709551615u64 {
+        return - 13
+    }
+    let reserved: Int32 = buffer_reserve_status(values,
+    count + 1usize)
+    if reserved != 0 {
+        return reserved
+    }
+    return buffer_insert_move_from_status(values,
+    index,
+    value)
+}
+/// Appends one generic value after reserving one additional slot when the
+/// current logical length already reaches capacity. The reserve happens
+/// before the append, so a failed allocation leaves the value and descriptor
+/// unchanged.
+pub fn append_grow<T>(values: write Buffer<T>, value: T) -> Bool {
+    let count: UIntSize = buffer_length(values)
+    if count as UInt64 == 18446744073709551615u64 {
+        return false
+    }
+    if ! buffer_reserve(values,
+    count + 1usize) {
+        return false
+    }
+    return buffer_append(values,
+    value)
+}
+/// Status form of `append_grow`; `-13` denotes a representational size
+/// overflow and other negative values come from the bounded reserve/append
+/// operations.
+pub fn append_grow_status<T>(values: write Buffer<T>, value: T) -> Int32 {
+    let count: UIntSize = buffer_length(values)
+    if count as UInt64 == 18446744073709551615u64 {
+        return - 13
+    }
+    let reserved: Int32 = buffer_reserve_status(values,
+    count + 1usize)
+    if reserved != 0 {
+        return reserved
+    }
+    return buffer_append_status(values,
+    value)
+}
+/// Appends one move-safe owning value after reserving one additional slot.
+/// The source ownership is transferred only by `buffer_append_move` after a
+/// successful bounded reserve.
+pub fn append_move_grow<T>(values: write Buffer<T>, value: T) -> Bool {
+    let count: UIntSize = buffer_length(values)
+    if count as UInt64 == 18446744073709551615u64 {
+        return false
+    }
+    if ! buffer_reserve(values,
+    count + 1usize) {
+        return false
+    }
+    return buffer_append_move(values,
+    value)
+}
+/// Status form of the move-aware generic growth helper.
+pub fn append_move_grow_status<T>(values: write Buffer<T>, value: T) -> Int32 {
+    let count: UIntSize = buffer_length(values)
+    if count as UInt64 == 18446744073709551615u64 {
+        return - 13
+    }
+    let reserved: Int32 = buffer_reserve_status(values,
+    count + 1usize)
+    if reserved != 0 {
+        return reserved
+    }
+    return buffer_append_move_status(values,
+    value)
+}
+/// Grows a generic owning buffer geometrically to at least `minimum` slots.
+/// Existing descriptors remain owned by their elements during reallocation.
+pub fn reserve<T>(values: write Buffer<T>, minimum: UIntSize) -> Bool {
+    return buffer_reserve(values,
+    minimum)
+}
+/// Status form of generic reserve; `0` is success and negative values are
+/// stable bounded allocation/argument errors.
+pub fn reserve_status<T>(values: write Buffer<T>, minimum: UIntSize) -> Int32 {
+    return buffer_reserve_status(values,
+    minimum)
+}
+/// Resizes a copy-safe generic buffer. Growing publishes additional logical
+/// slots; callers must initialize new slots before reading them. Owning
+/// elements must use `resize_move` instead.
+pub fn resize<T>(values: write Buffer<T>, new_length: UIntSize) -> Bool {
+    return buffer_resize(values,
+    new_length)
+}
+/// Status form of copy-safe generic resize.
+pub fn resize_status<T>(values: write Buffer<T>, new_length: UIntSize) -> Int32 {
+    return buffer_resize_status(values,
+    new_length)
+}
+/// Shrinks a copy-safe generic buffer to `new_length` without ever growing it.
+/// A target at or above the current length is a successful no-op; owning
+/// elements must use `truncate_move` instead.
+pub fn truncate<T>(values: write Buffer<T>, new_length: UIntSize) -> Bool {
+    let current: UIntSize = buffer_length(values)
+    if new_length >= current {
+        return true
+    }
+    return buffer_resize(values,
+    new_length)
+}
+/// Status form of copy-safe generic truncate. A no-op returns `0`.
+pub fn truncate_status<T>(values: write Buffer<T>, new_length: UIntSize) -> Int32 {
+    let current: UIntSize = buffer_length(values)
+    if new_length >= current {
+        return 0
+    }
+    return buffer_resize_status(values,
+    new_length)
+}
+/// Clears a copy-safe generic buffer by publishing logical length zero.
+pub fn clear<T>(values: write Buffer<T>) -> Bool {
+    return buffer_clear(values)
+}
+/// Status form of copy-safe generic clear.
+pub fn clear_status<T>(values: write Buffer<T>) -> Int32 {
+    return buffer_clear_status(values)
+}
+/// Clears every initialized element through the move-aware destructor path.
+/// The concrete element must satisfy the owning Buffer ABI at materialization.
+pub fn clear_move<T>(values: write Buffer<T>) -> Bool {
+    return buffer_clear_move(values)
+}
+/// Status form of the generic move-aware clear; `0` is success.
+pub fn clear_move_status<T>(values: write Buffer<T>) -> Int32 {
+    return buffer_clear_move_status(values)
+}
+/// Resizes a move-safe owning buffer, growing with zeroed slots and dropping
+/// removed ownership on shrink.
+pub fn resize_move<T>(values: write Buffer<T>, new_length: UIntSize) -> Bool {
+    return buffer_resize_move(values,
+    new_length)
+}
+/// Status form of generic move-aware resize.
+pub fn resize_move_status<T>(values: write Buffer<T>, new_length: UIntSize) -> Int32 {
+    return buffer_resize_move_status(values,
+    new_length)
+}
+/// Shrinks a move-safe owning buffer without ever growing it. Removed
+/// elements are released through the existing destructor-aware path.
+pub fn truncate_move<T>(values: write Buffer<T>, new_length: UIntSize) -> Bool {
+    let current: UIntSize = buffer_length(values)
+    if new_length >= current {
+        return true
+    }
+    return buffer_resize_move(values,
+    new_length)
+}
+/// Status form of move-aware generic truncate. A no-op returns `0`.
+pub fn truncate_move_status<T>(values: write Buffer<T>, new_length: UIntSize) -> Int32 {
+    let current: UIntSize = buffer_length(values)
+    if new_length >= current {
+        return 0
+    }
+    return buffer_resize_move_status(values,
+    new_length)
+}
+/// Inserts a compiler-approved move-safe owning value at `index`.
+pub fn insert_move_from<T>(values: write Buffer<T>, index: UIntSize, value: T) -> Bool {
+    return buffer_insert_move_from(values,
+    index,
+    value)
+}
+/// Status form of generic move-aware insertion.
+pub fn insert_move_from_status<T>(values: write Buffer<T>, index: UIntSize, value: T) -> Int32 {
+    return buffer_insert_move_from_status(values,
+    index,
+    value)
+}
+/// Moves the last initialized move-safe owning element out of a generic
+/// buffer. An empty buffer returns `Error(-20)`.
+pub fn pop<T>(values: write Buffer<T>) -> Result<T, Int32> {
+    return buffer_pop(values)
+}
+/// Moves the initialized element at `index` out of a generic move-safe
+/// owning buffer. An invalid index returns `Error(-20)`.
+pub fn remove<T>(values: write Buffer<T>, index: UIntSize) -> Result<T, Int32> {
+    return buffer_remove_move(values,
+    index)
+}
+/// Removes and disposes the last initialized element of a generic owning
+/// buffer. Returns `false` for an empty buffer or when the native drop path
+/// rejects the element layout.
+pub fn pop_drop<T>(values: write Buffer<T>) -> Bool {
+    let count: UIntSize = buffer_length(values)
+    if count == 0usize {
+        return false
+    }
+    return buffer_remove_drop(values,
+    count - 1usize)
+}
+/// Status form of `pop_drop`; `0` is success and `-20` is the stable empty
+/// or out-of-bounds code.
+pub fn pop_drop_status<T>(values: write Buffer<T>) -> Int32 {
+    let count: UIntSize = buffer_length(values)
+    if count == 0usize {
+        return - 20
+    }
+    return buffer_remove_drop_status(values,
+    count - 1usize)
+}
+/// Removes and disposes the initialized element at `index` of a generic
+/// owning buffer. The remaining elements are shifted left by the existing
+/// move-aware runtime path, so this is suitable for list/table row deletion.
+pub fn remove_drop<T>(values: write Buffer<T>, index: UIntSize) -> Bool {
+    return buffer_remove_drop(values,
+    index)
+}
+/// Status form of `remove_drop`; it preserves the runtime's stable
+/// out-of-bounds/empty boundary code instead of collapsing it to `false`.
+pub fn remove_drop_status<T>(values: write Buffer<T>, index: UIntSize) -> Int32 {
+    return buffer_remove_drop_status(values,
+    index)
+}
+/// Moves the initialized element at `index` into caller-owned output storage.
+/// The concrete move-safe owning layout is checked when `T` materializes.
+pub fn remove_move_into<T>(values: write Buffer<T>, index: UIntSize, output: write T) -> Bool {
+    return buffer_remove_move_into(values,
+    index,
+    output)
+}
+/// Status form of `remove_move_into`; invalid indices retain the stable `-20`
+/// boundary instead of collapsing it to `false`.
+pub fn remove_move_into_status<T>(values: write Buffer<T>, index: UIntSize, output: write T) -> Int32 {
+    return buffer_remove_move_into_status(values,
+    index,
+    output)
+}
+/// Moves the last initialized element into caller-owned output storage. Empty
+/// buffers retain the same stable `-20` boundary as indexed remove operations.
+pub fn pop_move_into<T>(values: write Buffer<T>, output: write T) -> Bool {
+    return buffer_pop_move_into(values,
+    output)
+}
+/// Status form of `pop_move_into` for callers that need the exact boundary
+/// code rather than a boolean result.
+pub fn pop_move_into_status<T>(values: write Buffer<T>, output: write T) -> Int32 {
+    return buffer_pop_move_into_status(values,
+    output)
 }

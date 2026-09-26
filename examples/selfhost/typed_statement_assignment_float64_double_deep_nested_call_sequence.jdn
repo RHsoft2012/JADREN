@@ -1,0 +1,7 @@
+module selfhost.typed_statement_assignment_float64_double_deep_nested_call_sequence;
+
+fn local_value() -> Float64 {
+    let first: Float64 = helper(scale(scale(1.5f64)), scale(scale(2.5f64)));
+    first = helper(scale(scale(3.5f64)), scale(scale(4.5f64)));
+    return helper(scale(scale(first)), scale(scale(5.5f64)));
+}

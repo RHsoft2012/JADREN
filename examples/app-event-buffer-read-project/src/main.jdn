@@ -1,0 +1,196 @@
+module app_event_buffer_read_project.main
+import jadren.app.event.click
+import jadren.app.event.read_text_buffer
+import jadren.app.event.read_text_buffer_if_revision
+import jadren.app.event.text_changed
+import jadren.app.state.clear
+import jadren.app.state.set_int
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.panel
+import jadren.app.ui.text_input
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear()
+    let root: Int32 = begin("Jadren AppEvent Buffer",
+    560,
+    280,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 1
+    }
+    let panel_node: Int32 = panel(root,
+    500,
+    200,
+    0xFFFFFFu32,
+    12,
+    12,
+    8,
+    0,
+    1)
+    if panel_node == 0 {
+        return 2
+    }
+    let input_node: Int32 = text_input(panel_node,
+    "Hello",
+    41,
+    320,
+    38,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if input_node == 0 {
+        return 3
+    }
+    var status: Int32 = 0
+    let output_created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(32usize)
+    match output_created {
+        Error(error) => {
+            status = error
+        }
+        Ok(output) => {
+            var length:[UIntSize;
+            1] =[777usize]
+            if ! read_text_buffer(text_changed(41,
+            5i64),
+            output,
+            32usize,
+            length) {
+                status = 4
+            }
+            if status == 0 {
+                if length[0] != 5usize {
+                    status = 5
+                }
+            }
+            if status == 0 {
+                if output[0] != 72u8 {
+                    status = 6
+                }
+            }
+            if status == 0 {
+                if output[4] != 111u8 {
+                    status = 6
+                }
+            }
+            if status == 0 {
+                output[0] = 89u8
+                length[0] = 501usize
+                if read_text_buffer(text_changed(41,
+                5i64),
+                output,
+                33usize,
+                length) {
+                    status = 50
+                }
+            }
+            if status == 0 {
+                if output[0] != 89u8 {
+                    status = 51
+                }
+            }
+            if status == 0 {
+                if length[0] != 501usize {
+                    status = 52
+                }
+            }
+            output[0] = 90u8
+            length[0] = 778usize
+            let wrong_kind = click(41)
+            if read_text_buffer(wrong_kind,
+            output,
+            32usize,
+            length) {
+                status = 7
+            }
+            if status == 0 {
+                if output[0] != 90u8 {
+                    status = 8
+                }
+            }
+            if status == 0 {
+                if length[0] != 778usize {
+                    status = 8
+                }
+            }
+            let stale: UInt64 = app_data_revision()
+            if status == 0 {
+                if ! set_int("probe",
+                1i64) {
+                    status = 9
+                }
+            }
+            if status == 0 {
+                if read_text_buffer_if_revision(text_changed(41,
+                5i64),
+                output,
+                32usize,
+                length,
+                stale) {
+                    status = 10
+                }
+            }
+            if status == 0 {
+                if output[0] != 90u8 {
+                    status = 11
+                }
+            }
+            if status == 0 {
+                if length[0] != 778usize {
+                    status = 11
+                }
+            }
+            let short_created: Result<Buffer<UInt8>,
+            Int32> = buffer_create(2usize)
+            match short_created {
+                Error(error) => {
+                    if status == 0 {
+                        status = error
+                    }
+                }
+                Ok(short) => {
+                    if status == 0 {
+                        short[0] = 91u8
+                        short[1] = 92u8
+                        length[0] = 779usize
+                        if read_text_buffer(text_changed(41,
+                        5i64),
+                        short,
+                        2usize,
+                        length) {
+                            status = 12
+                        }
+                    }
+                    if status == 0 {
+                        if short[0] != 91u8 {
+                            status = 13
+                        }
+                    }
+                    if status == 0 {
+                        if short[1] != 92u8 {
+                            status = 13
+                        }
+                    }
+                    if status == 0 {
+                        if length[0] != 779usize {
+                            status = 13
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if ! finish(panel_node) {
+        return 14
+    }
+    if ! finish(root) {
+        return 15
+    }
+    clear()
+    return status
+}

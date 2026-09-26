@@ -1,0 +1,244 @@
+module app_export_buffer_project.main
+import jadren.app.list
+import jadren.app.table
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    list.clear(0)
+    if ! list.push_text(0,
+    "A") {
+        status = 1
+    }
+    if status == 0 {
+        if ! list.push_text(0,
+        "B,C") {
+            status = 2
+        }
+    }
+    table.clear(0)
+    if status == 0 {
+        if ! table.set_column_name(0,
+        0,
+        "name") {
+            status = 3
+        }
+    }
+    if status == 0 {
+        if ! table.append_row(0) {
+            status = 4
+        }
+    }
+    if status == 0 {
+        if ! table.set_cell(0,
+        0,
+        0,
+        "Alpha") {
+            status = 5
+        }
+    }
+    let output_created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(128usize)
+    match output_created {
+        Error(error) => {
+            if status == 0 {
+                status = error
+            }
+        }
+        Ok(output) => {
+            if ! buffer_resize(output, 128usize) {
+                if status == 0 { status = 6 }
+            }
+            var length:[UIntSize;
+            1] =[777usize]
+            if status == 0 {
+                if ! list.export_csv_exact_buffer(0,
+                output,
+                128usize,
+                length) {
+                    status = 6
+                }
+            }
+            if status == 0 {
+                if length[0] != 8usize {
+                    status = 7
+                }
+            }
+            if status == 0 {
+                if output[0] != 65u8 {
+                    status = 8
+                }
+            }
+            if status == 0 {
+                if output[7] != 10u8 {
+                    status = 8
+                }
+            }
+            if status == 0 {
+                length[0] = 778usize
+                if ! list.export_json_exact_buffer(0,
+                output,
+                128usize,
+                length) {
+                    status = 9
+                }
+            }
+            if status == 0 {
+                if length[0] != 11usize {
+                    status = 10
+                }
+            }
+            if status == 0 {
+                if output[0] != 91u8 {
+                    status = 11
+                }
+            }
+            if status == 0 {
+                if output[10] != 93u8 {
+                    status = 11
+                }
+            }
+            if status == 0 {
+                length[0] = 779usize
+                if ! table.export_csv_exact_buffer(0,
+                output,
+                128usize,
+                length) {
+                    status = 12
+                }
+            }
+            if status == 0 {
+                if length[0] != 11usize {
+                    status = 13
+                }
+            }
+            if status == 0 {
+                if output[0] != 110u8 {
+                    status = 14
+                }
+            }
+            if status == 0 {
+                if output[10] != 10u8 {
+                    status = 14
+                }
+            }
+            if status == 0 {
+                length[0] = 780usize
+                if ! table.export_json_exact_buffer(0,
+                output,
+                128usize,
+                length) {
+                    status = 15
+                }
+            }
+            if status == 0 {
+                if length[0] == 0usize {
+                    status = 16
+                }
+            }
+            if status == 0 {
+                if output[0] != 123u8 {
+                    status = 17
+                }
+            }
+            if status == 0 {
+                if output[length[0] - 1usize] != 125u8 {
+                    status = 17
+                }
+            }
+            let short_created: Result<Buffer<UInt8>,
+            Int32> = buffer_create(7usize)
+            match short_created {
+                Error(error) => {
+                    if status == 0 {
+                        status = error
+                    }
+                }
+                Ok(short) => {
+                    if ! buffer_resize(short, 7usize) {
+                        if status == 0 { status = 18 }
+                    }
+                    if status == 0 {
+                        short[0] = 91u8
+                        short[1] = 92u8
+                        short[2] = 93u8
+                        short[3] = 94u8
+                        short[4] = 95u8
+                        short[5] = 96u8
+                        short[6] = 97u8
+                        length[0] = 781usize
+                        if list.export_csv_exact_buffer(0,
+                        short,
+                        7usize,
+                        length) {
+                            status = 18
+                        }
+                    }
+                    if status == 0 {
+                        if short[0] != 91u8 {
+                            status = 19
+                        }
+                    }
+                    if status == 0 {
+                        if short[6] != 97u8 {
+                            status = 19
+                        }
+                    }
+                    if status == 0 {
+                        if length[0] != 781usize {
+                            status = 20
+                        }
+                    }
+                    if status == 0 {
+                        length[0] = 782usize
+                        if list.export_csv_exact_buffer(0,
+                        short,
+                        8usize,
+                        length) {
+                            status = 50
+                        }
+                    }
+                    if status == 0 {
+                        if short[0] != 91u8 {
+                            status = 51
+                        }
+                    }
+                    if status == 0 {
+                        if short[6] != 97u8 {
+                            status = 51
+                        }
+                    }
+                    if status == 0 {
+                        if length[0] != 782usize {
+                            status = 52
+                        }
+                    }
+                    if status == 0 {
+                        length[0] = 783usize
+                        if table.export_json_exact_buffer(0,
+                        short,
+                        8usize,
+                        length) {
+                            status = 53
+                        }
+                    }
+                    if status == 0 {
+                        if short[0] != 91u8 {
+                            status = 54
+                        }
+                    }
+                    if status == 0 {
+                        if length[0] != 783usize {
+                            status = 55
+                        }
+                    }
+                }
+            }
+        }
+    }
+    list.clear(0)
+    table.clear(0)
+    return status
+}

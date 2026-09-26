@@ -1,0 +1,41 @@
+module examples.stdlib_buffer_four_level
+
+// A four-level owning Buffer chain exercises the generic constructor,
+// move-aware growth and recursive drop glue without a type-specific helper.
+// Each inner descriptor is transferred into its parent; scope exit must then
+// release the complete chain exactly once.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Buffer<Buffer<Int32>>>>, Int32> = buffer_create(0usize)
+    let level_two_created: Result<Buffer<Buffer<Buffer<Int32>>>, Int32> = buffer_create(0usize)
+    let level_three_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let leaf_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match level_two_created {
+                Ok(level_two) => {
+                    match level_three_created {
+                        Ok(level_three) => {
+                            match leaf_created {
+                                Ok(leaf) => {
+                                    if !buffer_append(leaf, 42) { result_code = 1 }
+                                    if !buffer_append(level_three, leaf) { result_code = 2 }
+                                    if !buffer_append(level_two, level_three) { result_code = 3 }
+                                    if !buffer_append(outer, level_two) { result_code = 4 }
+                                    if buffer_length(outer) != 1usize { result_code = 5 }
+                                    if outer[0][0][0][0] != 42 { result_code = 6 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

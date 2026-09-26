@@ -1,0 +1,65 @@
+module examples.app_collections_json_exact
+
+// Exact JSON exports are bounded, deterministic and atomic at the caller
+// boundary. Lists emit string arrays; tables emit a columns/rows text view.
+fn main() -> Int32 {
+    app_list_clear(0)
+    app_table_clear(0)
+
+    var output: [UInt8; 64] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var length: [UIntSize; 1] = [999usize]
+
+    if !app_list_export_json_exact(0, output, length) { return 1 }
+    if length[0] != 2usize { return 2 }
+    if output[0] != 91u8 { return 2 }
+    if output[1] != 93u8 { return 2 }
+
+    if !app_list_push_text(0, "A\"") { return 3 }
+    if !app_list_push_text(0, "line\n") { return 4 }
+    if !app_list_export_json_exact(0, output, length) { return 5 }
+    if output[0] != 91u8 { return 6 }
+    if output[1] != 34u8 { return 6 }
+    if output[2] != 65u8 { return 6 }
+    if output[3] != 92u8 { return 7 }
+    if output[4] != 34u8 { return 7 }
+    if output[5] != 34u8 { return 7 }
+    if output[6] != 44u8 { return 8 }
+    if output[7] != 34u8 { return 8 }
+    if output[8] != 108u8 { return 8 }
+
+    var short_output: [UInt8; 1] = [77u8]
+    var short_length: [UIntSize; 1] = [777usize]
+    if app_list_export_json_exact(0, short_output, short_length) { return 9 }
+    if short_output[0] != 77u8 { return 10 }
+    if short_length[0] != 777usize { return 10 }
+
+    if !app_table_set_column_name(0, 0, "name") { return 11 }
+    if !app_table_append_row(0) { return 12 }
+    if !app_table_set_cell(0, 0, 0, "Alice") { return 13 }
+    if !app_table_export_json_exact(0, output, length) { return 14 }
+    if length[0] != 39usize { return 15 }
+    if output[0] != 123u8 { return 16 }
+    if output[1] != 34u8 { return 16 }
+    if output[2] != 99u8 { return 16 }
+    if output[11] != 91u8 { return 17 }
+    if output[12] != 34u8 { return 17 }
+    if output[13] != 110u8 { return 17 }
+    if output[27] != 91u8 { return 18 }
+    if output[28] != 91u8 { return 18 }
+    if output[29] != 34u8 { return 18 }
+    if output[30] != 65u8 { return 19 }
+    if output[38] != 125u8 { return 19 }
+
+    app_list_clear(0)
+    app_table_clear(0)
+    return 0
+}

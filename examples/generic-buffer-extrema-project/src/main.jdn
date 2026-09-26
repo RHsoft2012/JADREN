@@ -1,0 +1,67 @@
+module generic_buffer_extrema.main
+
+import jadren.core.collections.append
+import jadren.core.collections.capacity
+import jadren.core.collections.create
+import jadren.core.collections.length
+import jadren.core.collections.max_index
+import jadren.core.collections.min_index
+
+fn main() -> Int32 {
+    var result_code: Int32 = 0
+
+    let integers: Result<Buffer<Int32>, Int32> = create(6usize)
+    match integers {
+        Ok(values) => {
+            if !append(values, 4) { result_code = 1 }
+            if !append(values, -2) { result_code = 2 }
+            if !append(values, 7) { result_code = 3 }
+            if !append(values, -2) { result_code = 4 }
+            let initial_capacity: UIntSize = capacity(values)
+            if min_index(values) != 1 { result_code = 5 }
+            if max_index(values) != 2 { result_code = 6 }
+            if values[0] != 4 { result_code = 7 }
+            if length(values) != 4usize { result_code = 8 }
+            if capacity(values) != initial_capacity { result_code = 9 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let floats: Result<Buffer<Float64>, Int32> = create(5usize)
+    match floats {
+        Ok(values) => {
+            if !append(values, 3.0f64) { result_code = 10 }
+            if !append(values, 1.5f64) { result_code = 11 }
+            if !append(values, 3.0f64) { result_code = 12 }
+            if !append(values, -4.0f64) { result_code = 13 }
+            if min_index(values) != 3 { result_code = 14 }
+            if max_index(values) != 0 { result_code = 15 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let chars: Result<Buffer<Char>, Int32> = create(5usize)
+    match chars {
+        Ok(values) => {
+            if !append(values, 'm') { result_code = 16 }
+            if !append(values, 'a') { result_code = 17 }
+            if !append(values, 'z') { result_code = 18 }
+            if !append(values, 'a') { result_code = 19 }
+            if min_index(values) != 1 { result_code = 20 }
+            if max_index(values) != 2 { result_code = 21 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let empty: Result<Buffer<Int32>, Int32> = create(0usize)
+    match empty {
+        Ok(values) => {
+            if min_index(values) != -1 { result_code = 22 }
+            if max_index(values) != -1 { result_code = 23 }
+            if length(values) != 0usize { result_code = 24 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

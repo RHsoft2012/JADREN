@@ -1,0 +1,42 @@
+module network_concurrent_session_project.main
+
+import jadren.network.router.add_exact
+import jadren.network.router.clear
+import jadren.network.session.close
+import jadren.network.session.open
+import jadren.network.session.step
+import jadren.network.tcp.listen
+
+// Bounded multi-connection session fixture. The host smoke opens two TCP
+// clients before either response is read; the session owns both slots and
+// serves one request from each without a worker thread or hidden allocation.
+fn main() -> Int32 {
+    clear()
+    var body: [UInt8; 2] = [79u8, 75u8]
+    if ! add_exact("GET", "/healthz", 200u16, "text/plain", body, 2usize) {
+        return 1
+    }
+
+    let listener: UIntSize = listen(38163u16)
+    if listener == 0usize {
+        return 2
+    }
+    let session: UIntSize = open(listener, 2u32, 1024u32, 1024u32)
+    if session == 0usize {
+        return 3
+    }
+
+    let first: UInt32 = step(session, 5000u32)
+    let second: UInt32 = step(session, 5000u32)
+    let closed: Bool = close(session)
+    if first == 0u32 {
+        return 4
+    }
+    if second == 0u32 {
+        return 5
+    }
+    if ! closed {
+        return 6
+    }
+    return 0
+}

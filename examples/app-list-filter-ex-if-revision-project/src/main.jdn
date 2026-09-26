@@ -1,0 +1,48 @@
+module app_list_filter_ex_if_revision_project.main
+
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.count
+import jadren.app.list.find_text
+import jadren.app.list.filter_text_ex_if_revision
+import jadren.app.list.push_text
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    clear(1)
+    if ! push_text(0, "Alpha") { return 1 }
+    if ! push_text(0, "beta") { return 2 }
+    if ! push_text(0, "Gamma") { return 3 }
+    if ! push_text(0, "Beta Gamma") { return 4 }
+    if ! push_text(1, "Sentinel") { return 5 }
+
+    let stale: UInt64 = revision()
+    if ! push_text(0, "Delta") { return 6 }
+    if filter_text_ex_if_revision(0, 1, "BETA", 5, stale) { return 7 }
+    if count(1) != 1 { return 8 }
+    if find_text(1, "Sentinel", 0) != 0 { return 9 }
+
+    let current: UInt64 = revision()
+    if ! filter_text_ex_if_revision(0, 1, "BETA", 5, current) { return 10 }
+    if count(1) != 2 { return 11 }
+    if find_text(1, "beta", 0) != 0 { return 12 }
+    if find_text(1, "Beta Gamma", 0) != 1 { return 13 }
+    if find_text(1, "Alpha", 0) != -1 { return 14 }
+
+    let suffix_revision: UInt64 = revision()
+    if ! filter_text_ex_if_revision(0, 1, "GAMMA", 7, suffix_revision) { return 15 }
+    if count(1) != 2 { return 16 }
+    if find_text(1, "Gamma", 0) != 0 { return 17 }
+    if find_text(1, "Beta Gamma", 0) != 1 { return 18 }
+    if filter_text_ex_if_revision(0, 1, "BETA", 8, revision()) { return 19 }
+    if count(1) != 2 { return 20 }
+    if filter_text_ex_if_revision(0, 0, "BETA", 5, revision()) { return 21 }
+    if count(1) != 2 { return 22 }
+    if filter_text_ex_if_revision(99, 1, "BETA", 5, revision()) { return 23 }
+    return 0
+}

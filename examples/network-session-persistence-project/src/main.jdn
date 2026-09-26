@@ -1,0 +1,148 @@
+module examples.network_session_persistence_project
+
+import jadren.network.auth.session_snapshot_length
+import jadren.network.auth.session_write_exact
+import jadren.network.auth.session_load_exact
+import jadren.app.fs.dir_create
+import jadren.app.fs.delete
+import jadren.app.fs.flush
+import jadren.app.fs.read_bytes_exact
+import jadren.app.fs.replace_atomic
+import jadren.app.fs.write_bytes
+
+// Standalone native persistence fixture: session snapshots stay bounded,
+// caller-owned and plaintext by contract; the filesystem boundary is explicit.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    dir_create("target/jadren")
+    delete("target/jadren/network-session-persistence.bin")
+    delete("target/jadren/network-session-persistence.tmp")
+
+    let slot_count: UIntSize = 2usize
+    let token_width: UIntSize = 4usize
+    if session_snapshot_length(slot_count, token_width) != 128usize { return 1 }
+
+    var tokens: [UInt8; 8] = [65u8, 66u8, 67u8, 68u8, 87u8, 88u8, 89u8, 90u8]
+    var subjects: [Int64; 2] = [42i64, -7i64]
+    var expires_at: [Int64; 2] = [100i64, 200i64]
+    var snapshot: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var snapshot_length: [UIntSize; 1] = [777usize]
+    if !session_write_exact(
+        tokens,
+        subjects,
+        expires_at,
+        slot_count,
+        token_width,
+        snapshot,
+        128usize,
+        snapshot_length
+    ) { return 2 }
+    if snapshot_length[0] != 128usize { return 3 }
+
+    var short_snapshot: [UInt8; 127] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var short_length: [UIntSize; 1] = [888usize]
+    if session_write_exact(
+        tokens,
+        subjects,
+        expires_at,
+        slot_count,
+        token_width,
+        short_snapshot,
+        127usize,
+        short_length
+    ) { return 4 }
+    if short_length[0] != 888usize { return 5 }
+
+    if write_bytes("target/jadren/network-session-persistence.tmp", snapshot) != 128usize { return 6 }
+    if !flush("target/jadren/network-session-persistence.tmp") { return 7 }
+    if !replace_atomic("target/jadren/network-session-persistence.tmp", "target/jadren/network-session-persistence.bin") { return 8 }
+
+    var loaded_snapshot: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var loaded_length: [UIntSize; 1] = [999usize]
+    if !read_bytes_exact("target/jadren/network-session-persistence.bin", loaded_snapshot, loaded_length) { return 9 }
+    if loaded_length[0] != 128usize { return 10 }
+
+    var loaded_tokens: [UInt8; 8] = [17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8]
+    var loaded_subjects: [Int64; 2] = [999i64, 999i64]
+    var loaded_expires_at: [Int64; 2] = [999i64, 999i64]
+    if !session_load_exact(
+        loaded_snapshot,
+        loaded_length[0],
+        loaded_tokens,
+        loaded_subjects,
+        loaded_expires_at,
+        slot_count,
+        token_width
+    ) { return 11 }
+    if loaded_tokens[0] != 65u8 { return 12 }
+    if loaded_tokens[7] != 90u8 { return 13 }
+    if loaded_subjects[0] != 42i64 { return 14 }
+    if loaded_subjects[1] != -7i64 { return 15 }
+    if loaded_expires_at[0] != 100i64 { return 16 }
+    if loaded_expires_at[1] != 200i64 { return 17 }
+
+    var duplicate_tokens: [UInt8; 8] = [41u8, 41u8, 41u8, 41u8, 41u8, 41u8, 41u8, 41u8]
+    var duplicate_subjects: [Int64; 2] = [414i64, 414i64]
+    var duplicate_expires_at: [Int64; 2] = [414i64, 414i64]
+    loaded_snapshot[71] = loaded_snapshot[14]
+    loaded_snapshot[72] = loaded_snapshot[15]
+    loaded_snapshot[73] = loaded_snapshot[16]
+    loaded_snapshot[74] = loaded_snapshot[17]
+    loaded_snapshot[75] = loaded_snapshot[18]
+    loaded_snapshot[76] = loaded_snapshot[19]
+    loaded_snapshot[77] = loaded_snapshot[20]
+    loaded_snapshot[78] = loaded_snapshot[21]
+    loaded_snapshot[79] = loaded_snapshot[22]
+    loaded_snapshot[80] = loaded_snapshot[23]
+    loaded_snapshot[81] = loaded_snapshot[24]
+    loaded_snapshot[82] = loaded_snapshot[25]
+    if session_load_exact(
+        loaded_snapshot,
+        loaded_length[0],
+        duplicate_tokens,
+        duplicate_subjects,
+        duplicate_expires_at,
+        slot_count,
+        token_width
+    ) { return 30 }
+    if duplicate_tokens[0] != 41u8 { return 31 }
+    if duplicate_subjects[0] != 414i64 { return 32 }
+    if duplicate_expires_at[0] != 414i64 { return 33 }
+
+    var corrupted_tokens: [UInt8; 8] = [31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8]
+    var corrupted_subjects: [Int64; 2] = [313i64, 313i64]
+    var corrupted_expires_at: [Int64; 2] = [313i64, 313i64]
+    loaded_snapshot[0] = 88u8
+    if session_load_exact(
+        loaded_snapshot,
+        loaded_length[0],
+        corrupted_tokens,
+        corrupted_subjects,
+        corrupted_expires_at,
+        slot_count,
+        token_width
+    ) { return 18 }
+    if corrupted_tokens[0] != 31u8 { return 19 }
+    if corrupted_subjects[0] != 313i64 { return 20 }
+    if corrupted_expires_at[0] != 313i64 { return 21 }
+
+    loaded_snapshot[0] = 74u8
+    if session_load_exact(
+        loaded_snapshot,
+        127usize,
+        corrupted_tokens,
+        corrupted_subjects,
+        corrupted_expires_at,
+        slot_count,
+        token_width
+    ) { return 22 }
+    if corrupted_tokens[0] != 31u8 { return 23 }
+
+    if !delete("target/jadren/network-session-persistence.bin") { return 24 }
+    if delete("target/jadren/network-session-persistence.tmp") { return 25 }
+    return 0
+}

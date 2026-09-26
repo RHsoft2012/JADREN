@@ -1,0 +1,75 @@
+module examples.dynamic_array_owning_carriers
+
+// DynamicArray<T> keeps the existing carrier-aware move/drop contract when T
+// is Option or Result.  The alias does not add a descriptor: Some/Ok text
+// payloads move through the same caller-owned operations as Buffer<T>, while
+// None/Error remain scalar-only branches.
+fn main() -> Int32 {
+    let options_created: Result<DynamicArray<Option<OwnedString>>, Int32> = buffer_create(0usize)
+    let results_created: Result<DynamicArray<Result<OwnedString, Int32>>, Int32> = buffer_create(0usize)
+    let option_text_created: Result<OwnedString, Int32> = string_owned_from("option")
+    let result_text_created: Result<OwnedString, Int32> = string_owned_from("result")
+    var result_code: Int32 = 0
+
+    match options_created {
+        Ok(options) => {
+            match results_created {
+                Ok(results) => {
+                    match option_text_created {
+                        Ok(option_text) => {
+                            let option_item: Option<OwnedString> = Some(option_text)
+                            if !buffer_append(options, option_item) { result_code = 1 }
+                            let option_output: Option<OwnedString> = None
+                            if !buffer_remove_move_into(options, 0usize, option_output) { result_code = 2 }
+                            match option_output {
+                                Some(value) => {
+                                    if string_owned_length(value) != 6usize { result_code = 3 }
+                                }
+                                None => { result_code = 4 }
+                            }
+                            if !buffer_append(options, None) { result_code = 5 }
+                            let none_output: Option<OwnedString> = None
+                            if !buffer_pop_move_into(options, none_output) { result_code = 6 }
+                            match none_output {
+                                Some(value) => { result_code = string_owned_length(value) as Int32 }
+                                None => { }
+                            }
+                            if buffer_length(options) != 0usize { result_code = 7 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                    match result_text_created {
+                        Ok(result_text) => {
+                            let result_item: Result<OwnedString, Int32> = Ok(result_text)
+                            if !buffer_append(results, result_item) { result_code = 8 }
+                            if !buffer_append(results, Error(-7)) { result_code = 9 }
+                            let result_output: Result<OwnedString, Int32> = Error(-1)
+                            if !buffer_remove_move_into(results, 0usize, result_output) { result_code = 10 }
+                            match result_output {
+                                Ok(value) => {
+                                    if string_owned_length(value) != 6usize { result_code = 11 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                            let error_output: Result<OwnedString, Int32> = Error(-1)
+                            if !buffer_pop_move_into(results, error_output) { result_code = 12 }
+                            match error_output {
+                                Ok(value) => { result_code = string_owned_length(value) as Int32 }
+                                Error(status) => {
+                                    if status != -7 { result_code = 13 }
+                                }
+                            }
+                            if buffer_length(results) != 0usize { result_code = 14 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                    if !buffer_clear_move(options) { result_code = 15 }
+                    if !buffer_clear_move(results) { result_code = 16 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

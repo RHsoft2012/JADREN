@@ -1,0 +1,160 @@
+module examples.network_session_buffer_project
+
+import jadren.network.auth.session_load_exact_buffer
+import jadren.network.auth.session_snapshot_length
+import jadren.network.auth.session_write_exact_buffer
+
+fn check_loaded(input: write Buffer<UInt8>) -> Int32 {
+    var loaded_tokens: [UInt8; 8] = [17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8, 17u8]
+    var loaded_subjects: [Int64; 2] = [999i64, 999i64]
+    var loaded_expires_at: [Int64; 2] = [999i64, 999i64]
+    if !session_load_exact_buffer(
+        input,
+        loaded_tokens,
+        loaded_subjects,
+        loaded_expires_at,
+        2usize,
+        4usize,
+    ) {
+        return 10
+    }
+    if loaded_tokens[0] != 65u8 { return 11 }
+    if loaded_tokens[7] != 90u8 { return 12 }
+    if loaded_subjects[0] != 42i64 { return 13 }
+    if loaded_subjects[1] != -7i64 { return 14 }
+    if loaded_expires_at[0] != 100i64 { return 15 }
+    if loaded_expires_at[1] != 200i64 { return 16 }
+
+    input[0] = 88u8
+    var malformed_tokens: [UInt8; 8] = [31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8, 31u8]
+    var malformed_subjects: [Int64; 2] = [313i64, 313i64]
+    var malformed_expires_at: [Int64; 2] = [313i64, 313i64]
+    if session_load_exact_buffer(
+        input,
+        malformed_tokens,
+        malformed_subjects,
+        malformed_expires_at,
+        2usize,
+        4usize,
+    ) {
+        return 17
+    }
+    if malformed_tokens[0] != 31u8 { return 18 }
+    if malformed_subjects[0] != 313i64 { return 19 }
+    if malformed_expires_at[0] != 313i64 { return 20 }
+    return 0
+}
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    let slot_count: UIntSize = 2usize
+    let token_width: UIntSize = 4usize
+    let expected_length: UIntSize = session_snapshot_length(slot_count, token_width)
+    if expected_length != 128usize { return 1 }
+
+    var tokens: [UInt8; 8] = [65u8, 66u8, 67u8, 68u8, 87u8, 88u8, 89u8, 90u8]
+    var subjects: [Int64; 2] = [42i64, -7i64]
+    var expires_at: [Int64; 2] = [100i64, 200i64]
+
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(expected_length)
+    match created {
+        Error(error) => { status = error }
+        Ok(snapshot) => {
+            if status == 0 {
+                if !buffer_resize(snapshot, expected_length) { status = 2 }
+            }
+            var output_length: [UIntSize; 1] = [777usize]
+            if status == 0 {
+                if !session_write_exact_buffer(
+                    tokens,
+                    subjects,
+                    expires_at,
+                    slot_count,
+                    token_width,
+                    snapshot,
+                    output_length,
+                ) { status = 3 }
+            }
+            if status == 0 {
+                if output_length[0] != expected_length { status = 4 }
+            }
+            if status == 0 {
+                if !buffer_resize(snapshot, output_length[0]) { status = 5 }
+            }
+
+            let loaded_created: Result<Buffer<UInt8>, Int32> = buffer_create(expected_length)
+            match loaded_created {
+                Error(error) => { if status == 0 { status = error } }
+                Ok(loaded) => {
+                    if status == 0 {
+                        if !buffer_resize(loaded, expected_length) { status = 6 }
+                    }
+                    if status == 0 {
+                        var loaded_length: [UIntSize; 1] = [888usize]
+                        if !session_write_exact_buffer(
+                            tokens,
+                            subjects,
+                            expires_at,
+                            slot_count,
+                            token_width,
+                            loaded,
+                            loaded_length,
+                        ) { status = 7 }
+                        if loaded_length[0] != expected_length { status = 8 }
+                    }
+                    if status == 0 {
+                        let loaded_status: Int32 = check_loaded(loaded)
+                        if loaded_status != 0 { status = loaded_status }
+                    }
+                    if status == 0 {
+                        loaded[0] = 74u8
+                        if !buffer_resize(loaded, 127usize) { status = 21 }
+                        var short_tokens: [UInt8; 8] = [41u8, 41u8, 41u8, 41u8, 41u8, 41u8, 41u8, 41u8]
+                        var short_subjects: [Int64; 2] = [414i64, 414i64]
+                        var short_expires_at: [Int64; 2] = [414i64, 414i64]
+                        if session_load_exact_buffer(
+                            loaded,
+                            short_tokens,
+                            short_subjects,
+                            short_expires_at,
+                            slot_count,
+                            token_width,
+                        ) { status = 22 }
+                        if short_tokens[0] != 41u8 { status = 23 }
+                        if short_subjects[0] != 414i64 { status = 24 }
+                        if short_expires_at[0] != 414i64 { status = 25 }
+                    }
+                }
+            }
+
+            let short_created: Result<Buffer<UInt8>, Int32> = buffer_create(127usize)
+            match short_created {
+                Error(error) => { if status == 0 { status = error } }
+                Ok(short) => {
+                    if status == 0 {
+                        if !buffer_resize(short, 127usize) { status = 26 }
+                    }
+                    var short_length: [UIntSize; 1] = [888usize]
+                    if status == 0 {
+                        if session_write_exact_buffer(
+                            tokens,
+                            subjects,
+                            expires_at,
+                            slot_count,
+                            token_width,
+                            short,
+                            short_length,
+                        ) { status = 27 }
+                    }
+                    if short_length[0] != 888usize { status = 28 }
+                }
+            }
+        }
+    }
+    return status
+}

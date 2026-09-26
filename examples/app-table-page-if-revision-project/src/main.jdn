@@ -1,0 +1,79 @@
+module app_table_page_if_revision_project.main
+
+import jadren.app.data.revision
+import jadren.app.table.append_row
+import jadren.app.table.clear
+import jadren.app.table.page_if_revision
+import jadren.app.table.page_if_model_revision
+import jadren.app.table.read_cell_exact
+import jadren.app.table.row_count
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    clear(1)
+    if ! set_column_type(0, 0, 0) { return 1 }
+    if ! set_column_name(0, 0, "Name") { return 2 }
+    if ! append_row(0) { return 3 }
+    if ! append_row(0) { return 4 }
+    if ! append_row(0) { return 5 }
+    if ! set_cell(0, 0, 0, "Alpha") { return 6 }
+    if ! set_cell(0, 1, 0, "Beta") { return 7 }
+    if ! set_cell(0, 2, 0, "Gamma") { return 8 }
+
+    if ! set_column_type(1, 0, 0) { return 9 }
+    if ! set_column_name(1, 0, "Name") { return 10 }
+    if ! append_row(1) { return 11 }
+    if ! set_cell(1, 0, 0, "Sentinel") { return 12 }
+
+    let stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "Alpha-updated") { return 13 }
+    if page_if_revision(0, 1, 1, 2, stale) { return 14 }
+    if row_count(1) != 1 { return 15 }
+
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var length: [UIntSize; 1] = [99usize]
+    if ! read_cell_exact(1, 0, 0, output, length) { return 16 }
+    if length[0] != 8usize { return 17 }
+    if output[0] != 83u8 { return 18 }
+
+    let current: UInt64 = revision()
+    if ! page_if_revision(0, 1, 1, 2, current) { return 19 }
+    if row_count(1) != 2 { return 20 }
+    if ! read_cell_exact(1, 0, 0, output, length) { return 21 }
+    if length[0] != 4usize { return 22 }
+    if output[0] != 66u8 { return 23 }
+    if ! read_cell_exact(1, 1, 0, output, length) { return 24 }
+    if length[0] != 5usize { return 25 }
+    if output[0] != 71u8 { return 26 }
+
+    // Invalid ranges and same-source requests remain no-ops with a fresh token.
+    let after_page: UInt64 = revision()
+    if page_if_revision(0, 1, 4, 1, after_page) { return 27 }
+    if row_count(1) != 2 { return 28 }
+    if page_if_revision(0, 0, 0, 1, after_page) { return 29 }
+    if row_count(1) != 2 { return 30 }
+
+    let model_stale: UInt64 = revision()
+    if ! set_cell(0, 2, 0, "Gamma-updated") { return 31 }
+    if page_if_model_revision(0, 1, 1, 2, model_stale) { return 32 }
+    if row_count(1) != 2 { return 33 }
+    if ! page_if_model_revision(0, 1, 1, 2, revision()) { return 34 }
+    if row_count(1) != 2 { return 35 }
+    if ! read_cell_exact(1, 0, 0, output, length) { return 36 }
+    if length[0] != 4usize { return 37 }
+    if output[0] != 66u8 { return 38 }
+    if ! read_cell_exact(1, 1, 0, output, length) { return 39 }
+    if length[0] != 13usize { return 40 }
+    if output[0] != 71u8 { return 41 }
+    if page_if_model_revision(99, 1, 0, 1, revision()) { return 42 }
+    return 0
+}

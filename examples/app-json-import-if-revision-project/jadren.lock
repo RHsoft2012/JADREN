@@ -1,0 +1,7 @@
+version = 1
+manifest_fingerprint = "4959706d2c6414fa"
+
+[package]
+name = "app-json-import-if-revision-project"
+version = "0.1.0"
+edition = "2026"

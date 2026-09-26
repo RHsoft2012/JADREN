@@ -1,0 +1,132 @@
+module app_ui_dialog_buffer_project.main
+import jadren.app.ui.directory_open_exact_buffer
+import jadren.app.ui.file_open_exact_buffer
+import jadren.app.ui.file_open_extension_exact_buffer
+import jadren.app.ui.file_save_exact_buffer
+import jadren.app.ui.file_save_extension_exact_buffer
+import jadren.app.ui.file_save_suggested_exact_buffer
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    let created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(8usize)
+    match created {
+        Error(error) => {
+            status = error
+        }
+        Ok(output) => {
+            if ! buffer_resize(output,
+            8usize) {
+                status = 1
+            }
+            output[0] = 90u8
+            var length:[UIntSize;
+            1] =[777usize]
+            if status == 0 {
+                if file_open_exact_buffer("ignored",
+                output,
+                9usize,
+                length) {
+                    status = 2
+                }
+            }
+            if status == 0 {
+                if length[0] != 777usize {
+                    status = 3
+                }
+                if output[0] != 90u8 {
+                    status = 3
+                }
+            }
+            if status == 0 {
+                if directory_open_exact_buffer("ignored",
+                output,
+                9usize,
+                length) {
+                    status = 4
+                }
+            }
+            if status == 0 {
+                if length[0] != 777usize {
+                    status = 5
+                }
+                if output[0] != 90u8 {
+                    status = 5
+                }
+            }
+            if status == 0 {
+                if file_open_extension_exact_buffer("ignored",
+                "csv",
+                output,
+                9usize,
+                length) {
+                    status = 6
+                }
+            }
+            if status == 0 {
+                if length[0] != 777usize {
+                    status = 7
+                }
+                if output[0] != 90u8 {
+                    status = 7
+                }
+            }
+            if status == 0 {
+                if file_save_exact_buffer("ignored",
+                output,
+                9usize,
+                length) {
+                    status = 8
+                }
+            }
+            if status == 0 {
+                if length[0] != 777usize {
+                    status = 9
+                }
+                if output[0] != 90u8 {
+                    status = 9
+                }
+            }
+            if status == 0 {
+                if file_save_suggested_exact_buffer("ignored",
+                "export",
+                "csv",
+                output,
+                9usize,
+                length) {
+                    status = 10
+                }
+            }
+            if status == 0 {
+                if length[0] != 777usize {
+                    status = 11
+                }
+                if output[0] != 90u8 {
+                    status = 11
+                }
+            }
+            if status == 0 {
+                if file_save_extension_exact_buffer("ignored",
+                "export",
+                "csv",
+                output,
+                9usize,
+                length) {
+                    status = 12
+                }
+            }
+            if status == 0 {
+                if length[0] != 777usize {
+                    status = 13
+                }
+                if output[0] != 90u8 {
+                    status = 13
+                }
+            }
+        }
+    }
+    return status
+}

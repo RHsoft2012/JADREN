@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "9b9bb474d1d1132a"
+
+[package]
+name = "app-table-filter-if-revision-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

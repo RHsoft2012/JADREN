@@ -1,0 +1,38 @@
+module examples.network_cookie_request_project
+
+import jadren.network.http.request_header
+import jadren.network.http.write_request_cookie
+
+// The request writer owns no session state: the cookie pair and output buffer
+// are supplied by the application for this one bounded serialization.
+fn main() -> Int32 {
+    var body: [UInt8; 2] = [79u8, 75u8]
+    var request: [UInt8; 128] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let written: UIntSize = write_request_cookie(
+        "POST",
+        "/tasks",
+        "localhost",
+        "sid",
+        "abc123",
+        body,
+        request)
+    if written == 0usize { return 1 }
+    if request[0] != 80u8 { return 2 }
+
+    var cookie: [UInt8; 10] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if request_header(request, "Cookie", cookie) != 10usize { return 3 }
+    if cookie[0] != 115u8 { return 4 }
+    if cookie[3] != 61u8 { return 5 }
+    if cookie[9] != 51u8 { return 6 }
+
+    request[0] = 77u8
+    if write_request_cookie("GET", "/tasks", "localhost", "bad name", "abc123", body, request) != 0usize { return 7 }
+    if request[0] != 77u8 { return 8 }
+    if write_request_cookie("GET", "/tasks", "localhost", "sid", "bad;value", body, request) != 0usize { return 9 }
+    if request[0] != 77u8 { return 10 }
+
+    var short_request: [UInt8; 8] = [55u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if write_request_cookie("GET", "/tasks", "localhost", "sid", "abc123", body, short_request) != 0usize { return 11 }
+    if short_request[0] != 55u8 { return 12 }
+    return 0
+}

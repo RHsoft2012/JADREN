@@ -1,0 +1,99 @@
+module examples.http_session_tls_caller_client
+
+// Native TLS client for the caller-driven dynamic session fixture.
+fn main() -> Int32 {
+    let socket: UIntSize = net_tcp_connect_dns("localhost", 38153u16)
+    if socket == 0usize { return 10 }
+    let tls: UIntSize = net_tls_open_client(socket, "localhost", false)
+    if tls == 0usize {
+        net_socket_close(socket)
+        return 11
+    }
+    let first: UInt32 = net_tls_step(tls, 5000u32)
+    let second: UInt32 = net_tls_step(tls, 5000u32)
+    let third: UInt32 = net_tls_step(tls, 5000u32)
+    let fourth: UInt32 = net_tls_step(tls, 5000u32)
+    let fifth: UInt32 = net_tls_step(tls, 5000u32)
+    let sixth: UInt32 = net_tls_step(tls, 5000u32)
+    let seventh: UInt32 = net_tls_step(tls, 5000u32)
+    let eighth: UInt32 = net_tls_step(tls, 5000u32)
+    if first == 4u32 { net_tls_close(tls); return 12 }
+    if second == 4u32 { net_tls_close(tls); return 12 }
+    if third == 4u32 { net_tls_close(tls); return 12 }
+    if fourth == 4u32 { net_tls_close(tls); return 12 }
+    if fifth == 4u32 { net_tls_close(tls); return 12 }
+    if sixth == 4u32 { net_tls_close(tls); return 12 }
+    if seventh == 4u32 { net_tls_close(tls); return 12 }
+    if eighth == 4u32 { net_tls_close(tls); return 12 }
+    if net_tls_state(tls) != 2u32 { net_tls_close(tls); return 12 }
+    var request: [UInt8; 59] = [71u8, 69u8, 84u8, 32u8, 47u8, 104u8, 101u8,
+        108u8, 108u8, 111u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8,
+        46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8,
+        108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8,
+        13u8, 10u8, 67u8, 111u8, 110u8, 110u8, 101u8, 99u8, 116u8, 105u8,
+        111u8, 110u8, 58u8, 32u8, 99u8, 108u8, 111u8, 115u8, 101u8,
+        13u8, 10u8, 13u8, 10u8]
+    let sent: UIntSize = net_tls_send(tls, request)
+    if sent != 59usize { net_tls_close(tls); return 13 }
+    var response: [UInt8; 128] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var tail: [UInt8; 64] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let first_received: UIntSize = net_tls_receive(tls, response)
+    if first_received == 0usize { net_tls_close(tls); return 14 }
+    let read_state: UInt32 = net_tls_step(tls, 5000u32)
+    if read_state == 4u32 { net_tls_close(tls); return 14 }
+    let tail_received: UIntSize = net_tls_receive(tls, tail)
+    if first_received + tail_received > 128usize {
+        net_tls_close(tls)
+        return 14
+    }
+    var copy_index: UIntSize = 0usize
+    while copy_index < tail_received {
+        response[first_received + copy_index] = tail[copy_index]
+        copy_index = copy_index + 1usize
+    }
+    let received: UIntSize = first_received + tail_received
+    if received != 93usize { net_tls_close(tls); return 50 }
+    if response[0] != 72u8 { net_tls_close(tls); return 51 }
+    if response[72] != 10u8 { net_tls_close(tls); return 51 }
+    if response[73] != 97u8 { net_tls_close(tls); return 51 }
+    if response[88] != 48u8 { net_tls_close(tls); return 51 }
+    if response[92] != 10u8 { net_tls_close(tls); return 51 }
+    var expected: [UInt8; 93] = [
+        72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 32u8, 50u8, 48u8, 48u8, 32u8, 79u8, 75u8, 13u8,
+        10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 84u8, 121u8, 112u8, 101u8, 58u8, 32u8, 116u8,
+        101u8, 120u8, 116u8, 47u8, 112u8, 108u8, 97u8, 105u8, 110u8, 13u8, 10u8, 84u8, 114u8, 97u8, 110u8, 115u8,
+        102u8, 101u8, 114u8, 45u8, 69u8, 110u8, 99u8, 111u8, 100u8, 105u8, 110u8, 103u8, 58u8, 32u8, 99u8, 104u8,
+        117u8, 110u8, 107u8, 101u8, 100u8, 13u8, 10u8, 13u8, 10u8, 97u8, 13u8, 10u8, 84u8, 76u8, 83u8, 32u8,
+        74u8, 97u8, 100u8, 114u8, 101u8, 110u8, 13u8, 10u8, 48u8, 13u8, 10u8, 13u8, 10u8]
+    var expected_index: UIntSize = 0usize
+    while expected_index < received {
+        if response[expected_index] != expected[expected_index] {
+            net_tls_close(tls)
+            return 52
+        }
+        expected_index = expected_index + 1usize
+    }
+
+    if http_response_status_prefix(response, received) != 200u16 {
+        net_tls_close(tls)
+        return 15
+    }
+    if response[76] != 84u8 { net_tls_close(tls); return 16 }
+    if response[85] != 110u8 { net_tls_close(tls); return 17 }
+    if response[88] != 48u8 { net_tls_close(tls); return 18 }
+    let closed: Bool = net_tls_close(tls)
+    if !closed { return 19 }
+    return 0
+}

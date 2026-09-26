@@ -1,0 +1,88 @@
+module generic_buffer_reverse.main
+
+import jadren.core.collections.append
+import jadren.core.collections.length
+import jadren.core.collections.reverse
+
+fn main() -> Int32 {
+    var result_code: Int32 = 0
+
+    let integers: Result<Buffer<Int32>, Int32> = buffer_create(8usize)
+    match integers {
+        Ok(values) => {
+            if ! append(values, 1) { result_code = 1 }
+            if ! append(values, 3) { result_code = 2 }
+            if ! append(values, 3) { result_code = 3 }
+            if ! append(values, 9) { result_code = 4 }
+            let initial_capacity: UIntSize = buffer_capacity(values)
+            if ! reverse(values) { result_code = 5 }
+            if values[0] != 9 { result_code = 6 }
+            if values[1] != 3 { result_code = 7 }
+            if values[2] != 3 { result_code = 8 }
+            if values[3] != 1 { result_code = 9 }
+            if length(values) != 4usize { result_code = 10 }
+            if buffer_capacity(values) != initial_capacity { result_code = 11 }
+            if ! reverse(values) { result_code = 12 }
+            if values[0] != 1 { result_code = 13 }
+            if values[3] != 9 { result_code = 14 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let floats: Result<Buffer<Float64>, Int32> = buffer_create(6usize)
+    match floats {
+        Ok(values) => {
+            if ! append(values, 3.5f64) { result_code = 15 }
+            if ! append(values, -1.0f64) { result_code = 16 }
+            if ! append(values, 3.5f64) { result_code = 17 }
+            if ! append(values, 9.0f64) { result_code = 18 }
+            let initial_capacity: UIntSize = buffer_capacity(values)
+            if ! reverse(values) { result_code = 19 }
+            if values[0] != 9.0f64 { result_code = 20 }
+            if values[1] != 3.5f64 { result_code = 21 }
+            if values[2] != -1.0f64 { result_code = 22 }
+            if values[3] != 3.5f64 { result_code = 23 }
+            if length(values) != 4usize { result_code = 24 }
+            if buffer_capacity(values) != initial_capacity { result_code = 25 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let empty: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    match empty {
+        Ok(values) => {
+            if ! reverse(values) { result_code = 26 }
+            if length(values) != 0usize { result_code = 27 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let single: Result<Buffer<Int32>, Int32> = buffer_create(1usize)
+    match single {
+        Ok(values) => {
+            if ! append(values, 42) { result_code = 28 }
+            if ! reverse(values) { result_code = 29 }
+            if values[0] != 42 { result_code = 30 }
+            if length(values) != 1usize { result_code = 31 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let chars: Result<Buffer<Char>, Int32> = buffer_create(4usize)
+    match chars {
+        Ok(values) => {
+            if ! append(values, 'a') { result_code = 32 }
+            if ! append(values, 'm') { result_code = 33 }
+            if ! append(values, 'z') { result_code = 34 }
+            let initial_capacity: UIntSize = buffer_capacity(values)
+            if ! reverse(values) { result_code = 35 }
+            if values[0] != 'z' { result_code = 36 }
+            if values[1] != 'm' { result_code = 37 }
+            if values[2] != 'a' { result_code = 38 }
+            if length(values) != 3usize { result_code = 39 }
+            if buffer_capacity(values) != initial_capacity { result_code = 40 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

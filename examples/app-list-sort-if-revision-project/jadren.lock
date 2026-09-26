@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "ad0a9a68dc3cc92f"
+
+[package]
+name = "app-list-sort-if-revision-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"

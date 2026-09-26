@@ -1,0 +1,49 @@
+module app_data_append_if_revision.main
+
+// Equality-only guarded append for bounded dynamic lists and tables.
+// A stale snapshot must not mutate either container; a current snapshot
+// appends exactly one item/row and produces a new model revision.
+fn main() -> Int32 {
+    app_list_clear(0)
+    app_table_clear(0)
+    if ! app_list_push_text(0, "first") { return 1 }
+    if ! app_table_append_row(0) { return 2 }
+
+    let stale: UInt64 = app_data_revision()
+    if ! app_list_push_text(0, "mutator") { return 3 }
+    let before_list: Int32 = app_list_count(0)
+    let before_rows: Int32 = app_table_row_count(0)
+    var bytes: [UInt8; 4] = [98u8, 121u8, 116u8, 101u8]
+
+    if app_list_push_text_if_revision(0, "stale", stale) { return 4 }
+    if app_list_push_text_bytes_if_revision(0, bytes, 4usize, stale) { return 5 }
+    if app_table_append_row_if_revision(0, stale) { return 6 }
+    if app_list_count(0) != before_list { return 7 }
+    if app_table_row_count(0) != before_rows { return 8 }
+
+    let current: UInt64 = app_data_revision()
+    if ! app_list_push_text_if_revision(0, "current", current) { return 9 }
+    let after_text: UInt64 = app_data_revision()
+    if ! app_list_push_text_bytes_if_revision(0, bytes, 4usize, after_text) { return 10 }
+    let after_bytes: UInt64 = app_data_revision()
+    if ! app_table_append_row_if_revision(0, after_bytes) { return 11 }
+    if app_list_count(0) != before_list + 2 { return 12 }
+    if app_table_row_count(0) != before_rows + 1 { return 13 }
+
+    let count_before_short: Int32 = app_list_count(0)
+    if app_list_push_text_bytes_if_revision(0, bytes, 5usize, app_data_revision()) { return 14 }
+    if app_list_count(0) != count_before_short { return 15 }
+
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if app_list_read_text(0, 3, output) != 4usize { return 16 }
+    if output[0] != 98u8 { return 17 }
+    if output[1] != 121u8 { return 18 }
+    if output[2] != 116u8 { return 19 }
+    if output[3] != 101u8 { return 20 }
+    if app_list_push_text_if_revision(99, "bad", app_data_revision()) { return 21 }
+    if app_table_append_row_if_revision(99, app_data_revision()) { return 22 }
+    if app_list_count(0) != count_before_short { return 23 }
+    if app_table_row_count(0) != before_rows + 1 { return 24 }
+    return 0
+}

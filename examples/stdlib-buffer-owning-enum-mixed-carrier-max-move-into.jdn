@@ -1,0 +1,51 @@
+module examples.stdlib_buffer_owning_enum_mixed_carrier_max_move_into
+
+// The bounded path ABI supports the maximum seven tags: the named Event tag
+// plus six mixed Result/Option carrier tags. Move-into transfers the complete
+// bytes to caller-owned output; output cleanup follows only active paths.
+@repr(C) enum Event {
+    Idle,
+    Text([Result<Option<Result<Option<Result<Option<OwnedString>, Int32>>, Int32>>, Int32>; 2]),
+    Done
+}
+
+fn main() -> Int32 {
+    let events_created: Result<Buffer<Event>, Int32> = buffer_create(0usize)
+    let first_created: Result<OwnedString, Int32> = string_owned_from("first")
+    let second_created: Result<OwnedString, Int32> = string_owned_from("second")
+    var result_code: Int32 = 0
+
+    match events_created {
+        Ok(events) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            let first_item: [Result<Option<Result<Option<Result<Option<OwnedString>, Int32>>, Int32>>, Int32>; 2] = [Ok(Some(Ok(Some(Ok(Some(first)))))), Error(-11)]
+                            let second_item: [Result<Option<Result<Option<Result<Option<OwnedString>, Int32>>, Int32>>, Int32>; 2] = [Error(-12), Ok(Some(Ok(Some(Ok(Some(second))))))]
+                            if !buffer_append(events, Event.Text(first_item)) { result_code = 1 }
+                            if !buffer_append(events, Event.Text(second_item)) { result_code = 2 }
+
+                            var removed: Event = Event.Idle
+                            if !buffer_remove_move_into(events, 0usize, removed) { result_code = 3 }
+                            if buffer_length(events) != 1usize { result_code = 4 }
+                            let invalid_status: Int32 = buffer_remove_move_into_status(events, 99usize, removed)
+                            if invalid_status != -20 { result_code = 5 }
+
+                            var popped: Event = Event.Idle
+                            if !buffer_pop_move_into(events, popped) { result_code = 6 }
+                            if buffer_length(events) != 0usize { result_code = 7 }
+                            let empty_status: Int32 = buffer_pop_move_into_status(events, popped)
+                            if empty_status != -20 { result_code = 8 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

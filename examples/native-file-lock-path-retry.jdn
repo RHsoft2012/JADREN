@@ -1,0 +1,90 @@
+module examples.native_file_lock_path_retry
+
+// Exercises the bounded retry contract around one persistent sidecar lock.
+// The sidecar deliberately remains after unlock so cooperating POSIX processes
+// continue to use the same inode identity.
+fn mode() -> Int32 {
+    if process_arg_count() != 2usize { return 0 }
+    var value: [UInt8; 9] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = process_arg_read(1usize, value)
+    if length == 6usize {
+        if value[0usize] != 45u8 { return 0 }
+        if value[1usize] != 45u8 { return 0 }
+        if value[2usize] == 104u8 {
+            if value[3usize] == 111u8 {
+                if value[4usize] == 108u8 {
+                    if value[5usize] == 100u8 { return 1 }
+                }
+            }
+        }
+        if value[2usize] == 119u8 {
+            if value[3usize] == 97u8 {
+                if value[4usize] == 105u8 {
+                    if value[5usize] == 116u8 { return 2 }
+                }
+            }
+        }
+    }
+    if length == 9usize {
+        if value[0usize] != 45u8 { return 0 }
+        if value[1usize] != 45u8 { return 0 }
+        if value[2usize] != 116u8 { return 0 }
+        if value[3usize] != 105u8 { return 0 }
+        if value[4usize] != 109u8 { return 0 }
+        if value[5usize] != 101u8 { return 0 }
+        if value[6usize] != 111u8 { return 0 }
+        if value[7usize] != 117u8 { return 0 }
+        if value[8usize] == 116u8 { return 3 }
+    }
+    return 0
+}
+
+fn main() -> Int32 {
+    var lock_path: [UInt8; 34] = [116u8, 97u8, 114u8, 103u8, 101u8, 116u8, 47u8,
+        106u8, 97u8, 100u8, 114u8, 101u8, 110u8, 45u8, 108u8, 111u8,
+        99u8, 107u8, 45u8, 112u8, 97u8, 116u8, 104u8, 45u8, 114u8,
+        101u8, 116u8, 114u8, 121u8, 46u8, 108u8, 111u8, 99u8, 107u8]
+    let selected_mode: Int32 = mode()
+    if selected_mode == 1 {
+        let token: UIntSize = file_lock_path_retry(lock_path, 34usize, 1usize, 0usize)
+        if token == 0usize { return 10 }
+        var ready_path: [UInt8; 35] = [116u8, 97u8, 114u8, 103u8, 101u8, 116u8,
+            47u8, 106u8, 97u8, 100u8, 114u8, 101u8, 110u8, 45u8, 108u8,
+            111u8, 99u8, 107u8, 45u8, 112u8, 97u8, 116u8, 104u8, 45u8,
+            114u8, 101u8, 116u8, 114u8, 121u8, 46u8, 114u8, 101u8, 97u8,
+            100u8, 121u8]
+        var ready: [UInt8; 5] = [114u8, 101u8, 97u8, 100u8, 121u8]
+        if file_write_prefix_path(ready_path, 35usize, ready, 5usize) != 5usize {
+            file_unlock(token)
+            return 11
+        }
+        let started: UInt64 = time_now_monotonic_ms()
+        while time_now_monotonic_ms() < started + 1200u64 { }
+        if !file_unlock(token) { return 12 }
+        return 0
+    }
+    if selected_mode == 3 {
+        let started: UInt64 = time_now_monotonic_ms()
+        let token: UIntSize = file_lock_path_retry(lock_path, 34usize, 3usize, 50usize)
+        let elapsed: UInt64 = time_now_monotonic_ms() - started
+        if token != 0usize {
+            file_unlock(token)
+            return 20
+        }
+        if elapsed < 80u64 { return 21 }
+        return 0
+    }
+    if selected_mode == 2 {
+        let token: UIntSize = file_lock_path_retry(lock_path, 34usize, 50usize, 50usize)
+        if token == 0usize { return 30 }
+        if !file_unlock(token) { return 31 }
+        return 0
+    }
+
+    if file_lock_path_retry(lock_path, 35usize, 1usize, 0usize) != 0usize { return 1 }
+    if file_lock_path_retry(lock_path, 34usize, 0usize, 0usize) != 0usize { return 2 }
+    let token: UIntSize = file_lock_path_retry(lock_path, 34usize, 1usize, 0usize)
+    if token == 0usize { return 3 }
+    if !file_unlock(token) { return 4 }
+    return 0
+}

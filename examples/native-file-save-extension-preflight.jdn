@@ -1,0 +1,14 @@
+module examples.native_file_save_extension_preflight
+
+// A non-interactive native smoke for the filtered save contract. The invalid
+// extension is rejected before the OS dialog opens, preserving caller-owned
+// outputs without automating an interactive system dialog.
+fn main() -> Int32 {
+    var path: [UInt8; 4] = [91u8, 91u8, 91u8, 91u8]
+    var path_length: [UIntSize; 1] = [77usize]
+    if ui_file_save_extension_exact("Export CSV", "tasks", "csv!", path, path_length) { return 1 }
+    if path[0] != 91u8 { return 2 }
+    if path[1] != 91u8 { return 3 }
+    if path_length[0] != 77usize { return 4 }
+    return 0
+}

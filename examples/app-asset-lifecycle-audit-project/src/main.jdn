@@ -1,0 +1,262 @@
+module app_asset_lifecycle_audit_project.main
+import jadren.app.assets.AssetKind
+import jadren.app.assets.AssetStatus
+import jadren.app.assets.configure
+import jadren.app.assets.configure_history
+import jadren.app.assets.count
+import jadren.app.assets.export_json_durable
+import jadren.app.assets.find
+import jadren.app.assets.remove_if_model_revision
+import jadren.app.assets.transition_with_history
+import jadren.app.assets.transition_with_history_if_model_revision
+import jadren.app.assets.transition_if_current_durable_directory_if_model_revision
+import jadren.app.assets.upsert
+import jadren.app.assets.upsert_if_model_revision
+import jadren.app.data.revision
+import jadren.app.fs.delete
+import jadren.app.fs.exists
+import jadren.app.table.read_named_int_exact
+import jadren.app.table.read_named_uint_exact
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    let catalog_table_id: Int32 = 0
+    let history_table_id: Int32 = 1
+    if ! configure(catalog_table_id) {
+        return 1
+    }
+    if ! configure_history(history_table_id) {
+        return 2
+    }
+    let row: Int32 = upsert(catalog_table_id,
+    9001i64,
+    AssetKind.Data,
+    "assets/data.json",
+    12u64,
+    1700000000000000000u64,
+    AssetStatus.Discovered)
+    if row<0i32 {
+        return 3
+    }
+    if ! transition_with_history(catalog_table_id,
+    history_table_id,
+    row,
+    AssetStatus.Discovered,
+    AssetStatus.Ready,
+    1u64,
+    "scan-ready") {
+        return 4
+    }
+    if count(history_table_id) != 1 {
+        return 5
+    }
+    var from_status:[Int64;
+    1] =[0i64]
+    var to_status:[Int64;
+    1] =[0i64]
+    var sequence:[UInt64;
+    1] =[0u64]
+    if ! read_named_int_exact(history_table_id,
+    0,
+    "from_status",
+    from_status) {
+        return 6
+    }
+    if ! read_named_int_exact(history_table_id,
+    0,
+    "to_status",
+    to_status) {
+        return 7
+    }
+    if ! read_named_uint_exact(history_table_id,
+    0,
+    "sequence",
+    sequence) {
+        return 8
+    }
+    if from_status[0] != 1i64 {
+        return 9
+    }
+    if to_status[0] != 2i64 {
+        return 9
+    }
+    if sequence[0] != 1u64 {
+        return 9
+    }
+    let stale_upsert_revision: UInt64 = revision()
+    let guarded_row: Int32 = upsert(catalog_table_id,
+    9002i64,
+    AssetKind.Prefab,
+    "assets/prefab.json",
+    24u64,
+    1700000000000000001u64,
+    AssetStatus.Discovered)
+    if guarded_row<0i32 {
+        return 19
+    }
+    let stale_upsert_row: Int32 = upsert_if_model_revision(catalog_table_id,
+    9003i64,
+    AssetKind.Texture,
+    "assets/texture.json",
+    48u64,
+    1700000000000000002u64,
+    AssetStatus.Discovered,
+    stale_upsert_revision)
+    if stale_upsert_row >= 0i32 {
+        return 24
+    }
+    if count(catalog_table_id) != 2 {
+        return 25
+    }
+    let current_upsert_revision: UInt64 = revision()
+    let third_row: Int32 = upsert_if_model_revision(catalog_table_id,
+    9003i64,
+    AssetKind.Texture,
+    "assets/texture.json",
+    48u64,
+    1700000000000000002u64,
+    AssetStatus.Discovered,
+    current_upsert_revision)
+    if third_row<0i32 {
+        return 26
+    }
+    if count(catalog_table_id) != 3 {
+        return 27
+    }
+    if transition_with_history_if_model_revision(catalog_table_id,
+    history_table_id,
+    guarded_row,
+    AssetStatus.Discovered,
+    AssetStatus.Ready,
+    2u64,
+    "stale-guard",
+    stale_upsert_revision) {
+        return 20
+    }
+    if count(history_table_id) != 1 {
+        return 21
+    }
+    let current_revision: UInt64 = revision()
+    if ! transition_with_history_if_model_revision(catalog_table_id,
+    history_table_id,
+    guarded_row,
+    AssetStatus.Discovered,
+    AssetStatus.Ready,
+    2u64,
+    "guarded-ready",
+    current_revision) {
+        return 22
+    }
+    if count(history_table_id) != 2 {
+        return 23
+    }
+    if transition_with_history(catalog_table_id,
+    history_table_id,
+    row,
+    AssetStatus.Ready,
+    AssetStatus.Discovered,
+    99u64,
+    "stale-caller") {
+        return 10
+    }
+    if count(history_table_id) != 2 {
+        return 11
+    }
+    if ! transition_with_history(catalog_table_id,
+    history_table_id,
+    row,
+    AssetStatus.Ready,
+    AssetStatus.Missing,
+    2u64,
+    "file-missing") {
+        return 12
+    }
+    if count(history_table_id) != 3 {
+        return 13
+    }
+    if ! read_named_int_exact(catalog_table_id,
+    row,
+    "status",
+    to_status) {
+        return 14
+    }
+    if to_status[0] != 3i64 {
+        return 15
+    }
+    let stale_remove_revision: UInt64 = revision()
+    let refresh_row: Int32 = upsert(catalog_table_id,
+    9001i64,
+    AssetKind.Data,
+    "assets/data.json",
+    13u64,
+    1700000000000000000u64,
+    AssetStatus.Missing)
+    if refresh_row<0i32 {
+        return 28
+    }
+    if remove_if_model_revision(catalog_table_id,
+    9003i64,
+    stale_remove_revision) {
+        return 29
+    }
+    if find(catalog_table_id,
+    9003i64) < 0i32 {
+        return 30
+    }
+    let current_remove_revision: UInt64 = revision()
+    if ! remove_if_model_revision(catalog_table_id,
+    9003i64,
+    current_remove_revision) {
+        return 31
+    }
+    if find(catalog_table_id,
+    9003i64) >= 0i32 {
+        return 32
+    }
+    let durable_transition_revision: UInt64 = revision()
+    if ! transition_if_current_durable_directory_if_model_revision(catalog_table_id,
+    guarded_row,
+    AssetStatus.Ready,
+    AssetStatus.Missing,
+    "target/jadren/asset-lifecycle-audit-catalog.json",
+    "target/jadren/asset-lifecycle-audit-catalog.json.tmp",
+    "target/jadren",
+    durable_transition_revision) {
+        return 33
+    }
+    if ! exists("target/jadren/asset-lifecycle-audit-catalog.json") {
+        return 34
+    }
+    if transition_if_current_durable_directory_if_model_revision(catalog_table_id,
+    guarded_row,
+    AssetStatus.Missing,
+    AssetStatus.Failed,
+    "target/jadren/asset-lifecycle-audit-catalog.json",
+    "target/jadren/asset-lifecycle-audit-catalog.json.tmp",
+    "target/jadren",
+    durable_transition_revision) {
+        return 35
+    }
+    if ! delete("target/jadren/asset-lifecycle-audit-catalog.json") {
+        return 36
+    }
+    if exists("target/jadren/asset-lifecycle-audit-catalog.json.tmp") {
+        return 37
+    }
+    let output_path: String = "target/jadren/asset-lifecycle-audit.json"
+    let temporary_path: String = "target/jadren/asset-lifecycle-audit.json.tmp"
+    if ! export_json_durable(history_table_id,
+    output_path,
+    temporary_path) {
+        return 16
+    }
+    if ! exists("target/jadren/asset-lifecycle-audit.json") {
+        return 17
+    }
+    if ! delete("target/jadren/asset-lifecycle-audit.json") {
+        return 18
+    }
+    return 0
+}

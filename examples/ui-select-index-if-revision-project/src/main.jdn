@@ -1,0 +1,109 @@
+module ui_select_index_if_revision_project.main
+import jadren.app.ui.select_index_if_model_revision
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    app_state_clear()
+    let root: Int32 = ui_app_begin("Guarded select",
+    520,
+    260,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 1
+    }
+    let panel: Int32 = ui_app_panel(root,
+    460,
+    180,
+    0xFFFFFFu32,
+    12,
+    12,
+    8,
+    0,
+    1)
+    if panel == 0 {
+        return 2
+    }
+    let select: Int32 = ui_app_select(panel,
+    30,
+    260,
+    36,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if select == 0 {
+        return 3
+    }
+    if ! ui_app_select_option(select,
+    "First") {
+        return 4
+    }
+    if ! ui_app_select_option(select,
+    "Second") {
+        return 5
+    }
+    if ! ui_app_select_set_index(select,
+    1) {
+        return 6
+    }
+    if ui_app_select_index(select) != 1 {
+        return 7
+    }
+    if ui_select_index(30) != 1 {
+        return 8
+    }
+    let stale: UInt64 = app_data_revision()
+    if ! app_state_set_int("probe",
+    1 as Int64) {
+        return 9
+    }
+    if ui_app_select_index_if_revision(select,
+    stale) != - 2 {
+        return 10
+    }
+    if ui_select_index_if_revision(30,
+    stale) != - 2 {
+        return 11
+    }
+    if select_index_if_model_revision(select,
+    stale) != - 2 {
+        return 18
+    }
+    if ui_app_select_index(select) != 1 {
+        return 12
+    }
+    if ui_select_index(30) != 1 {
+        return 13
+    }
+    let current: UInt64 = app_data_revision()
+    if ui_app_select_index_if_revision(select,
+    current) != 1 {
+        return 14
+    }
+    if ui_select_index_if_revision(30,
+    current) != 1 {
+        return 15
+    }
+    if select_index_if_model_revision(select,
+    current) != 1 {
+        return 19
+    }
+    if ui_app_select_index_if_revision(999,
+    current) != - 2 {
+        return 16
+    }
+    if ui_select_index_if_revision(999,
+    current) != - 2 {
+        return 17
+    }
+    if ! ui_app_end(panel) {
+        return 20
+    }
+    if ! ui_app_end(root) {
+        return 21
+    }
+    app_state_clear()
+    return 0
+}

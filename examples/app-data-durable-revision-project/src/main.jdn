@@ -1,0 +1,67 @@
+module examples.app_data_durable_revision_project
+
+import jadren.app.data.load
+import jadren.app.data.revision
+import jadren.app.data.tx_begin_if_revision
+import jadren.app.data.tx_commit_durable_if_revision
+import jadren.app.data.tx_rollback
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.exists
+import jadren.app.state.clear
+import jadren.app.state.read_text_exact
+import jadren.app.state.set_text
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    dir_create("target/jadren")
+    delete("target/jadren/app-data-durable-revision.tmp")
+    delete("target/jadren/app-data-durable-revision.json")
+    delete("target/jadren/app-data-durable-revision.lock")
+
+    clear()
+    if !set_text("theme", "dark") { return 1 }
+    let before_change: UInt64 = revision()
+    if !tx_begin_if_revision(before_change) { return 2 }
+    if !set_text("theme", "light") { return 3 }
+    if tx_commit_durable_if_revision(
+        "target/jadren/app-data-durable-revision.tmp",
+        "target/jadren/app-data-durable-revision.json",
+        "target/jadren/app-data-durable-revision.lock",
+        before_change
+    ) { return 4 }
+    if exists("target/jadren/app-data-durable-revision.json") { return 5 }
+    if exists("target/jadren/app-data-durable-revision.tmp") { return 6 }
+    if !tx_rollback() { return 7 }
+
+    let before_commit: UInt64 = revision()
+    if !tx_begin_if_revision(before_commit) { return 8 }
+    if !set_text("theme", "light") { return 9 }
+    let commit_revision: UInt64 = revision()
+    if !tx_commit_durable_if_revision(
+        "target/jadren/app-data-durable-revision.tmp",
+        "target/jadren/app-data-durable-revision.json",
+        "target/jadren/app-data-durable-revision.lock",
+        commit_revision
+    ) { return 10 }
+    if exists("target/jadren/app-data-durable-revision.tmp") { return 11 }
+    if !exists("target/jadren/app-data-durable-revision.json") { return 12 }
+
+    clear()
+    if !load("target/jadren/app-data-durable-revision.json") { return 13 }
+    var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var length: [UIntSize; 1] = [999usize]
+    if !read_text_exact("theme", output, length) { return 14 }
+    if length[0] != 5usize { return 15 }
+    if output[0] != 108u8 { return 16 }
+    if output[4] != 116u8 { return 16 }
+
+    delete("target/jadren/app-data-durable-revision.tmp")
+    delete("target/jadren/app-data-durable-revision.json")
+    delete("target/jadren/app-data-durable-revision.lock")
+    return 0
+}

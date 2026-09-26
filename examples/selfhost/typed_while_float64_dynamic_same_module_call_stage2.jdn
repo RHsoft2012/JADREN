@@ -1,0 +1,21 @@
+module selfhost.typed_while_float64_dynamic_same_module_call_stage2;
+
+// JADREN_STAGE2_DYNAMIC_TYPED_CALL
+// JADREN_STAGE2_DYNAMIC_MUTABLE_BODY_LET
+// JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS
+// The loop and helper both remain homogeneous Float64 values. The helper is
+// materialized as a same-module Internal JIR function without a C helper.
+fn local_value() -> Float64 {
+    var counter: Float64 = 0.0f64;
+    while counter < 4.0f64 {
+        var step: Float64 = helper(counter + 1.0f64);
+        step = helper(step);
+        counter = counter + step;
+        counter = counter + 0.0f64;
+    }
+    return counter;
+}
+
+fn helper(value: Float64) -> Float64 {
+    return value + 1.0f64;
+}

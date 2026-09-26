@@ -1,0 +1,4 @@
+# Local build and smoke-test artifacts must never be included in npm packs.
+target/
+node_modules/
+.vscodeignore

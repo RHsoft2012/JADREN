@@ -1,0 +1,53 @@
+module network_api_buffer_server_project.main
+
+import jadren.network.api.serve_once_buffers
+import jadren.network.api.serve_once_chunked_buffers
+import jadren.network.router.add
+import jadren.network.router.clear
+
+fn chunked_mode() -> Bool {
+    if process_arg_count() < 2usize { return false }
+    var mode: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = process_arg_read(1usize, mode)
+    if length != 7usize { return false }
+    if mode[0] != 99u8 { return false }
+    if mode[1] != 104u8 { return false }
+    if mode[2] != 117u8 { return false }
+    if mode[3] != 110u8 { return false }
+    if mode[4] != 107u8 { return false }
+    if mode[5] != 101u8 { return false }
+    if mode[6] != 100u8 { return false }
+    return true
+}
+
+fn run_server(request: write Buffer<UInt8>, response: write Buffer<UInt8>) -> Int32 {
+    if !buffer_resize(request, 512usize) { return 1 }
+    if !buffer_resize(response, 512usize) { return 2 }
+    var body: [UInt8; 2] = [79u8, 75u8]
+    clear()
+    if !add("GET", "/healthz", 200u16, "text/plain", body) { return 3 }
+    var status: Int32 = 0i32
+    if chunked_mode() {
+        status = serve_once_chunked_buffers(38177u16, 3000u32, request, response)
+    } else {
+        status = serve_once_buffers(38176u16, 3000u32, request, response)
+    }
+    if status != 200i32 { return 4 }
+    return 0
+}
+
+fn main() -> Int32 {
+    let request_created: Result<Buffer<UInt8>, Int32> = buffer_create(512usize)
+    var status: Int32 = 0i32
+    match request_created {
+        Error(error) => { status = error }
+        Ok(request) => {
+            let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(512usize)
+            match response_created {
+                Error(error) => { status = error }
+                Ok(response) => { status = run_server(request, response) }
+            }
+        }
+    }
+    return status
+}

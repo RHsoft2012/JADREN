@@ -1,0 +1,67 @@
+module examples.ui_event_queue_batch_exact
+
+// The batch poll is caller-driven: it consumes only the requested prefix of
+// the bounded native FIFO and leaves the suffix for the next application tick.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id < 1 { return 2 }
+    if event_id > 3 { return 2 }
+    return 0
+}
+
+fn main() -> Int32 {
+    let root: Int32 = ui_app_begin("Jadren event batch", 420, 240, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+    if ui_app_button(root, "One", 1, 100, 32,
+                     0xFFFFFFu32, 0x168EF5u32, 8, 0) == 0 { return 2 }
+    if ui_app_button(root, "Two", 2, 100, 32,
+                     0xFFFFFFu32, 0x168EF5u32, 8, 0) == 0 { return 3 }
+    if ui_app_button(root, "Three", 3, 100, 32,
+                     0xFFFFFFu32, 0x168EF5u32, 8, 0) == 0 { return 4 }
+
+    ui_event_queue_clear()
+    if !ui_dispatch_event(1) { return 5 }
+    if !ui_dispatch_event(2) { return 6 }
+    if !ui_dispatch_event(3) { return 7 }
+    if ui_event_queue_count() != 3usize { return 8 }
+
+    var output: [Int32; 2] = [77, 88]
+    var count: [UIntSize; 1] = [99usize]
+    if !ui_event_queue_poll_batch_exact(output, 2usize, count) { return 9 }
+    if count[0] != 2usize { return 10 }
+    if output[0] != 1 { return 11 }
+    if output[1] != 2 { return 12 }
+    if ui_event_queue_count() != 1usize { return 13 }
+
+    // A zero limit is a successful no-op and leaves the pending suffix.
+    output[0] = 55
+    output[1] = 66
+    count[0] = 123usize
+    if !ui_event_queue_poll_batch_exact(output, 0usize, count) { return 14 }
+    if count[0] != 0usize { return 15 }
+    if output[0] != 55 { return 16 }
+    if output[1] != 66 { return 16 }
+    if ui_event_queue_count() != 1usize { return 17 }
+
+    if !ui_event_queue_poll_batch_exact(output, 2usize, count) { return 18 }
+    if count[0] != 1usize { return 19 }
+    if output[0] != 3 { return 20 }
+    if ui_event_queue_count() != 0usize { return 21 }
+
+    // A short output is rejected before consuming any queued event.
+    if !ui_dispatch_event(1) { return 22 }
+    if !ui_dispatch_event(2) { return 23 }
+    var short_output: [Int32; 1] = [44]
+    count[0] = 124usize
+    if ui_event_queue_poll_batch_exact(short_output, 2usize, count) { return 24 }
+    if short_output[0] != 44 { return 25 }
+    if count[0] != 124usize { return 26 }
+    if ui_event_queue_count() != 2usize { return 27 }
+    if !ui_event_queue_poll_batch_exact(output, 2usize, count) { return 28 }
+    if count[0] != 2usize { return 29 }
+    if output[0] != 1 { return 30 }
+    if output[1] != 2 { return 31 }
+
+    if !ui_app_end(root) { return 32 }
+    return 0
+}

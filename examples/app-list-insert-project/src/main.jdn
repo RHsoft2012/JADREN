@@ -1,0 +1,122 @@
+module app_list_insert_project.main
+
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.count
+import jadren.app.list.find_text
+import jadren.app.list.insert_bytes
+import jadren.app.list.insert_bytes_if_model_revision
+import jadren.app.list.insert_bytes_if_revision
+import jadren.app.list.insert_text
+import jadren.app.list.insert_text_if_model_revision
+import jadren.app.list.insert_text_if_revision
+import jadren.app.list.move_text
+import jadren.app.list.move_text_if_model_revision
+import jadren.app.list.push_text
+import jadren.app.list.push_text_if_model_revision
+import jadren.app.list.remove
+import jadren.app.list.remove_if_model_revision
+import jadren.app.list.set_bytes
+import jadren.app.list.set_bytes_if_model_revision
+import jadren.app.list.set_text
+import jadren.app.list.set_text_if_model_revision
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    if ! push_text(0, "Alpha") { return 1 }
+    if ! push_text(0, "Gamma") { return 2 }
+
+    if ! insert_text(0, 1, "Beta") { return 3 }
+    if find_text(0, "Alpha", 0) != 0 { return 4 }
+    if find_text(0, "Beta", 0) != 1 { return 5 }
+    if find_text(0, "Gamma", 0) != 2 { return 6 }
+
+    if ! insert_text(0, 3, "Omega") { return 7 }
+    var delta: [UInt8; 5] = [68u8, 101u8, 108u8, 116u8, 97u8]
+    if ! insert_bytes(0, 2, delta, 5usize) { return 8 }
+    if find_text(0, "Delta", 0) != 2 { return 9 }
+    if find_text(0, "Gamma", 0) != 3 { return 10 }
+    if find_text(0, "Omega", 0) != 4 { return 11 }
+
+    let before_invalid: Int32 = count(0)
+    if insert_text(0, -1, "Invalid") { return 12 }
+    if insert_text(0, 99, "Invalid") { return 13 }
+    if insert_bytes(0, 0, delta, 6usize) { return 14 }
+    if count(0) != before_invalid { return 15 }
+
+    let stale: UInt64 = revision()
+    if ! insert_text(0, 0, "Fresh") { return 16 }
+    if insert_text_if_revision(0, 1, "Rejected", stale) { return 17 }
+    if find_text(0, "Rejected", 0) != -1 { return 18 }
+
+    let current: UInt64 = revision()
+    if ! insert_text_if_revision(0, 1, "Current", current) { return 19 }
+    let bytes_current: UInt64 = revision()
+    if ! insert_bytes_if_revision(0, count(0), delta, 5usize, bytes_current) { return 20 }
+    if count(0) != 8 { return 21 }
+    if find_text(0, "Fresh", 0) != 0 { return 22 }
+    if find_text(0, "Current", 0) != 1 { return 23 }
+    if find_text(0, "Alpha", 0) != 2 { return 24 }
+    if find_text(0, "Delta", 0) != 4 { return 25 }
+    if find_text(0, "Gamma", 0) != 5 { return 26 }
+    if find_text(0, "Omega", 0) != 6 { return 27 }
+    if find_text(0, "Delta", 6) != 7 { return 28 }
+
+    let model_push_stale: UInt64 = revision()
+    if ! push_text(0, "ModelFresh") { return 29 }
+    if push_text_if_model_revision(0, "Rejected", model_push_stale) { return 30 }
+    if find_text(0, "Rejected", 0) != -1 { return 31 }
+    let model_push_current: UInt64 = revision()
+    if ! push_text_if_model_revision(0, "ModelCurrent", model_push_current) { return 32 }
+
+    let model_insert_stale: UInt64 = revision()
+    if ! insert_text(0, 0, "InsertFresh") { return 33 }
+    if insert_text_if_model_revision(0, 1, "InsertRejected", model_insert_stale) { return 34 }
+    if find_text(0, "InsertRejected", 0) != -1 { return 35 }
+    let model_insert_current: UInt64 = revision()
+    if ! insert_text_if_model_revision(0, 1, "InsertCurrent", model_insert_current) { return 36 }
+
+    let model_bytes_stale: UInt64 = revision()
+    if ! insert_bytes(0, 0, delta, 5usize) { return 37 }
+    if insert_bytes_if_model_revision(0, 1, delta, 5usize, model_bytes_stale) { return 38 }
+    let model_bytes_current: UInt64 = revision()
+    if ! insert_bytes_if_model_revision(0, 1, delta, 5usize, model_bytes_current) { return 39 }
+
+    let model_move_stale: UInt64 = revision()
+    // Move distinct values so this setup step really advances the model
+    // revision; the first two entries are both "Delta" at this point.
+    if ! move_text(0, 0, 2) { return 40 }
+    if move_text_if_model_revision(0, 1, 0, model_move_stale) { return 41 }
+    let model_move_current: UInt64 = revision()
+    if ! move_text_if_model_revision(0, 1, 0, model_move_current) { return 42 }
+
+    let model_remove_stale: UInt64 = revision()
+    if ! push_text(0, "RemoveFresh") { return 43 }
+    let remove_index: Int32 = find_text(0, "RemoveFresh", 0)
+    if remove_if_model_revision(0, remove_index, model_remove_stale) { return 44 }
+    if find_text(0, "RemoveFresh", 0) != remove_index { return 45 }
+    let model_remove_current: UInt64 = revision()
+    if ! remove_if_model_revision(0, remove_index, model_remove_current) { return 46 }
+    if find_text(0, "RemoveFresh", 0) != -1 { return 47 }
+
+    let model_set_text_stale: UInt64 = revision()
+    if ! set_text(0, 0, "SetFresh") { return 48 }
+    if set_text_if_model_revision(0, 1, "SetRejected", model_set_text_stale) { return 49 }
+    if find_text(0, "SetRejected", 0) != -1 { return 50 }
+    let model_set_text_current: UInt64 = revision()
+    if ! set_text_if_model_revision(0, 1, "SetCurrent", model_set_text_current) { return 51 }
+
+    let model_set_bytes_stale: UInt64 = revision()
+    if ! set_bytes(0, 0, delta, 5usize) { return 52 }
+    if set_bytes_if_model_revision(0, 1, delta, 5usize, model_set_bytes_stale) { return 53 }
+    let model_set_bytes_current: UInt64 = revision()
+    if ! set_bytes_if_model_revision(0, 1, delta, 5usize, model_set_bytes_current) { return 54 }
+
+    if insert_text_if_model_revision(99, 0, "Invalid", revision()) { return 55 }
+    return 0
+}

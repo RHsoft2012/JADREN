@@ -1,0 +1,87 @@
+module network_tls_body_buffer_client_project.main
+
+import jadren.network.client_tls.request_once_exact_buffer
+
+fn main() -> Int32 {
+    var status: Int32 = 0
+    let body_created: Result<Buffer<UInt8>, Int32> = buffer_create(4usize)
+    match body_created {
+        Ok(body) => {
+            if !buffer_resize(body, 4usize) {
+                status = 1
+            } else {
+                body[0usize] = 74u8
+                body[1usize] = 68u8
+                body[2usize] = 78u8
+                body[3usize] = 33u8
+                let request_created: Result<Buffer<UInt8>, Int32> = buffer_create(256usize)
+                match request_created {
+                    Ok(request) => {
+                        let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(256usize)
+                        match response_created {
+                            Ok(response) => {
+                                let output_created: Result<Buffer<UInt8>, Int32> = buffer_create(8usize)
+                                match output_created {
+                                    Ok(output) => {
+                                        if !buffer_resize(request, 256usize) {
+                                            status = 2
+                                        } else if !buffer_resize(response, 256usize) {
+                                            status = 3
+                                        } else if !buffer_resize(output, 8usize) {
+                                            status = 4
+                                        } else {
+                                            var response_length: [UIntSize; 1] = [99usize]
+                                            var output_length: [UIntSize; 1] = [99usize]
+                                            status = request_once_exact_buffer(
+                                                "localhost",
+                                                "localhost",
+                                                "localhost",
+                                                38161u16,
+                                                3000u32,
+                                                16u32,
+                                                false,
+                                                "POST",
+                                                "/echo",
+                                                body,
+                                                4usize,
+                                                request,
+                                                256usize,
+                                                response,
+                                                256usize,
+                                                response_length,
+                                                output,
+                                                8usize,
+                                                output_length,
+                                            )
+                                            if status == 200 {
+                                                if output_length[0] != 2usize { status = 5 }
+                                                if output[0usize] != 79u8 { status = 6 }
+                                                if output[1usize] != 75u8 { status = 7 }
+                                                if response_length[0] == 0usize { status = 8 }
+                                                if body[0usize] != 74u8 { status = 9 }
+                                                if body[1usize] != 68u8 { status = 10 }
+                                                if body[2usize] != 78u8 { status = 11 }
+                                                if body[3usize] != 33u8 { status = 12 }
+                                                if status == 200 { status = 0 }
+                                            }
+                                        }
+                                    }
+                                    Error(error) => { status = error }
+                                }
+                            }
+                            Error(error) => { status = error }
+                        }
+                    }
+                    Error(error) => { status = error }
+                }
+            }
+        }
+        Error(error) => { status = error }
+    }
+    if status != 0 { return status }
+    if file_write_text(
+        "target/jadren/network-tls-body-buffer-client.result",
+        "tls-body-buffer-client:200 body:POST /echo response:OK verify:false\n",
+    ) == 0usize { return 13 }
+    return 0
+}

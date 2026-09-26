@@ -1,0 +1,17 @@
+version = 1
+manifest_fingerprint = "1dbe1eb7522bbca8"
+
+[package]
+name = "network-health-session-server-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

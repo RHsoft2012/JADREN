@@ -1,0 +1,110 @@
+module generic_buffer_pop_package.main
+import jadren.core.collections.append_move
+import jadren.core.collections.clear_move
+import jadren.core.collections.create
+import jadren.core.collections.length
+import jadren.core.collections.pop
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Int32>>,
+    Int32> = create(0usize)
+    let first_created: Result<Buffer<Int32>,
+    Int32> = create(0usize)
+    let second_created: Result<Buffer<Int32>,
+    Int32> = create(0usize)
+    var result_code: Int32 = 0
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            if ! append_move(first,
+                            11) {
+                                result_code = 1
+                            }
+                            if ! append_move(second,
+                            22) {
+                                result_code = 2
+                            }
+                            if ! append_move(outer,
+                            first) {
+                                result_code = 3
+                            }
+                            if ! append_move(outer,
+                            second) {
+                                result_code = 4
+                            }
+                            if length(outer) != 2usize {
+                                result_code = 5
+                            }
+                            let last: Result<Buffer<Int32>,
+                            Int32> = pop(outer)
+                            match last {
+                                Ok(value) => {
+                                    if value[0] != 22 {
+                                        result_code = 6
+                                    }
+                                    if ! buffer_clear(value) {
+                                        result_code = 7
+                                    }
+                                }
+                                Error(status) => {
+                                    result_code = status
+                                }
+                            }
+                            if length(outer) != 1usize {
+                                result_code = 8
+                            }
+                            let remaining: Result<Buffer<Int32>,
+                            Int32> = pop(outer)
+                            match remaining {
+                                Ok(value) => {
+                                    if value[0] != 11 {
+                                        result_code = 9
+                                    }
+                                    if ! buffer_clear(value) {
+                                        result_code = 10
+                                    }
+                                }
+                                Error(status) => {
+                                    result_code = status
+                                }
+                            }
+                            if length(outer) != 0usize {
+                                result_code = 11
+                            }
+                            let empty: Result<Buffer<Int32>,
+                            Int32> = pop(outer)
+                            match empty {
+                                Ok(value) => {
+                                    if ! buffer_clear(value) {
+                                        result_code = 12
+                                    }
+                                    result_code = 13
+                                }
+                                Error(status) => {
+                                    if status != - 20 {
+                                        result_code = 14
+                                    }
+                                }
+                            }
+                            if ! clear_move(outer) {
+                                result_code = 15
+                            }
+                        }
+                        Error(status) => {
+                            result_code = status
+                        }
+                    }
+                }
+                Error(status) => {
+                    result_code = status
+                }
+            }
+        }
+        Error(status) => {
+            result_code = status
+        }
+    }
+    return result_code
+}

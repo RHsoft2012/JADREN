@@ -1,0 +1,12 @@
+module examples.debug_string_helper
+
+fn helper(key: String) -> Bool {
+    return app_state_set_int(key, 42i64)
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+    if !helper("x") { return 1 }
+    if app_state_get_int("x") != 42i64 { return 2 }
+    return 0
+}

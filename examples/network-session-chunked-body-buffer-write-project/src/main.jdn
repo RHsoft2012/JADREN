@@ -1,0 +1,71 @@
+module network_session_chunked_body_buffer_write_project.main
+
+import jadren.network.http.response_body_chunked_exact
+import jadren.network.http.response_status_prefix
+import jadren.network.session.write_chunked_body_buffer
+
+fn verify_frame(frame: read Slice<UInt8>, length: UIntSize) -> Int32 {
+    if response_status_prefix(frame, length) != 200u16 { return 4 }
+    var decoded: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var decoded_length: [UIntSize; 1] = [0usize]
+    if !response_body_chunked_exact(frame, decoded, decoded_length) { return 5 }
+    if decoded_length[0] != 4usize { return 6 }
+    if decoded[0usize] != 74u8 { return 7 }
+    if decoded[1usize] != 65u8 { return 8 }
+    if decoded[2usize] != 68u8 { return 9 }
+    if decoded[3usize] != 33u8 { return 10 }
+    return 0
+}
+
+fn main() -> Int32 {
+    var status: Int32 = 0
+    let body_created: Result<Buffer<UInt8>, Int32> = buffer_create(4usize)
+    match body_created {
+        Ok(body) => {
+            if !buffer_resize(body, 4usize) { return 1 }
+            body[0usize] = 74u8
+            body[1usize] = 65u8
+            body[2usize] = 68u8
+            body[3usize] = 33u8
+            if buffer_length(body) != 4usize { return 20 }
+            let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(256usize)
+            match response_created {
+                Ok(response) => {
+                    if !buffer_resize(response, 256usize) { return 2 }
+                    if buffer_length(response) != 256usize { return 21 }
+                    let written: UIntSize = write_chunked_body_buffer(
+                        200u16,
+                        "text/plain",
+                        body,
+                        4usize,
+                        response,
+                        256usize,
+                    )
+                    if written == 0usize { return 3 }
+                    let verification: Int32 = verify_frame(
+                        buffer_slice(response, 0usize, written),
+                        written,
+                    )
+                    if verification != 0 { status = verification }
+                    let invalid_written: UIntSize = write_chunked_body_buffer(
+                        200u16,
+                        "text/plain",
+                        body,
+                        5usize,
+                        response,
+                        256usize,
+                    )
+                    if invalid_written != 0usize { status = 12 }
+                }
+                Error(error) => { status = error }
+            }
+        }
+        Error(error) => { status = error }
+    }
+    if status != 0 { return status }
+    if file_write_text(
+        "target/jadren/network-session-chunked-body-buffer-write.result",
+        "chunked-body-buffer-write:pass payload:JAD!\n",
+    ) == 0usize { return 13 }
+    return 0
+}

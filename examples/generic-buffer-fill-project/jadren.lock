@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "0d3825112f5c9a5c"
+
+[package]
+name = "generic-buffer-fill-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-core"
+requirement = ""
+source = "path:../../stdlib/core"

@@ -1,0 +1,92 @@
+module app_export_file_durable_directory_project.main
+
+import jadren.app.data.revision
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.dir_exists
+import jadren.app.fs.exists
+import jadren.app.list.clear
+import jadren.app.list.export_csv_file_durable_directory_if_revision
+import jadren.app.list.export_json_file_durable_directory
+import jadren.app.list.push_text
+import jadren.app.table.export_csv_file_durable_directory
+import jadren.app.table.export_json_file_durable_directory_if_revision
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    if !dir_exists("target/app-export-file-durable-directory") {
+        if !dir_create("target/app-export-file-durable-directory") { return 1 }
+    }
+    delete("target/app-export-file-durable-directory/list.csv")
+    delete("target/app-export-file-durable-directory/list.csv.tmp")
+    delete("target/app-export-file-durable-directory/list.json")
+    delete("target/app-export-file-durable-directory/list.json.tmp")
+    delete("target/app-export-file-durable-directory/table.csv")
+    delete("target/app-export-file-durable-directory/table.csv.tmp")
+    delete("target/app-export-file-durable-directory/table.json")
+    delete("target/app-export-file-durable-directory/table.json.tmp")
+
+    clear(0)
+    if !push_text(0, "A") { return 2 }
+    let list_revision: UInt64 = revision()
+    if !export_csv_file_durable_directory_if_revision(
+        0,
+        "target/app-export-file-durable-directory/list.csv",
+        "target/app-export-file-durable-directory/list.csv.tmp",
+        "target/app-export-file-durable-directory",
+        list_revision) { return 3 }
+    if !exists("target/app-export-file-durable-directory/list.csv") { return 4 }
+    if exists("target/app-export-file-durable-directory/list.csv.tmp") { return 5 }
+
+    if !push_text(0, "B") { return 6 }
+    if export_csv_file_durable_directory_if_revision(
+        0,
+        "target/app-export-file-durable-directory/list.csv",
+        "target/app-export-file-durable-directory/list.csv.tmp",
+        "target/app-export-file-durable-directory",
+        list_revision) { return 7 }
+    if exists("target/app-export-file-durable-directory/list.csv.tmp") { return 8 }
+    if !export_json_file_durable_directory(
+        0,
+        "target/app-export-file-durable-directory/list.json",
+        "target/app-export-file-durable-directory/list.json.tmp",
+        "target/app-export-file-durable-directory") { return 9 }
+    if !exists("target/app-export-file-durable-directory/list.json") { return 10 }
+    if exists("target/app-export-file-durable-directory/list.json.tmp") { return 11 }
+
+    app_table_clear(0)
+    if !app_table_set_column_name(0, 0, "name") { return 12 }
+    if !app_table_append_row(0) { return 13 }
+    if !app_table_set_cell(0, 0, 0, "Alpha") { return 14 }
+    if !export_csv_file_durable_directory(
+        0,
+        "target/app-export-file-durable-directory/table.csv",
+        "target/app-export-file-durable-directory/table.csv.tmp",
+        "target/app-export-file-durable-directory") { return 15 }
+    if !exists("target/app-export-file-durable-directory/table.csv") { return 16 }
+    if exists("target/app-export-file-durable-directory/table.csv.tmp") { return 17 }
+
+    let table_revision: UInt64 = revision()
+    if !export_json_file_durable_directory_if_revision(
+        0,
+        "target/app-export-file-durable-directory/table.json",
+        "target/app-export-file-durable-directory/table.json.tmp",
+        "target/app-export-file-durable-directory",
+        table_revision) { return 18 }
+    if !exists("target/app-export-file-durable-directory/table.json") { return 19 }
+    if exists("target/app-export-file-durable-directory/table.json.tmp") { return 20 }
+
+    if !delete("target/app-export-file-durable-directory/list.csv") { return 21 }
+    if !delete("target/app-export-file-durable-directory/list.json") { return 22 }
+    if !delete("target/app-export-file-durable-directory/table.csv") { return 23 }
+    if !delete("target/app-export-file-durable-directory/table.json") { return 24 }
+    delete("target/app-export-file-durable-directory/list.csv.tmp")
+    delete("target/app-export-file-durable-directory/list.json.tmp")
+    delete("target/app-export-file-durable-directory/table.csv.tmp")
+    delete("target/app-export-file-durable-directory/table.json.tmp")
+    return 0
+}

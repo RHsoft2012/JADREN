@@ -1,0 +1,33 @@
+module app_list_find_if_revision_project.main
+
+import jadren.app.data.revision
+import jadren.app.list.clear
+import jadren.app.list.find_text_if_revision
+import jadren.app.list.push_text
+import jadren.app.list.set_text
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    if ! push_text(0, "Alpha") { return 1 }
+    if ! push_text(0, "Beta") { return 2 }
+    if ! push_text(0, "Beta") { return 3 }
+    if ! push_text(0, "Gamma") { return 4 }
+
+    let stale: UInt64 = revision()
+    if ! set_text(0, 1, "Changed") { return 5 }
+    if find_text_if_revision(0, "Beta", 0, stale) != -1 { return 6 }
+
+    if ! set_text(0, 1, "Beta") { return 7 }
+    let current: UInt64 = revision()
+    if find_text_if_revision(0, "Beta", 0, current) != 1 { return 8 }
+    if find_text_if_revision(0, "Beta", 2, current) != 2 { return 9 }
+    if find_text_if_revision(0, "Missing", 0, current) != -1 { return 10 }
+    if find_text_if_revision(99, "Beta", 0, current) != -1 { return 11 }
+
+    return 0
+}

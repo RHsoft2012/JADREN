@@ -1,0 +1,109 @@
+module app_state_save_atomic_durable_smoke
+fn read_mode_is(output: read Slice<UInt8>, length: read Slice<UIntSize>, first: UInt8, second: UInt8, third: UInt8) -> Bool {
+    if length[0] != 3usize {
+        return false
+    }
+    if output[0] != first {
+        return false
+    }
+    if output[1] != second {
+        return false
+    }
+    if output[2] != third {
+        return false
+    }
+    return true
+}
+fn main() -> Int32 {
+    var output:[UInt8;
+    8] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var length:[UIntSize;
+    1] =[0usize]
+    app_state_clear()
+    if ! app_state_set_text("mode",
+    "OLD") {
+        return 10
+    }
+    if ! app_state_save_atomic_durable("target/app-state-durable.tmp",
+    "target/app-state-durable.json",
+    "target") {
+        return 11
+    }
+    if ! app_state_set_text("mode",
+    "NEW") {
+        return 12
+    }
+    let revision: UInt64 = app_state_revision()
+    if ! app_state_save_atomic_durable_if_revision("target/app-state-durable.tmp",
+    "target/app-state-durable.json",
+    "target",
+    revision) {
+        return 13
+    }
+    app_state_clear()
+    if ! app_state_load("target/app-state-durable.json") {
+        return 14
+    }
+    if ! app_state_read_text_exact("mode",
+    output,
+    length) {
+        return 15
+    }
+    if ! read_mode_is(output,
+    length,
+    78u8,
+    69u8,
+    87u8) {
+        return 16
+    }
+    if ! app_state_set_text("mode",
+    "BAD") {
+        return 17
+    }
+    let stale_revision: UInt64 = app_state_revision()
+    if ! app_state_set_text("mode",
+    "NEW") {
+        return 18
+    }
+    if app_state_save_atomic_durable_if_revision("target/app-state-durable.tmp",
+    "target/app-state-durable.json",
+    "target",
+    stale_revision) {
+        return 19
+    }
+    let same_path: Bool = app_state_save_atomic_durable("target/app-state-durable.json",
+    "target/app-state-durable.json",
+    "target")
+    if same_path {
+        return 20
+    }
+    app_state_clear()
+    if ! app_state_load("target/app-state-durable.json") {
+        return 21
+    }
+    if ! app_state_read_text_exact("mode",
+    output,
+    length) {
+        return 22
+    }
+    if ! read_mode_is(output,
+    length,
+    78u8,
+    69u8,
+    87u8) {
+        return 23
+    }
+    if app_state_save_atomic_durable("target/missing-state.tmp",
+    "target/missing-state.json",
+    "target/missing-durable-state") {
+        return 24
+    }
+    return 0
+}

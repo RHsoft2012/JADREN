@@ -1,0 +1,23 @@
+module examples.native_file_mtime_path
+
+// Reads a static file identity input through a caller-owned UTF-8 path. The
+// value is useful for cache validation but is not a content hash or a lock.
+fn main() -> Int32 {
+    var path: [UInt8; 33] = [116u8, 97u8, 114u8, 103u8, 101u8, 116u8, 47u8,
+        106u8, 97u8, 100u8, 114u8, 101u8, 110u8, 45u8, 102u8, 105u8,
+        108u8, 101u8, 45u8, 109u8, 116u8, 105u8, 109u8, 101u8, 45u8,
+        112u8, 97u8, 116u8, 104u8, 46u8, 98u8, 105u8, 110u8]
+    var initial: [UInt8; 3] = [79u8, 76u8, 68u8]
+    var replacement: [UInt8; 3] = [78u8, 69u8, 87u8]
+
+    if file_mtime_unix_nanos_path(path, 34usize) != 0u64 { return 1 }
+    if file_write_prefix_path(path, 33usize, initial, 3usize) != 3usize { return 2 }
+    let first: UInt64 = file_mtime_unix_nanos_path(path, 33usize)
+    if first == 0u64 { return 3 }
+    if file_write_prefix_path(path, 33usize, replacement, 3usize) != 3usize { return 4 }
+    let second: UInt64 = file_mtime_unix_nanos_path(path, 33usize)
+    if second == 0u64 { return 5 }
+    if second < first { return 6 }
+    if file_mtime_unix_nanos_path(path, 34usize) != 0u64 { return 7 }
+    return 0
+}

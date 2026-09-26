@@ -1,0 +1,158 @@
+module app_list_csv_file_import_if_revision_project.main
+import jadren.app.data.revision
+import jadren.app.fs.delete
+import jadren.app.fs.write_text
+import jadren.app.list.clear
+import jadren.app.list.count
+import jadren.app.list.find_text
+import jadren.app.list
+import jadren.app.list.import_csv_if_revision
+import jadren.app.list.import_csv_file_if_revision
+import jadren.app.list.push_text
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    var csv:[UInt8;
+    16] =[79u8,
+    110u8,
+    101u8,
+    10u8,
+    34u8,
+    84u8,
+    119u8,
+    111u8,
+    44u8,
+    84u8,
+    104u8,
+    114u8,
+    101u8,
+    101u8,
+    34u8,
+    10u8
+    ]
+    clear(0)
+    if ! push_text(0,
+    "Original") {
+        return 1
+    }
+    let stale_revision: UInt64 = revision()
+    if ! push_text(0,
+    "Changed") {
+        return 2
+    }
+    if import_csv_if_revision(0,
+    csv,
+    16usize,
+    stale_revision) {
+        return 3
+    }
+    if count(0) != 2 {
+        return 4
+    }
+    if find_text(0,
+    "Changed",
+    0) != 1 {
+        return 5
+    }
+    clear(0)
+    if ! push_text(0,
+    "Before") {
+        return 6
+    }
+    if write_text("target/app-list-csv-file-import-if-revision.csv",
+    "Alpha\n\"Beta,Gamma\"\n") != 19usize {
+        return 7
+    }
+    let file_stale_revision: UInt64 = revision()
+    if ! push_text(0,
+    "Changed") {
+        return 8
+    }
+    if import_csv_file_if_revision(0,
+    "target/app-list-csv-file-import-if-revision.csv",
+    file_stale_revision) {
+        return 9
+    }
+    if find_text(0,
+    "Before",
+    0) != 0 {
+        return 10
+    }
+    let current_revision: UInt64 = revision()
+    if ! import_csv_file_if_revision(0,
+    "target/app-list-csv-file-import-if-revision.csv",
+    current_revision) {
+        return 11
+    }
+    if count(0) != 2 {
+        return 12
+    }
+    if find_text(0,
+    "Beta,Gamma",
+    0) != 1 {
+        return 13
+    }
+    let model_stale_revision: UInt64 = revision()
+    if ! push_text(0,
+    "ModelChanged") {
+        return 20
+    }
+    if list.import_csv_file_if_model_revision(0,
+    "target/app-list-csv-file-import-if-revision.csv",
+    model_stale_revision) {
+        return 21
+    }
+    if find_text(0,
+    "ModelChanged",
+    0) != 2 {
+        return 22
+    }
+    let model_current_revision: UInt64 = revision()
+    if ! list.import_csv_file_if_model_revision(0,
+    "target/app-list-csv-file-import-if-revision.csv",
+    model_current_revision) {
+        return 23
+    }
+    if count(0) != 2 {
+        return 24
+    }
+    if find_text(0,
+    "Beta,Gamma",
+    0) != 1 {
+        return 25
+    }
+    if write_text("target/app-list-csv-file-import-if-revision.csv",
+    "\"Unclosed\n") != 10usize {
+        return 14
+    }
+    let malformed_revision: UInt64 = revision()
+    if import_csv_file_if_revision(0,
+    "target/app-list-csv-file-import-if-revision.csv",
+    malformed_revision) {
+        return 15
+    }
+    if count(0) != 2 {
+        return 16
+    }
+    if find_text(0,
+    "Beta,Gamma",
+    0) != 1 {
+        return 17
+    }
+    write_text("target/app-list-csv-file-import-if-revision.csv",
+    "")
+    let empty_revision: UInt64 = revision()
+    if ! import_csv_file_if_revision(0,
+    "target/app-list-csv-file-import-if-revision.csv",
+    empty_revision) {
+        return 18
+    }
+    if count(0) != 0 {
+        return 19
+    }
+    delete("target/app-list-csv-file-import-if-revision.csv")
+    clear(0)
+    return 0
+}

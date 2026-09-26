@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "84df36a3aa460446"
+
+[package]
+name = "network-response-header-buffer-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

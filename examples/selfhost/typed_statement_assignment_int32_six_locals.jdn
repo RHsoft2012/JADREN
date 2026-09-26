@@ -1,0 +1,17 @@
+module selfhost.typed_statement_assignment_int32_six_locals
+
+fn local_value() -> Int32 {
+    let first: Int32 = 10;
+    let second: Int32 = 20;
+    let third: Int32 = 30;
+    let fourth: Int32 = 40;
+    let fifth: Int32 = 50;
+    let sixth: Int32 = 60;
+    first = first + 1;
+    second = first - 2;
+    third = second * 3;
+    fourth = third + 4;
+    fifth = fourth + 5;
+    sixth = fifth + 6;
+    return sixth;
+}

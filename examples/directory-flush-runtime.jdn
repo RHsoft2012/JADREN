@@ -1,0 +1,20 @@
+module examples.directory_flush_runtime
+
+// directory_flush synchronizes directory metadata after create, rename and
+// delete. It is intentionally explicit and does not imply a transaction.
+fn main() -> Int32 {
+    file_delete("target/jadren/directory-flush-runtime/value.txt")
+    file_delete("target/jadren/directory-flush-runtime/value.tmp")
+    directory_delete("target/jadren/directory-flush-runtime")
+    if !directory_create("target/jadren/directory-flush-runtime") { return 1 }
+    if !directory_flush("target/jadren/directory-flush-runtime") { return 2 }
+    if file_write_text("target/jadren/directory-flush-runtime/value.tmp", "value") != 5usize { return 3 }
+    if !file_flush("target/jadren/directory-flush-runtime/value.tmp") { return 4 }
+    if !file_replace_atomic("target/jadren/directory-flush-runtime/value.tmp", "target/jadren/directory-flush-runtime/value.txt") { return 5 }
+    if !directory_flush("target/jadren/directory-flush-runtime") { return 6 }
+    if !file_exists("target/jadren/directory-flush-runtime/value.txt") { return 7 }
+    if !file_delete("target/jadren/directory-flush-runtime/value.txt") { return 8 }
+    if !directory_flush("target/jadren/directory-flush-runtime") { return 9 }
+    if !directory_delete("target/jadren/directory-flush-runtime") { return 10 }
+    return 0
+}

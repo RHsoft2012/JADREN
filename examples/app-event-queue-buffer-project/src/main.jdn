@@ -1,0 +1,129 @@
+module app_event_queue_buffer_project.main
+
+import jadren.app.event.queue_clear
+import jadren.app.event.queue_count
+import jadren.app.event.queue_peek_exact_buffer
+import jadren.app.event.queue_poll_batch_exact_buffer
+import jadren.app.event.queue_poll_exact_buffer
+import jadren.app.ui.begin
+import jadren.app.ui.button
+import jadren.app.ui.finish
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id < 1 { return 2 }
+    if event_id > 3 { return 2 }
+    return 0
+}
+
+fn main() -> Int32 {
+    let root: Int32 = begin("Jadren event Buffer", 420, 240, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+    if button(root, "One", 1, 100, 32, 0xFFFFFFu32, 0x168EF5u32, 8, 0) == 0 { return 2 }
+    if button(root, "Two", 2, 100, 32, 0xFFFFFFu32, 0x168EF5u32, 8, 0) == 0 { return 3 }
+    if button(root, "Three", 3, 100, 32, 0xFFFFFFu32, 0x168EF5u32, 8, 0) == 0 { return 4 }
+
+    queue_clear()
+    if !ui_dispatch_event(1) { return 5 }
+    if !ui_dispatch_event(2) { return 6 }
+    if !ui_dispatch_event(3) { return 7 }
+    if queue_count() != 3usize { return 8 }
+
+    let output_created: Result<Buffer<Int32>, Int32> = buffer_create(4usize)
+    var result_code: Int32 = 0
+    match output_created {
+        Error(status) => { result_code = status }
+        Ok(output) => {
+            var count: [UIntSize; 1] = [99usize]
+            if !queue_poll_batch_exact_buffer(output, 2usize, count) { result_code = 9 }
+            if result_code == 0 {
+                if count[0] != 2usize { result_code = 10 }
+                if output[0] != 1 { result_code = 11 }
+                if output[1] != 2 { result_code = 12 }
+                if output[2] != 0 { result_code = 13 }
+                if queue_count() != 1usize { result_code = 14 }
+            }
+
+            // Zero is a successful no-op and leaves the pending suffix.
+            if result_code == 0 {
+                output[0] = 55
+                count[0] = 123usize
+                if !queue_poll_batch_exact_buffer(output, 0usize, count) { result_code = 15 }
+                if count[0] != 0usize { result_code = 16 }
+                if output[0] != 55 { result_code = 17 }
+                if queue_count() != 1usize { result_code = 18 }
+            }
+
+            if result_code == 0 {
+                if !queue_poll_exact_buffer(output, count) { result_code = 19 }
+                if count[0] != 1usize { result_code = 20 }
+                if output[0] != 3 { result_code = 21 }
+                if queue_count() != 0usize { result_code = 22 }
+            }
+
+            // A non-consuming Buffer snapshot can be inspected before commit.
+            if result_code == 0 {
+                if !ui_dispatch_event(1) { result_code = 34 }
+                if !ui_dispatch_event(2) { result_code = 35 }
+                count[0] = 123usize
+                if !queue_peek_exact_buffer(output, count) { result_code = 36 }
+                if count[0] != 2usize { result_code = 37 }
+                if output[0] != 1 { result_code = 38 }
+                if output[1] != 2 { result_code = 39 }
+                if queue_count() != 2usize { result_code = 40 }
+            }
+
+            // A short dynamic snapshot is rejected without consuming or writing.
+            if result_code == 0 {
+                let short_peek_created: Result<Buffer<Int32>, Int32> = buffer_create(1usize)
+                match short_peek_created {
+                    Error(status) => { result_code = status }
+                    Ok(short_peek) => {
+                        short_peek[0] = 77
+                        count[0] = 124usize
+                        if queue_peek_exact_buffer(short_peek, count) { result_code = 41 }
+                        if short_peek[0] != 77 { result_code = 42 }
+                        if count[0] != 124usize { result_code = 43 }
+                        if queue_count() != 2usize { result_code = 44 }
+                    }
+                }
+            }
+
+            if result_code == 0 {
+                if !queue_poll_exact_buffer(output, count) { result_code = 45 }
+                if count[0] != 2usize { result_code = 46 }
+                if output[0] != 1 { result_code = 47 }
+                if output[1] != 2 { result_code = 48 }
+                if queue_count() != 0usize { result_code = 49 }
+            }
+
+            // A short dynamic output is rejected before consuming either event.
+            if result_code == 0 {
+                if !ui_dispatch_event(1) { result_code = 23 }
+                if !ui_dispatch_event(2) { result_code = 24 }
+                let short_created: Result<Buffer<Int32>, Int32> = buffer_create(1usize)
+                match short_created {
+                    Error(status) => { result_code = status }
+                    Ok(short) => {
+                        short[0] = 77
+                        count[0] = 124usize
+                        if queue_poll_batch_exact_buffer(short, 2usize, count) { result_code = 25 }
+                        if short[0] != 77 { result_code = 26 }
+                        if count[0] != 124usize { result_code = 27 }
+                        if queue_count() != 2usize { result_code = 28 }
+                    }
+                }
+                if result_code == 0 {
+                    if !queue_poll_exact_buffer(output, count) { result_code = 29 }
+                    if count[0] != 2usize { result_code = 30 }
+                    if output[0] != 1 { result_code = 31 }
+                    if output[1] != 2 { result_code = 32 }
+                    if queue_count() != 0usize { result_code = 33 }
+                }
+            }
+        }
+    }
+
+    if !finish(root) { return 50 }
+    return result_code
+}

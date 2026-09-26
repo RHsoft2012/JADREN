@@ -1,0 +1,107 @@
+module network_client_tls_keep_alive_buffer_project.main
+
+import jadren.app.fs.write_text
+import jadren.network.client_tls.close_session
+import jadren.network.client_tls.open
+import jadren.network.client_tls.request_exact_buffer
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn run_requests(
+    body: write Buffer<UInt8>,
+    request: write Buffer<UInt8>,
+    response: write Buffer<UInt8>,
+    output: write Buffer<UInt8>,
+) -> Int32 {
+    if !buffer_resize(body, 1usize) { return 1 }
+    if !buffer_resize(request, 256usize) { return 2 }
+    if !buffer_resize(response, 128usize) { return 3 }
+    if !buffer_resize(output, 8usize) { return 4 }
+    var response_length: [UIntSize; 1] = [99usize]
+    var output_length: [UIntSize; 1] = [99usize]
+    let tls: UIntSize = open("localhost", "localhost", 38147u16, 5000u32, 16u32, false)
+    if tls == 0usize { return 5 }
+    let first: Int32 = request_exact_buffer(
+        tls, "localhost", "GET", "/hello", body, 0usize, 1u32,
+        request, 256usize, response, 128usize, response_length,
+        output, 8usize, output_length,
+    )
+    if first != 200i32 {
+        close_session(tls)
+        return 6
+    }
+    if response_length[0] == 0usize {
+        close_session(tls)
+        return 7
+    }
+    if output_length[0] != 2usize {
+        close_session(tls)
+        return 11
+    }
+    if output[0usize] != 79u8 {
+        close_session(tls)
+        return 12
+    }
+    if output[1usize] != 75u8 {
+        close_session(tls)
+        return 13
+    }
+    let second: Int32 = request_exact_buffer(
+        tls, "localhost", "GET", "/hello", body, 0usize, 0u32,
+        request, 256usize, response, 128usize, response_length,
+        output, 8usize, output_length,
+    )
+    if second != 200i32 {
+        close_session(tls)
+        return 20
+    }
+    if output_length[0] != 2usize {
+        close_session(tls)
+        return 21
+    }
+    if output[0usize] != 79u8 {
+        close_session(tls)
+        return 22
+    }
+    if output[1usize] != 75u8 {
+        close_session(tls)
+        return 23
+    }
+    if !close_session(tls) { return 30 }
+    if write_text(
+        "target/jadren/network-client-tls-keep-alive-buffer.result",
+        "client-tls-buffer:2 keep_alive:true close:false\n",
+    ) == 0usize { return 31 }
+    return 0
+}
+
+fn main() -> Int32 {
+    var status: Int32 = 0
+    let body_created: Result<Buffer<UInt8>, Int32> = buffer_create(1usize)
+    match body_created {
+        Ok(body) => {
+            let request_created: Result<Buffer<UInt8>, Int32> = buffer_create(256usize)
+            match request_created {
+                Ok(request) => {
+                    let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(128usize)
+                    match response_created {
+                        Ok(response) => {
+                            let output_created: Result<Buffer<UInt8>, Int32> = buffer_create(8usize)
+                            match output_created {
+                                Ok(output) => { status = run_requests(body, request, response, output) }
+                                Error(error) => { status = error }
+                            }
+                        }
+                        Error(error) => { status = error }
+                    }
+                }
+                Error(error) => { status = error }
+            }
+        }
+        Error(error) => { status = error }
+    }
+    return status
+}

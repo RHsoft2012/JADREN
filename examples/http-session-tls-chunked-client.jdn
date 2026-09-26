@@ -1,0 +1,45 @@
+module examples.http_session_tls_chunked_client
+
+// Bounded TLS client: decode the complete one-shot chunked response into a
+// caller-owned body buffer and require an explicit terminal connection.
+fn main() -> Int32 {
+    let socket: UIntSize = net_tcp_connect_dns("localhost", 38152u16)
+    if (socket as Int32) == 0 { return 10 }
+    let tls: UIntSize = net_tls_open_client(socket, "localhost", false)
+    if (tls as Int32) == 0 { net_socket_close(socket); return 11 }
+    let first: UInt32 = net_tls_step(tls, 2000u32)
+    let second: UInt32 = net_tls_step(tls, 2000u32)
+    let third: UInt32 = net_tls_step(tls, 2000u32)
+    let fourth: UInt32 = net_tls_step(tls, 2000u32)
+    let fifth: UInt32 = net_tls_step(tls, 2000u32)
+    let sixth: UInt32 = net_tls_step(tls, 2000u32)
+    let seventh: UInt32 = net_tls_step(tls, 2000u32)
+    let eighth: UInt32 = net_tls_step(tls, 2000u32)
+    if first == 4u32 { net_tls_close(tls); return 12 }
+    if second == 4u32 { net_tls_close(tls); return 12 }
+    if third == 4u32 { net_tls_close(tls); return 12 }
+    if fourth == 4u32 { net_tls_close(tls); return 12 }
+    if fifth == 4u32 { net_tls_close(tls); return 12 }
+    if sixth == 4u32 { net_tls_close(tls); return 12 }
+    if seventh == 4u32 { net_tls_close(tls); return 12 }
+    if eighth == 4u32 { net_tls_close(tls); return 12 }
+    if net_tls_state(tls) != 2u32 { net_tls_close(tls); return 12 }
+
+    var request: [UInt8; 59] = [71u8, 69u8, 84u8, 32u8, 47u8, 104u8, 101u8, 108u8, 108u8, 111u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 104u8, 111u8, 115u8, 116u8, 13u8, 10u8, 67u8, 111u8, 110u8, 110u8, 101u8, 99u8, 116u8, 105u8, 111u8, 110u8, 58u8, 32u8, 99u8, 108u8, 111u8, 115u8, 101u8, 13u8, 10u8, 13u8, 10u8]
+    let sent: UIntSize = net_tls_send(tls, request)
+    if (sent as Int32) != 59 { net_tls_close(tls); return 13 }
+
+    var response: [UInt8; 107] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let received: UIntSize = net_tls_receive(tls, response)
+    if received == 0usize { net_tls_close(tls); return 14 }
+    if http_response_status_prefix(response, received) != 200u16 { net_tls_close(tls); return 15 }
+    var body: [UInt8; 5] = [0u8, 0u8, 0u8, 0u8, 0u8]
+    var body_length: [UIntSize; 1] = [99usize]
+    if !http_response_body_chunked_exact(response, body, body_length) { net_tls_close(tls); return 16 }
+    if body_length[0] != 5usize { net_tls_close(tls); return 17 }
+    if body[0] != 72u8 { net_tls_close(tls); return 18 }
+    if body[4] != 79u8 { net_tls_close(tls); return 18 }
+    let closed: Bool = net_tls_close(tls)
+    if !closed { return 19 }
+    return 0
+}

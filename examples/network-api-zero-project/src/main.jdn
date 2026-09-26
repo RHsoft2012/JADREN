@@ -1,0 +1,11 @@
+module network_api_zero_project.main
+
+import jadren.network.api.serve_requests
+
+fn main() -> Int32 {
+    var request: [UInt8; 1] = [0u8]
+    var response: [UInt8; 1] = [0u8]
+    let served: Int32 = serve_requests(38161u16, 1u32, 0usize, request, response)
+    if served != 0 { return 1 }
+    return 0
+}

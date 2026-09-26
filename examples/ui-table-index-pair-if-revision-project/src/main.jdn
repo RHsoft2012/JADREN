@@ -1,0 +1,692 @@
+module ui_table_index_pair_if_revision_project.main
+import jadren.app.data.revision
+import jadren.app.table.append_row
+import jadren.app.table.clear
+import jadren.app.table.index_build_pair
+import jadren.app.table.index_build_int
+import jadren.app.table.index_build_uint
+import jadren.app.table.index_build_float
+import jadren.app.table.index_build_bool
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_type
+import jadren.app.table.set_int
+import jadren.app.table.set_uint
+import jadren.app.table.set_float
+import jadren.app.table.set_bool
+import jadren.app.list.set_text
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.panel
+import jadren.app.ui.table
+import jadren.app.ui.table_bind
+import jadren.app.ui.table_index_find_int_if_revision
+import jadren.app.ui.table_index_find_pair_text_if_revision
+import jadren.app.ui.table_index_find_uint_if_revision
+import jadren.app.ui.table_index_find_float_if_revision
+import jadren.app.ui.table_index_find_bool_if_revision
+import jadren.app.ui.list
+import jadren.app.ui.list_bind
+import jadren.app.ui.list_index
+import jadren.app.ui.list_count
+import jadren.app.ui.list_count_if_revision
+import jadren.app.ui.list_index_if_revision
+import jadren.app.ui.list_refresh
+import jadren.app.ui.list_read_item_exact_if_revision
+import jadren.app.ui.list_set_index_if_revision
+import jadren.app.ui.table_read_cell_exact_if_revision
+import jadren.app.ui.table_refresh
+import jadren.app.ui.table_row_count
+import jadren.app.ui.table_row_count_if_revision
+import jadren.app.ui.table_selected_row
+import jadren.app.ui.table_selected_row_if_revision
+import jadren.app.ui.table_set_selected_row_if_revision
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    clear(0)
+    if ! set_column_type(0,
+    0,
+    0) {
+        return 1
+    }
+    if ! set_column_type(0,
+    1,
+    0) {
+        return 2
+    }
+    if ! set_column_type(0,
+    2,
+    1) {
+        return 3
+    }
+    if ! set_column_type(0,
+    3,
+    2) {
+        return 4
+    }
+    if ! set_column_type(0,
+    4,
+    4) {
+        return 5
+    }
+    if ! set_column_type(0,
+    5,
+    3) {
+        return 6
+    }
+    if ! append_row(0) {
+        return 4
+    }
+    if ! append_row(0) {
+        return 5
+    }
+    if ! append_row(0) {
+        return 6
+    }
+    if ! set_cell(0,
+    0,
+    0,
+    "task") {
+        return 7
+    }
+    if ! set_cell(0,
+    0,
+    1,
+    "open") {
+        return 8
+    }
+    if ! set_int(0,
+    0,
+    2,
+    7i64) {
+        return 9
+    }
+    if ! set_uint(0,
+    0,
+    3,
+    70u64) {
+        return 10
+    }
+    if ! set_float(0,
+    0,
+    4,
+    7.25f64) {
+        return 11
+    }
+    if ! set_bool(0,
+    0,
+    5,
+    true) {
+        return 12
+    }
+    if ! set_cell(0,
+    1,
+    0,
+    "task") {
+        return 10
+    }
+    if ! set_cell(0,
+    1,
+    1,
+    "done") {
+        return 11
+    }
+    if ! set_int(0,
+    1,
+    2,
+    9i64) {
+        return 12
+    }
+    if ! set_uint(0,
+    1,
+    3,
+    90u64) {
+        return 13
+    }
+    if ! set_float(0,
+    1,
+    4,
+    9.25f64) {
+        return 14
+    }
+    if ! set_bool(0,
+    1,
+    5,
+    false) {
+        return 15
+    }
+    if ! set_cell(0,
+    2,
+    0,
+    "other") {
+        return 13
+    }
+    if ! set_cell(0,
+    2,
+    1,
+    "open") {
+        return 14
+    }
+    if ! set_int(0,
+    2,
+    2,
+    11i64) {
+        return 15
+    }
+    if ! set_uint(0,
+    2,
+    3,
+    110u64) {
+        return 16
+    }
+    if ! set_float(0,
+    2,
+    4,
+    11.25f64) {
+        return 17
+    }
+    if ! set_bool(0,
+    2,
+    5,
+    true) {
+        return 18
+    }
+    if ! index_build_pair(0,
+    0,
+    1) {
+        return 16
+    }
+    if ! index_build_int(0,
+    2) {
+        return 17
+    }
+    if ! index_build_uint(0,
+    3) {
+        return 18
+    }
+    if ! index_build_float(0,
+    4) {
+        return 19
+    }
+    if ! index_build_bool(0,
+    5) {
+        return 20
+    }
+    let root: Int32 = begin("Jadren pair lookup",
+    640,
+    360,
+    0xF6F8FCu32)
+    if root == 0 {
+        return 18
+    }
+    let panel_node: Int32 = panel(root,
+    560,
+    240,
+    0xFFFFFFu32,
+    16,
+    12,
+    8,
+    0,
+    1)
+    if panel_node == 0 {
+        return 19
+    }
+    app_list_clear(0)
+    if ! app_list_push_text(0,
+    "first") {
+        return 20
+    }
+    if ! app_list_push_text(0,
+    "second") {
+        return 21
+    }
+    let list_node: Int32 = list(panel_node,
+    40,
+    240,
+    80,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if list_node == 0 {
+        return 22
+    }
+    if ! list_bind(list_node,
+    0) {
+        return 23
+    }
+    let table_node: Int32 = table(panel_node,
+    10,
+    480,
+    120,
+    0x111827u32,
+    0xFFFFFFu32,
+    8,
+    1)
+    if table_node == 0 {
+        return 24
+    }
+    if ! table_bind(table_node,
+    0,
+    6) {
+        return 25
+    }
+    let stale: UInt64 = revision()
+    if ! set_cell(0,
+    0,
+    1,
+    "closed") {
+        return 22
+    }
+    if table_index_find_pair_text_if_revision(table_node,
+    0,
+    1,
+    "task",
+    "open",
+    stale
+    ) != - 1 {
+        return 23
+    }
+    if ! set_cell(0,
+    0,
+    1,
+    "open") {
+        return 24
+    }
+    if ! index_build_pair(0,
+    0,
+    1) {
+        return 25
+    }
+    let current: UInt64 = revision()
+    if table_index_find_pair_text_if_revision(table_node,
+    0,
+    1,
+    "task",
+    "open",
+    current
+    ) != 0 {
+        return 26
+    }
+    if table_index_find_pair_text_if_revision(table_node,
+    0,
+    1,
+    "task",
+    "done",
+    current
+    ) != 1 {
+        return 27
+    }
+    if table_index_find_pair_text_if_revision(table_node,
+    0,
+    1,
+    "missing",
+    "open",
+    current
+    ) != - 1 {
+        return 28
+    }
+    let stale_int: UInt64 = revision()
+    if ! set_int(0,
+    0,
+    2,
+    42i64) {
+        return 29
+    }
+    if table_index_find_int_if_revision(table_node,
+    2,
+    7i64,
+    stale_int) != - 1 {
+        return 30
+    }
+    if ! index_build_int(0,
+    2) {
+        return 31
+    }
+    let current_int: UInt64 = revision()
+    if table_index_find_int_if_revision(table_node,
+    2,
+    42i64,
+    current_int) != 0 {
+        return 32
+    }
+    if table_index_find_int_if_revision(table_node,
+    2,
+    99i64,
+    current_int) != - 1 {
+        return 33
+    }
+    let stale_uint: UInt64 = revision()
+    if ! set_uint(0,
+    0,
+    3,
+    420u64) {
+        return 34
+    }
+    if table_index_find_uint_if_revision(table_node,
+    3,
+    70u64,
+    stale_uint) != - 1 {
+        return 35
+    }
+    if ! index_build_uint(0,
+    3) {
+        return 36
+    }
+    let current_uint: UInt64 = revision()
+    if table_index_find_uint_if_revision(table_node,
+    3,
+    420u64,
+    current_uint) != 0 {
+        return 37
+    }
+    if table_index_find_uint_if_revision(table_node,
+    3,
+    999u64,
+    current_uint) != - 1 {
+        return 38
+    }
+    let stale_float: UInt64 = revision()
+    if ! set_float(0,
+    0,
+    4,
+    42.25f64) {
+        return 39
+    }
+    if table_index_find_float_if_revision(table_node,
+    4,
+    7.25f64,
+    stale_float) != - 1 {
+        return 40
+    }
+    if ! index_build_float(0,
+    4) {
+        return 41
+    }
+    let current_float: UInt64 = revision()
+    if table_index_find_float_if_revision(table_node,
+    4,
+    42.25f64,
+    current_float) != 0 {
+        return 42
+    }
+    if table_index_find_float_if_revision(table_node,
+    4,
+    999.25f64,
+    current_float) != - 1 {
+        return 43
+    }
+    let stale_bool: UInt64 = revision()
+    if ! set_bool(0,
+    0,
+    5,
+    false) {
+        return 44
+    }
+    if table_index_find_bool_if_revision(table_node,
+    5,
+    true,
+    stale_bool) != - 1 {
+        return 45
+    }
+    if ! index_build_bool(0,
+    5) {
+        return 46
+    }
+    let current_bool: UInt64 = revision()
+    if table_index_find_bool_if_revision(table_node,
+    5,
+    false,
+    current_bool) != 0 {
+        return 47
+    }
+    if table_index_find_bool_if_revision(table_node,
+    5,
+    true,
+    current_bool) != 2 {
+        return 48
+    }
+    let stale_list_selection: UInt64 = revision()
+    if ! set_cell(0,
+    0,
+    0,
+    "task-selection") {
+        return 49
+    }
+    if list_set_index_if_revision(list_node,
+    1,
+    stale_list_selection) {
+        return 50
+    }
+    if list_index(list_node) != - 1 {
+        return 51
+    }
+    let current_list_selection: UInt64 = revision()
+    if ! list_set_index_if_revision(list_node,
+    1,
+    current_list_selection) {
+        return 52
+    }
+    if list_index(list_node) != 1 {
+        return 53
+    }
+    if list_set_index_if_revision(list_node,
+    99,
+    current_list_selection) {
+        return 54
+    }
+    if list_index(list_node) != 1 {
+        return 55
+    }
+    let stale_list_selection_read: UInt64 = revision()
+    if ! set_cell(0,
+    0,
+    0,
+    "task-selection-read") {
+        return 90
+    }
+    if list_index_if_revision(list_node,
+    stale_list_selection_read) != - 2 {
+        return 91
+    }
+    if list_index(list_node) != 1 {
+        return 92
+    }
+    let current_list_selection_read: UInt64 = revision()
+    if list_index_if_revision(list_node,
+    current_list_selection_read) != 1 {
+        return 93
+    }
+    let stale_table_selection: UInt64 = revision()
+    if ! set_cell(0,
+    0,
+    0,
+    "task-table-selection") {
+        return 56
+    }
+    if table_set_selected_row_if_revision(table_node,
+    1,
+    stale_table_selection) {
+        return 57
+    }
+    if table_selected_row(table_node) != - 1 {
+        return 58
+    }
+    let current_table_selection: UInt64 = revision()
+    if ! table_set_selected_row_if_revision(table_node,
+    1,
+    current_table_selection) {
+        return 59
+    }
+    if table_selected_row(table_node) != 1 {
+        return 60
+    }
+    if table_set_selected_row_if_revision(table_node,
+    99,
+    current_table_selection) {
+        return 61
+    }
+    if table_selected_row(table_node) != 1 {
+        return 62
+    }
+    let stale_table_selection_read: UInt64 = revision()
+    if ! set_cell(0,
+    0,
+    1,
+    "task-table-selection-read") {
+        return 94
+    }
+    if table_selected_row_if_revision(table_node,
+    stale_table_selection_read) != - 2 {
+        return 95
+    }
+    if table_selected_row(table_node) != 1 {
+        return 96
+    }
+    let current_table_selection_read: UInt64 = revision()
+    if table_selected_row_if_revision(table_node,
+    current_table_selection_read) != 1 {
+        return 97
+    }
+    var read_bytes:[UInt8;
+    16] =[90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8,
+    90u8]
+    var read_length:[UIntSize;
+    1] =[777usize]
+    let stale_list_read: UInt64 = revision()
+    if ! set_text(0,
+    0,
+    "changed") {
+        return 63
+    }
+    if list_read_item_exact_if_revision(list_node,
+    0,
+    read_bytes,
+    read_length,
+    stale_list_read) {
+        return 64
+    }
+    if read_bytes[0] as Int32 != 90 {
+        return 65
+    }
+    if read_length[0] as Int32 != 777 {
+        return 65
+    }
+    if ! list_refresh(list_node) {
+        return 66
+    }
+    let current_list_read: UInt64 = revision()
+    if ! list_read_item_exact_if_revision(list_node,
+    0,
+    read_bytes,
+    read_length,
+    current_list_read) {
+        return 67
+    }
+    if read_length[0] as Int32 != 7 {
+        return 68
+    }
+    if read_bytes[0] as Int32 != 99 {
+        return 68
+    }
+    let stale_table_read: UInt64 = revision()
+    if ! set_cell(0,
+    0,
+    1,
+    "closed") {
+        return 69
+    }
+    if table_read_cell_exact_if_revision(table_node,
+    0,
+    1,
+    read_bytes,
+    read_length,
+    stale_table_read) {
+        return 70
+    }
+    if read_bytes[0] as Int32 != 99 {
+        return 71
+    }
+    if read_length[0] as Int32 != 7 {
+        return 71
+    }
+    if ! table_refresh(table_node) {
+        return 72
+    }
+    let current_table_read: UInt64 = revision()
+    if ! table_read_cell_exact_if_revision(table_node,
+    0,
+    1,
+    read_bytes,
+    read_length,
+    current_table_read) {
+        return 73
+    }
+    if read_length[0] as Int32 != 6 {
+        return 74
+    }
+    if read_bytes[0] as Int32 != 99 {
+        return 74
+    }
+    let stale_list_count: UInt64 = revision()
+    if ! set_cell(0,
+    0,
+    0,
+    "task-count") {
+        return 75
+    }
+    if list_count_if_revision(list_node,
+    stale_list_count) != - 1 {
+        return 76
+    }
+    if list_count(list_node) != 2 {
+        return 77
+    }
+    let current_list_count: UInt64 = revision()
+    if list_count_if_revision(list_node,
+    current_list_count) != 2 {
+        return 78
+    }
+    let stale_table_count: UInt64 = revision()
+    if ! set_cell(0,
+    0,
+    1,
+    "task-table-count") {
+        return 79
+    }
+    if table_row_count_if_revision(table_node,
+    stale_table_count) != - 1 {
+        return 80
+    }
+    if table_row_count(table_node) != 3 {
+        return 81
+    }
+    let current_table_count: UInt64 = revision()
+    if table_row_count_if_revision(table_node,
+    current_table_count) != 3 {
+        return 82
+    }
+    if ! finish(panel_node) {
+        return 83
+    }
+    if ! finish(root) {
+        return 84
+    }
+    return 0
+}

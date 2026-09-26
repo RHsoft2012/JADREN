@@ -1,0 +1,50 @@
+module app_state_remove_if_revision.main
+
+// A stale-safe delete removes one entry only for the revision the caller
+// observed. Missing keys and stale snapshots leave both model and revision
+// unchanged, which keeps form/server compare-and-swap flows deterministic.
+fn main() -> Int32 {
+    app_state_clear()
+    if ! app_state_set_int("minutes", 25i64) {
+        return 1
+    }
+    if ! app_state_set_text("name", "Focus") {
+        return 2
+    }
+    let snapshot: UInt64 = app_state_revision()
+    if ! app_state_remove_if_revision("minutes", snapshot) {
+        return 3
+    }
+    if app_state_exists("minutes") {
+        return 4
+    }
+    let current: UInt64 = app_state_revision()
+    if app_state_remove_if_revision("name", snapshot) {
+        return 5
+    }
+    if ! app_state_exists("name") {
+        return 6
+    }
+    if app_state_revision() != current {
+        return 7
+    }
+    if app_state_remove_if_revision("missing", current) {
+        return 8
+    }
+    if app_state_revision() != current {
+        return 9
+    }
+    if app_state_remove_if_revision("", current) {
+        return 10
+    }
+    if app_state_revision() != current {
+        return 11
+    }
+    if ! app_state_remove_if_revision("name", current) {
+        return 12
+    }
+    if app_state_exists("name") {
+        return 13
+    }
+    return 0
+}

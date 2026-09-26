@@ -1,0 +1,66 @@
+module examples.directory_list_exact
+
+// Exact directory read-back distinguishes an existing empty directory from
+// a missing/unreadable path and never publishes partial caller-owned output.
+fn main() -> Int32 {
+    file_delete("target/directory-list-exact-smoke/a.txt")
+    directory_delete("target/directory-list-exact-smoke/z")
+    directory_delete("target/directory-list-exact-smoke/empty")
+    directory_delete("target/directory-list-exact-smoke")
+    if !directory_create("target/directory-list-exact-smoke") { return 1 }
+    if !directory_create("target/directory-list-exact-smoke/empty") { return 2 }
+    if !directory_create("target/directory-list-exact-smoke/z") { return 3 }
+    if file_write_text("target/directory-list-exact-smoke/a.txt", "A") != 1usize { return 4 }
+
+    var names: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var names_length: [UIntSize; 1] = [99usize]
+    var kinds: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    var item_count: [UIntSize; 1] = [99usize]
+    if !directory_list_ex_exact("target/directory-list-exact-smoke", names, names_length, kinds, item_count) { return 5 }
+    if names_length[0] != 13usize { return 6 }
+    if item_count[0] != 3usize { return 7 }
+    if names[0] != 97u8 { return 8 }
+    if names[1] != 46u8 { return 9 }
+    if names[5] != 10u8 { return 10 }
+    if names[6] != 101u8 { return 11 }
+    if kinds[0] != 1u8 { return 12 }
+    if kinds[1] != 2u8 { return 13 }
+    if kinds[2] != 2u8 { return 14 }
+
+    var short_names: [UInt8; 3] = [91u8, 91u8, 91u8]
+    var short_length: [UIntSize; 1] = [77usize]
+    var short_kinds: [UInt8; 2] = [92u8, 92u8]
+    var short_count: [UIntSize; 1] = [78usize]
+    if directory_list_ex_exact("target/directory-list-exact-smoke", short_names, short_length, short_kinds, short_count) { return 15 }
+    if short_names[0] != 91u8 { return 16 }
+    if short_length[0] != 77usize { return 17 }
+    if short_kinds[0] != 92u8 { return 18 }
+    if short_count[0] != 78usize { return 19 }
+
+    var empty_names: [UInt8; 1] = [93u8]
+    var empty_length: [UIntSize; 1] = [88usize]
+    var empty_kinds: [UInt8; 1] = [94u8]
+    var empty_count: [UIntSize; 1] = [89usize]
+    if !directory_list_ex_exact("target/directory-list-exact-smoke/empty", empty_names, empty_length, empty_kinds, empty_count) { return 20 }
+    if empty_length[0] != 0usize { return 21 }
+    if empty_count[0] != 0usize { return 22 }
+    if empty_names[0] != 93u8 { return 23 }
+    if empty_kinds[0] != 94u8 { return 24 }
+
+    var missing_names: [UInt8; 4] = [95u8, 95u8, 95u8, 95u8]
+    var missing_length: [UIntSize; 1] = [90usize]
+    var missing_kinds: [UInt8; 1] = [96u8]
+    var missing_count: [UIntSize; 1] = [91usize]
+    if directory_list_ex_exact("target/directory-list-exact-smoke/missing", missing_names, missing_length, missing_kinds, missing_count) { return 25 }
+    if missing_names[0] != 95u8 { return 26 }
+    if missing_length[0] != 90usize { return 27 }
+    if missing_kinds[0] != 96u8 { return 28 }
+    if missing_count[0] != 91usize { return 29 }
+
+    if !file_delete("target/directory-list-exact-smoke/a.txt") { return 30 }
+    if !directory_delete("target/directory-list-exact-smoke/z") { return 31 }
+    if !directory_delete("target/directory-list-exact-smoke/empty") { return 32 }
+    if !directory_delete("target/directory-list-exact-smoke") { return 33 }
+    return 0
+}

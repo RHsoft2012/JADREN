@@ -1,0 +1,60 @@
+module examples.stdlib_buffer_owning_enum_record
+
+// A named C-layout record may be an inline payload of a named enum variant.
+// Its owning fields must be flattened into the enum field table so the outer
+// tag selects the record payload before each nested descriptor is destroyed.
+@repr(C)
+struct Entry {
+    id: Int32,
+    values: Buffer<Int32>,
+    label: Buffer<OwnedString>
+}
+
+@repr(C)
+enum Event {
+    Idle,
+    Entry(Entry),
+    Done
+}
+
+fn main() -> Int32 {
+    let events_created: Result<Buffer<Event>, Int32> = buffer_create(0usize)
+    let values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let labels_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match events_created {
+        Ok(events) => {
+            if !buffer_append(events, Event.Idle) { result_code = 1 }
+            match values_created {
+                Ok(values) => {
+                    if !buffer_append(values, 42) { result_code = 2 }
+                    match labels_created {
+                        Ok(labels) => {
+                            let label_created: Result<OwnedString, Int32> = string_owned_from("record")
+                            match label_created {
+                                Ok(label) => {
+                                    if !buffer_append(labels, label) { result_code = 3 }
+                                    let item: Entry = Entry {
+                                        id: 7,
+                                        values: values,
+                                        label: labels
+                                    }
+                                    if !buffer_append(events, Event.Entry(item)) { result_code = 4 }
+                                    if buffer_length(events) != 2usize { result_code = 5 }
+                                    if !buffer_remove_drop(events, 1usize) { result_code = 6 }
+                                    if !buffer_clear_move(events) { result_code = 7 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

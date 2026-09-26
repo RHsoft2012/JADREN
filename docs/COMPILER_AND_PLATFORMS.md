@@ -54,7 +54,7 @@ the stated workload; it is not a blanket platform-support or performance claim.
 
 | Area | Platform and target | Highest verified state | Bounded scope |
 | --- | --- | --- | --- |
-| Compiler CLI and developer ZIP | Windows x86-64 | Executed | Clean extraction and CLI command smoke; unsigned developer package only. |
+| Compiler CLI and developer ZIP | Windows x86-64 | Executed | Clean extraction and CLI command smoke; public package remains manifest-verified `signed-local`, while local developer copies may be self-signed. |
 | Windows desktop preview | Windows x86-64 | Executed | `examples/windows-desktop-preview.jdn` built to a Windows GUI PE, opened a native rounded Win32 window, and its source-defined coloured rounded button changed visible state; bounded direct UI functions, not a general GUI toolkit. |
 | Native animation | Windows x86-64 baseline/AVX2 | Executed | Safe baseline fallback and numerical parity; no universal FPS claim. |
 | Native animation | Physical Android ARM64 with NEON artifact | Executed | ABI, sample, angle and checksum smoke on three recorded device classes; no FPS, sustained thermal or broad device-support claim. |
@@ -67,6 +67,7 @@ the stated workload; it is not a blanket platform-support or performance claim.
 | Self-hosting preview | Docker Linux x86-64 | Executed | Container-local object, loader and CLI run; not a native Linux installation claim. |
 | Developer package | Linux x86-64 | Executed | Reproducible unsigned archive passed checksums plus native build/run in a clean Debian 12 container; broader distributions and bare-metal hosts remain unverified. |
 
-The matrix intentionally keeps public-release readiness false. Signed packages,
+The matrix intentionally keeps public-release readiness false. Trusted
+Authenticode packages (a public CA certificate plus an RFC 3161 timestamp),
 retained physical macOS evidence, broader Linux distribution and device
 coverage, and the declared external security/release gates remain separate work.

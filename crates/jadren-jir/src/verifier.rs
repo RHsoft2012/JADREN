@@ -1676,6 +1676,141 @@ fn verify_instruction(
                 }
             }
         }
+        InstructionKind::BufferRemoveDropNestedBuffer {
+            descriptor,
+            index,
+            element,
+            leaf_element,
+            depth,
+            status_result,
+        } => {
+            let Some(result) = require_result(instruction, function, block, errors) else {
+                return;
+            };
+            use_value(
+                *descriptor,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            use_value(
+                *index,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            let expected_result = if *status_result {
+                matches!(
+                    type_kind(module, result.ty),
+                    Some(Type::Integer {
+                        signed: true,
+                        bits: 32
+                    })
+                )
+            } else {
+                matches!(type_kind(module, result.ty), Some(Type::Bool))
+            };
+            if !expected_result {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop nested buffer result type does not match status contract",
+                ));
+            }
+            if type_kind(module, *element).is_none() || type_kind(module, *leaf_element).is_none() {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop nested buffer element type is missing",
+                ));
+            }
+            if *depth == 0 {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop nested buffer depth must be nonzero",
+                ));
+            }
+        }
+        InstructionKind::BufferRemoveDropNestedOwnedString {
+            descriptor,
+            index,
+            element,
+            string_element,
+            depth,
+            status_result,
+        } => {
+            let Some(result) = require_result(instruction, function, block, errors) else {
+                return;
+            };
+            use_value(
+                *descriptor,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            use_value(
+                *index,
+                None,
+                function,
+                block,
+                site,
+                definitions,
+                dominators,
+                errors,
+            );
+            let expected_result = if *status_result {
+                matches!(
+                    type_kind(module, result.ty),
+                    Some(Type::Integer {
+                        signed: true,
+                        bits: 32
+                    })
+                )
+            } else {
+                matches!(type_kind(module, result.ty), Some(Type::Bool))
+            };
+            if !expected_result {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop nested owned string result type does not match status contract",
+                ));
+            }
+            if type_kind(module, *element).is_none() || type_kind(module, *string_element).is_none()
+            {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop nested owned string element type is missing",
+                ));
+            }
+            if *depth == 0 {
+                errors.push(instruction_error(
+                    function,
+                    block,
+                    instruction,
+                    "buffer remove drop nested owned string depth must be nonzero",
+                ));
+            }
+        }
         InstructionKind::EnumCarrierBufferDrop {
             value,
             element,

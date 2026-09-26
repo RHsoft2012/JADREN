@@ -1,0 +1,61 @@
+module examples.dynamic_array_nested_owned_string
+
+// DynamicArray remains compositional for a nested move-only element.  The
+// outer and inner descriptors use the existing Buffer<OwnedString> drop glue;
+// no second collection ABI or implicit copy is introduced.
+fn main() -> Int32 {
+    let outer_created: Result<DynamicArray<DynamicArray<OwnedString>>, Int32> = buffer_create(0usize)
+    let first_created: Result<DynamicArray<OwnedString>, Int32> = buffer_create(0usize)
+    let second_created: Result<DynamicArray<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            let first_value: Result<OwnedString, Int32> = string_owned_from("first")
+                            match first_value {
+                                Ok(value) => {
+                                    if !buffer_append(first, value) { result_code = 1 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                            let second_value: Result<OwnedString, Int32> = string_owned_from("second")
+                            match second_value {
+                                Ok(value) => {
+                                    if !buffer_insert_move(second, 0usize, value) { result_code = 2 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                            if buffer_length(first) != 1usize { result_code = 3 }
+                            if buffer_length(second) != 1usize { result_code = 4 }
+                            if string_owned_length(first[0]) != 5usize { result_code = 5 }
+                            if string_owned_length(second[0]) != 6usize { result_code = 6 }
+                            if !buffer_append(outer, first) { result_code = 7 }
+                            if !buffer_append(outer, second) { result_code = 8 }
+                            if buffer_length(outer) != 2usize { result_code = 9 }
+                            if string_owned_length(outer[0][0]) != 5usize { result_code = 10 }
+                            if string_owned_length(outer[1][0]) != 6usize { result_code = 11 }
+                            let removed: Result<OwnedString, Int32> = buffer_remove_move(outer[0], 0usize)
+                            match removed {
+                                Ok(value) => {
+                                    if string_owned_length(value) != 5usize { result_code = 12 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                            if buffer_length(outer[0]) != 0usize { result_code = 13 }
+                            if !buffer_clear_move(outer) { return 14 }
+                            if buffer_length(outer) != 0usize { return 15 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

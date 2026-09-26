@@ -1,0 +1,169 @@
+module app_table_insert_project.main
+
+import jadren.app.data.revision
+import jadren.app.table.append_row
+import jadren.app.table.append_row_if_model_revision
+import jadren.app.table.clear
+import jadren.app.table.find_text
+import jadren.app.table.insert_row
+import jadren.app.table.insert_row_if_model_revision
+import jadren.app.table.insert_row_if_revision
+import jadren.app.table.move_row_if_model_revision
+import jadren.app.table.remove_row_if_model_revision
+import jadren.app.table.row_count
+import jadren.app.table.set_cell
+import jadren.app.table.set_cell_bytes
+import jadren.app.table.set_cell_bytes_if_model_revision
+import jadren.app.table.set_cell_if_model_revision
+import jadren.app.table.set_cell_bytes_ex
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+import jadren.app.table.set_int
+import jadren.app.table.set_int_if_model_revision
+import jadren.app.table.read_int
+import jadren.app.table.set_uint
+import jadren.app.table.set_uint_if_model_revision
+import jadren.app.table.read_uint
+import jadren.app.table.set_float
+import jadren.app.table.set_float_if_model_revision
+import jadren.app.table.read_float
+import jadren.app.table.set_bool
+import jadren.app.table.set_bool_if_model_revision
+import jadren.app.table.read_bool
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    clear(0)
+    if ! set_column_name(0, 0, "title") { return 1 }
+    if ! set_column_type(0, 0, 0) { return 2 }
+    if ! append_row(0) { return 3 }
+    if ! append_row(0) { return 4 }
+    if ! set_cell(0, 0, 0, "Alpha") { return 5 }
+    if ! set_cell(0, 1, 0, "Gamma") { return 6 }
+
+    if ! insert_row(0, 1) { return 7 }
+    if row_count(0) != 3 { return 8 }
+    if ! set_cell(0, 1, 0, "Beta") { return 9 }
+    if find_text(0, 0, "Alpha", 0) != 0 { return 10 }
+    if find_text(0, 0, "Beta", 0) != 1 { return 11 }
+    if find_text(0, 0, "Gamma", 0) != 2 { return 12 }
+
+    if ! insert_row(0, row_count(0)) { return 13 }
+    if ! set_cell(0, 3, 0, "Omega") { return 14 }
+    if find_text(0, 0, "Omega", 0) != 3 { return 15 }
+
+    let before_invalid: Int32 = row_count(0)
+    if insert_row(0, -1) { return 16 }
+    if insert_row(0, 99) { return 17 }
+    if row_count(0) != before_invalid { return 18 }
+
+    let stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "Fresh") { return 19 }
+    if insert_row_if_revision(0, 1, stale) { return 20 }
+    if row_count(0) != before_invalid { return 21 }
+    if find_text(0, 0, "Beta", 0) != 1 { return 22 }
+
+    let current: UInt64 = revision()
+    if ! insert_row_if_revision(0, 1, current) { return 23 }
+    if row_count(0) != 5 { return 24 }
+    if ! set_cell(0, 1, 0, "Current") { return 25 }
+    if find_text(0, 0, "Fresh", 0) != 0 { return 26 }
+    if find_text(0, 0, "Current", 0) != 1 { return 27 }
+    if find_text(0, 0, "Beta", 0) != 2 { return 28 }
+    if find_text(0, 0, "Gamma", 0) != 3 { return 29 }
+    if find_text(0, 0, "Omega", 0) != 4 { return 30 }
+
+    let model_append_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "AppendFresh") { return 31 }
+    if append_row_if_model_revision(0, model_append_stale) { return 32 }
+    let model_append_current: UInt64 = revision()
+    if ! append_row_if_model_revision(0, model_append_current) { return 33 }
+    if row_count(0) != 6 { return 34 }
+
+    let model_insert_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "InsertFresh") { return 35 }
+    if insert_row_if_model_revision(0, 1, model_insert_stale) { return 36 }
+    let model_insert_current: UInt64 = revision()
+    if ! insert_row_if_model_revision(0, 1, model_insert_current) { return 37 }
+    if row_count(0) != 7 { return 38 }
+
+    let model_move_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "MoveFresh") { return 39 }
+    if move_row_if_model_revision(0, 0, 1, model_move_stale) { return 40 }
+    let model_move_current: UInt64 = revision()
+    if ! move_row_if_model_revision(0, 0, 1, model_move_current) { return 41 }
+
+    let model_remove_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "RemoveFresh") { return 42 }
+    if remove_row_if_model_revision(0, 0, model_remove_stale) { return 43 }
+    if row_count(0) != 7 { return 44 }
+    let model_remove_current: UInt64 = revision()
+    if ! remove_row_if_model_revision(0, 0, model_remove_current) { return 45 }
+    if row_count(0) != 6 { return 46 }
+
+    let model_set_text_stale: UInt64 = revision()
+    if ! set_cell(0, 0, 0, "SetFresh") { return 47 }
+    if set_cell_if_model_revision(0, 1, 0, "SetRejected", model_set_text_stale) { return 48 }
+    if find_text(0, 0, "SetRejected", 0) != -1 { return 49 }
+    let model_set_text_current: UInt64 = revision()
+    if ! set_cell_if_model_revision(0, 1, 0, "SetCurrent", model_set_text_current) { return 50 }
+
+    var delta: [UInt8; 5] = [68u8, 101u8, 108u8, 116u8, 97u8]
+    let model_set_bytes_stale: UInt64 = revision()
+    if ! set_cell_bytes_ex(0, 0, 0, delta, 5usize) { return 51 }
+    if set_cell_bytes_if_model_revision(0, 1, 0, delta, 5usize, model_set_bytes_stale) { return 52 }
+    let model_set_bytes_current: UInt64 = revision()
+    if ! set_cell_bytes_if_model_revision(0, 1, 0, delta, 5usize, model_set_bytes_current) { return 53 }
+
+    clear(1)
+    if ! set_column_name(1, 0, "signed") { return 54 }
+    if ! set_column_name(1, 1, "unsigned") { return 55 }
+    if ! set_column_name(1, 2, "ratio") { return 56 }
+    if ! set_column_name(1, 3, "enabled") { return 57 }
+    if ! set_column_type(1, 0, 1) { return 58 }
+    if ! set_column_type(1, 1, 2) { return 59 }
+    if ! set_column_type(1, 2, 4) { return 60 }
+    if ! set_column_type(1, 3, 3) { return 61 }
+    if ! append_row(1) { return 62 }
+
+    let model_set_int_stale: UInt64 = revision()
+    if ! set_int(1, 0, 0, 41i64) { return 63 }
+    if set_int_if_model_revision(1, 0, 0, 42i64, model_set_int_stale) { return 64 }
+    if read_int(1, 0, 0) != 41i64 { return 65 }
+    if ! set_int_if_model_revision(1, 0, 0, 42i64, revision()) { return 66 }
+    if read_int(1, 0, 0) != 42i64 { return 67 }
+
+    let model_set_uint_stale: UInt64 = revision()
+    if ! set_uint(1, 0, 1, 7u64) { return 68 }
+    if set_uint_if_model_revision(1, 0, 1, 8u64, model_set_uint_stale) { return 69 }
+    if read_uint(1, 0, 1) != 7u64 { return 70 }
+    if ! set_uint_if_model_revision(1, 0, 1, 8u64, revision()) { return 71 }
+    if read_uint(1, 0, 1) != 8u64 { return 72 }
+
+    let model_set_float_stale: UInt64 = revision()
+    if ! set_float(1, 0, 2, 1.25f64) { return 73 }
+    if set_float_if_model_revision(1, 0, 2, 2.5f64, model_set_float_stale) { return 74 }
+    if read_float(1, 0, 2) != 1.25f64 { return 75 }
+    if ! set_float_if_model_revision(1, 0, 2, 2.5f64, revision()) { return 76 }
+    if read_float(1, 0, 2) != 2.5f64 { return 77 }
+
+    let model_set_bool_stale: UInt64 = revision()
+    if ! set_bool(1, 0, 3, false) { return 78 }
+    if set_bool_if_model_revision(1, 0, 3, true, model_set_bool_stale) { return 79 }
+    if read_bool(1, 0, 3) { return 80 }
+    if ! set_bool_if_model_revision(1, 0, 3, true, revision()) { return 81 }
+    if ! read_bool(1, 0, 3) { return 82 }
+
+    let model_set_wrong_schema: UInt64 = revision()
+    if set_int_if_model_revision(1, 0, 1, 99i64, model_set_wrong_schema) { return 83 }
+    if read_uint(1, 0, 1) != 8u64 { return 84 }
+
+    if insert_row_if_model_revision(99, 0, revision()) { return 85 }
+    clear(1)
+    clear(0)
+    return 0
+}

@@ -1,0 +1,4643 @@
+module jadren_site_server_control_project.main
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.exists
+import jadren.app.fs.write_atomic_durable
+import jadren.app.input.read_text_exact
+import jadren.app.input.refresh_all
+import jadren.app.input.table_selected_row
+import jadren.app.input.set_value_exact
+import jadren.app.state.load
+import jadren.app.state.set_text_bytes
+import jadren.app.state.write_json_exact_buffer
+import jadren.app.site_server.start_with_webroot_buffer
+import jadren.app.site_server.is_running
+import jadren.app.site_server.stop
+import jadren.app.site_server.restart
+import jadren.app.ui.directory_open_exact
+import jadren.app.ui.file_open_exact
+import jadren.app.ui.table_bind
+import jadren.app.ui.table_column
+import jadren.app.ui.table_refresh
+import jadren.app.ui.table_set_selected_row
+import jadren.app.table.append_row
+import jadren.app.table.clear
+import jadren.app.table.export_json_file_durable_directory
+import jadren.app.table.import_json_file
+import jadren.app.table.read_cell_exact
+import jadren.app.table.remove_row
+import jadren.app.table.row_count
+import jadren.app.table.set_cell_bytes_ex
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+import jadren.app.table.set_column_type
+import jadren.network.health.probe_once_buffer
+import jadren.network.http.response_status_prefix
+import jadren.network.tcp.close_socket
+import jadren.network.tcp.connect_dns
+import jadren.network.tcp.receive_buffer
+import jadren.network.tcp.send_buffer
+import jadren.network.tcp.set_timeout
+fn has_smoke_flag() -> Bool {
+    if process_arg_count() != 2usize {
+        return false
+    }
+    var value:[UInt8;
+    7] =[45u8,
+    45u8,
+    115u8,
+    109u8,
+    111u8,
+    107u8,
+    101u8]
+    let length: UIntSize = process_arg_read(1usize,
+    value)
+    if length != 7usize {
+        return false
+    }
+    if value[0] != 45u8 {
+        return false
+    }
+    if value[1] != 45u8 {
+        return false
+    }
+    if value[2] != 115u8 {
+        return false
+    }
+    if value[3] != 109u8 {
+        return false
+    }
+    if value[4] != 111u8 {
+        return false
+    }
+    if value[5] != 107u8 {
+        return false
+    }
+    return value[6] == 101u8
+}
+// The --smoke-http path runs the same callbacks against a local test origin.
+fn has_http_smoke_flag() -> Bool {
+    if process_arg_count() != 2usize {
+        return false
+    }
+    var value:[UInt8;
+    12] =[45u8,
+    45u8,
+    115u8,
+    109u8,
+    111u8,
+    107u8,
+    101u8,
+    45u8,
+    104u8,
+    116u8,
+    116u8,
+    112u8,
+    ]
+    var argument:[UInt8;
+    12] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    ]
+    let length: UIntSize = process_arg_read(1usize,
+    argument)
+    if length != 12usize {
+        return false
+    }
+    var index: UIntSize = 0usize
+    while index<12usize {
+        if argument[index] != value[index] {
+            return false
+        }
+        index += 1usize
+    }
+    return true
+}
+fn has_process_smoke_flag() -> Bool {
+    // --smoke-process runs the real native start/stop callbacks.
+    if process_arg_count() != 2usize {
+        return false
+    }
+    var value:[UInt8;
+    15] =[45u8,
+    45u8,
+    115u8,
+    109u8,
+    111u8,
+    107u8,
+    101u8,
+    45u8,
+    112u8,
+    114u8,
+    111u8,
+    99u8,
+    101u8,
+    115u8,
+    115u8,
+    ]
+    var argument:[UInt8;
+    15] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    ]
+    let length: UIntSize = process_arg_read(1usize,
+    argument)
+    if length != 15usize {
+        return false
+    }
+    var index: UIntSize = 0usize
+    while index<15usize {
+        if argument[index] != value[index] {
+            return false
+        }
+        index += 1usize
+    }
+    return true
+}
+fn write_settings(temporary_path: read String, path: read String, directory_path: read String) -> Bool {
+    var status: Int32 = 0i32
+    let created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(2048usize)
+    match created {
+        Error(error) => {
+            status = error
+        }
+        Ok(snapshot) => {
+            if ! buffer_resize(snapshot,
+            2048usize) {
+                status = 1i32
+            }
+            if status == 0i32 {
+                var length:[UIntSize;
+                1] =[0usize]
+                if ! write_json_exact_buffer(snapshot,
+                2048usize,
+                length) {
+                    status = 2i32
+                } else {
+                    if ! dir_create(directory_path) {
+                        if ! exists(directory_path) {
+                            status = 3i32
+                        }
+                    }
+                    if status == 0i32 {
+                        if ! write_atomic_durable(temporary_path,
+                        path,
+                        directory_path,
+                        buffer_slice(snapshot,
+                        0usize,
+                        length[0]),
+                        length[0]) {
+                            status = 4i32
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return status == 0i32
+}
+fn save_settings(path: read String) -> Bool {
+    return write_settings("config/jadren-site-server-control.tmp",
+    path,
+    "config")
+}
+fn save_autostart_manifest() -> Bool {
+    return write_settings("C:/ProgramData/Jadren/config/server-autostart.tmp",
+    "C:/ProgramData/Jadren/config/server-autostart.json",
+    "C:/ProgramData/Jadren/config")
+}
+// The launcher starts from the repository/installation root. The parent
+// fallback keeps a manually started copy from target/ compatible with the
+// same persisted settings file.
+fn load_saved_settings() -> Bool {
+    if exists("config/jadren-site-server-control.json") {
+        return load("config/jadren-site-server-control.json")
+    }
+    if exists("../config/jadren-site-server-control.json") {
+        return load("../config/jadren-site-server-control.json")
+    }
+    return false
+}
+// Route editor contract: hostnames are allowlisted metadata for Cloudflare
+// ingress and loopback HTTP services. PostgreSQL is deliberately not a route
+// kind; it remains an internal dependency of the Node API on port 5432.
+fn route_service_kind(value: read Slice<UInt8>, length: UIntSize) -> Int32 {
+    if length == 0usize {
+        return 0i32
+    }
+    if value[0usize] == 47u8 {
+        return 1i32
+    }
+    if length >= 3usize {
+        if value[1usize] == 58u8 {
+            if value[2usize] == 47u8 {
+                return 1i32
+            }
+        }
+    }
+    var loopback_v4:[UInt8;
+    17] =[104u8,
+    116u8,
+    116u8,
+    112u8,
+    58u8,
+    47u8,
+    47u8,
+    49u8,
+    50u8,
+    55u8,
+    46u8,
+    48u8,
+    46u8,
+    48u8,
+    46u8,
+    49u8,
+    58u8]
+    var loopback_name:[UInt8;
+    17] =[104u8,
+    116u8,
+    116u8,
+    112u8,
+    58u8,
+    47u8,
+    47u8,
+    108u8,
+    111u8,
+    99u8,
+    97u8,
+    108u8,
+    104u8,
+    111u8,
+    115u8,
+    116u8,
+    58u8]
+    if route_prefix(value,
+    length,
+    loopback_v4,
+    17usize) {
+        return 2i32
+    }
+    if route_prefix(value,
+    length,
+    loopback_name,
+    17usize) {
+        return 2i32
+    }
+    return 0i32
+}
+fn route_host_valid(value: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length == 0usize {
+        return false
+    }
+    if length>253usize {
+        return false
+    }
+    var label_length: UIntSize = 0usize
+    var index: UIntSize = 0usize
+    while index<length {
+        let character: UInt8 = value[index]
+        if character == 46u8 {
+            if label_length == 0usize {
+                return false
+            }
+            if value[index - 1usize] == 45u8 {
+                return false
+            }
+            label_length = 0usize
+        } else {
+            var alphanumeric: Bool = false
+            if character >= 48u8 {
+                if character <= 57u8 {
+                    alphanumeric = true
+                }
+            }
+            if character >= 65u8 {
+                if character <= 90u8 {
+                    alphanumeric = true
+                }
+            }
+            if character >= 97u8 {
+                if character <= 122u8 {
+                    alphanumeric = true
+                }
+            }
+            if ! alphanumeric {
+                if character != 45u8 {
+                    return false
+                }
+            }
+            if label_length == 0usize {
+                if character == 45u8 {
+                    return false
+                }
+            }
+            label_length = label_length + 1usize
+            if label_length>63usize {
+                return false
+            }
+        }
+        index = index + 1usize
+    }
+    if label_length == 0usize {
+        return false
+    }
+    if value[length - 1usize] == 45u8 {
+        return false
+    }
+    return true
+}
+fn route_prefix(value: read Slice<UInt8>, length: UIntSize, prefix: read Slice<UInt8>, prefix_length: UIntSize) -> Bool {
+    if length<prefix_length {
+        return false
+    }
+    var index: UIntSize = 0usize
+    while index<prefix_length {
+        if value[index] != prefix[index] {
+            return false
+        }
+        index = index + 1usize
+    }
+    return true
+}
+fn route_contains_5432(value: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length<4usize {
+        return false
+    }
+    var index: UIntSize = 0usize
+    while index + 3usize<length {
+        if value[index] == 53u8 {
+            if value[index + 1usize] == 52u8 {
+                if value[index + 2usize] == 51u8 {
+                    if value[index + 3usize] == 50u8 {
+                        return true
+                    }
+                }
+            }
+        }
+        index = index + 1usize
+    }
+    return false
+}
+fn route_target_valid(value: read Slice<UInt8>, length: UIntSize, kind: Int32) -> Bool {
+    if length == 0usize {
+        return false
+    }
+    if length>128usize {
+        return false
+    }
+    var index: UIntSize = 0usize
+    while index<length {
+        let character: UInt8 = value[index]
+        if character == 34u8 {
+            return false
+        }
+        if character == 92u8 {
+            return false
+        }
+        if character == 10u8 {
+            return false
+        }
+        if character == 13u8 {
+            return false
+        }
+        index = index + 1usize
+    }
+    if kind == 1i32 {
+        if value[0usize] == 47u8 {
+            return true
+        }
+        if length<3usize {
+            return false
+        }
+        if value[1usize] == 58u8 {
+            return value[2usize] == 47u8
+        }
+        return false
+    }
+    var loopback_v4:[UInt8;
+    18] =[104u8,
+    116u8,
+    116u8,
+    112u8,
+    58u8,
+    47u8,
+    47u8,
+    49u8,
+    50u8,
+    55u8,
+    46u8,
+    48u8,
+    46u8,
+    48u8,
+    46u8,
+    49u8,
+    58u8,
+    0u8]
+    var loopback_name:[UInt8;
+    17] =[104u8,
+    116u8,
+    116u8,
+    112u8,
+    58u8,
+    47u8,
+    47u8,
+    108u8,
+    111u8,
+    99u8,
+    97u8,
+    108u8,
+    104u8,
+    111u8,
+    115u8,
+    116u8,
+    58u8]
+    var prefix_length: UIntSize = 0usize
+    if route_prefix(value,
+    length,
+    loopback_v4,
+    17usize) {
+        prefix_length = 17usize
+    } else if route_prefix(value,
+    length,
+    loopback_name,
+    17usize) {
+        prefix_length = 17usize
+    } else {
+        return false
+    }
+    if route_contains_5432(value,
+    length) {
+        return false
+    }
+    if length <= prefix_length {
+        return false
+    }
+    index = prefix_length
+    var digits: UIntSize = 0usize
+    while index<length {
+        if value[index] < 48u8 {
+            return false
+        }
+        if value[index]>57u8 {
+            return false
+        }
+        digits = digits + 1usize
+        if digits>5usize {
+            return false
+        }
+        index = index + 1usize
+    }
+    return digits>0usize
+}
+fn validate_route_values(host: read Slice<UInt8>, host_length: UIntSize, target: read Slice<UInt8>, target_length: UIntSize) -> Bool {
+    if ! route_host_valid(host,
+    host_length) {
+        return false
+    }
+    let kind: Int32 = route_service_kind(target,
+    target_length)
+    if kind == 0i32 {
+        return false
+    }
+    return route_target_valid(target,
+    target_length,
+    kind)
+}
+fn validate_route(host_id: Int32, target_id: Int32) -> Bool {
+    var host:[UInt8;
+    64] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var target:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var host_length:[UIntSize;
+    1] =[0usize]
+    var target_length:[UIntSize;
+    1] =[0usize]
+    if ! read_text_exact(host_id,
+    host,
+    host_length) {
+        return false
+    }
+    if ! read_text_exact(target_id,
+    target,
+    target_length) {
+        return false
+    }
+    return validate_route_values(host,
+    host_length[0usize],
+    target,
+    target_length[0usize])
+}
+fn validate_table_route(row: Int32) -> Bool {
+    var host:[UInt8;
+    64] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var target:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var host_length:[UIntSize;
+    1] =[0usize]
+    var target_length:[UIntSize;
+    1] =[0usize]
+    if ! read_cell_exact(0,
+    row,
+    0,
+    host,
+    host_length) {
+        return false
+    }
+    if ! read_cell_exact(0,
+    row,
+    1,
+    target,
+    target_length) {
+        return false
+    }
+    return validate_route_values(host,
+    host_length[0usize],
+    target,
+    target_length[0usize])
+}
+fn prepare_route_table() -> Bool {
+    clear(0)
+    if ! set_column_name(0,
+    0,
+    "hostname") {
+        return false
+    }
+    if ! set_column_name(0,
+    1,
+    "target") {
+        return false
+    }
+    if ! set_column_type(0,
+    0,
+    0) {
+        return false
+    }
+    if ! set_column_type(0,
+    1,
+    0) {
+        return false
+    }
+    if exists("C:/ProgramData/Jadren/config/server-routes-table.json") {
+        if ! import_json_file(0,
+        "C:/ProgramData/Jadren/config/server-routes-table.json") {
+            return false
+        }
+        if ! validate_routes() {
+            return false
+        }
+        return row_count(0)>0
+    } else if exists("config/server-routes-table.json") {
+        if ! import_json_file(0,
+        "config/server-routes-table.json") {
+            return false
+        }
+        if ! validate_routes() {
+            return false
+        }
+        return row_count(0)>0
+    }
+    return seed_default_routes()
+}
+fn seed_default_routes() -> Bool {
+    clear(0)
+    if ! append_row(0) {
+        return false
+    }
+    if ! set_cell(0,
+    0,
+    0,
+    "site.example.com") {
+        return false
+    }
+    if ! set_cell(0,
+    0,
+    1,
+    "C:/Jadren/site") {
+        return false
+    }
+    if ! append_row(0) {
+        return false
+    }
+    if ! set_cell(0,
+    1,
+    0,
+    "web.example.com") {
+        return false
+    }
+    if ! set_cell(0,
+    1,
+    1,
+    "http://127.0.0.1:8090") {
+        return false
+    }
+    if ! append_row(0) {
+        return false
+    }
+    if ! set_cell(0,
+    2,
+    0,
+    "api.example.com") {
+        return false
+    }
+    return set_cell(0,
+    2,
+    1,
+    "http://127.0.0.1:8090")
+}
+fn append_route_bytes(output: write Buffer<UInt8>, offset: UIntSize, value: read Slice<UInt8>, length: UIntSize) -> UIntSize {
+    var index: UIntSize = 0usize
+    var current: UIntSize = offset
+    while index<length {
+        if current >= buffer_length(output) {
+            return 0usize
+        }
+        output[current] = value[index]
+        current = current + 1usize
+        index = index + 1usize
+    }
+    return current
+}
+fn append_route_record(output: write Buffer<UInt8>, offset: UIntSize, row: Int32, comma: Bool) -> UIntSize {
+    var host:[UInt8;
+    64] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var target:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var host_length:[UIntSize;
+    1] =[0usize]
+    var target_length:[UIntSize;
+    1] =[0usize]
+    if ! read_cell_exact(0,
+    row,
+    0,
+    host,
+    host_length) {
+        return 0usize
+    }
+    if ! read_cell_exact(0,
+    row,
+    1,
+    target,
+    target_length) {
+        return 0usize
+    }
+    let kind: Int32 = route_service_kind(target,
+    target_length[0usize])
+    if kind == 0i32 {
+        return 0usize
+    }
+    var current: UIntSize = offset
+    let capacity: UIntSize = buffer_length(output)
+    if comma {
+        current = string_builder_append(",",
+        buffer_slice_write(output,
+        0usize,
+        capacity),
+        current)
+    }
+    current = string_builder_append("{\"hostname\":\"",
+    buffer_slice_write(output,
+    0usize,
+    capacity),
+    current)
+    current = append_route_bytes(output,
+    current,
+    host,
+    host_length[0usize])
+    if kind == 1i32 {
+        current = string_builder_append("\",\"kind\":\"static\",\"root\":\"",
+        buffer_slice_write(output,
+        0usize,
+        capacity),
+        current)
+    } else {
+        current = string_builder_append("\",\"kind\":\"http-proxy\",\"upstream\":\"",
+        buffer_slice_write(output,
+        0usize,
+        capacity),
+        current)
+    }
+    current = append_route_bytes(output,
+    current,
+    target,
+    target_length[0usize])
+    current = string_builder_append("\"}",
+    buffer_slice_write(output,
+    0usize,
+    capacity),
+    current)
+    return current
+}
+fn validate_routes() -> Bool {
+    let count: Int32 = row_count(0)
+    if count <= 0i32 {
+        return false
+    }
+    if count>64i32 {
+        return false
+    }
+    var row: Int32 = 0i32
+    while row<count {
+        if ! validate_table_route(row) {
+            return false
+        }
+        row = row + 1i32
+    }
+    return true
+}
+fn save_route_config(temporary_path: read String, target_path: read String, directory_path: read String) -> Bool {
+    if ! validate_routes() {
+        return false
+    }
+    if ! dir_create(directory_path) {
+        if ! exists(directory_path) {
+            return false
+        }
+    }
+    var status: Int32 = 0i32
+    let created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(32768usize)
+    match created {
+        Error(error) => {
+            status = error
+        }
+        Ok(document) => {
+            if ! buffer_resize(document,
+            32768usize) {
+                status = 1i32
+            }
+            if status == 0i32 {
+                let capacity: UIntSize = buffer_length(document)
+                var length: UIntSize = string_builder_append("{\"schema\":\"jadren-server-routes-0.1\",\"listen\":{\"bind\":\"127.0.0.1\",\"port\":8080},\"reject_unknown_host\":true,\"routes\":[",
+                buffer_slice_write(document,
+                0usize,
+                capacity),
+                0usize)
+                var row: Int32 = 0i32
+                let route_count: Int32 = row_count(0)
+                while row<route_count {
+                    length = append_route_record(document,
+                    length,
+                    row,
+                    row>0i32)
+                    if length == 0usize {
+                        status = 2i32
+                    }
+                    if status != 0i32 {
+                        break
+                    }
+                    row = row + 1i32
+                }
+                if status == 0i32 {
+                    length = string_builder_append("]}\n",
+                    buffer_slice_write(document,
+                    0usize,
+                    capacity),
+                    length)
+                    if ! write_atomic_durable(temporary_path,
+                    target_path,
+                    directory_path,
+                    buffer_slice(document,
+                    0usize,
+                    length),
+                    length) {
+                        status = 3i32
+                    }
+                }
+            }
+        }
+    }
+    return status == 0i32
+}
+fn host_kind() -> Int32 {
+    var host:[UInt8;
+    64] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    ]
+    var length:[UIntSize;
+    1] =[0usize]
+    if ! read_text_exact(10,
+    host,
+    length) {
+        return 0
+    }
+    if length[0] == 9usize {
+        var local: Bool = true
+        if host[0] != 108u8 {
+            local = false
+        }
+        if host[1] != 111u8 {
+            local = false
+        }
+        if host[2] != 99u8 {
+            local = false
+        }
+        if host[3] != 97u8 {
+            local = false
+        }
+        if host[4] != 108u8 {
+            local = false
+        }
+        if host[5] != 104u8 {
+            local = false
+        }
+        if host[6] != 111u8 {
+            local = false
+        }
+        if host[7] != 115u8 {
+            local = false
+        }
+        if host[8] != 116u8 {
+            local = false
+        }
+        if local {
+            return 1
+        }
+        var numeric: Bool = true
+        if host[0] != 49u8 {
+            numeric = false
+        }
+        if host[1] != 50u8 {
+            numeric = false
+        }
+        if host[2] != 55u8 {
+            numeric = false
+        }
+        if host[3] != 46u8 {
+            numeric = false
+        }
+        if host[4] != 48u8 {
+            numeric = false
+        }
+        if host[5] != 46u8 {
+            numeric = false
+        }
+        if host[6] != 48u8 {
+            numeric = false
+        }
+        if host[7] != 46u8 {
+            numeric = false
+        }
+        if host[8] != 49u8 {
+            numeric = false
+        }
+        if numeric {
+            return 2
+        }
+    }
+    return 0
+}
+fn configured_port() -> UInt16 {
+    var value:[UInt8;
+    8] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var length:[UIntSize;
+    1] =[0usize]
+    if ! read_text_exact(11,
+    value,
+    length) {
+        return 0u16
+    }
+    if length[0] == 0usize {
+        return 0u16
+    }
+    if length[0]>5usize {
+        return 0u16
+    }
+    var number: UInt32 = 0u32
+    var index: UIntSize = 0usize
+    while index<length[0] {
+        if value[index] < 48u8 {
+            return 0u16
+        }
+        if value[index]>57u8 {
+            return 0u16
+        }
+        number = number * 10u32 +(value[index] - 48u8) as UInt32
+        if number>65535u32 {
+            return 0u16
+        }
+        index += 1usize
+    }
+    if number == 0u32 {
+        return 0u16
+    }
+    return number as UInt16
+}
+fn local_health_check() -> Int32 {
+    let kind: Int32 = host_kind()
+    let port: UInt16 = configured_port()
+    if kind == 0 {
+        return - 20
+    }
+    if port == 0u16 {
+        return - 20
+    }
+    var outcome: Int32 = 0i32
+    let request_created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(512usize)
+    match request_created {
+        Error(error) => {
+            outcome = error
+        }
+        Ok(request) => {
+            if ! buffer_resize(request,
+            512usize) {
+                outcome = - 21
+            }
+            if outcome == 0i32 {
+                let response_created: Result<Buffer<UInt8>,
+                Int32> = buffer_create(2048usize)
+                match response_created {
+                    Error(error) => {
+                        outcome = error
+                    }
+                    Ok(response) => {
+                        if ! buffer_resize(response,
+                        2048usize) {
+                            outcome = - 22
+                        }
+                        if outcome == 0i32 {
+                            let body_created: Result<Buffer<UInt8>,
+                            Int32> = buffer_create(256usize)
+                            match body_created {
+                                Error(error) => {
+                                    outcome = error
+                                }
+                                Ok(body) => {
+                                    if ! buffer_resize(body,
+                                    256usize) {
+                                        outcome = - 23
+                                    } else if kind == 1 {
+                                        outcome = probe_once_buffer("localhost",
+                                        "localhost",
+                                        port,
+                                        1200u32,
+                                        request,
+                                        response,
+                                        body)
+                                    } else {
+                                        outcome = probe_once_buffer("127.0.0.1",
+                                        "127.0.0.1",
+                                        port,
+                                        1200u32,
+                                        request,
+                                        response,
+                                        body)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return outcome
+}
+fn append_prefix(output: write Buffer<UInt8>, input: read Slice<UInt8>, length: UIntSize) -> Bool {
+    var index: UIntSize = 0usize
+    while index<length {
+        if ! buffer_append(output,
+        input[index]) {
+            return false
+        }
+        index += 1usize
+    }
+    return true
+}
+fn contains_buffer_marker(input: read Slice<UInt8>, input_length: UIntSize, marker: read Slice<UInt8>, marker_length: UIntSize,) -> Bool {
+    if marker_length == 0usize {
+        return true
+    }
+    if marker_length>input_length {
+        return false
+    }
+    var start: UIntSize = 0usize
+    while start + marker_length <= input_length {
+        var index: UIntSize = 0usize
+        var matched: Bool = true
+        while index<marker_length {
+            if input[start + index] != marker[index] {
+                matched = false
+                break
+            }
+            index += 1usize
+        }
+        if matched {
+            return true
+        }
+        start += 1usize
+    }
+    return false
+}
+fn verify_process_webroot() -> Bool {
+    var outcome: Int32 = - 1i32
+    let request_created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(512usize)
+    match request_created {
+        Error(error) => {
+            outcome = error
+        }
+        Ok(request) => {
+            if buffer_resize(request,
+            0usize) {
+                let response_created: Result<Buffer<UInt8>,
+                Int32> = buffer_create(2048usize)
+                match response_created {
+                    Error(error) => {
+                        outcome = error
+                    }
+                    Ok(response) => {
+                        if buffer_resize(response,
+                        2048usize) {
+                            let body_created: Result<Buffer<UInt8>,
+                            Int32> = buffer_create(2048usize)
+                            match body_created {
+                                Error(error) => {
+                                    outcome = error
+                                }
+                                Ok(body) => {
+                                    if buffer_resize(body,
+                                    2048usize) {
+                                        var line:[UInt8;
+                                        19] =[71u8,
+                                        69u8,
+                                        84u8,
+                                        32u8,
+                                        47u8,
+                                        32u8,
+                                        72u8,
+                                        84u8,
+                                        84u8,
+                                        80u8,
+                                        47u8,
+                                        49u8,
+                                        46u8,
+                                        49u8,
+                                        13u8,
+                                        10u8,
+                                        0u8,
+                                        0u8,
+                                        0u8,
+                                        ]
+                                        var host:[UInt8;
+                                        17] =[72u8,
+                                        111u8,
+                                        115u8,
+                                        116u8,
+                                        58u8,
+                                        32u8,
+                                        108u8,
+                                        111u8,
+                                        99u8,
+                                        97u8,
+                                        108u8,
+                                        104u8,
+                                        111u8,
+                                        115u8,
+                                        116u8,
+                                        13u8,
+                                        10u8,
+                                        ]
+                                        var close_line:[UInt8;
+                                        21] =[67u8,
+                                        111u8,
+                                        110u8,
+                                        110u8,
+                                        101u8,
+                                        99u8,
+                                        116u8,
+                                        105u8,
+                                        111u8,
+                                        110u8,
+                                        58u8,
+                                        32u8,
+                                        99u8,
+                                        108u8,
+                                        111u8,
+                                        115u8,
+                                        101u8,
+                                        13u8,
+                                        10u8,
+                                        13u8,
+                                        10u8,
+                                        ]
+                                        if ! append_prefix(request,
+                                        line,
+                                        16usize) {
+                                            outcome = - 20i32
+                                        } else if ! append_prefix(request,
+                                        host,
+                                        17usize) {
+                                            outcome = - 21i32
+                                        } else if ! append_prefix(request,
+                                        close_line,
+                                        21usize) {
+                                            outcome = - 22i32
+                                        } else {
+                                            let socket: UIntSize = connect_dns("127.0.0.1",
+                                            18081u16)
+                                            if socket == 0usize {
+                                                outcome = - 2i32
+                                            } else if ! set_timeout(socket,
+                                            1200u32) {
+                                                close_socket(socket)
+                                                outcome = - 3i32
+                                            } else {
+                                                let request_length: UIntSize = buffer_length(request)
+                                                let request_sent: UIntSize = send_buffer(socket,
+                                                request)
+                                                if request_sent != request_length {
+                                                    close_socket(socket)
+                                                    outcome = - 4i32
+                                                } else {
+                                                    let header_received: UIntSize = receive_buffer(socket,
+                                                    response)
+                                                    if header_received == 0usize {
+                                                        close_socket(socket)
+                                                        outcome = - 5i32
+                                                    } else if response_status_prefix(buffer_slice(response,
+                                                    0usize,
+                                                    header_received),
+                                                    header_received) != 200u16 {
+                                                        close_socket(socket)
+                                                        outcome = - 6i32
+                                                    } else {
+                                                        let body_received: UIntSize = receive_buffer(socket,
+                                                        body)
+                                                        if ! close_socket(socket) {
+                                                            outcome = - 7i32
+                                                        } else {
+                                                            var marker:[UInt8;
+                                                            14] =[119u8,
+                                                            101u8,
+                                                            98u8,
+                                                            114u8,
+                                                            111u8,
+                                                            111u8,
+                                                            116u8,
+                                                            45u8,
+                                                            109u8,
+                                                            97u8,
+                                                            114u8,
+                                                            107u8,
+                                                            101u8,
+                                                            114u8,
+                                                            ]
+                                                            if contains_buffer_marker(buffer_slice(response,
+                                                            0usize,
+                                                            header_received),
+                                                            header_received,
+                                                            marker,
+                                                            14usize) {
+                                                                outcome = 0i32
+                                                            } else if contains_buffer_marker(buffer_slice(body,
+                                                            0usize,
+                                                            body_received),
+                                                            body_received,
+                                                            marker,
+                                                            14usize) {
+                                                                outcome = 0i32
+                                                            } else {
+                                                                outcome = - 30i32
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        outcome = - 23i32
+                                    }
+                                }
+                            }
+                        } else {
+                            outcome = - 24i32
+                        }
+                    }
+                }
+            } else {
+                outcome = - 25i32
+            }
+        }
+    }
+    return outcome == 0i32
+}
+fn admin_status_request() -> Int32 {
+    let kind: Int32 = host_kind()
+    let port: UInt16 = configured_port()
+    if kind == 0 {
+        return - 20
+    }
+    if port == 0u16 {
+        return - 20
+    }
+    var token:[UInt8;
+    64] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    ]
+    var token_length:[UIntSize;
+    1] =[0usize]
+    if ! read_text_exact(15,
+    token,
+    token_length) {
+        return - 24
+    }
+    if token_length[0] == 0usize {
+        return - 24
+    }
+    if token_length[0]>64usize {
+        return - 25
+    }
+    var outcome: Int32 = 0i32
+    let request_created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(512usize)
+    match request_created {
+        Error(error) => {
+            outcome = error
+        }
+        Ok(request) => {
+            if ! buffer_resize(request,
+            512usize) {
+                outcome = - 26
+            }
+            var line:[UInt8;
+            36] =[71u8,
+            69u8,
+            84u8,
+            32u8,
+            47u8,
+            97u8,
+            100u8,
+            109u8,
+            105u8,
+            110u8,
+            47u8,
+            117u8,
+            112u8,
+            100u8,
+            97u8,
+            116u8,
+            101u8,
+            47u8,
+            115u8,
+            116u8,
+            97u8,
+            116u8,
+            117u8,
+            115u8,
+            32u8,
+            72u8,
+            84u8,
+            84u8,
+            80u8,
+            47u8,
+            49u8,
+            46u8,
+            49u8,
+            13u8,
+            10u8,
+            0u8,
+            ]
+            if outcome == 0i32 {
+                if ! append_prefix(request,
+                line,
+                35usize) {
+                    outcome = - 27
+                }
+            }
+            var host_line:[UInt8;
+            18] =[72u8,
+            111u8,
+            115u8,
+            116u8,
+            58u8,
+            32u8,
+            108u8,
+            111u8,
+            99u8,
+            97u8,
+            108u8,
+            104u8,
+            111u8,
+            115u8,
+            116u8,
+            13u8,
+            10u8,
+            0u8,
+            ]
+            if kind == 2 {
+                host_line[6] = 49u8
+                host_line[7] = 50u8
+                host_line[8] = 55u8
+                host_line[9] = 46u8
+                host_line[10] = 48u8
+                host_line[11] = 46u8
+                host_line[12] = 48u8
+                host_line[13] = 46u8
+                host_line[14] = 49u8
+            }
+            if outcome == 0i32 {
+                if ! append_prefix(request,
+                host_line,
+                17usize) {
+                    outcome = - 28
+                }
+            }
+            var authorization:[UInt8;
+            22] =[65u8,
+            117u8,
+            116u8,
+            104u8,
+            111u8,
+            114u8,
+            105u8,
+            122u8,
+            97u8,
+            116u8,
+            105u8,
+            111u8,
+            110u8,
+            58u8,
+            32u8,
+            66u8,
+            101u8,
+            97u8,
+            114u8,
+            101u8,
+            114u8,
+            32u8,
+            ]
+            if outcome == 0i32 {
+                if ! append_prefix(request,
+                authorization,
+                22usize) {
+                    outcome = - 29
+                }
+            }
+            if outcome == 0i32 {
+                if ! append_prefix(request,
+                token,
+                token_length[0]) {
+                    outcome = - 30
+                }
+            }
+            var suffix:[UInt8;
+            40] =[13u8,
+            10u8,
+            67u8,
+            111u8,
+            110u8,
+            110u8,
+            101u8,
+            99u8,
+            116u8,
+            105u8,
+            111u8,
+            110u8,
+            58u8,
+            32u8,
+            99u8,
+            108u8,
+            111u8,
+            115u8,
+            101u8,
+            13u8,
+            10u8,
+            67u8,
+            111u8,
+            110u8,
+            116u8,
+            101u8,
+            110u8,
+            116u8,
+            45u8,
+            76u8,
+            101u8,
+            110u8,
+            103u8,
+            116u8,
+            104u8,
+            58u8,
+            32u8,
+            48u8,
+            13u8,
+            10u8,
+            ]
+            if outcome == 0i32 {
+                if ! append_prefix(request,
+                suffix,
+                40usize) {
+                    outcome = - 31
+                }
+            }
+            if outcome == 0i32 {
+                if ! buffer_append(request,
+                13u8) {
+                    outcome = - 32
+                }
+            }
+            if outcome == 0i32 {
+                if ! buffer_append(request,
+                10u8) {
+                    outcome = - 32
+                }
+            }
+            if outcome == 0i32 {
+                let socket: UIntSize = if kind == 1 {
+                    connect_dns("localhost",
+                    port)
+                } else {
+                    connect_dns("127.0.0.1",
+                    port)
+                }
+                if socket == 0usize {
+                    outcome = - 33
+                } else if ! set_timeout(socket,
+                1200u32) {
+                    close_socket(socket)
+                    outcome = - 34
+                } else {
+                    let request_length: UIntSize = buffer_length(request)
+                    if send_buffer(socket,
+                    request) != request_length {
+                        close_socket(socket)
+                        outcome = - 35
+                    } else {
+                        let response_created: Result<Buffer<UInt8>,
+                        Int32> = buffer_create(2048usize)
+                        match response_created {
+                            Error(error) => {
+                                close_socket(socket);
+                                outcome = error
+                            }
+                            Ok(response) => {
+                                if ! buffer_resize(response,
+                                2048usize) {
+                                    close_socket(socket)
+                                    outcome = - 36
+                                } else {
+                                    let received: UIntSize = receive_buffer(socket,
+                                    response)
+                                    if ! close_socket(socket) {
+                                        outcome = - 37
+                                    } else if received == 0usize {
+                                        outcome = - 38
+                                    } else {
+                                        outcome = response_status_prefix(buffer_slice(response,
+                                        0usize,
+                                        received),
+                                        received) as Int32
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return outcome
+}
+fn verify_smoke() -> Bool {
+    if ! app_state_set_text("status",
+    "Smoke pripravena") {
+        return false
+    }
+    if ! prepare_route_table() {
+        return false
+    }
+    if ! validate_routes() {
+        return false
+    }
+    if ! set_cell(0,
+    1,
+    1,
+    "http://127.0.0.1:5432") {
+        return false
+    }
+    if validate_routes() {
+        return false
+    }
+    if ! set_cell(0,
+    1,
+    1,
+    "http://127.0.0.1:8090") {
+        return false
+    }
+    if ! validate_routes() {
+        return false
+    }
+    if ! append_row(0) {
+        return false
+    }
+    if ! set_cell(0,
+    3,
+    0,
+    "admin.example.com") {
+        return false
+    }
+    if ! set_cell(0,
+    3,
+    1,
+    "http://localhost:8091") {
+        return false
+    }
+    if row_count(0) != 4i32 {
+        return false
+    }
+    if ! validate_routes() {
+        return false
+    }
+    if ! remove_row(0,
+    3) {
+        return false
+    }
+    if row_count(0) != 3i32 {
+        return false
+    }
+    ui_set_input_text(27,
+    "admin.example.com")
+    ui_set_input_text(28,
+    "http://localhost:8091")
+    if on_click(29) != 29 {
+        return false
+    }
+    if row_count(0) != 4i32 {
+        return false
+    }
+    ui_set_input_text(27,
+    "control.example.com")
+    ui_set_input_text(28,
+    "http://127.0.0.1:8092")
+    if on_click(30) != 30 {
+        return false
+    }
+    if ! validate_routes() {
+        return false
+    }
+    if on_click(31) != 31 {
+        return false
+    }
+    if row_count(0) != 3i32 {
+        return false
+    }
+    if ! save_settings("target/jadren-site-server-control-smoke.json") {
+        return false
+    }
+    if ! exists("target/jadren-site-server-control-smoke.json") {
+        return false
+    }
+    if ! delete("target/jadren-site-server-control-smoke.json") {
+        return false
+    }
+    if ! write_settings("target/server-autostart-smoke.tmp",
+    "target/server-autostart-smoke.json",
+    "target") {
+        return false
+    }
+    if ! exists("target/server-autostart-smoke.json") {
+        return false
+    }
+    if ! delete("target/server-autostart-smoke.json") {
+        return false
+    }
+    if ! save_route_config("target/jadren-server-routes-smoke.tmp",
+    "target/jadren-server-routes-smoke.json",
+    "target") {
+        return false
+    }
+    if ! exists("target/jadren-server-routes-smoke.json") {
+        return false
+    }
+    if ! delete("target/jadren-server-routes-smoke.json") {
+        return false
+    }
+    if ! export_json_file_durable_directory(0,
+    "target/jadren-server-routes-table-smoke.json",
+    "target/jadren-server-routes-table-smoke.tmp",
+    "target") {
+        return false
+    }
+    if ! exists("target/jadren-server-routes-table-smoke.json") {
+        return false
+    }
+    if ! delete("target/jadren-server-routes-table-smoke.json") {
+        return false
+    }
+    return ! exists("target/jadren-site-server-control-smoke.json")
+}
+fn verify_http_smoke() -> Bool {
+    ui_set_input_text(10,
+    "127.0.0.1")
+    ui_set_input_text(11,
+    "18080")
+    ui_set_input_text(15,
+    "smoke-token")
+    if on_click(1) != 1 {
+        return false
+    }
+    if on_click(2) != 2 {
+        return false
+    }
+    if local_health_check() != 200i32 {
+        return false
+    }
+    return admin_status_request() == 200i32
+}
+fn verify_process_smoke() -> Bool {
+    ui_set_input_text(13,
+    "target/jadren-site-server-control-webroot")
+    ui_set_input_text(14,
+    "target/jadrenserver.exe")
+    ui_set_input_text(11,
+    "18081")
+    if on_click(4) != 4 {
+        return false
+    }
+    let handle: UInt64 = app_state_get_uint("server_handle")
+    if handle == 0u64 {
+        return false
+    }
+    if ! is_running(handle) {
+        stop(handle,
+        2000u32)
+        return false
+    }
+    if ! verify_process_webroot() {
+        stop(handle,
+        2000u32)
+        return false
+    }
+    var webroot:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    ]
+    var webroot_length:[UIntSize;
+    1] =[0usize]
+    if ! read_text_exact(13,
+    webroot,
+    webroot_length) {
+        stop(handle,
+        2000u32)
+        return false
+    }
+    let restarted: UInt64 = restart(handle,
+    18081u16,
+    webroot,
+    webroot_length[0],
+    2000u32)
+    if restarted == 0u64 {
+        return false
+    }
+    if ! is_running(restarted) {
+        let cleanup_succeeded: Bool = stop(restarted,
+        2000u32)
+        if ! cleanup_succeeded {
+            return false
+        }
+        return false
+    }
+    if ! app_state_set_uint("server_handle",
+    restarted) {
+        stop(restarted,
+        2000u32)
+        return false
+    }
+    if ! verify_process_webroot() {
+        stop(restarted,
+        2000u32)
+        return false
+    }
+    if on_click(5) != 5 {
+        return false
+    }
+    return app_state_get_uint("server_handle") == 0u64
+}
+fn choose_webroot() -> Bool {
+    var path:[UInt8;
+    64] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    ]
+    var length:[UIntSize;
+    1] =[0usize]
+    if ! directory_open_exact("Vyberte webroot",
+    path,
+    length) {
+        return false
+    }
+    if length[0] == 0usize {
+        return false
+    }
+    return set_value_exact(13,
+    path,
+    length[0])
+}
+fn choose_server_executable() -> Bool {
+    var path:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    ]
+    var length:[UIntSize;
+    1] =[0usize]
+    if ! file_open_exact("Vyberte jadrenserver.exe",
+    path,
+    length) {
+        return false
+    }
+    if length[0] == 0usize {
+        return false
+    }
+    return set_value_exact(14,
+    path,
+    length[0])
+}
+fn reset_server_profile() -> Bool {
+    if ! app_state_set_text("host",
+    "127.0.0.1") {
+        return false
+    }
+    if ! app_state_set_text("port",
+    "8080") {
+        return false
+    }
+    if ! app_state_set_text("bind",
+    "127.0.0.1") {
+        return false
+    }
+    if ! app_state_set_text("webroot",
+    "C:/Jadren/site") {
+        return false
+    }
+    if ! app_state_set_text("server_executable",
+    "C:/Jadren/site/jadrenserver.exe") {
+        return false
+    }
+    if ! app_state_set_text("route1_host",
+    "site.example.com") {
+        return false
+    }
+    if ! app_state_set_text("route1_target",
+    "C:/Jadren/site") {
+        return false
+    }
+    if ! app_state_set_text("route2_host",
+    "web.example.com") {
+        return false
+    }
+    if ! app_state_set_text("route2_target",
+    "http://127.0.0.1:8090") {
+        return false
+    }
+    if ! app_state_set_text("route3_host",
+    "api.example.com") {
+        return false
+    }
+    if ! app_state_set_text("route3_target",
+    "http://127.0.0.1:8090") {
+        return false
+    }
+    if ! seed_default_routes() {
+        return false
+    }
+    let node: Int32 = route_table_node()
+    if node>0i32 {
+        if ! refresh_route_table() {
+            return false
+        }
+        if ! route_table_select(0i32) {
+            return false
+        }
+    }
+    ui_set_input_text(10,
+    "127.0.0.1")
+    ui_set_input_text(11,
+    "8080")
+    ui_set_input_text(12,
+    "127.0.0.1")
+    ui_set_input_text(13,
+    "C:/Jadren/site")
+    ui_set_input_text(14,
+    "C:/Jadren/site/jadrenserver.exe")
+    return true
+}
+fn route_table_node() -> Int32 {
+    let value: Int64 = app_state_get_int("route_table_node")
+    if value <= 0i64 {
+        return 0
+    }
+    return value as Int32
+}
+fn copy_route_row_to_draft(row: Int32) -> Bool {
+    var host:[UInt8;
+    64] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var target:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var host_length:[UIntSize;
+    1] =[0usize]
+    var target_length:[UIntSize;
+    1] =[0usize]
+    if ! read_cell_exact(0,
+    row,
+    0,
+    host,
+    host_length) {
+        return false
+    }
+    if ! read_cell_exact(0,
+    row,
+    1,
+    target,
+    target_length) {
+        return false
+    }
+    if ! set_text_bytes("route_draft_host",
+    host,
+    host_length[0usize]) {
+        return false
+    }
+    return set_text_bytes("route_draft_target",
+    target,
+    target_length[0usize])
+}
+fn read_route_draft(host: write Slice<UInt8>, host_length: write Slice<UIntSize>, target: write Slice<UInt8>, target_length: write Slice<UIntSize>) -> Bool {
+    if ! read_text_exact(27,
+    host,
+    host_length) {
+        return false
+    }
+    return read_text_exact(28,
+    target,
+    target_length)
+}
+fn refresh_route_table() -> Bool {
+    let node: Int32 = route_table_node()
+    if node == 0 {
+        return false
+    }
+    return table_refresh(node)
+}
+fn route_table_select(row: Int32) -> Bool {
+    let node: Int32 = route_table_node()
+    if node == 0 {
+        return false
+    }
+    if ! table_set_selected_row(node,
+    row) {
+        return false
+    }
+    if ! app_state_set_int("route_selected_row",
+    row as Int64) {
+        return false
+    }
+    return copy_route_row_to_draft(row)
+}
+fn apply_route_draft(row: Int32) -> Bool {
+    var host:[UInt8;
+    64] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var target:[UInt8;
+    128] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var host_length:[UIntSize;
+    1] =[0usize]
+    var target_length:[UIntSize;
+    1] =[0usize]
+    if ! read_route_draft(host,
+    host_length,
+    target,
+    target_length) {
+        return false
+    }
+    if ! validate_route_values(host,
+    host_length[0usize],
+    target,
+    target_length[0usize]) {
+        return false
+    }
+    var destination: Int32 = row
+    if destination<0i32 {
+        destination = row_count(0)
+        if ! append_row(0) {
+            return false
+        }
+    }
+    if ! set_cell_bytes_ex(0,
+    destination,
+    0,
+    host,
+    host_length[0usize]) {
+        return false
+    }
+    if ! set_cell_bytes_ex(0,
+    destination,
+    1,
+    target,
+    target_length[0usize]) {
+        return false
+    }
+    if ! refresh_route_table() {
+        return false
+    }
+    return route_table_select(destination)
+}
+fn add_route_from_draft() -> Bool {
+    return apply_route_draft( - 1i32)
+}
+fn update_route_from_draft() -> Bool {
+    return apply_route_draft(table_selected_row(26))
+}
+fn remove_selected_route() -> Bool {
+    let row: Int32 = table_selected_row(26)
+    if row<0i32 {
+        return false
+    }
+    if ! remove_row(0,
+    row) {
+        return false
+    }
+    let count: Int32 = row_count(0)
+    if ! refresh_route_table() {
+        return false
+    }
+    if count == 0i32 {
+        if ! app_state_set_text("route_draft_host",
+        "") {
+            return false
+        }
+        return app_state_set_text("route_draft_target",
+        "")
+    }
+    var selected: Int32 = row
+    if selected >= count {
+        selected = count - 1i32
+    }
+    return route_table_select(selected)
+}
+fn configured_webroot(output: write Slice<UInt8>, length: write Slice<UIntSize>) -> Bool {
+    return read_text_exact(13,
+    output,
+    length)
+}
+fn refresh_process_status() -> Bool {
+    let handle: UInt64 = app_state_get_uint("server_handle")
+    if handle == 0u64 {
+        ui_set_status("Stav procesu: panel nema vlastny spusteny server.")
+        return false
+    }
+    if is_running(handle) {
+        ui_set_status("Stav procesu: server bezi.")
+        return true
+    }
+    if ! app_state_set_uint("server_handle",
+    0u64) {
+        ui_set_status("Stav procesu: proces skoncil, stav sa nepodarilo vycistit.")
+        return false
+    }
+    ui_set_status("Stav procesu: server uz nebezi.")
+    return false
+}
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 26 {
+        let row: Int32 = table_selected_row(26)
+        if row >= 0i32 {
+            if route_table_select(row) {
+                ui_set_status("Vybraná trasa je pripravená na úpravu.")
+            } else {
+                ui_set_status("Vybranú trasu sa nepodarilo načítať.")
+            }
+        }
+    } else if event_id == 29 {
+        if add_route_from_draft() {
+            ui_set_status("Trasa bola pridaná do zoznamu; uložte route config.")
+        } else {
+            ui_set_status("Trasa sa nedala pridať: overte hostname a static/loopback cieľ.")
+        }
+    } else if event_id == 30 {
+        if update_route_from_draft() {
+            ui_set_status("Trasa bola upravená; uložte route config.")
+        } else {
+            ui_set_status("Trasa sa nedala upraviť: vyberte riadok a overte jeho cieľ.")
+        }
+    } else if event_id == 31 {
+        if remove_selected_route() {
+            ui_set_status("Trasa bola odstránená zo zoznamu.")
+        } else {
+            ui_set_status("Vyberte trasu, ktorú chcete odstrániť.")
+        }
+    } else if event_id == 1 {
+        let status: Int32 = local_health_check()
+        if status == 200i32 {
+            ui_set_status("Health-check HTTP: server odpovedal 200 na /healthz.")
+        } else if status == - 20i32 {
+            ui_set_status("Health-check: zadajte localhost alebo 127.0.0.1 a platny port.")
+        } else {
+            ui_set_status("Health-check HTTP: server nie je dostupny alebo vratil chybny kontrakt.")
+        }
+    } else if event_id == 2 {
+        let status: Int32 = admin_status_request()
+        if status == 200i32 {
+            ui_set_status("Administracia HTTP: /admin/update/status odpovedal 200.")
+        } else if status == 403i32 {
+            ui_set_status("Administracia HTTP: bearer token bol odmietnuty (403).")
+        } else if status == 404i32 {
+            ui_set_status("Administracia HTTP: endpoint je skryty (404); skontrolujte token na serveri.")
+        } else if status == - 24i32 {
+            ui_set_status("Administracia: zadajte bearer token; token sa neuklada do konfiguracie.")
+        } else {
+            ui_set_status("Administracia HTTP: volanie sa nepodarilo dokončit.")
+        }
+    } else if event_id == 3 {
+        if save_settings("config/jadren-site-server-control.json") {
+            ui_set_status("Nastavenia boli ulozene atomicky.")
+        } else {
+            ui_set_status("Nastavenia sa nepodarilo ulozit.")
+        }
+    } else if event_id == 4 {
+        let port: UInt16 = configured_port()
+        if port == 0u16 {
+            ui_set_status("Start: zadajte platny port 1-65535.")
+        } else {
+            let existing: UInt64 = app_state_get_uint("server_handle")
+            var already_running: Bool = false
+            if existing != 0u64 {
+                already_running = is_running(existing)
+            }
+            if already_running {
+                ui_set_status("Server uz bezi; druhy proces sa nespusta.")
+            } else {
+                var webroot:[UInt8;
+                64] =[0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                0u8,
+                ]
+                var webroot_length:[UIntSize;
+                1] =[0usize]
+                let configured: Bool = configured_webroot(webroot,
+                webroot_length)
+                if ! configured {
+                    ui_set_status("Start: vyberte existujuci webroot.")
+                    return event_id
+                } else if webroot_length[0] == 0usize {
+                    ui_set_status("Start: vyberte existujuci webroot.")
+                    return event_id
+                }
+                let created: Result<Buffer<UInt8>,
+                Int32> = buffer_create(64usize)
+                match created {
+                    Error(_) => {
+                        ui_set_status("Start zlyhal: nepodarilo sa vytvorit webroot Buffer.")
+                    }
+                    Ok(webroot_buffer) => {
+                        if ! buffer_resize(webroot_buffer,
+                        webroot_length[0]) {
+                            ui_set_status("Start zlyhal: webroot Buffer nema dostatocnu kapacitu.")
+                        } else {
+                            var index: UIntSize = 0usize
+                            while index<webroot_length[0] {
+                                webroot_buffer[index] = webroot[index]
+                                index += 1usize
+                            }
+                            let handle: UInt64 = start_with_webroot_buffer(port,
+                            webroot_buffer,
+                            webroot_length[0])
+                            if handle == 0u64 {
+                                ui_set_status("Start zlyhal: vedla ovladaca musi byt jadrenserver.exe a webroot.")
+                            } else if ! app_state_set_uint("server_handle",
+                            handle) {
+                                stop(handle,
+                                2000u32)
+                                ui_set_status("Start zlyhal pri ulozeni procesu do ovladacieho stavu.")
+                            } else {
+                                ui_set_status("Server bol spusteny nativnym allowlistovanym procesnym ABI.")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else if event_id == 5 {
+        let handle: UInt64 = app_state_get_uint("server_handle")
+        if handle == 0u64 {
+            ui_set_status("Stop: panel nema vlastny spusteny proces.")
+        } else if stop(handle,
+        2000u32) {
+            if ! app_state_set_uint("server_handle",
+            0u64) {
+                ui_set_status("Server sa zastavil, ale stav procesu sa nepodarilo vycistit.")
+            } else {
+                ui_set_status("Server bol zastaveny bounded nativnym procesnym ABI.")
+            }
+        } else {
+            ui_set_status("Stop zlyhal alebo proces neukoncil v bounded limite.")
+        }
+    } else if event_id == 6 {
+        if choose_webroot() {
+            ui_set_status("Webroot bol vybrany natívnym dialogom.")
+        } else {
+            ui_set_status("Vyber webrootu bol zruseny alebo cesta nebola platna.")
+        }
+    } else if event_id == 7 {
+        let refreshed: Bool = refresh_process_status()
+        if refreshed {
+        }
+    } else if event_id == 8 {
+        if validate_routes() {
+            ui_set_status("Trasy su platne: hostname allowlist a loopback service ciel su v poriadku.")
+        } else {
+            ui_set_status("Trasy su neplatne: pouzite hostname, static/http-proxy a localhost/127.0.0.1.");
+        }
+    } else if event_id == 9 {
+        if save_route_config("C:/ProgramData/Jadren/config/server-routes.tmp",
+        "C:/ProgramData/Jadren/config/server-routes.json",
+        "C:/ProgramData/Jadren/config") {
+            if export_json_file_durable_directory(0,
+            "C:/ProgramData/Jadren/config/server-routes-table.json",
+            "C:/ProgramData/Jadren/config/server-routes-table.tmp",
+            "C:/ProgramData/Jadren/config") {
+                ui_set_status("Route konfiguracia a editor tras boli ulozene mimo webrootu.")
+            } else {
+                ui_set_status("Route konfiguracia bola ulozena, ale tabulka tras sa nepodarila ulozit.")
+            }
+        } else {
+            ui_set_status("Route konfiguraciu sa nepodarilo ulozit; spustite panel s pravami pre ProgramData.")
+        }
+    } else if event_id == 10 {
+        if choose_server_executable() {
+            ui_set_status("Server EXE bol vybrany natívnym systemovym dialogom.")
+        } else {
+            ui_set_status("Vyber servera bol zruseny alebo cesta nebola platna.")
+        }
+    } else if event_id == 11 {
+        if save_autostart_manifest() {
+            ui_set_status("Autostart manifest bol ulozeny do ProgramData; registraciu vykona podpisany PowerShell postup s potvrdenim.")
+        } else {
+            ui_set_status("Autostart manifest sa nepodarilo ulozit; skontrolujte prava pre ProgramData.")
+        }
+    } else if event_id == 12 {
+        if reset_server_profile() {
+            ui_set_status("Novy server: pripraveny je samostatny aktivny profil s bezpecnymi predvolbami.")
+        } else {
+            ui_set_status("Novy server sa nepodarilo pripravit.")
+        }
+    }
+    return event_id
+}
+fn main() -> Int32 {
+    app_state_clear()
+    if ! app_state_set_text("host",
+    "127.0.0.1") {
+        return 1
+    }
+    if ! app_state_set_text("port",
+    "8080") {
+        return 1
+    }
+    if ! app_state_set_text("bind",
+    "127.0.0.1") {
+        return 1
+    }
+    if ! app_state_set_text("webroot",
+    "C:/Jadren/site") {
+        return 1
+    }
+    if ! app_state_set_text("task",
+    "Jadren Site Server") {
+        return 1
+    }
+    if ! app_state_set_text("server_executable",
+    "C:/Jadren/site/jadrenserver.exe") {
+        return 1
+    }
+    if ! app_state_set_text("route1_host",
+    "site.example.com") {
+        return 1
+    }
+    if ! app_state_set_text("route1_target",
+    "C:/Jadren/site") {
+        return 1
+    }
+    if ! app_state_set_text("route2_host",
+    "web.example.com") {
+        return 1
+    }
+    if ! app_state_set_text("route2_target",
+    "http://127.0.0.1:8090") {
+        return 1
+    }
+    if ! app_state_set_text("route3_host",
+    "api.example.com") {
+        return 1
+    }
+    if ! app_state_set_text("route3_target",
+    "http://127.0.0.1:8090") {
+        return 1
+    }
+    if ! app_state_set_text("status",
+    "Pripraveny") {
+        return 1
+    }
+    if ! app_state_set_uint("server_handle",
+    0u64) {
+        return 1
+    }
+    if load_saved_settings() {
+        if ! app_state_exists("host") {
+            if ! app_state_set_text("host",
+            "127.0.0.1") {
+                return 1
+            }
+        }
+        if ! app_state_exists("port") {
+            if ! app_state_set_text("port",
+            "8080") {
+                return 1
+            }
+        }
+        if ! app_state_exists("bind") {
+            if ! app_state_set_text("bind",
+            "127.0.0.1") {
+                return 1
+            }
+        }
+        if ! app_state_exists("webroot") {
+            if ! app_state_set_text("webroot",
+            "C:/Jadren/site") {
+                return 1
+            }
+        }
+        if ! app_state_exists("task") {
+            if ! app_state_set_text("task",
+            "Jadren Site Server") {
+                return 1
+            }
+        }
+        if ! app_state_exists("server_executable") {
+            if ! app_state_set_text("server_executable",
+            "C:/Jadren/site/jadrenserver.exe") {
+                return 1
+            }
+        }
+        if ! app_state_exists("route1_host") {
+            if ! app_state_set_text("route1_host",
+            "site.example.com") {
+                return 1
+            }
+        }
+        if ! app_state_exists("route1_target") {
+            if ! app_state_set_text("route1_target",
+            "C:/Jadren/site") {
+                return 1
+            }
+        }
+        if ! app_state_exists("route2_host") {
+            if ! app_state_set_text("route2_host",
+            "web.example.com") {
+                return 1
+            }
+        }
+        if ! app_state_exists("route2_target") {
+            if ! app_state_set_text("route2_target",
+            "http://127.0.0.1:8090") {
+                return 1
+            }
+        }
+        if ! app_state_exists("route3_host") {
+            if ! app_state_set_text("route3_host",
+            "api.example.com") {
+                return 1
+            }
+        }
+        if ! app_state_exists("route3_target") {
+            if ! app_state_set_text("route3_target",
+            "http://127.0.0.1:8090") {
+                return 1
+            }
+        }
+        if ! app_state_set_uint("server_handle",
+        0u64) {
+            return 1
+        }
+        if ! app_state_set_text("status",
+        "Konfiguracia nacitana z disku") {
+            return 1
+        }
+    }
+    if ! prepare_route_table() {
+        return 1
+    }
+    if ! app_state_set_text("route_draft_host",
+    "site.example.com") {
+        return 1
+    }
+    if ! app_state_set_text("route_draft_target",
+    "C:/Jadren/site") {
+        return 1
+    }
+    if ! app_state_set_int("route_selected_row",
+    0i64) {
+        return 1
+    }
+    if ! app_state_set_int("route_table_node",
+    0i64) {
+        return 1
+    }
+    if ! copy_route_row_to_draft(0i32) {
+        return 1
+    }
+    let smoke: Bool = has_smoke_flag()
+    let http_smoke: Bool = has_http_smoke_flag()
+    let process_smoke: Bool = has_process_smoke_flag()
+    if process_arg_count()>1usize {
+        if ! smoke {
+            if ! http_smoke {
+                if ! process_smoke {
+                    return 1
+                }
+            }
+        }
+    }
+    let root: Int32 = ui_app_begin("Jadren Site Server Control Center",
+    1240,
+    980,
+    0x08111Fu32)
+    if root == 0 {
+        return 2
+    }
+    let top_bar: Int32 = ui_app_top_bar(root,
+    1180,
+    62,
+    0x0D1D36u32,
+    0,
+    14,
+    12,
+    0,
+    1)
+    if top_bar == 0 {
+        return 3
+    }
+    if ui_app_label(top_bar,
+    "Jadren Site Server",
+    260,
+    40,
+    0xFFFFFFu32,
+    0x0D1D36u32,
+    12,
+    0) == 0 {
+        return 3
+    }
+    let file_menu: Int32 = ui_app_menu(top_bar,
+    "Súbor",
+    96,
+    40,
+    0xD8E7FFu32,
+    0x152B4Au32,
+    10,
+    0)
+    if file_menu == 0 {
+        return 3
+    }
+    if ! ui_app_menu_item(file_menu,
+    "Uložiť nastavenia",
+    3) {
+        return 3
+    }
+    if ! ui_app_menu_item(file_menu,
+    "Nový server",
+    12) {
+        return 3
+    }
+    let server_menu: Int32 = ui_app_menu(top_bar,
+    "Server",
+    104,
+    40,
+    0xD8E7FFu32,
+    0x152B4Au32,
+    10,
+    0)
+    if server_menu == 0 {
+        return 3
+    }
+    if ! ui_app_menu_item(server_menu,
+    "Spustiť server",
+    4) {
+        return 3
+    }
+    if ! ui_app_menu_item(server_menu,
+    "Zastaviť server",
+    5) {
+        return 3
+    }
+    if ! ui_app_menu_item(server_menu,
+    "Obnoviť stav",
+    7) {
+        return 3
+    }
+    if ! ui_app_end(top_bar) {
+        return 3
+    }
+    let panel: Int32 = ui_app_panel(root,
+    1180,
+    870,
+    0xF7FAFCu32,
+    18,
+    22,
+    12,
+    0,
+    1)
+    if panel == 0 {
+        return 3
+    }
+    if ui_app_label(panel,
+    "JADREN SITE SERVER",
+    1136,
+    54,
+    0xFFFFFFu32,
+    0x10233Fu32,
+    12,
+    0) == 0 {
+        return 4
+    }
+    if ui_app_label(panel,
+    "Natívne ovládanie servera bez Electronu",
+    1136,
+    36,
+    0x53657Du32,
+    0xEAF2FFu32,
+    10,
+    0) == 0 {
+        return 5
+    }
+    if ui_app_label(panel,
+    "Nastavenia sa ukladajú lokálne; citlivý bearer token zostáva iba v pamäti.",
+    1136,
+    34,
+    0x53657Du32,
+    0xFFFFFFu32,
+    10,
+    0) == 0 {
+        return 5
+    }
+    let settings_row_one: Int32 = ui_app_row(panel,
+    1136,
+    44,
+    10,
+    0,
+    0,
+    1)
+    if settings_row_one == 0 {
+        return 6
+    }
+    let host_row: Int32 = ui_app_row(settings_row_one,
+    370,
+    44,
+    4,
+    0,
+    0,
+    1)
+    if host_row == 0 {
+        return 6
+    }
+    if ui_app_label(host_row,
+    "Host",
+    100,
+    38,
+    0x10233Fu32,
+    0xEAF2FFu32,
+    8,
+    0) == 0 {
+        return 6
+    }
+    let host: Int32 = ui_app_text_input(host_row,
+    "127.0.0.1",
+    10,
+    260,
+    38,
+    0x10233Fu32,
+    0xFFFFFFu32,
+    10,
+    1)
+    if host == 0 {
+        return 6
+    }
+    if ! ui_app_end(host_row) {
+        return 6
+    }
+    let port_row: Int32 = ui_app_row(settings_row_one,
+    370,
+    44,
+    4,
+    0,
+    0,
+    1)
+    if port_row == 0 {
+        return 6
+    }
+    if ui_app_label(port_row,
+    "Port",
+    100,
+    38,
+    0x10233Fu32,
+    0xEAF2FFu32,
+    8,
+    0) == 0 {
+        return 6
+    }
+    let port: Int32 = ui_app_text_input(port_row,
+    "8080",
+    11,
+    260,
+    38,
+    0x10233Fu32,
+    0xFFFFFFu32,
+    10,
+    1)
+    if port == 0 {
+        return 6
+    }
+    if ! ui_app_end(port_row) {
+        return 6
+    }
+    let bind_row: Int32 = ui_app_row(settings_row_one,
+    370,
+    44,
+    4,
+    0,
+    0,
+    1)
+    if bind_row == 0 {
+        return 6
+    }
+    if ui_app_label(bind_row,
+    "Bind",
+    100,
+    38,
+    0x10233Fu32,
+    0xEAF2FFu32,
+    8,
+    0) == 0 {
+        return 6
+    }
+    let bind: Int32 = ui_app_text_input(bind_row,
+    "127.0.0.1",
+    12,
+    260,
+    38,
+    0x10233Fu32,
+    0xFFFFFFu32,
+    10,
+    1)
+    if bind == 0 {
+        return 6
+    }
+    if ! ui_app_end(bind_row) {
+        return 6
+    }
+    if ! ui_app_end(settings_row_one) {
+        return 6
+    }
+    let settings_row_two: Int32 = ui_app_row(panel,
+    1136,
+    44,
+    10,
+    0,
+    0,
+    1)
+    if settings_row_two == 0 {
+        return 6
+    }
+    let webroot_row: Int32 = ui_app_row(settings_row_two,
+    370,
+    44,
+    4,
+    0,
+    0,
+    1)
+    if webroot_row == 0 {
+        return 6
+    }
+    if ui_app_label(webroot_row,
+    "Webroot",
+    100,
+    38,
+    0x10233Fu32,
+    0xEAF2FFu32,
+    8,
+    0) == 0 {
+        return 6
+    }
+    let webroot: Int32 = ui_app_text_input(webroot_row,
+    "C:/Jadren/site",
+    13,
+    260,
+    38,
+    0x10233Fu32,
+    0xFFFFFFu32,
+    10,
+    1)
+    if webroot == 0 {
+        return 6
+    }
+    if ! ui_app_end(webroot_row) {
+        return 6
+    }
+    let server_row: Int32 = ui_app_row(settings_row_two,
+    370,
+    44,
+    4,
+    0,
+    0,
+    1)
+    if server_row == 0 {
+        return 6
+    }
+    if ui_app_label(server_row,
+    "Server EXE",
+    100,
+    38,
+    0x10233Fu32,
+    0xEAF2FFu32,
+    8,
+    0) == 0 {
+        return 6
+    }
+    let server_executable: Int32 = ui_app_text_input(server_row,
+    "C:/Jadren/site/jadrenserver.exe",
+    14,
+    260,
+    38,
+    0x10233Fu32,
+    0xFFFFFFu32,
+    10,
+    1)
+    if server_executable == 0 {
+        return 6
+    }
+    if ! ui_app_end(server_row) {
+        return 6
+    }
+    let token_row: Int32 = ui_app_row(settings_row_two,
+    370,
+    44,
+    4,
+    0,
+    0,
+    1)
+    if token_row == 0 {
+        return 6
+    }
+    if ui_app_label(token_row,
+    "Bearer token",
+    100,
+    38,
+    0x7C2D12u32,
+    0xFFF7EDu32,
+    8,
+    0) == 0 {
+        return 6
+    }
+    let token: Int32 = ui_app_text_input(token_row,
+    "iba v pamäti",
+    15,
+    260,
+    38,
+    0x10233Fu32,
+    0xFFF7EDu32,
+    10,
+    1)
+    if token == 0 {
+        return 6
+    }
+    if ! ui_app_end(token_row) {
+        return 6
+    }
+    if ! ui_app_end(settings_row_two) {
+        return 6
+    }
+    if host == 0 {
+        return 6
+    }
+    if port == 0 {
+        return 6
+    }
+    if bind == 0 {
+        return 6
+    }
+    if webroot == 0 {
+        return 6
+    }
+    if server_executable == 0 {
+        return 6
+    }
+    if token == 0 {
+        return 6
+    }
+    if ! ui_app_bind_app_state_exact(host,
+    "host") {
+        return 7
+    }
+    if ! ui_app_bind_app_state_exact(port,
+    "port") {
+        return 7
+    }
+    if ! ui_app_bind_app_state_exact(bind,
+    "bind") {
+        return 7
+    }
+    if ! ui_app_bind_app_state_exact(webroot,
+    "webroot") {
+        return 7
+    }
+    if ! ui_app_bind_app_state_exact(server_executable,
+    "server_executable") {
+        return 7
+    }
+    if ui_app_label(panel,
+    "TRASY HOSTNAME A SLUŽBY",
+    1136,
+    44,
+    0x10233Fu32,
+    0xDCEBFFu32,
+    10,
+    0) == 0 {
+        return 8
+    }
+    if ui_app_label(panel,
+    "Statická cesta alebo loopback proxy. PostgreSQL 5432 zostáva interný.",
+    1136,
+    30,
+    0x53657Du32,
+    0xFFFFFFu32,
+    8,
+    0) == 0 {
+        return 8
+    }
+    let route_table_row: Int32 = ui_app_row(panel,
+    1136,
+    220,
+    0,
+    8,
+    0,
+    1)
+    if route_table_row == 0 {
+        return 8
+    }
+    let route_table: Int32 = ui_app_table(route_table_row,
+    26,
+    1136,
+    220,
+    0x10233Fu32,
+    0xF8FAFCu32,
+    8,
+    0)
+    if route_table == 0 {
+        return 8
+    }
+    if ! ui_app_table_column(route_table,
+    0,
+    "Hostname",
+    390) {
+        return 8
+    }
+    if ! ui_app_table_column(route_table,
+    1,
+    "Target · static alebo loopback HTTP",
+    690) {
+        return 8
+    }
+    if ! table_bind(route_table,
+    0,
+    3) {
+        return 8
+    }
+    if ! ui_app_bind_app_state(route_table,
+    "route_selected_row") {
+        return 8
+    }
+    if ! app_state_set_int("route_table_node",
+    route_table as Int64) {
+        return 8
+    }
+    if ! ui_app_end(route_table_row) {
+        return 8
+    }
+    let route_editor: Int32 = ui_app_row(panel,
+    1136,
+    44,
+    8,
+    8,
+    0,
+    1)
+    if route_editor == 0 {
+        return 8
+    }
+    let route_draft_host: Int32 = ui_app_text_input(route_editor,
+    "Hostname, napr. api.example.com",
+    27,
+    390,
+    38,
+    0x10233Fu32,
+    0xFFFFFFu32,
+    10,
+    1)
+    let route_draft_target: Int32 = ui_app_text_input(route_editor,
+    "Cesta alebo http://127.0.0.1:8090",
+    28,
+    690,
+    38,
+    0x10233Fu32,
+    0xFFFFFFu32,
+    10,
+    1)
+    if route_draft_host == 0 {
+        return 8
+    }
+    if route_draft_target == 0 {
+        return 8
+    }
+    if ! ui_app_bind_app_state_exact(route_draft_host,
+    "route_draft_host") {
+        return 7
+    }
+    if ! ui_app_bind_app_state_exact(route_draft_target,
+    "route_draft_target") {
+        return 7
+    }
+    if ! ui_app_end(route_editor) {
+        return 8
+    }
+    let route_edit_actions: Int32 = ui_app_row(panel,
+    1136,
+    44,
+    8,
+    0,
+    0,
+    1)
+    if route_edit_actions == 0 {
+        return 8
+    }
+    if ui_app_button(route_edit_actions,
+    "Pridať trasu",
+    29,
+    220,
+    40,
+    0xFFFFFFu32,
+    0x168EF5u32,
+    10,
+    0) == 0 {
+        return 8
+    }
+    if ui_app_button(route_edit_actions,
+    "Použiť úpravu",
+    30,
+    220,
+    40,
+    0xFFFFFFu32,
+    0x0F766Eu32,
+    10,
+    0) == 0 {
+        return 8
+    }
+    if ui_app_button(route_edit_actions,
+    "Odstrániť trasu",
+    31,
+    220,
+    40,
+    0xFFFFFFu32,
+    0xB91C1Cu32,
+    10,
+    0) == 0 {
+        return 8
+    }
+    if ! ui_app_end(route_edit_actions) {
+        return 8
+    }
+    if ui_app_status(panel,
+    "Pripravený · server nie je spustený",
+    1136,
+    44,
+    0x14532Du32,
+    0xDCFCE7u32,
+    10,
+    0) == 0 {
+        return 8
+    }
+    let actions: Int32 = ui_app_row(panel,
+    1136,
+    48,
+    10,
+    0,
+    0,
+    1)
+    if actions == 0 {
+        return 9
+    }
+    if ui_app_button(actions,
+    "Health-check",
+    1,
+    210,
+    42,
+    0xFFFFFFu32,
+    0x168EF5u32,
+    10,
+    0) == 0 {
+        return 10
+    }
+    if ui_app_button(actions,
+    "Administrácia HTTP",
+    2,
+    230,
+    42,
+    0xFFFFFFu32,
+    0xD97706u32,
+    10,
+    0) == 0 {
+        return 10
+    }
+    if ui_app_button(actions,
+    "Uložiť nastavenia",
+    3,
+    230,
+    42,
+    0xFFFFFFu32,
+    0x3A8D5Du32,
+    10,
+    0) == 0 {
+        return 10
+    }
+    if ! ui_app_end(actions) {
+        return 11
+    }
+    let route_actions: Int32 = ui_app_row(panel,
+    1136,
+    48,
+    10,
+    0,
+    0,
+    1)
+    if route_actions == 0 {
+        return 11
+    }
+    if ui_app_button(route_actions,
+    "Vybrať webroot",
+    6,
+    230,
+    42,
+    0xFFFFFFu32,
+    0x7C3AEDu32,
+    10,
+    0) == 0 {
+        return 10
+    }
+    if ui_app_button(route_actions,
+    "Overiť trasy",
+    8,
+    210,
+    42,
+    0xFFFFFFu32,
+    0x0891B2u32,
+    10,
+    0) == 0 {
+        return 10
+    }
+    if ui_app_button(route_actions,
+    "Uložiť route config",
+    9,
+    230,
+    42,
+    0xFFFFFFu32,
+    0x3A8D5Du32,
+    10,
+    0) == 0 {
+        return 10
+    }
+    if ! ui_app_end(route_actions) {
+        return 11
+    }
+    if ui_app_label(panel,
+    "WINDOWS AUTOSTART A NOVÝ PROFIL",
+    1136,
+    34,
+    0x53657Du32,
+    0xFFFFFFu32,
+    8,
+    0) == 0 {
+        return 11
+    }
+    let profile_actions: Int32 = ui_app_row(panel,
+    1136,
+    48,
+    10,
+    0,
+    0,
+    1)
+    if profile_actions == 0 {
+        return 11
+    }
+    if ui_app_button(profile_actions,
+    "Vybrať server EXE",
+    10,
+    250,
+    42,
+    0xFFFFFFu32,
+    0x7C3AEDu32,
+    10,
+    0) == 0 {
+        return 12
+    }
+    if ui_app_button(profile_actions,
+    "Pripraviť autostart",
+    11,
+    250,
+    42,
+    0xFFFFFFu32,
+    0x0F766Eu32,
+    10,
+    0) == 0 {
+        return 12
+    }
+    if ui_app_button(profile_actions,
+    "Nový server",
+    12,
+    250,
+    42,
+    0xFFFFFFu32,
+    0x334155u32,
+    10,
+    0) == 0 {
+        return 12
+    }
+    if ! ui_app_end(profile_actions) {
+        return 12
+    }
+    if ui_app_label(panel,
+    "Autostart je mimo webrootu. Registrácia úlohy vyžaduje vedomé spustenie podpísaného skriptu s právami správcu.",
+    1136,
+    44,
+    0x7C2D12u32,
+    0xFFF7EDu32,
+    10,
+    0) == 0 {
+        return 12
+    }
+    let lifecycle: Int32 = ui_app_row(panel,
+    1136,
+    48,
+    10,
+    0,
+    0,
+    1)
+    if lifecycle == 0 {
+        return 11
+    }
+    if ui_app_button(lifecycle,
+    "Spustiť server",
+    4,
+    230,
+    42,
+    0xFFFFFFu32,
+    0x2563EBu32,
+    10,
+    0) == 0 {
+        return 12
+    }
+    if ui_app_button(lifecycle,
+    "Zastaviť server",
+    5,
+    230,
+    42,
+    0xFFFFFFu32,
+    0xB91C1Cu32,
+    10,
+    0) == 0 {
+        return 12
+    }
+    if ui_app_button(lifecycle,
+    "Obnoviť stav",
+    7,
+    230,
+    42,
+    0xFFFFFFu32,
+    0x475569u32,
+    10,
+    0) == 0 {
+        return 12
+    }
+    if ! ui_app_end(lifecycle) {
+        return 13
+    }
+    if ui_app_label(panel,
+    "Start/stop aj HTTP diagnostika používajú lokálny allowlist; bez shellu a ľubovoľných príkazov.",
+    1136,
+    42,
+    0x7C2D12u32,
+    0xFFF7EDu32,
+    10,
+    0) == 0 {
+        return 12
+    }
+    if ! ui_app_end(panel) {
+        return 13
+    }
+    if ! ui_app_end(root) {
+        return 14
+    }
+    if smoke {
+        return if verify_smoke() {
+            0
+        } else {
+            15
+        }
+    }
+    if http_smoke {
+        return if verify_http_smoke() {
+            0
+        } else {
+            16
+        }
+    }
+    if process_smoke {
+        return if verify_process_smoke() {
+            0
+        } else {
+            17
+        }
+    }
+    return ui_app_run()
+}

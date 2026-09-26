@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2026"
 
 [dependencies]
+jadren-core = { path = "../../stdlib/core" }
 jadren-app = { path = "../../stdlib/app" }
 jadren-network = { path = "../../stdlib/network" }
 

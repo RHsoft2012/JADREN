@@ -1,0 +1,35 @@
+module examples.stdlib_buffer_owning_carrier_array_pop_move_into
+
+// Pop the last direct inline carrier array into caller-owned storage. Both
+// active Option payloads remain owned by the output until scope cleanup.
+fn main() -> Int32 {
+    let values_created: Result<Buffer<[Option<OwnedString>; 2]>, Int32> = buffer_create(0usize)
+    let first_created: Result<OwnedString, Int32> = string_owned_from("first")
+    let second_created: Result<OwnedString, Int32> = string_owned_from("second")
+    var result_code: Int32 = 0
+
+    match values_created {
+        Ok(values) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            let item: [Option<OwnedString>; 2] = [Some(first), Some(second)]
+                            let output: [Option<OwnedString>; 2] = [None, None]
+                            if !buffer_append(values, item) { result_code = 1 }
+                            if !buffer_pop_move_into(values, output) { result_code = 2 }
+                            if buffer_length(values) != 0usize { result_code = 3 }
+                            let status: Int32 = buffer_pop_move_into_status(values, output)
+                            if status != -20 { result_code = 4 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

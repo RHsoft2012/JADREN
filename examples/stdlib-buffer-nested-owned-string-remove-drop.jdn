@@ -1,0 +1,76 @@
+module examples.stdlib_buffer_nested_owned_string_remove_drop
+
+// buffer_remove_drop over Buffer<Buffer<OwnedString>> destroys the selected
+// nested string chain before compacting the outer descriptors.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<OwnedString>>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    let third_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            match third_created {
+                                Ok(third) => {
+                                    let first_text: Result<OwnedString, Int32> =
+                                        string_owned_from("first")
+                                    let second_text: Result<OwnedString, Int32> =
+                                        string_owned_from("second")
+                                    let third_text: Result<OwnedString, Int32> =
+                                        string_owned_from("third")
+                                    match first_text {
+                                        Ok(text) => {
+                                            if !buffer_append(first, text) { result_code = 1 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                    match second_text {
+                                        Ok(text) => {
+                                            if !buffer_append(second, text) { result_code = 2 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                    match third_text {
+                                        Ok(text) => {
+                                            if !buffer_append(third, text) { result_code = 3 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                    if !buffer_append(outer, first) { result_code = 4 }
+                                    if !buffer_append(outer, second) { result_code = 5 }
+                                    if !buffer_append(outer, third) { result_code = 6 }
+
+                                    let removed: Bool = buffer_remove_drop(outer, 1usize)
+                                    if !removed { result_code = 7 }
+                                    if buffer_length(outer) != 2usize { result_code = 8 }
+                                    if string_owned_length(outer[0][0]) != 5usize {
+                                        result_code = 9
+                                    }
+                                    if string_owned_length(outer[1][0]) != 5usize {
+                                        result_code = 10
+                                    }
+
+                                    let status: Int32 = buffer_remove_drop_status(outer, 0usize)
+                                    if status != 0 { result_code = 11 }
+                                    if buffer_length(outer) != 1usize { result_code = 12 }
+                                    let bad: Int32 = buffer_remove_drop_status(outer, 99usize)
+                                    if bad != -20 { result_code = 13 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

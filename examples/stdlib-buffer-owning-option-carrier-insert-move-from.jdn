@@ -1,0 +1,45 @@
+module examples.stdlib_buffer_owning_option_carrier_insert_move_from
+
+// Insert caller-owned Option carriers into a dynamic list. Both successful
+// Some movement and an invalid-index status path stay ownership-safe.
+fn main() -> Int32 {
+    let values_created: Result<Buffer<Option<OwnedString>>, Int32> = buffer_create(0usize)
+    let first_created: Result<OwnedString, Int32> = string_owned_from("first")
+    let second_created: Result<OwnedString, Int32> = string_owned_from("second")
+    let status_created: Result<OwnedString, Int32> = string_owned_from("status")
+    var result_code: Int32 = 0
+
+    match values_created {
+        Ok(values) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            match status_created {
+                                Ok(status_text) => {
+                                    let existing: Option<OwnedString> = Some(first)
+                                    let incoming: Option<OwnedString> = Some(second)
+                                    if !buffer_append(values, existing) { result_code = 1 }
+                                    if !buffer_insert_move_from(values, 0usize, incoming) { result_code = 2 }
+                                    if buffer_length(values) != 2usize { result_code = 3 }
+                                    let invalid: Option<OwnedString> = Some(status_text)
+                                    let status: Int32 = buffer_insert_move_from_status(values, 99usize, invalid)
+                                    if status != -20 { result_code = 4 }
+                                    if buffer_length(values) != 2usize { result_code = 5 }
+                                    if !buffer_remove_drop(values, 0usize) { result_code = 6 }
+                                    if !buffer_clear_move(values) { result_code = 7 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

@@ -1,0 +1,77 @@
+module examples.stdlib_buffer_nested_owning_carrier_matrix_move_into
+
+// Caller-owned move-into/pop transfers a nested Buffer whose leaf is a
+// two-dimensional carrier matrix; output cleanup must reach all four slots.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<[[Option<OwnedString>; 2]; 2]>>, Int32> = buffer_create(0usize)
+    let inner_created: Result<Buffer<[[Option<OwnedString>; 2]; 2]>, Int32> = buffer_create(0usize)
+    let output_created: Result<Buffer<[[Option<OwnedString>; 2]; 2]>, Int32> = buffer_create(0usize)
+    let first_created: Result<OwnedString, Int32> = string_owned_from("first")
+    let second_created: Result<OwnedString, Int32> = string_owned_from("second")
+    let third_created: Result<OwnedString, Int32> = string_owned_from("third")
+    let fourth_created: Result<OwnedString, Int32> = string_owned_from("fourth")
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match inner_created {
+                Ok(inner) => {
+                    match output_created {
+                        Ok(output) => {
+                            match first_created {
+                                Ok(first) => {
+                                    match second_created {
+                                        Ok(second) => {
+                                            let item: [[Option<OwnedString>; 2]; 2] = [[Some(first), None], [None, Some(second)]]
+                                            if !buffer_append(inner, item) { result_code = 1 }
+                                            if !buffer_append_move(outer, inner) { result_code = 2 }
+                                            if !buffer_remove_move_into(outer, 0usize, output) { result_code = 3 }
+                                            if buffer_length(outer) != 0usize { result_code = 4 }
+                                            if buffer_length(output) != 1usize { result_code = 5 }
+                                            if !buffer_clear_move(output) { result_code = 6 }
+                                            let status: Int32 = buffer_remove_move_into_status(outer, 0usize, output)
+                                            if status != -20 { result_code = 7 }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+
+                            let next_created: Result<Buffer<[[Option<OwnedString>; 2]; 2]>, Int32> = buffer_create(0usize)
+                            match next_created {
+                                Ok(next) => {
+                                    match third_created {
+                                        Ok(third) => {
+                                            match fourth_created {
+                                                Ok(fourth) => {
+                                                    let next_item: [[Option<OwnedString>; 2]; 2] = [[Some(third), None], [None, Some(fourth)]]
+                                                    if !buffer_append(next, next_item) { result_code = 8 }
+                                                    if !buffer_append_move(outer, next) { result_code = 9 }
+                                                    if !buffer_pop_move_into(outer, output) { result_code = 10 }
+                                                    if buffer_length(outer) != 0usize { result_code = 11 }
+                                                    if buffer_length(output) != 1usize { result_code = 12 }
+                                                    if !buffer_clear_move(output) { result_code = 13 }
+                                                    let pop_status: Int32 = buffer_pop_move_into_status(outer, output)
+                                                    if pop_status != -20 { result_code = 14 }
+                                                }
+                                                Error(status) => { result_code = status }
+                                            }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

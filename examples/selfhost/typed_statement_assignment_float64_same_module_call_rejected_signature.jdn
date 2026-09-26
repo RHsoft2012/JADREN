@@ -1,0 +1,13 @@
+module selfhost.typed_statement_assignment_float64_same_module_call_rejected_signature;
+
+// JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS
+fn local_value() -> Float64 {
+    let first: Float64 = helper(1.5f64);
+    return helper(first);
+}
+
+// The caller is Float64, but this definition deliberately has an Int32
+// signature; the host-side same-module admission must reject the mismatch.
+fn helper(value: Int32) -> Int32 {
+    return value + 1;
+}

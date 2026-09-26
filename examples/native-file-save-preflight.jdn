@@ -1,0 +1,14 @@
+module examples.native_file_save_preflight
+
+// A non-interactive native smoke for the save-dialog contract. An empty title
+// is rejected before the OS dialog is opened, so the no-partial-write boundary
+// can be checked without automating a user-facing system dialog.
+fn main() -> Int32 {
+    var path: [UInt8; 4] = [91u8, 91u8, 91u8, 91u8]
+    var path_length: [UIntSize; 1] = [77usize]
+    if ui_file_save_exact("", path, path_length) { return 1 }
+    if path[0] != 91u8 { return 2 }
+    if path[1] != 91u8 { return 3 }
+    if path_length[0] != 77usize { return 4 }
+    return 0
+}

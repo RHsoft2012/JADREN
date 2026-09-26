@@ -1,0 +1,186 @@
+module app_scheduler_buffer_project.main
+import jadren.app.scheduler.clear
+import jadren.app.scheduler.count
+import jadren.app.scheduler.load_exact_buffer
+import jadren.app.scheduler.load_file_buffer
+import jadren.app.scheduler.next_due_exact
+import jadren.app.scheduler.save_atomic_durable_buffer
+import jadren.app.scheduler.set
+import jadren.app.scheduler.write_exact_buffer
+import jadren.app.fs.delete
+import jadren.app.fs.exists
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    clear()
+    if ! set(7,
+    300i64,
+    60u64) {
+        status = 1
+    }
+    if status == 0 {
+        if ! set(2,
+        100i64,
+        0u64) {
+            status = 2
+        }
+    }
+    if status == 0 {
+        if ! set(5,
+        100i64,
+        20u64) {
+            status = 3
+        }
+    }
+    let created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(128usize)
+    match created {
+        Error(error) => {
+            if status == 0 {
+                status = error
+            }
+        }
+        Ok(snapshot) => {
+            if ! buffer_resize(snapshot, 128usize) {
+                if status == 0 { status = 4 }
+            }
+            var snapshot_length:[UIntSize;
+            1] =[999usize]
+            if status == 0 {
+                if ! write_exact_buffer(snapshot,
+                128usize,
+                snapshot_length) {
+                    status = 4
+                }
+            }
+            if status == 0 {
+                if snapshot_length[0] == 0usize {
+                    status = 5
+                }
+            }
+            if status == 0 {
+                if ! save_atomic_durable_buffer("target/app-scheduler-buffer-smoke/scheduler.tmp",
+                "target/app-scheduler-buffer-smoke/scheduler.jds",
+                "target/app-scheduler-buffer-smoke",
+                snapshot,
+                128usize,
+                ) {
+                    status = 6
+                }
+            }
+            if status == 0 {
+                if ! exists("target/app-scheduler-buffer-smoke/scheduler.jds") {
+                    status = 7
+                }
+            }
+            if status == 0 {
+                clear()
+                if count() != 0usize {
+                    status = 8
+                }
+            }
+            if status == 0 {
+                if ! load_file_buffer("target/app-scheduler-buffer-smoke/scheduler.jds",
+                snapshot,
+                128usize,
+                ) {
+                    status = 9
+                }
+            }
+            if status == 0 {
+                if count() != 3usize {
+                    status = 10
+                }
+            }
+            var next_due:[Int64;
+            1] =[0i64]
+            var has_due:[Bool;
+            1] =[false]
+            if status == 0 {
+                if ! next_due_exact(next_due,
+                has_due) {
+                    status = 11
+                }
+            }
+            if status == 0 {
+                if ! has_due[0] {
+                    status = 12
+                }
+            }
+            if status == 0 {
+                if next_due[0] != 100i64 {
+                    status = 13
+                }
+            }
+            // An output capacity beyond the dynamic Buffer is rejected before
+            // serialization and leaves the published length unchanged.
+            if status == 0 {
+                snapshot_length[0] = 501usize
+                if write_exact_buffer(snapshot,
+                129usize,
+                snapshot_length) {
+                    status = 50
+                }
+            }
+            if status == 0 {
+                if snapshot_length[0] != 501usize {
+                    status = 51
+                }
+            }
+            // A malformed JDS1 prefix is rejected without clearing the queue.
+            snapshot[0] = 88u8
+            if status == 0 {
+                if load_exact_buffer(snapshot,
+                snapshot_length[0]) {
+                    status = 14
+                }
+            }
+            if status == 0 {
+                if count() != 3usize {
+                    status = 15
+                }
+            }
+            let short_created: Result<Buffer<UInt8>,
+            Int32> = buffer_create(4usize)
+            match short_created {
+                Error(error) => {
+                    if status == 0 {
+                        status = error
+                    }
+                }
+                Ok(short) => {
+                    if ! buffer_resize(short, 4usize) {
+                        if status == 0 { status = 16 }
+                    }
+                    if status == 0 {
+                        if load_exact_buffer(short,
+                        snapshot_length[0]) {
+                            status = 16
+                        }
+                    }
+                    if status == 0 {
+                        if count() != 3usize {
+                            status = 17
+                        }
+                    }
+                }
+            }
+            clear()
+            if status == 0 {
+                if ! delete("target/app-scheduler-buffer-smoke/scheduler.jds") {
+                    status = 18
+                }
+            }
+            if status == 0 {
+                if exists("target/app-scheduler-buffer-smoke/scheduler.jds") {
+                    status = 19
+                }
+            }
+        }
+    }
+    clear()
+    return status
+}

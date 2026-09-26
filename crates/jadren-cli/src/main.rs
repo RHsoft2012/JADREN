@@ -1,5 +1,8 @@
 //! Initial command-line driver for the Jadren compiler.
 
+#[cfg(any(windows, test))]
+mod windows_subsystem;
+
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::OsString;
@@ -29,6 +32,6594 @@ use jadren_types::TypeStore;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const LLVM_VERSION: &str = "22.1.8";
+
+const DESKTOP_TEMPLATE_MAIN: &str = r#"module {module}.main
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    if event_id == 1 {
+        if !app_state_set_text("status", "Button clicked") { return 2 }
+        ui_set_status("Button clicked: the event reached Jadren.")
+    }
+    return event_id
+}
+
+fn has_smoke_flag() -> Bool {
+    // Run the generated project with `--smoke` to exercise the callback
+    // without entering the blocking native GUI event loop.
+    if process_arg_count() != 2usize { return false }
+    var value: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = process_arg_read(1usize, value)
+    if length != 7usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 115u8 { return false }
+    if value[3] != 109u8 { return false }
+    if value[4] != 111u8 { return false }
+    if value[5] != 107u8 { return false }
+    return value[6] == 101u8
+}
+
+fn desktop_has_serve_api_flag(value: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length != 11usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 115u8 { return false }
+    if value[3] != 101u8 { return false }
+    if value[4] != 114u8 { return false }
+    if value[5] != 118u8 { return false }
+    if value[6] != 101u8 { return false }
+    if value[7] != 45u8 { return false }
+    if value[8] != 97u8 { return false }
+    if value[9] != 112u8 { return false }
+    return value[10] == 105u8
+}
+
+fn desktop_has_serve_edit_flag(value: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length != 12usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 115u8 { return false }
+    if value[3] != 101u8 { return false }
+    if value[4] != 114u8 { return false }
+    if value[5] != 118u8 { return false }
+    if value[6] != 101u8 { return false }
+    if value[7] != 45u8 { return false }
+    if value[8] != 101u8 { return false }
+    if value[9] != 100u8 { return false }
+    if value[10] != 105u8 { return false }
+    return value[11] == 116u8
+}
+
+fn desktop_parse_serve_api_port() -> UInt16 {
+    if process_arg_count() != 3usize { return 0u16 }
+    var flag: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let flag_length: UIntSize = process_arg_read(1usize, flag)
+    if !desktop_has_serve_api_flag(flag, flag_length) { return 0u16 }
+    var value: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let value_length: UIntSize = process_arg_read(2usize, value)
+    var parsed: [UInt64; 1] = [0u64]
+    if !parse_uint(value, value_length, parsed) { return 0u16 }
+    if parsed[0] == 0u64 { return 0u16 }
+    if parsed[0] > 65535u64 { return 0u16 }
+    return parsed[0] as UInt16
+}
+
+fn desktop_parse_serve_edit_port() -> UInt16 {
+    if process_arg_count() != 3usize { return 0u16 }
+    var flag: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let flag_length: UIntSize = process_arg_read(1usize, flag)
+    if !desktop_has_serve_edit_flag(flag, flag_length) { return 0u16 }
+    var value: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let value_length: UIntSize = process_arg_read(2usize, value)
+    var parsed: [UInt64; 1] = [0u64]
+    if !parse_uint(value, value_length, parsed) { return 0u16 }
+    if parsed[0] == 0u64 { return 0u16 }
+    if parsed[0] > 65535u64 { return 0u16 }
+    return parsed[0] as UInt16
+}
+
+fn desktop_add_api_model_route_buffer(model_body: write Buffer<UInt8>) -> Bool {
+    if !buffer_resize(model_body, 2048usize) {
+        return false
+    }
+    var model_length: [UIntSize; 1] = [0usize]
+    if !app_data_write_exact(
+        buffer_slice_write(model_body, 0usize, 2048usize),
+        model_length,
+    ) {
+        return false
+    }
+    if !http_router_add_exact(
+        "GET", "/api/model", 200u16, "application/json",
+        buffer_slice(model_body, 0usize, model_length[0]), model_length[0]
+    ) {
+        return false
+    }
+    return true
+}
+
+fn desktop_add_api_model_route() -> Bool {
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(2048usize)
+    var success: Int32 = 0i32
+    match created {
+        Error(_) => {
+            success = 0i32
+        }
+        Ok(model_body) => {
+            if desktop_add_api_model_route_buffer(model_body) { success = 1i32 }
+        }
+    }
+    return success == 1i32
+}
+
+fn desktop_add_api_snapshot_routes() -> Bool {
+    var state_body: [UInt8; 256] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var state_length: [UIntSize; 1] = [0usize]
+    if !app_state_write_json_exact(state_body, state_length) { return false }
+    if !http_router_add_exact(
+        "GET", "/api/state", 200u16, "application/json", state_body, state_length[0]
+    ) { return false }
+
+    var list_body: [UInt8; 256] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var list_length: [UIntSize; 1] = [0usize]
+    if !app_list_export_json_exact(0, list_body, list_length) { return false }
+    if !http_router_add_exact(
+        "GET", "/api/lists/0", 200u16, "application/json", list_body, list_length[0]
+    ) { return false }
+
+    var table_body: [UInt8; 512] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var table_length: [UIntSize; 1] = [0usize]
+    if !app_table_export_json_exact(0, table_body, table_length) { return false }
+    if !http_router_add_exact(
+        "GET", "/api/tables/0", 200u16, "application/json", table_body, table_length[0]
+    ) { return false }
+    if !desktop_add_api_model_route() { return false }
+    return true
+}
+
+// Serve a bounded, read-only local API for the starter model. The process
+// accepts exactly seven connection-close requests and then exits; production
+// authentication, TLS and long-running hosting stay outside this template.
+fn desktop_serve_api(port: UInt16) -> Bool {
+    let listener: UIntSize = net_tcp_listen(port)
+    if (listener as Int32) == 0 { return false }
+    http_router_clear()
+    var health_body: [UInt8; 24] = [74u8, 97u8, 100u8, 114u8, 101u8, 110u8, 32u8,
+        100u8, 101u8, 115u8, 107u8, 116u8, 111u8, 112u8, 32u8, 65u8,
+        80u8, 73u8, 32u8, 114u8, 101u8, 97u8, 100u8, 121u8]
+    var status: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var status_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("status", status, status_length) {
+        net_socket_close(listener)
+        return false
+    }
+    if !http_router_add("GET", "/healthz", 200u16, "text/plain", health_body) {
+        net_socket_close(listener)
+        return false
+    }
+    if !http_router_add_exact(
+        "GET", "/api/status", 200u16, "text/plain", status, status_length[0]
+    ) {
+        net_socket_close(listener)
+        return false
+    }
+    var revision: [UInt8; 24] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let revision_length: UIntSize = format_uint(app_data_revision(), revision)
+    if revision_length == 0usize {
+        net_socket_close(listener)
+        return false
+    }
+    if !http_router_add_exact(
+        "GET", "/api/revision", 200u16, "text/plain", revision, revision_length
+    ) {
+        net_socket_close(listener)
+        return false
+    }
+    if !desktop_add_api_snapshot_routes() {
+        net_socket_close(listener)
+        return false
+    }
+    let session: UIntSize = http_session_open(listener, 7u32, 1024u32, 1024u32)
+    if (session as Int32) == 0 {
+        net_socket_close(listener)
+        return false
+    }
+    var handled: UInt32 = 0u32
+    var attempts: UInt32 = 0u32
+    while attempts < 12u32 {
+        if handled == 7u32 { break }
+        let step: UInt32 = http_session_step(session, 2000u32)
+        attempts = attempts + 1u32
+        if step != 0u32 { handled = handled + 1u32 }
+    }
+    let closed: Bool = http_session_close(session)
+    if handled != 7u32 { return false }
+    return closed
+}
+
+fn desktop_edit_body_is_valid(body: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length == 0usize { return false }
+    if length > 32usize { return false }
+    var index: UIntSize = 0usize
+    while index < length {
+        if body[index] < 32u8 { return false }
+        if body[index] > 126u8 { return false }
+        index = index + 1usize
+    }
+    return true
+}
+
+// Apply the edit only when the complete model revision is still equal to the
+// token exported by /api/revision. The template is single-threaded and
+// connection-bounded, so the check and setter are one local operation; a
+// production server still needs its own concurrency and authentication layer.
+fn desktop_set_name_if_model_revision(
+    body: read Slice<UInt8>,
+    length: UIntSize,
+    expected_revision: UInt64,
+) -> Bool {
+    return app_state_set_text_bytes_if_model_revision(
+        "name", body, length, expected_revision
+    )
+}
+
+// Serve one bounded revision-guarded edit for the generated starter model.
+// POST /api/name requires X-Jadren-Revision and a printable ASCII body; a
+// stale equality token is rejected with 409 and cannot mutate app_state. A
+// final GET reads the accepted value back. This is a local smoke endpoint, not
+// an authenticated, TLS-enabled or long-running production service.
+fn desktop_serve_edit_buffers(
+    listener: UIntSize,
+    request: write Slice<UInt8>,
+    body: write Slice<UInt8>,
+    response: write Slice<UInt8>,
+) -> Bool {
+    var chunk: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var revision_text: [UInt8; 24] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var rejected: [UInt8; 13] = [114u8, 101u8, 106u8, 101u8, 99u8, 116u8, 101u8,
+        100u8, 32u8, 101u8, 100u8, 105u8, 116u8]
+    var stale_body: [UInt8; 14] = [115u8, 116u8, 97u8, 108u8, 101u8, 32u8, 114u8,
+        101u8, 118u8, 105u8, 115u8, 105u8, 111u8, 110u8]
+    var handled: UInt32 = 0u32
+
+    while handled < 3u32 {
+        let client: UIntSize = net_tcp_accept(listener)
+        if (client as Int32) == 0 {
+            net_socket_close(listener)
+            return false
+        }
+        if !net_socket_set_timeout(client, 3000u32) {
+            net_socket_close(client)
+            net_socket_close(listener)
+            return false
+        }
+        var received: UIntSize = 0usize
+        var reads: UIntSize = 0usize
+        while reads < 8usize {
+            if received >= 512usize { break }
+            let chunk_received: UIntSize = net_tcp_receive(client, chunk)
+            if chunk_received == 0usize { break }
+            let appended: UIntSize = http_request_append(
+                request,
+                received,
+                chunk,
+                chunk_received,
+            )
+            if appended == 0usize { break }
+            received = appended
+            reads = reads + 1usize
+            if http_request_is_complete_prefix(
+                request,
+                received,
+            ) { break }
+            if received >= 512usize { break }
+        }
+
+        var body_length: [UIntSize; 1] = [0usize]
+        var revision_length: [UIntSize; 1] = [0usize]
+        var accepted: Bool = false
+        var stale: Bool = false
+        var readable: Bool = false
+        if received > 0usize {
+            if http_request_is_complete_prefix(request, received) {
+                if http_route_match(request, "POST", "/api/name") {
+                    if http_request_header_exact(
+                        request,
+                        "X-Jadren-Revision",
+                        revision_text,
+                        revision_length,
+                    ) {
+                        var expected: [UInt64; 1] = [0u64]
+                        if parse_uint(revision_text, revision_length[0], expected) {
+                            if app_data_revision() != expected[0] {
+                                stale = true
+                            } else if http_request_body_exact_prefix(
+                                request,
+                                received,
+                                body,
+                                body_length,
+                                ) {
+                                if desktop_edit_body_is_valid(
+                                    body,
+                                    body_length[0],
+                                ) {
+                                    accepted = desktop_set_name_if_model_revision(
+                                        body,
+                                        body_length[0],
+                                        expected[0],
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else if http_route_match(request, "GET", "/api/name") {
+                    readable = app_state_read_text_exact(
+                        "name",
+                        body,
+                        body_length,
+                    )
+                }
+            }
+        }
+
+        var response_length: UIntSize = 0usize
+        var success: Bool = false
+        if accepted { success = true }
+        if readable { success = true }
+        if success {
+            response_length = http_response_write_header_prefix(
+                200u16,
+                "text/plain",
+                "X-Jadren-Edit",
+                "accepted",
+                body,
+                body_length[0],
+                response,
+            )
+        } else if stale {
+            response_length = http_response_write_header_prefix(
+                409u16,
+                "text/plain",
+                "X-Jadren-Edit",
+                "stale",
+                stale_body,
+                14usize,
+                response,
+            )
+        } else {
+            response_length = http_response_write_header_prefix(
+                400u16,
+                "text/plain",
+                "X-Jadren-Edit",
+                "rejected",
+                rejected,
+                13usize,
+                response,
+            )
+        }
+        if response_length == 0usize {
+            net_socket_close(client)
+            net_socket_close(listener)
+            return false
+        }
+        let sent: UIntSize = net_tcp_send_all_prefix(
+            client,
+            response,
+            response_length,
+        )
+        let closed: Bool = net_socket_close(client)
+        if sent != response_length {
+            net_socket_close(listener)
+            return false
+        }
+        if !closed {
+            net_socket_close(listener)
+            return false
+        }
+        handled = handled + 1u32
+    }
+    return net_socket_close(listener)
+}
+
+fn desktop_serve_edit(port: UInt16) -> Bool {
+    let listener: UIntSize = net_tcp_listen(port)
+    if (listener as Int32) == 0 { return false }
+    var request: [UInt8; 512] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var body: [UInt8; 64] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var response: [UInt8; 256] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    return desktop_serve_edit_buffers(listener, request, body, response)
+}
+
+fn verify_smoke_event() -> Bool {
+    if !ui_dispatch_event(1) { return false }
+    var status: [UInt8; 32] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var status_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("status", status, status_length) { return false }
+    if status_length[0] != 14usize { return false }
+    if status[0] != 66u8 { return false }
+    if status[7] != 108u8 { return false }
+    if status[13] != 100u8 { return false }
+    if app_list_count(0) != 2 { return false }
+    return app_table_row_count(0) == 2
+}
+
+fn verify_smoke_input_binding(input: Int32) -> Bool {
+    ui_set_input_text(10, "Ada")
+    let current: UInt64 = app_data_revision()
+    if !ui_app_commit_app_state_if_revision(input, current) { return false }
+
+    var value: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var value_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("name", value, value_length) { return false }
+    if value_length[0] != 3usize { return false }
+    if value[0] != 65u8 { return false }
+    if value[1] != 100u8 { return false }
+    if value[2] != 97u8 { return false }
+    value[0] = 90u8
+    value_length[0] = 77usize
+    if !ui_app_input_read_exact(input, value, value_length) { return false }
+    if value_length[0] != 3usize { return false }
+    if value[0] != 65u8 { return false }
+    if value[1] != 100u8 { return false }
+    if value[2] != 97u8 { return false }
+
+    ui_set_input_text(10, "Stale")
+    let stale: UInt64 = app_data_revision()
+    if !app_state_set_text("name", "Guarded") { return false }
+    if ui_app_commit_app_state_if_revision(input, stale) { return false }
+    value[0] = 91u8
+    value_length[0] = 78usize
+    if !app_state_read_text_exact("name", value, value_length) { return false }
+    if value_length[0] != 7usize { return false }
+    if value[0] != 71u8 { return false }
+    if value[6] != 100u8 { return false }
+
+    let fresh: UInt64 = app_data_revision()
+    if !ui_app_commit_app_state_if_revision(input, fresh) { return false }
+    value[0] = 92u8
+    value_length[0] = 79usize
+    if !app_state_read_text_exact("name", value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 83u8 { return false }
+    if value[4] != 101u8 { return false }
+    return true
+}
+
+fn verify_smoke_collection_bindings(list: Int32, table: Int32) -> Bool {
+    if !ui_app_list_set_index(list, 1) { return false }
+    let list_revision: UInt64 = app_data_revision()
+    if !ui_app_commit_app_state_if_revision(list, list_revision) { return false }
+    var selected_item: [Int64; 1] = [0i64]
+    if !app_state_read_int("selected_item", selected_item) { return false }
+    if selected_item[0] != 1i64 { return false }
+
+    if !ui_app_table_set_selected_row(table, 1) { return false }
+    let table_revision: UInt64 = app_data_revision()
+    if !ui_app_commit_app_state_if_revision(table, table_revision) { return false }
+    var selected_row: [Int64; 1] = [0i64]
+    if !app_state_read_int("selected_row", selected_row) { return false }
+    if selected_row[0] != 1i64 { return false }
+
+    if !ui_app_list_set_index(list, 0) { return false }
+    let stale_list_revision: UInt64 = app_data_revision()
+    if !app_state_set_int("selected_item", 2i64) { return false }
+    if ui_app_commit_app_state_if_revision(list, stale_list_revision) { return false }
+    if !app_state_read_int("selected_item", selected_item) { return false }
+    if selected_item[0] != 2i64 { return false }
+    if !ui_app_commit_app_state_if_revision(list, app_data_revision()) { return false }
+    if !app_state_read_int("selected_item", selected_item) { return false }
+    if selected_item[0] != 0i64 { return false }
+
+    if !ui_app_table_set_selected_row(table, 0) { return false }
+    if !ui_app_commit_app_state_if_revision(table, app_data_revision()) { return false }
+    if !app_state_read_int("selected_row", selected_row) { return false }
+    return selected_row[0] == 0i64
+}
+
+fn verify_smoke_collection_sorting(list: Int32, table: Int32) -> Bool {
+    var value: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var value_length: [UIntSize; 1] = [0usize]
+
+    // The selection commit creates a newer revision, so an older sort token
+    // must not reorder the list. The successful descending/ascending pair is
+    // then restored before the durable checkpoint runs.
+    let list_stale: UInt64 = app_data_revision()
+    if !ui_app_list_set_index(list, 1) { return false }
+    if !ui_app_commit_app_state_if_revision(list, list_stale) { return false }
+    if ui_app_list_sort_text_if_revision(list, true, list_stale) { return false }
+    let list_current: UInt64 = app_data_revision()
+    if !ui_app_list_sort_text_if_revision(list, true, list_current) { return false }
+    if !ui_app_list_read_item_exact(list, 0, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 84u8 { return false }
+    if !ui_app_list_sort_text(list, false) { return false }
+    if !ui_app_list_read_item_exact(list, 0, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 73u8 { return false }
+    if !ui_app_list_set_index(list, 0) { return false }
+    if !ui_app_commit_app_state_if_revision(list, app_data_revision()) { return false }
+
+    // Repeat the same stale/current contract for the first text table column.
+    let table_stale: UInt64 = app_data_revision()
+    if !ui_app_table_set_selected_row(table, 1) { return false }
+    if !ui_app_commit_app_state_if_revision(table, table_stale) { return false }
+    if ui_app_table_sort_text_if_revision(table, 0, true, table_stale) { return false }
+    let table_current: UInt64 = app_data_revision()
+    if !ui_app_table_sort_text_if_revision(table, 0, true, table_current) { return false }
+    if !ui_app_table_read_cell_exact(table, 0, 0, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 84u8 { return false }
+    if !ui_app_table_sort_text(table, 0, false) { return false }
+    if !ui_app_table_read_cell_exact(table, 0, 0, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 73u8 { return false }
+    if !ui_app_table_set_selected_row(table, 0) { return false }
+    if !ui_app_commit_app_state_if_revision(table, app_data_revision()) { return false }
+    return true
+}
+
+fn verify_smoke_collection_filters(list: Int32, table: Int32) -> Bool {
+    var value: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var value_length: [UIntSize; 1] = [0usize]
+
+    // Filtering projects the bound source into a distinct destination. A
+    // stale equality-only token must leave that destination untouched.
+    app_list_clear(1)
+    let list_stale: UInt64 = app_data_revision()
+    if !app_state_set_int("selected_item", 1i64) { return false }
+    if ui_app_list_filter_text_ex_if_revision(list, 1, "Today", 0, list_stale) {
+        return false
+    }
+    if app_list_count(1) != 0 { return false }
+    let list_current: UInt64 = app_data_revision()
+    if !ui_app_list_filter_text_ex_if_revision(list, 1, "Today", 0, list_current) {
+        return false
+    }
+    if app_list_count(1) != 1 { return false }
+    if !ui_app_list_read_item_exact(1, 0, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 84u8 { return false }
+    if value[4] != 121u8 { return false }
+
+    app_table_clear(1)
+    let table_stale: UInt64 = app_data_revision()
+    if !app_state_set_int("selected_row", 1i64) { return false }
+    if ui_app_table_filter_text_ex_if_revision(table, 1, 0, "Today", 0, table_stale) {
+        return false
+    }
+    if app_table_row_count(1) != 0 { return false }
+    let table_current: UInt64 = app_data_revision()
+    if !ui_app_table_filter_text_ex_if_revision(table, 1, 0, "Today", 0, table_current) {
+        return false
+    }
+    if app_table_row_count(1) != 1 { return false }
+    if !ui_app_table_read_cell_exact(1, 0, 0, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 84u8 { return false }
+    if value[4] != 121u8 { return false }
+
+    // Keep the generated starter's durable checkpoint focused on its source
+    // models and restore both selection values before the next smoke phase.
+    app_list_clear(1)
+    app_table_clear(1)
+    if !app_state_set_int("selected_item", 0i64) { return false }
+    if !app_state_set_int("selected_row", 0i64) { return false }
+    return true
+}
+
+fn verify_smoke_collection_paging(list: Int32, table: Int32) -> Bool {
+    var value: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var value_length: [UIntSize; 1] = [0usize]
+
+    // A page is a bounded projection, not a mutation of its source. Verify
+    // stale rejection first, then read the second source item as a one-item
+    // page and reject an invalid range without changing that destination.
+    app_list_clear(1)
+    let list_stale: UInt64 = app_data_revision()
+    if !app_state_set_int("selected_item", 1i64) { return false }
+    if ui_app_list_page_if_revision(list, 1, 1, 1, list_stale) { return false }
+    if app_list_count(1) != 0 { return false }
+    let list_current: UInt64 = app_data_revision()
+    if !ui_app_list_page_if_revision(list, 1, 1, 1, list_current) { return false }
+    if app_list_count(1) != 1 { return false }
+    if !ui_app_list_read_item_exact(1, 0, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 84u8 { return false }
+    if value[4] != 121u8 { return false }
+    let list_invalid_revision: UInt64 = app_data_revision()
+    if ui_app_list_page_if_revision(list, 1, -1, 1, list_invalid_revision) { return false }
+    if app_list_count(1) != 1 { return false }
+
+    app_table_clear(1)
+    let table_stale: UInt64 = app_data_revision()
+    if !app_state_set_int("selected_row", 1i64) { return false }
+    if ui_app_table_page_if_revision(table, 1, 1, 1, table_stale) { return false }
+    if app_table_row_count(1) != 0 { return false }
+    let table_current: UInt64 = app_data_revision()
+    if !ui_app_table_page_if_revision(table, 1, 1, 1, table_current) { return false }
+    if app_table_row_count(1) != 1 { return false }
+    if !ui_app_table_read_cell_exact(1, 0, 0, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 84u8 { return false }
+    if value[4] != 121u8 { return false }
+    let table_invalid_revision: UInt64 = app_data_revision()
+    if ui_app_table_page_if_revision(table, 1, -1, 1, table_invalid_revision) { return false }
+    if app_table_row_count(1) != 1 { return false }
+
+    app_list_clear(1)
+    app_table_clear(1)
+    if !app_state_set_int("selected_item", 0i64) { return false }
+    if !app_state_set_int("selected_row", 0i64) { return false }
+    return true
+}
+
+fn verify_smoke_collection_mutations(list: Int32, table: Int32) -> Bool {
+    var value: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var value_length: [UIntSize; 1] = [0usize]
+
+    // Mutate the bound list through the app model, rejecting an old revision
+    // before inserting and then refreshing the retained projection explicitly.
+    let list_stale: UInt64 = app_data_revision()
+    if !app_state_set_int("selected_item", 1i64) { return false }
+    if app_list_insert_text_if_revision(0, 1, "Later", list_stale) { return false }
+    if app_list_count(0) != 2 { return false }
+    let list_current: UInt64 = app_data_revision()
+    if !app_list_insert_text_if_revision(0, 1, "Later", list_current) { return false }
+    if app_list_count(0) != 3 { return false }
+    if !app_list_read_text_exact(0, 1, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 76u8 { return false }
+    if value[4] != 114u8 { return false }
+    if !ui_app_list_refresh(list) { return false }
+    if !ui_app_list_read_item_exact(list, 1, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 76u8 { return false }
+    if value[4] != 114u8 { return false }
+    if !app_list_remove_if_revision(0, 1, app_data_revision()) { return false }
+    if app_list_count(0) != 2 { return false }
+    if !ui_app_list_refresh(list) { return false }
+
+    // Repeat the same transaction for a complete table row and verify both
+    // model and retained read-back before removing the temporary row.
+    let table_stale: UInt64 = app_data_revision()
+    if !app_state_set_int("selected_row", 1i64) { return false }
+    if app_table_insert_row_if_revision(0, 1, table_stale) { return false }
+    if app_table_row_count(0) != 2 { return false }
+    let table_current: UInt64 = app_data_revision()
+    if !app_table_insert_row_if_revision(0, 1, table_current) { return false }
+    if app_table_row_count(0) != 3 { return false }
+    if !app_table_set_cell_if_revision(0, 1, 0, "Later", app_data_revision()) {
+        return false
+    }
+    if !app_table_set_cell_if_revision(0, 1, 1, "Planned", app_data_revision()) {
+        return false
+    }
+    if !app_table_read_cell_exact(0, 1, 0, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 76u8 { return false }
+    if value[4] != 114u8 { return false }
+    if !ui_app_table_refresh(table) { return false }
+    if !ui_app_table_read_cell_exact(table, 1, 0, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 76u8 { return false }
+    if value[4] != 114u8 { return false }
+    if !app_table_remove_row_if_revision(0, 1, app_data_revision()) { return false }
+    if app_table_row_count(0) != 2 { return false }
+    if !ui_app_table_refresh(table) { return false }
+
+    if !app_state_set_int("selected_item", 0i64) { return false }
+    if !app_state_set_int("selected_row", 0i64) { return false }
+    return true
+}
+
+fn desktop_keep_first_collection_item(source: Int32, index: Int32) -> Bool {
+    // The callback is intentionally stateless: the source identifier is
+    // supplied by the retained collection runtime, while the starter keeps
+    // only the first bounded item/row in the destination projection.
+    return index == 0
+}
+
+fn verify_smoke_collection_callback_filters(list: Int32, table: Int32) -> Bool {
+    var value: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var value_length: [UIntSize; 1] = [0usize]
+
+    // Callback filtering follows the same stale/current equality-only
+    // contract as text filters, but lets the application own the predicate.
+    app_list_clear(1)
+    let list_stale: UInt64 = app_data_revision()
+    if !app_state_set_int("selected_item", 1i64) { return false }
+    if ui_app_list_filter_callback_if_revision(
+        list, 1, desktop_keep_first_collection_item, list_stale
+    ) { return false }
+    if app_list_count(1) != 0 { return false }
+    let list_current: UInt64 = app_data_revision()
+    if !ui_app_list_filter_callback_if_revision(
+        list, 1, desktop_keep_first_collection_item, list_current
+    ) { return false }
+    if app_list_count(1) != 1 { return false }
+    if !app_list_read_text_exact(1, 0, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 73u8 { return false }
+    if value[4] != 120u8 { return false }
+
+    app_table_clear(1)
+    let table_stale: UInt64 = app_data_revision()
+    if !app_state_set_int("selected_row", 1i64) { return false }
+    if ui_app_table_filter_callback_if_revision(
+        table, 1, desktop_keep_first_collection_item, table_stale
+    ) { return false }
+    if app_table_row_count(1) != 0 { return false }
+    let table_current: UInt64 = app_data_revision()
+    if !ui_app_table_filter_callback_if_revision(
+        table, 1, desktop_keep_first_collection_item, table_current
+    ) { return false }
+    if app_table_row_count(1) != 1 { return false }
+    if !app_table_read_cell_exact(1, 0, 0, value, value_length) { return false }
+    if value_length[0] != 5usize { return false }
+    if value[0] != 73u8 { return false }
+    if value[4] != 120u8 { return false }
+
+    app_list_clear(1)
+    app_table_clear(1)
+    if !app_state_set_int("selected_item", 0i64) { return false }
+    if !app_state_set_int("selected_row", 0i64) { return false }
+    return true
+}
+
+fn desktop_save_atomic_durable_buffer(output: write Buffer<UInt8>) -> Bool {
+    var output_length: [UIntSize; 1] = [0usize]
+    if !app_data_write_exact(
+        buffer_slice_write(output, 0usize, 2048usize),
+        output_length,
+    ) { return false }
+    return file_write_atomic_durable(
+        "target/jadren-desktop-smoke/model.tmp",
+        "target/jadren-desktop-smoke/model.data",
+        "target/jadren-desktop-smoke",
+        buffer_slice(output, 0usize, output_length[0]),
+        output_length[0],
+    )
+}
+
+fn desktop_load_file_buffer(input: write Buffer<UInt8>) -> Bool {
+    var input_length: [UIntSize; 1] = [0usize]
+    if !file_read_exact(
+        "target/jadren-desktop-smoke/model.data",
+        buffer_slice_write(input, 0usize, 2048usize),
+        input_length,
+    ) { return false }
+    return app_data_load_exact(
+        buffer_slice(input, 0usize, input_length[0]),
+        input_length[0],
+    )
+}
+
+fn desktop_export_table_csv_durable(output: write Buffer<UInt8>) -> Bool {
+    var output_length: [UIntSize; 1] = [0usize]
+    if !app_table_export_csv_exact(
+        0,
+        buffer_slice_write(output, 0usize, 2048usize),
+        output_length,
+    ) { return false }
+    return file_write_atomic_durable(
+        "target/jadren-desktop-smoke/table.tmp",
+        "target/jadren-desktop-smoke/table.csv",
+        "target/jadren-desktop-smoke",
+        buffer_slice(output, 0usize, output_length[0]),
+        output_length[0],
+    )
+}
+
+fn desktop_verify_smoke_persistence_buffer(snapshot: write Buffer<UInt8>) -> Bool {
+    if !desktop_save_atomic_durable_buffer(snapshot) { return false }
+    if !file_exists("target/jadren-desktop-smoke/model.data") { return false }
+    app_state_clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    if !desktop_load_file_buffer(snapshot) { return false }
+    if !app_data_validate() { return false }
+    if app_list_count(0) != 2 { return false }
+    if app_table_row_count(0) != 2 { return false }
+    var selected_item: [Int64; 1] = [0i64]
+    if !app_state_read_int("selected_item", selected_item) { return false }
+    if selected_item[0] != 0i64 { return false }
+    var status: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var status_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("status", status, status_length) { return false }
+    if status_length[0] != 5usize { return false }
+    if status[0] != 82u8 { return false }
+    var cell: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var cell_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, 1, 1, cell, cell_length) { return false }
+    if cell_length[0] != 7usize { return false }
+    if cell[0] != 80u8 { return false }
+    if cell[6] != 100u8 { return false }
+    if !desktop_export_table_csv_durable(snapshot) { return false }
+    if !file_exists("target/jadren-desktop-smoke/table.csv") { return false }
+    var csv_length: [UIntSize; 1] = [0usize]
+    if !file_read_exact(
+        "target/jadren-desktop-smoke/table.csv",
+        buffer_slice_write(snapshot, 0usize, 2048usize),
+        csv_length,
+    ) { return false }
+    if csv_length[0] != 37usize { return false }
+    if snapshot[0] != 73u8 { return false }
+    if snapshot[4] != 44u8 { return false }
+    if snapshot[10] != 10u8 { return false }
+    if snapshot[11] != 73u8 { return false }
+    if snapshot[22] != 10u8 { return false }
+    if snapshot[23] != 84u8 { return false }
+    if snapshot[36] != 10u8 { return false }
+    if !file_delete("target/jadren-desktop-smoke/table.csv") { return false }
+    if file_exists("target/jadren-desktop-smoke/table.csv") { return false }
+    if !file_delete("target/jadren-desktop-smoke/model.data") { return false }
+    if file_exists("target/jadren-desktop-smoke/model.data") { return false }
+    return true
+}
+
+fn verify_smoke_persistence() -> Bool {
+    if !directory_exists("target/jadren-desktop-smoke") {
+        if !directory_create("target/jadren-desktop-smoke") { return false }
+    }
+    if file_exists("target/jadren-desktop-smoke/model.data") {
+        if !file_delete("target/jadren-desktop-smoke/model.data") { return false }
+    }
+    if file_exists("target/jadren-desktop-smoke/model.tmp") {
+        if !file_delete("target/jadren-desktop-smoke/model.tmp") { return false }
+    }
+    if file_exists("target/jadren-desktop-smoke/table.csv") {
+        if !file_delete("target/jadren-desktop-smoke/table.csv") { return false }
+    }
+    if file_exists("target/jadren-desktop-smoke/table.tmp") {
+        if !file_delete("target/jadren-desktop-smoke/table.tmp") { return false }
+    }
+    let expected_length: UIntSize = app_data_snapshot_length()
+    if expected_length == 0usize { return false }
+    if expected_length > 2048usize { return false }
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(2048usize)
+    var status: Int32 = 0
+    match created {
+        Error(error) => { status = error }
+        Ok(snapshot) => {
+            if !desktop_verify_smoke_persistence_buffer(snapshot) { status = 1 }
+        }
+    }
+    return status == 0
+}
+
+fn main() -> Int32 {
+    let smoke: Bool = has_smoke_flag()
+    let serve_api_port: UInt16 = desktop_parse_serve_api_port()
+    let serve_edit_port: UInt16 = desktop_parse_serve_edit_port()
+    if process_arg_count() > 1usize {
+        if !smoke {
+            if serve_api_port == 0u16 {
+                if serve_edit_port == 0u16 { return 1 }
+            }
+        }
+    }
+    if !app_state_set_text("name", "") { return 1 }
+    if !app_state_set_text("status", "Ready") { return 1 }
+    if !app_state_set_int("selected_item", 0 as Int64) { return 1 }
+    if !app_state_set_int("selected_row", 0 as Int64) { return 1 }
+    app_list_clear(0)
+    if !app_list_push_text(0, "Inbox") { return 1 }
+    if !app_list_push_text(0, "Today") { return 1 }
+    app_table_clear(0)
+    if !app_table_set_column_type(0, 0, 0) { return 1 }
+    if !app_table_set_column_type(0, 1, 0) { return 1 }
+    if !app_table_set_column_name(0, 0, "Item") { return 1 }
+    if !app_table_set_column_name(0, 1, "State") { return 1 }
+    if !app_table_append_row(0) { return 1 }
+    if !app_table_append_row(0) { return 1 }
+    if !app_table_set_cell(0, 0, 0, "Inbox") { return 1 }
+    if !app_table_set_cell(0, 0, 1, "Ready") { return 1 }
+    if !app_table_set_cell(0, 1, 0, "Today") { return 1 }
+    if !app_table_set_cell(0, 1, 1, "Planned") { return 1 }
+    if serve_api_port != 0u16 {
+        if !desktop_serve_api(serve_api_port) { return 22 }
+        return 0
+    }
+    if serve_edit_port != 0u16 {
+        if !desktop_serve_edit(serve_edit_port) { return 23 }
+        return 0
+    }
+    let root: Int32 = ui_app_begin("Jadren native app", 960, 640, 0xF6F8FCu32)
+    if root == 0 { return 2 }
+    let panel: Int32 = ui_app_panel(root, 860, 520, 0xFFFFFFu32, 12, 16, 10, 0, 1)
+    if panel == 0 { return 3 }
+    let title: Int32 = ui_app_label(panel, "Jadren native desktop app", 780, 44,
+        0x111827u32, 0xFFFFFFu32, 8, 0)
+    if title == 0 { return 4 }
+    let input: Int32 = ui_app_text_input(panel, "Your name", 10, 780, 40,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if input == 0 { return 5 }
+    if !ui_app_bind_app_state_exact(input, "name") { return 6 }
+    let subtitle: Int32 = ui_app_label(panel,
+        "State, input, lists, tables, files and network APIs stay in Jadren.",
+        780, 36, 0x6B7280u32, 0xFFFFFFu32, 8, 0)
+    if subtitle == 0 { return 7 }
+    let status: Int32 = ui_app_status(panel, "Ready", 780, 40,
+        0x111827u32, 0xDCFCE7u32, 8, 0)
+    if status == 0 { return 8 }
+    let list: Int32 = ui_app_list(panel, 21, 780, 100,
+        0x111827u32, 0xFFFFFFu32, 8, 0)
+    if list == 0 { return 9 }
+    if !ui_app_list_bind_app(list, 0) { return 10 }
+    if !ui_app_bind_app_state_exact(list, "selected_item") { return 11 }
+    let table: Int32 = ui_app_table(panel, 22, 780, 120,
+        0x111827u32, 0xFFFFFFu32, 8, 0)
+    if table == 0 { return 12 }
+    if !ui_app_table_column(table, 0, "Item", 360) { return 13 }
+    if !ui_app_table_column(table, 1, "State", 240) { return 14 }
+    if !ui_app_table_bind_app(table, 0, 2) { return 15 }
+    if !ui_app_bind_app_state_exact(table, "selected_row") { return 16 }
+    let button: Int32 = ui_app_button(panel, "Commit state", 1, 220, 42,
+        0xFFFFFFu32, 0x168EF5u32, 10, 0)
+    if button == 0 { return 17 }
+    if smoke {
+        if !verify_smoke_input_binding(input) { return 20 }
+        if !verify_smoke_collection_bindings(list, table) { return 21 }
+        if !verify_smoke_collection_sorting(list, table) { return 22 }
+        if !verify_smoke_collection_filters(list, table) { return 23 }
+        if !verify_smoke_collection_paging(list, table) { return 24 }
+        if !verify_smoke_collection_mutations(list, table) { return 25 }
+        if !verify_smoke_collection_callback_filters(list, table) { return 26 }
+    }
+    if !ui_app_end(panel) { return 18 }
+    if !ui_app_end(root) { return 19 }
+    if smoke {
+        if !verify_smoke_event() { return 27 }
+        if !verify_smoke_persistence() { return 28 }
+        return 0
+    }
+    return ui_app_run()
+}
+"#;
+
+const DESKTOP_TEMPLATE_README: &str = r#"# Jadren native desktop app
+
+This project was created by `jadren init --template desktop`.
+
+```powershell
+jadren check .
+jadren build . -o target/jadren-app.exe --profile release
+target/jadren-app.exe --smoke
+target/jadren-app.exe --serve-api 38173
+target/jadren-app.exe --serve-edit 38174
+```
+
+The starter keeps the application state and retained UI in Jadren. It already
+contains one text input bound to `app_state`, an exported native button
+callback, a dynamic `app_list` and `app_table` projection, explicit root/panel
+scope closure, and a bounded durable checkpoint round-trip for the complete
+model. Add more file checkpoints and network routes as the application grows;
+no Electron bridge is required. The `--smoke` mode sets a deterministic input,
+commits it against the current model revision, reads it back exactly, and
+proves that a stale revision cannot overwrite a newer state value. It then
+dispatches the same button event headlessly, verifies the resulting
+state/list/table, writes the model atomically, clears it, reads it back,
+validates the restored projections, and removes the temporary checkpoint
+before exiting. It also exports the seed table as a durable CSV and verifies
+its read-back framing before cleanup. Before the checkpoint, the smoke sorts
+the bound list and table in both directions, rejects stale sort revisions, and
+restores the original order. It also projects an exact text filter for the
+bound list and table into separate destination models, rejects stale filter
+revisions, verifies the filtered read-back, and clears those projections
+before the checkpoint. Finally, it copies one bounded page from each bound
+source into a destination model, rejects stale and invalid page requests, and
+clears those page projections before the checkpoint.
+It also applies an application-owned callback predicate to both source
+collections, verifies stale rejection and exact first-item/row read-back, and
+clears the callback projections before the checkpoint.
+It performs one revision-guarded list insert/remove and table row insert/cell
+write/remove through the bound app model, refreshes the retained controls, and
+verifies both model and UI read-back before restoring the seed model.
+The bounded `--serve-api <port>` mode exposes `GET /healthz`,
+`GET /api/status`, `GET /api/revision`, `GET /api/state`, `GET /api/lists/0`,
+`GET /api/tables/0` and `GET /api/model` on loopback. It reads the current
+`app_state` status and model revision and serializes the seeded model
+projections through caller-owned buffers, accepts exactly seven
+connection-close requests, and then exits. It is a local smoke fixture, not a
+production server: authentication, TLS, concurrency policy and deployment
+remain explicit application decisions.
+The bounded `--serve-edit <port>` mode adds one revision-guarded local write:
+`POST /api/name` requires the `X-Jadren-Revision` header and a printable
+ASCII body, rejects stale revisions with HTTP 409, and proves the accepted
+value with a final `GET /api/name`. It accepts exactly three
+connection-close requests and exits; it is an in-process smoke contract, not
+a production write API or durable checkpoint policy.
+"#;
+
+const FULL_APP_TEMPLATE_MAIN: &str = r#"module {module}.main
+
+import {module}.model.bootstrap
+import {module}.model.verify_smoke_model
+import {module}.model.verify_interaction_smoke_model
+import {module}.model.verify_due_reminder_smoke_model
+import {module}.model.verify_scheduled_reminder_smoke_model
+import {module}.model.verify_filtered_projects_smoke_model
+import {module}.model.verify_filtered_tasks_smoke_model
+import {module}.model.verify_tasks_ascending_smoke_model
+import {module}.model.verify_tasks_descending_smoke_model
+import {module}.model.verify_removal_smoke_model
+import {module}.controller.cleanup_interactive_checkpoint
+import {module}.controller.cleanup_interactive_exports
+import {module}.controller.cleanup_interactive_json_backup
+import {module}.controller.verify_interactive_checkpoint_slot
+import {module}.controller.verify_interactive_exports
+import {module}.controller.verify_interactive_json_backup
+import {module}.storage.smoke_checkpoint_roundtrip
+import {module}.storage.smoke_file_backed_model_roundtrip
+import {module}.exports.smoke_durable_exports
+import {module}.api.serve_health_once
+import {module}.api.serve_snapshot
+import {module}.api.serve_draft_update
+import {module}.api.serve_draft_commit
+import {module}.api.serve_model_sync
+import {module}.view.build
+import {module}.view.dispatch_smoke_actions
+import {module}.view.dispatch_smoke_edit
+import {module}.view.dispatch_smoke_due_reminders
+import {module}.view.dispatch_smoke_future_reminder
+import {module}.view.dispatch_smoke_filter
+import {module}.view.dispatch_smoke_json_backup
+import {module}.view.dispatch_smoke_sort_ascending
+import {module}.view.dispatch_smoke_sort_descending
+import {module}.view.dispatch_smoke_persistence
+import {module}.view.dispatch_smoke_exports
+import {module}.view.dispatch_smoke_removal
+import {module}.view.reset_smoke_event_queue
+import {module}.view.verify_smoke_view
+import {module}.view.verify_interaction_smoke_view
+import {module}.view.verify_due_reminder_smoke_view
+import {module}.view.verify_scheduled_reminder_smoke_view
+import {module}.view.verify_filtered_projects_smoke_view
+import {module}.view.verify_filtered_tasks_smoke_view
+import {module}.view.verify_tasks_ascending_smoke_view
+import {module}.view.verify_tasks_descending_smoke_view
+import {module}.view.verify_interactive_checkpoint_slot_view
+import {module}.view.verify_removal_smoke_view
+import {module}.view.verify_smoke_event_queue
+
+// `--smoke` validates the model and the retained native projections without
+// entering the interactive UI event loop.
+fn full_app_has_smoke_flag() -> Bool {
+    if process_arg_count() != 2usize { return false }
+    var value: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = process_arg_read(1usize, value)
+    if length != 7usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 115u8 { return false }
+    if value[3] != 109u8 { return false }
+    if value[4] != 111u8 { return false }
+    if value[5] != 107u8 { return false }
+    if value[6] != 101u8 { return false }
+    return true
+}
+
+// `--serve-once <port>` bootstraps the bounded model and serves one local
+// health request without opening the retained desktop event loop.
+fn full_app_has_serve_once_flag(value: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length != 12usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 115u8 { return false }
+    if value[3] != 101u8 { return false }
+    if value[4] != 114u8 { return false }
+    if value[5] != 118u8 { return false }
+    if value[6] != 101u8 { return false }
+    if value[7] != 45u8 { return false }
+    if value[8] != 111u8 { return false }
+    if value[9] != 110u8 { return false }
+    if value[10] != 99u8 { return false }
+    if value[11] != 101u8 { return false }
+    return true
+}
+
+// `--serve-api <port>` exposes one bounded read-only snapshot of each
+// template store through four local GET requests, then exits.
+fn full_app_has_serve_api_flag(value: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length != 11usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 115u8 { return false }
+    if value[3] != 101u8 { return false }
+    if value[4] != 114u8 { return false }
+    if value[5] != 118u8 { return false }
+    if value[6] != 101u8 { return false }
+    if value[7] != 45u8 { return false }
+    if value[8] != 97u8 { return false }
+    if value[9] != 112u8 { return false }
+    if value[10] != 105u8 { return false }
+    return true
+}
+
+// `--serve-draft <port>` accepts one valid draft update, one rejected update
+// and one readback request before exiting.
+fn full_app_has_serve_draft_flag(value: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length != 13usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 115u8 { return false }
+    if value[3] != 101u8 { return false }
+    if value[4] != 114u8 { return false }
+    if value[5] != 118u8 { return false }
+    if value[6] != 101u8 { return false }
+    if value[7] != 45u8 { return false }
+    if value[8] != 100u8 { return false }
+    if value[9] != 114u8 { return false }
+    if value[10] != 97u8 { return false }
+    if value[11] != 102u8 { return false }
+    if value[12] != 116u8 { return false }
+    return true
+}
+
+// `--serve-draft-commit <port>` accepts a revision-guarded draft update,
+// rejects a stale revision, and proves durable readback before exit.
+fn full_app_has_serve_draft_commit_flag(value: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length != 20usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 115u8 { return false }
+    if value[3] != 101u8 { return false }
+    if value[4] != 114u8 { return false }
+    if value[5] != 118u8 { return false }
+    if value[6] != 101u8 { return false }
+    if value[7] != 45u8 { return false }
+    if value[8] != 100u8 { return false }
+    if value[9] != 114u8 { return false }
+    if value[10] != 97u8 { return false }
+    if value[11] != 102u8 { return false }
+    if value[12] != 116u8 { return false }
+    if value[13] != 45u8 { return false }
+    if value[14] != 99u8 { return false }
+    if value[15] != 111u8 { return false }
+    if value[16] != 109u8 { return false }
+    if value[17] != 109u8 { return false }
+    if value[18] != 105u8 { return false }
+    if value[19] != 116u8 { return false }
+    return true
+}
+
+// `--serve-model-sync <port>` exposes a bounded complete-model read/update
+// exchange. Updates carry the current process-local equality token.
+fn full_app_has_serve_model_sync_flag(value: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length != 18usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 115u8 { return false }
+    if value[3] != 101u8 { return false }
+    if value[4] != 114u8 { return false }
+    if value[5] != 118u8 { return false }
+    if value[6] != 101u8 { return false }
+    if value[7] != 45u8 { return false }
+    if value[8] != 109u8 { return false }
+    if value[9] != 111u8 { return false }
+    if value[10] != 100u8 { return false }
+    if value[11] != 101u8 { return false }
+    if value[12] != 108u8 { return false }
+    if value[13] != 45u8 { return false }
+    if value[14] != 115u8 { return false }
+    if value[15] != 121u8 { return false }
+    if value[16] != 110u8 { return false }
+    if value[17] != 99u8 { return false }
+    return true
+}
+
+fn full_app_parse_serve_once_port() -> UInt16 {
+    if process_arg_count() != 3usize { return 0u16 }
+    var flag: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let flag_length: UIntSize = process_arg_read(1usize, flag)
+    if !full_app_has_serve_once_flag(flag, flag_length) { return 0u16 }
+    var value: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let value_length: UIntSize = process_arg_read(2usize, value)
+    var parsed: [UInt64; 1] = [0u64]
+    if !parse_uint(value, value_length, parsed) { return 0u16 }
+    if parsed[0] == 0u64 { return 0u16 }
+    if parsed[0] > 65535u64 { return 0u16 }
+    return parsed[0] as UInt16
+}
+
+fn full_app_parse_serve_api_port() -> UInt16 {
+    if process_arg_count() != 3usize { return 0u16 }
+    var flag: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let flag_length: UIntSize = process_arg_read(1usize, flag)
+    if !full_app_has_serve_api_flag(flag, flag_length) { return 0u16 }
+    var value: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let value_length: UIntSize = process_arg_read(2usize, value)
+    var parsed: [UInt64; 1] = [0u64]
+    if !parse_uint(value, value_length, parsed) { return 0u16 }
+    if parsed[0] == 0u64 { return 0u16 }
+    if parsed[0] > 65535u64 { return 0u16 }
+    return parsed[0] as UInt16
+}
+
+fn full_app_parse_serve_draft_port() -> UInt16 {
+    if process_arg_count() != 3usize { return 0u16 }
+    var flag: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let flag_length: UIntSize = process_arg_read(1usize, flag)
+    if !full_app_has_serve_draft_flag(flag, flag_length) { return 0u16 }
+    var value: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let value_length: UIntSize = process_arg_read(2usize, value)
+    var parsed: [UInt64; 1] = [0u64]
+    if !parse_uint(value, value_length, parsed) { return 0u16 }
+    if parsed[0] == 0u64 { return 0u16 }
+    if parsed[0] > 65535u64 { return 0u16 }
+    return parsed[0] as UInt16
+}
+
+fn full_app_parse_serve_draft_commit_port() -> UInt16 {
+    if process_arg_count() != 3usize { return 0u16 }
+    var flag: [UInt8; 24] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let flag_length: UIntSize = process_arg_read(1usize, flag)
+    if !full_app_has_serve_draft_commit_flag(flag, flag_length) { return 0u16 }
+    var value: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let value_length: UIntSize = process_arg_read(2usize, value)
+    var parsed: [UInt64; 1] = [0u64]
+    if !parse_uint(value, value_length, parsed) { return 0u16 }
+    if parsed[0] == 0u64 { return 0u16 }
+    if parsed[0] > 65535u64 { return 0u16 }
+    return parsed[0] as UInt16
+}
+
+fn full_app_parse_serve_model_sync_port() -> UInt16 {
+    if process_arg_count() != 3usize { return 0u16 }
+    var flag: [UInt8; 24] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let flag_length: UIntSize = process_arg_read(1usize, flag)
+    if !full_app_has_serve_model_sync_flag(flag, flag_length) { return 0u16 }
+    var value: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let value_length: UIntSize = process_arg_read(2usize, value)
+    var parsed: [UInt64; 1] = [0u64]
+    if !parse_uint(value, value_length, parsed) { return 0u16 }
+    if parsed[0] == 0u64 { return 0u16 }
+    if parsed[0] > 65535u64 { return 0u16 }
+    return parsed[0] as UInt16
+}
+
+fn main() -> Int32 {
+    if !bootstrap() { return 1 }
+    let smoke: Bool = full_app_has_smoke_flag()
+    let serve_once_port: UInt16 = full_app_parse_serve_once_port()
+    let serve_api_port: UInt16 = full_app_parse_serve_api_port()
+    let serve_draft_port: UInt16 = full_app_parse_serve_draft_port()
+    let serve_draft_commit_port: UInt16 = full_app_parse_serve_draft_commit_port()
+    let serve_model_sync_port: UInt16 = full_app_parse_serve_model_sync_port()
+    if process_arg_count() > 1usize {
+        if !smoke {
+            if serve_once_port == 0u16 {
+                if serve_api_port == 0u16 {
+                    if serve_draft_port == 0u16 {
+                        if serve_draft_commit_port == 0u16 {
+                            if serve_model_sync_port == 0u16 { return 7 }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if serve_api_port != 0u16 {
+        if !serve_snapshot(serve_api_port) { return 8 }
+        return 0
+    }
+    if serve_draft_port != 0u16 {
+        if !serve_draft_update(serve_draft_port) { return 9 }
+        return 0
+    }
+    if serve_draft_commit_port != 0u16 {
+        if !serve_draft_commit(serve_draft_commit_port) { return 10 }
+        return 0
+    }
+    if serve_model_sync_port != 0u16 {
+        if !serve_model_sync(serve_model_sync_port) { return 12 }
+        return 0
+    }
+    if serve_once_port != 0u16 {
+        if !serve_health_once(serve_once_port) { return 11 }
+        return 0
+    }
+    if smoke {
+        if !smoke_checkpoint_roundtrip() { return 2 }
+        if !smoke_file_backed_model_roundtrip() { return 55 }
+        if !verify_smoke_model() { return 3 }
+        if !smoke_durable_exports() { return 4 }
+    }
+    if !build() { return 5 }
+    if smoke {
+        if !reset_smoke_event_queue() { return 47 }
+        if !verify_smoke_view() { return 6 }
+        if !dispatch_smoke_actions() { return 7 }
+        if !dispatch_smoke_edit() { return 8 }
+        if !verify_interaction_smoke_model() { return 9 }
+        if !verify_interaction_smoke_view() { return 10 }
+        if !dispatch_smoke_due_reminders() { return 49 }
+        if !verify_due_reminder_smoke_model() { return 50 }
+        if !verify_due_reminder_smoke_view() { return 51 }
+        if !dispatch_smoke_future_reminder() { return 52 }
+        if !verify_scheduled_reminder_smoke_model() { return 53 }
+        if !verify_scheduled_reminder_smoke_view() { return 54 }
+        if !dispatch_smoke_filter() { return 11 }
+        if !verify_filtered_projects_smoke_model() { return 12 }
+        if !verify_filtered_projects_smoke_view() { return 13 }
+        if !verify_filtered_tasks_smoke_model() { return 14 }
+        if !verify_filtered_tasks_smoke_view() { return 15 }
+        if !dispatch_smoke_persistence() { return 16 }
+        if !verify_interactive_checkpoint_slot() { return 17 }
+        if !verify_interactive_checkpoint_slot_view() { return 18 }
+        if !verify_scheduled_reminder_smoke_model() { return 19 }
+        if !verify_scheduled_reminder_smoke_view() { return 20 }
+        if !verify_filtered_projects_smoke_model() { return 21 }
+        if !verify_filtered_projects_smoke_view() { return 22 }
+        if !verify_filtered_tasks_smoke_model() { return 23 }
+        if !verify_filtered_tasks_smoke_view() { return 24 }
+        if !dispatch_smoke_json_backup() { return 25 }
+        if !verify_interactive_json_backup() { return 26 }
+        if !verify_scheduled_reminder_smoke_model() { return 27 }
+        if !verify_scheduled_reminder_smoke_view() { return 28 }
+        if !verify_filtered_projects_smoke_model() { return 29 }
+        if !verify_filtered_projects_smoke_view() { return 30 }
+        if !verify_filtered_tasks_smoke_model() { return 31 }
+        if !verify_filtered_tasks_smoke_view() { return 32 }
+        if !dispatch_smoke_sort_ascending() { return 33 }
+        if !verify_tasks_ascending_smoke_model() { return 34 }
+        if !verify_tasks_ascending_smoke_view() { return 35 }
+        if !dispatch_smoke_sort_descending() { return 36 }
+        if !verify_tasks_descending_smoke_model() { return 37 }
+        if !verify_tasks_descending_smoke_view() { return 38 }
+        if !dispatch_smoke_exports() { return 39 }
+        if !verify_interactive_exports() { return 40 }
+        if !dispatch_smoke_removal() { return 41 }
+        if !verify_removal_smoke_model() { return 42 }
+        if !verify_removal_smoke_view() { return 43 }
+        if !verify_smoke_event_queue() { return 48 }
+        if !cleanup_interactive_json_backup() { return 44 }
+        if !cleanup_interactive_exports() { return 45 }
+        if !cleanup_interactive_checkpoint() { return 46 }
+        return 0
+    }
+    return ui_app_run()
+}
+"#;
+
+const FULL_APP_TEMPLATE_MODEL: &str = r#"module {module}.model
+
+// The model module owns application state and bounded collections. View code
+// only projects these stores into native retained controls.
+pub fn bootstrap() -> Bool {
+    app_state_clear()
+    if !app_state_set_text("draft", "First native task") { return false }
+    if !app_state_set_text("project_draft", "") { return false }
+    if !app_state_set_text("project_editor", "") { return false }
+    if !app_state_set_text("task_editor", "") { return false }
+    if !app_state_set_text("task_status_editor", "") { return false }
+    if !app_state_set_text("task_notes_editor", "") { return false }
+    if !app_state_set_text("task_estimate_editor", "") { return false }
+    if !app_state_set_text("task_reminder_due_editor", "") { return false }
+    if !app_state_set_int("project_choice", 0 as Int64) { return false }
+    if !app_state_set_int("task_choice", 0 as Int64) { return false }
+    if !app_state_set_int("selected_task_id", 1 as Int64) { return false }
+    if !app_state_set_int("next_task_id", 3 as Int64) { return false }
+    if !app_state_set_int("checkpoint_slot", 0 as Int64) { return false }
+    if !app_state_set_text("project_filter", "") { return false }
+    if !app_state_set_int("filtered_project_choice", -1 as Int64) { return false }
+    if !app_state_set_text("task_filter", "") { return false }
+    if !app_state_set_int("filtered_task_choice", -1 as Int64) { return false }
+
+    app_list_clear(0)
+    if !app_list_push_text(0, "Inbox") { return false }
+    if !app_list_push_text(0, "Today") { return false }
+
+    app_list_clear(1)
+    if !app_list_push_text(1, "Primary local checkpoint") { return false }
+    if !app_list_push_text(1, "Backup local checkpoint") { return false }
+
+    app_list_clear(2)
+    app_scheduler_clear()
+
+    app_table_clear(0)
+    if !app_table_set_column_type(0, 0, 0) { return false }
+    if !app_table_set_column_type(0, 1, 0) { return false }
+    if !app_table_set_column_type(0, 2, 0) { return false }
+    if !app_table_set_column_type(0, 3, 0) { return false }
+    if !app_table_set_column_type(0, 4, 1) { return false }
+    if !app_table_set_column_type(0, 5, 1) { return false }
+    if !app_table_set_column_type(0, 6, 1) { return false }
+    if !app_table_set_column_name(0, 0, "Task") { return false }
+    if !app_table_set_column_name(0, 1, "Status") { return false }
+    if !app_table_set_column_name(0, 2, "Project") { return false }
+    if !app_table_set_column_name(0, 3, "Notes") { return false }
+    if !app_table_set_column_name(0, 4, "EstimateMinutes") { return false }
+    if !app_table_set_column_name(0, 5, "ReminderDueUnixSeconds") { return false }
+    if !app_table_set_column_name(0, 6, "TaskId") { return false }
+    if !app_table_append_row(0) { return false }
+    if !app_table_append_row(0) { return false }
+    if !app_table_set_named_cell(0, 0, "Task", "First native task") { return false }
+    if !app_table_set_named_cell(0, 0, "Status", "Open") { return false }
+    if !app_table_set_named_cell(0, 0, "Project", "Inbox") { return false }
+    if !app_table_set_named_cell(0, 0, "Notes", "") { return false }
+    if !app_table_set_int(0, 0, 4, 30 as Int64) { return false }
+    if !app_table_set_int(0, 0, 5, 0 as Int64) { return false }
+    if !app_table_set_int(0, 0, 6, 1 as Int64) { return false }
+    if !app_table_set_named_cell(0, 1, "Task", "Review the model") { return false }
+    if !app_table_set_named_cell(0, 1, "Status", "Planned") { return false }
+    if !app_table_set_named_cell(0, 1, "Project", "Today") { return false }
+    if !app_table_set_named_cell(0, 1, "Notes", "") { return false }
+    if !app_table_set_int(0, 1, 4, 45 as Int64) { return false }
+    if !app_table_set_int(0, 1, 5, 0 as Int64) { return false }
+    if !app_table_set_int(0, 1, 6, 2 as Int64) { return false }
+    app_table_clear(1)
+    return true
+}
+
+// The controller invokes this from a native button event. It assigns the exact
+// task input to the current project-list selection and updates the source table
+// as one process-local app-data transaction; any failure restores all stores.
+pub fn add_draft_task() -> Bool {
+    var draft: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var draft_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("draft", draft, draft_length) { return false }
+    if draft_length[0] == 0usize { return false }
+    let project_index: Int32 = selected_project_index()
+    if project_index < 0 { return false }
+    var project: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var project_length: [UIntSize; 1] = [0usize]
+    if !app_list_read_text_exact(0, project_index, project, project_length) { return false }
+    if project_length[0] == 0usize { return false }
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    var next_task_id: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("next_task_id", next_task_id) {
+        app_data_tx_rollback()
+        return false
+    }
+    if next_task_id[0] <= 0 as Int64 {
+        app_data_tx_rollback()
+        return false
+    }
+    let task_row: Int32 = app_table_upsert_int(0, 6, next_task_id[0])
+    if task_row < 0 {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_table_set_cell_bytes_ex(0, task_row, 0, draft, draft_length[0]) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_table_set_cell(0, task_row, 1, "Open") {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_table_set_cell_bytes_ex(0, task_row, 2, project, project_length[0]) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_table_set_cell(0, task_row, 3, "") {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_table_set_int(0, task_row, 4, 0 as Int64) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_table_set_int(0, task_row, 5, 0 as Int64) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_state_set_int("task_choice", task_row as Int64) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_state_set_int("selected_task_id", next_task_id[0]) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_state_set_int("next_task_id", next_task_id[0] + 1 as Int64) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_state_set_text("draft", "") {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        return false
+    }
+    return true
+}
+
+fn selected_project_index() -> Int32 {
+    var selected: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("project_choice", selected) { return -1 }
+    if selected[0] < 0 as Int64 { return -1 }
+    let item: Int32 = selected[0] as Int32
+    if item < 0 { return -1 }
+    if item >= app_list_count(0) { return -1 }
+    return item
+}
+
+// A native list-selection event first writes project_choice. This explicit
+// readback keeps the retained input synchronized without a hidden binding that
+// could mutate the dynamic source list.
+pub fn load_selected_project_editor() -> Bool {
+    let item: Int32 = selected_project_index()
+    if item < 0 { return false }
+    var editor: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var editor_length: [UIntSize; 1] = [0usize]
+    if !app_list_read_text_exact(0, item, editor, editor_length) { return false }
+    return app_state_set_text_bytes("project_editor", editor, editor_length[0])
+}
+
+pub fn sync_selected_project_from_list() -> Bool {
+    return load_selected_project_editor()
+}
+
+// Projects are created independently from tasks. Names stay exact and unique
+// in this bounded template so a task's visible Project value is an unambiguous
+// application-owned reference rather than a retained UI index.
+pub fn add_project() -> Bool {
+    var draft: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var draft_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("project_draft", draft, draft_length) { return false }
+    if draft_length[0] == 0usize { return false }
+    if find_project_exact(draft, draft_length[0]) >= 0 { return false }
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    if !app_list_push_text_bytes(0, draft, draft_length[0]) {
+        app_data_tx_rollback()
+        return false
+    }
+    let item: Int32 = app_list_count(0) - 1
+    if item < 0 {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_state_set_int("project_choice", item as Int64) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_state_set_text_bytes("project_editor", draft, draft_length[0]) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_state_set_text("project_draft", "") {
+        app_data_tx_rollback()
+        return false
+    }
+    if !refresh_project_filter() {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        return false
+    }
+    return true
+}
+
+fn text_bytes_equal(
+    left: read Slice<UInt8>, left_length: UIntSize,
+    right: read Slice<UInt8>, right_length: UIntSize
+) -> Bool {
+    if left_length != right_length { return false }
+    var index: UIntSize = 0usize
+    while index < left_length {
+        if left[index] != right[index] { return false }
+        index = index + 1usize
+    }
+    return true
+}
+
+fn find_project_exact(value: read Slice<UInt8>, value_length: UIntSize) -> Int32 {
+    let count: Int32 = app_list_count(0)
+    var item: Int32 = 0
+    while item < count {
+        var candidate: [UInt8; 64] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+        ]
+        var candidate_length: [UIntSize; 1] = [0usize]
+        if !app_list_read_text_exact(0, item, candidate, candidate_length) { return -1 }
+        if text_bytes_equal(candidate, candidate_length[0], value, value_length) { return item }
+        item = item + 1
+    }
+    return -1
+}
+
+// Every table row must name one current project-list item. This protects the
+// relation across checkpoints, JSON import and complete-model synchronization.
+pub fn task_projects_are_valid() -> Bool {
+    let rows: Int32 = app_table_row_count(0)
+    var row: Int32 = 0
+    while row < rows {
+        var project: [UInt8; 64] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+        ]
+        var project_length: [UIntSize; 1] = [0usize]
+        if !app_table_read_cell_exact(0, row, 2, project, project_length) { return false }
+        if project_length[0] == 0usize { return false }
+        if find_project_exact(project, project_length[0]) < 0 { return false }
+        row = row + 1
+    }
+    return true
+}
+
+// The native scheduler accepts Int32 caller-owned tokens. TaskId is already
+// bounded by the full-app model, so this conversion keeps persisted identity
+// and process-local timers in the same explicit range.
+fn scheduler_task_id(task_id: Int64) -> Int32 {
+    if task_id <= 0 as Int64 { return -1 }
+    if task_id > 2147483646 as Int64 { return -1 }
+    return task_id as Int32
+}
+
+// ReminderDueUnixSeconds is persistent table data; zero means that the row has
+// no scheduled one-shot timer. The scheduler itself is process-local and is
+// rebuilt only from rows accepted by this invariant.
+pub fn task_reminders_are_valid() -> Bool {
+    let rows: Int32 = app_table_row_count(0)
+    var row: Int32 = 0
+    while row < rows {
+        let due_unix_seconds: Int64 = app_table_read_int(0, row, 5)
+        if due_unix_seconds < 0 as Int64 { return false }
+        if due_unix_seconds > 0 as Int64 {
+            if scheduler_task_id(app_table_read_int(0, row, 6)) < 0 { return false }
+        }
+        row = row + 1
+    }
+    return true
+}
+
+// Restoring a checkpoint or complete model does not implicitly start a worker.
+// It rehydrates this bounded queue, which the controller polls at an explicit
+// user or host event boundary.
+pub fn rebuild_task_reminders() -> Bool {
+    if !task_reminders_are_valid() { return false }
+    app_scheduler_clear()
+    let rows: Int32 = app_table_row_count(0)
+    var row: Int32 = 0
+    while row < rows {
+        let due_unix_seconds: Int64 = app_table_read_int(0, row, 5)
+        if due_unix_seconds > 0 as Int64 {
+            let task_id: Int32 = scheduler_task_id(app_table_read_int(0, row, 6))
+            if !app_scheduler_set(task_id, due_unix_seconds, 0u64) {
+                app_scheduler_clear()
+                return false
+            }
+        }
+        row = row + 1
+    }
+    return true
+}
+
+// Rename the selected source-list item through its exact bound editor input.
+// The source list and its explicit filtered projection are replaced together
+// within one revision-checked transaction.
+pub fn rename_selected_project() -> Bool {
+    var editor: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var editor_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("project_editor", editor, editor_length) { return false }
+    if editor_length[0] == 0usize { return false }
+    let item: Int32 = selected_project_index()
+    if item < 0 { return false }
+    var previous: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var previous_length: [UIntSize; 1] = [0usize]
+    if !app_list_read_text_exact(0, item, previous, previous_length) { return false }
+    let duplicate: Int32 = find_project_exact(editor, editor_length[0])
+    if duplicate >= 0 {
+        if duplicate != item { return false }
+    }
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    if !app_list_set_text_bytes(0, item, editor, editor_length[0]) {
+        app_data_tx_rollback()
+        return false
+    }
+    let rows: Int32 = app_table_row_count(0)
+    var row: Int32 = 0
+    while row < rows {
+        var task_project: [UInt8; 64] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+        ]
+        var task_project_length: [UIntSize; 1] = [0usize]
+        if !app_table_read_cell_exact(0, row, 2, task_project, task_project_length) {
+            app_data_tx_rollback()
+            return false
+        }
+        if text_bytes_equal(task_project, task_project_length[0], previous, previous_length[0]) {
+            if !app_table_set_cell_bytes_ex(0, row, 2, editor, editor_length[0]) {
+                app_data_tx_rollback()
+                return false
+            }
+        }
+        row = row + 1
+    }
+    if !task_projects_are_valid() {
+        app_data_tx_rollback()
+        return false
+    }
+    if !refresh_project_filter() {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        return false
+    }
+    return true
+}
+
+// Remove only an unused project while keeping at least one selection target
+// for new tasks. A referenced project is an integrity boundary: the caller
+// must move or remove those tasks first instead of creating a dangling value.
+pub fn remove_selected_project() -> Bool {
+    if app_list_count(0) <= 1 { return false }
+    let item: Int32 = selected_project_index()
+    if item < 0 { return false }
+    var project: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var project_length: [UIntSize; 1] = [0usize]
+    if !app_list_read_text_exact(0, item, project, project_length) { return false }
+    let rows: Int32 = app_table_row_count(0)
+    var row: Int32 = 0
+    while row < rows {
+        var task_project: [UInt8; 64] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+        ]
+        var task_project_length: [UIntSize; 1] = [0usize]
+        if !app_table_read_cell_exact(0, row, 2, task_project, task_project_length) { return false }
+        if text_bytes_equal(task_project, task_project_length[0], project, project_length[0]) {
+            return false
+        }
+        row = row + 1
+    }
+    if !task_projects_are_valid() { return false }
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    if !app_list_remove(0, item) {
+        app_data_tx_rollback()
+        return false
+    }
+    let count: Int32 = app_list_count(0)
+    var next_item: Int32 = item
+    if next_item >= count { next_item = count - 1 }
+    if !app_state_set_int("project_choice", next_item as Int64) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !load_selected_project_editor() {
+        app_data_tx_rollback()
+        return false
+    }
+    if !refresh_project_filter() {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        return false
+    }
+    return true
+}
+
+// Mark the current bound table selection complete without making the view own
+// a row index. Invalid or missing selection leaves the complete model intact.
+pub fn complete_selected_task() -> Bool {
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    let row: Int32 = selected_task_row()
+    if row < 0 {
+        app_data_tx_rollback()
+        return false
+    }
+    let task_id: Int32 = scheduler_task_id(app_table_read_int(0, row, 6))
+    if task_id < 0 {
+        app_data_tx_rollback()
+        return false
+    }
+    let previous_due: Int64 = app_table_read_int(0, row, 5)
+    if previous_due > 0 as Int64 {
+        if !app_scheduler_cancel(task_id) {
+            app_data_tx_rollback()
+            return false
+        }
+        if !app_table_set_int(0, row, 5, 0 as Int64) {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+    }
+    if !app_table_set_cell(0, row, 1, "Done") {
+        app_data_tx_rollback()
+        rebuild_task_reminders()
+        return false
+    }
+    if !app_state_set_text("task_status_editor", "Done") {
+        app_data_tx_rollback()
+        rebuild_task_reminders()
+        return false
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        rebuild_task_reminders()
+        return false
+    }
+    if previous_due > 0 as Int64 {
+        return app_state_set_text("task_reminder_due_editor", "0")
+    }
+    return true
+}
+
+fn selected_task_row() -> Int32 {
+    var selected_task_id: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("selected_task_id", selected_task_id) { return -1 }
+    if selected_task_id[0] <= 0 as Int64 { return -1 }
+    return app_table_find_int(0, 6, selected_task_id[0], 0)
+}
+
+// A native row-selection event first writes its bound row index. This explicit
+// model step derives the stable identity and editor content from that row.
+pub fn sync_selected_task_from_row() -> Bool {
+    var selected: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("task_choice", selected) { return false }
+    if selected[0] < 0 as Int64 { return false }
+    let row: Int32 = selected[0] as Int32
+    if row < 0 { return false }
+    if row >= app_table_row_count(0) { return false }
+    let task_id: Int64 = app_table_read_int(0, row, 6)
+    if task_id <= 0 as Int64 { return false }
+    if !app_state_set_int("selected_task_id", task_id) { return false }
+    return load_selected_task_fields()
+}
+
+// The generated model reserves positive, unique IDs for source-table rows.
+// This rejects a hand-modified backup that would make identity ambiguous.
+pub fn task_ids_are_unique() -> Bool {
+    let rows: Int32 = app_table_row_count(0)
+    var row: Int32 = 0
+    while row < rows {
+        let task_id: Int64 = app_table_read_int(0, row, 6)
+        if task_id <= 0 as Int64 { return false }
+        if app_table_find_int(0, 6, task_id, 0) != row { return false }
+        row = row + 1
+    }
+    return true
+}
+
+// A restored table can originate from an earlier process. Keep the generated
+// ID counter above every accepted row so the next add cannot overwrite it.
+pub fn normalize_next_task_id() -> Bool {
+    let rows: Int32 = app_table_row_count(0)
+    var row: Int32 = 0
+    var maximum_task_id: Int64 = 0 as Int64
+    while row < rows {
+        let task_id: Int64 = app_table_read_int(0, row, 6)
+        // The sample's bounded counter leaves room for one safe increment.
+        if task_id > 2147483646 as Int64 { return false }
+        if task_id > maximum_task_id { maximum_task_id = task_id }
+        row = row + 1
+    }
+    var next_task_id: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("next_task_id", next_task_id) { return false }
+    if next_task_id[0] <= maximum_task_id {
+        return app_state_set_int("next_task_id", maximum_task_id + 1 as Int64)
+    }
+    return next_task_id[0] > 0 as Int64
+}
+
+// Read the selected source-table task into the exact editor-state binding. The
+// controller owns this explicit readback, so selection does not imply a hidden
+// reactive copy into the native input.
+pub fn load_selected_task_editor() -> Bool {
+    var selected: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("task_choice", selected) { return false }
+    if selected[0] < 0 as Int64 { return false }
+    let row: Int32 = selected[0] as Int32
+    if row < 0 { return false }
+    if row >= app_table_row_count(0) { return false }
+    var editor: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var editor_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, row, 0, editor, editor_length) { return false }
+    return app_state_set_text_bytes("task_editor", editor, editor_length[0])
+}
+
+// Status is an independently bound visible table field. It is read explicitly
+// together with the title instead of letting a retained control mutate rows.
+pub fn load_selected_task_status_editor() -> Bool {
+    var selected: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("task_choice", selected) { return false }
+    if selected[0] < 0 as Int64 { return false }
+    let row: Int32 = selected[0] as Int32
+    if row < 0 { return false }
+    if row >= app_table_row_count(0) { return false }
+    var status: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var status_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, row, 1, status, status_length) { return false }
+    return app_state_set_text_bytes("task_status_editor", status, status_length[0])
+}
+
+pub fn load_selected_task_notes_editor() -> Bool {
+    let row: Int32 = selected_task_row()
+    if row < 0 { return false }
+    var notes: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var notes_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, row, 3, notes, notes_length) { return false }
+    return app_state_set_text_bytes("task_notes_editor", notes, notes_length[0])
+}
+
+// A typed table value is rendered into the bound text form explicitly. The
+// text input remains transport only; the table stores the validated Int64.
+pub fn load_selected_task_estimate_editor() -> Bool {
+    let row: Int32 = selected_task_row()
+    if row < 0 { return false }
+    let estimate: Int64 = app_table_read_int(0, row, 4)
+    if estimate < 0 as Int64 { return false }
+    var estimate_text: [UInt8; 20] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    let estimate_length: UIntSize = format_int(estimate, estimate_text)
+    if estimate_length == 0usize { return false }
+    return app_state_set_text_bytes("task_estimate_editor", estimate_text, estimate_length)
+}
+
+pub fn load_selected_task_reminder_due_editor() -> Bool {
+    let row: Int32 = selected_task_row()
+    if row < 0 { return false }
+    let due_unix_seconds: Int64 = app_table_read_int(0, row, 5)
+    if due_unix_seconds < 0 as Int64 { return false }
+    var reminder_text: [UInt8; 20] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    let reminder_length: UIntSize = format_int(due_unix_seconds, reminder_text)
+    if reminder_length == 0usize { return false }
+    return app_state_set_text_bytes(
+        "task_reminder_due_editor", reminder_text, reminder_length
+    )
+}
+
+pub fn load_selected_task_fields() -> Bool {
+    if !load_selected_task_editor() { return false }
+    if !load_selected_task_status_editor() { return false }
+    if !load_selected_task_notes_editor() { return false }
+    if !load_selected_task_estimate_editor() { return false }
+    return load_selected_task_reminder_due_editor()
+}
+
+// Rename only the selected task-table row through an explicit bound editor
+// input. The source project list remains independent and every model write
+// stays inside one revision-checked app-data transaction.
+pub fn rename_selected_task() -> Bool {
+    var editor: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var editor_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_editor", editor, editor_length) { return false }
+    if editor_length[0] == 0usize { return false }
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    let row: Int32 = selected_task_row()
+    if row < 0 {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_table_set_cell_bytes_ex(0, row, 0, editor, editor_length[0]) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        return false
+    }
+    return true
+}
+
+// Update the visible Status field through its own bound input. The stable ID
+// resolves the selected source row so sorting cannot redirect the edit.
+pub fn update_selected_task_status() -> Bool {
+    var status: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var status_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_status_editor", status, status_length) { return false }
+    if status_length[0] == 0usize { return false }
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    let row: Int32 = selected_task_row()
+    if row < 0 {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_table_set_cell_bytes_ex(0, row, 1, status, status_length[0]) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        return false
+    }
+    return true
+}
+
+// Update the persistent Notes field through its own bound input. It uses the
+// selected TaskId-derived row, so table sorting cannot redirect the edit.
+pub fn update_selected_task_notes() -> Bool {
+    var notes: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var notes_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_notes_editor", notes, notes_length) { return false }
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    let row: Int32 = selected_task_row()
+    if row < 0 {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_table_set_cell_bytes_ex(0, row, 3, notes, notes_length[0]) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        return false
+    }
+    return true
+}
+
+// EstimateMinutes is parsed from the full bound UTF-8 input before the model
+// transaction begins. Malformed, overflowing or negative values never change
+// the table or its retained projection.
+pub fn update_selected_task_estimate() -> Bool {
+    var estimate_text: [UInt8; 20] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var estimate_text_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact(
+        "task_estimate_editor", estimate_text, estimate_text_length
+    ) { return false }
+    var estimate: [Int64; 1] = [0 as Int64]
+    if !parse_int(estimate_text, estimate_text_length[0], estimate) { return false }
+    if estimate[0] < 0 as Int64 { return false }
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    let row: Int32 = selected_task_row()
+    if row < 0 {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_table_set_int(0, row, 4, estimate[0]) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        return false
+    }
+    return true
+}
+
+// A reminder is a validated persistent Unix timestamp. Scheduling remains an
+// explicit action: zero clears the one-shot timer and no background thread is
+// created by the template.
+pub fn update_selected_task_reminder() -> Bool {
+    var reminder_text: [UInt8; 20] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var reminder_text_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact(
+        "task_reminder_due_editor", reminder_text, reminder_text_length
+    ) { return false }
+    var due_unix_seconds: [Int64; 1] = [0 as Int64]
+    if !parse_int(reminder_text, reminder_text_length[0], due_unix_seconds) { return false }
+    if due_unix_seconds[0] < 0 as Int64 { return false }
+    let row: Int32 = selected_task_row()
+    if row < 0 { return false }
+    let task_id: Int32 = scheduler_task_id(app_table_read_int(0, row, 6))
+    if task_id < 0 { return false }
+    let previous_due: Int64 = app_table_read_int(0, row, 5)
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    if due_unix_seconds[0] > 0 as Int64 {
+        if !app_scheduler_set(task_id, due_unix_seconds[0], 0u64) {
+            app_data_tx_rollback()
+            return false
+        }
+    } else if previous_due > 0 as Int64 {
+        if !app_scheduler_cancel(task_id) {
+            app_data_tx_rollback()
+            return false
+        }
+    }
+    if !app_table_set_int(0, row, 5, due_unix_seconds[0]) {
+        app_data_tx_rollback()
+        rebuild_task_reminders()
+        return false
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        rebuild_task_reminders()
+        return false
+    }
+    return true
+}
+
+// Due reminders are processed only by this explicit controller call. The
+// queue is polled into caller-owned storage, then its persistent source rows
+// are marked Due and cleared in one app-data transaction.
+pub fn poll_due_task_reminders() -> Bool {
+    var due_task_ids: [Int32; 64] = [0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0]
+    var due_count: [UIntSize; 1] = [0usize]
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    if !app_scheduler_poll_exact(time_now_unix_seconds(), due_task_ids, due_count) {
+        app_data_tx_rollback()
+        return false
+    }
+    if due_count[0] == 0usize {
+        app_data_tx_rollback()
+        return true
+    }
+    var index: UIntSize = 0usize
+    while index < due_count[0] {
+        let row: Int32 = app_table_find_int(0, 6, due_task_ids[index] as Int64, 0)
+        if row < 0 {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+        if app_table_read_int(0, row, 5) <= 0 as Int64 {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+        if !app_table_set_int(0, row, 5, 0 as Int64) {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+        if !app_table_set_cell(0, row, 1, "Due") {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+        index = index + 1usize
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        rebuild_task_reminders()
+        return false
+    }
+    return load_selected_task_fields()
+}
+
+// Move the stable selected task to the project currently selected in the
+// source list. The Project cell is rewritten in the same transaction and the
+// explicit filtered task projection is refreshed only after the new relation
+// has been accepted.
+pub fn move_selected_task_to_selected_project() -> Bool {
+    let project_item: Int32 = selected_project_index()
+    if project_item < 0 { return false }
+    var project: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var project_length: [UIntSize; 1] = [0usize]
+    if !app_list_read_text_exact(0, project_item, project, project_length) { return false }
+    if project_length[0] == 0usize { return false }
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    let row: Int32 = selected_task_row()
+    if row < 0 {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_table_set_cell_bytes_ex(0, row, 2, project, project_length[0]) {
+        app_data_tx_rollback()
+        return false
+    }
+    if !task_projects_are_valid() {
+        app_data_tx_rollback()
+        return false
+    }
+    if !refresh_task_filter() {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        return false
+    }
+    return true
+}
+
+// Sorting is an explicit model mutation. The source table remains the source
+// of truth, and the typed selected_task_id finds the same task after reordering.
+pub fn sort_tasks_by_title(descending: Bool) -> Bool {
+    var selected_task_id: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("selected_task_id", selected_task_id) { return false }
+    if !app_table_sort_text(0, 0, descending) { return false }
+    let rows: Int32 = app_table_row_count(0)
+    if rows == 0 {
+        if !app_state_set_int("task_choice", -1 as Int64) { return false }
+        if !app_state_set_int("selected_task_id", 0 as Int64) { return false }
+        return app_state_set_text("task_editor", "")
+    }
+    let preserved_row: Int32 = app_table_find_int(0, 6, selected_task_id[0], 0)
+    if preserved_row >= 0 {
+        if !app_state_set_int("task_choice", preserved_row as Int64) { return false }
+        return load_selected_task_fields()
+    }
+    if !app_state_set_int("task_choice", 0 as Int64) { return false }
+    return sync_selected_task_from_row()
+}
+
+// Removing a selected row is atomic and only changes the task table. The
+// independent project list remains intact; a valid table selection is clamped
+// to its closest surviving row and an empty table has no selection.
+pub fn remove_selected_task() -> Bool {
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    let row: Int32 = selected_task_row()
+    if row < 0 {
+        app_data_tx_rollback()
+        return false
+    }
+    let task_id: Int32 = scheduler_task_id(app_table_read_int(0, row, 6))
+    if task_id < 0 {
+        app_data_tx_rollback()
+        return false
+    }
+    let previous_due: Int64 = app_table_read_int(0, row, 5)
+    if previous_due > 0 as Int64 {
+        if !app_scheduler_cancel(task_id) {
+            app_data_tx_rollback()
+            return false
+        }
+    }
+    if !app_table_remove_row(0, row) {
+        app_data_tx_rollback()
+        rebuild_task_reminders()
+        return false
+    }
+    let remaining: Int32 = app_table_row_count(0)
+    if remaining == 0 {
+        if !app_state_set_int("task_choice", -1 as Int64) {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+        if !app_state_set_int("selected_task_id", 0 as Int64) {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+        if !app_state_set_text("task_editor", "") {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+        if !app_state_set_text("task_status_editor", "") {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+        if !app_state_set_text("task_notes_editor", "") {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+        if !app_state_set_text("task_estimate_editor", "") {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+        if !app_state_set_text("task_reminder_due_editor", "") {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+    } else {
+        if row >= remaining {
+            let last_row: Int32 = remaining - 1
+            if !app_state_set_int("task_choice", last_row as Int64) {
+                app_data_tx_rollback()
+                rebuild_task_reminders()
+                return false
+            }
+        } else {
+            if !app_state_set_int("task_choice", row as Int64) {
+                app_data_tx_rollback()
+                rebuild_task_reminders()
+                return false
+            }
+        }
+        if !sync_selected_task_from_row() {
+            app_data_tx_rollback()
+            rebuild_task_reminders()
+            return false
+        }
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        rebuild_task_reminders()
+        return false
+    }
+    return true
+}
+
+// Refresh the separate bounded projection only on an explicit controller
+// action. The source list remains untouched and there is no hidden reactive
+// graph; mode 5 is ASCII case-insensitive contains matching.
+pub fn refresh_project_filter() -> Bool {
+    var query: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var query_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("project_filter", query, query_length) { return false }
+    if !app_list_filter_text_ex_bytes(0, 2, query, query_length[0], 5) { return false }
+    let matches: Int32 = app_list_count(2)
+    if matches == 0 { return app_state_set_int("filtered_project_choice", -1 as Int64) }
+    return app_state_set_int("filtered_project_choice", 0 as Int64)
+}
+
+// The task table uses the same explicit bounded-filter policy as projects,
+// but copies complete schema-valid rows into a different table projection.
+pub fn refresh_task_filter() -> Bool {
+    var query: [UInt8; 64] = [
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var query_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_filter", query, query_length) { return false }
+    if !app_table_filter_text_ex_bytes(0, 1, 1, query, query_length[0], 5) { return false }
+    let matches: Int32 = app_table_row_count(1)
+    if matches == 0 { return app_state_set_int("filtered_task_choice", -1 as Int64) }
+    return app_state_set_int("filtered_task_choice", 0 as Int64)
+}
+
+pub fn verify_smoke_model() -> Bool {
+    var draft: [UInt8; 24] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("draft", draft, length) { return false }
+    if length[0] != 17usize { return false }
+    if draft[0] != 70u8 { return false }
+    if draft[16] != 107u8 { return false }
+    if app_list_count(0) != 2 { return false }
+    if app_table_row_count(0) != 2 { return false }
+    var project_choice: [Int64; 1] = [0 as Int64]
+    var task_choice: [Int64; 1] = [0 as Int64]
+    var selected_task_id: [Int64; 1] = [0 as Int64]
+    var next_task_id: [Int64; 1] = [0 as Int64]
+    var checkpoint_slot: [Int64; 1] = [0 as Int64]
+    var filtered_project_choice: [Int64; 1] = [0 as Int64]
+    var filtered_task_choice: [Int64; 1] = [0 as Int64]
+    var project_filter: [UInt8; 1] = [0u8]
+    var project_filter_length: [UIntSize; 1] = [0usize]
+    var project_draft: [UInt8; 1] = [0u8]
+    var project_draft_length: [UIntSize; 1] = [0usize]
+    var task_filter: [UInt8; 1] = [0u8]
+    var task_filter_length: [UIntSize; 1] = [0usize]
+    var project_editor: [UInt8; 1] = [0u8]
+    var project_editor_length: [UIntSize; 1] = [0usize]
+    var task_editor: [UInt8; 1] = [0u8]
+    var task_editor_length: [UIntSize; 1] = [0usize]
+    var task_status_editor: [UInt8; 1] = [0u8]
+    var task_status_editor_length: [UIntSize; 1] = [0usize]
+    var task_estimate_editor: [UInt8; 1] = [0u8]
+    var task_estimate_editor_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_int("project_choice", project_choice) { return false }
+    if !app_state_read_int("task_choice", task_choice) { return false }
+    if !app_state_read_int("selected_task_id", selected_task_id) { return false }
+    if !app_state_read_int("next_task_id", next_task_id) { return false }
+    if !app_state_read_int("checkpoint_slot", checkpoint_slot) { return false }
+    if !app_state_read_int("filtered_project_choice", filtered_project_choice) { return false }
+    if !app_state_read_int("filtered_task_choice", filtered_task_choice) { return false }
+    if !app_state_read_text_exact("project_filter", project_filter, project_filter_length) { return false }
+    if !app_state_read_text_exact("project_draft", project_draft, project_draft_length) { return false }
+    if !app_state_read_text_exact("task_filter", task_filter, task_filter_length) { return false }
+    if !app_state_read_text_exact("project_editor", project_editor, project_editor_length) { return false }
+    if !app_state_read_text_exact("task_editor", task_editor, task_editor_length) { return false }
+    if !app_state_read_text_exact("task_status_editor", task_status_editor, task_status_editor_length) { return false }
+    if !app_state_read_text_exact("task_estimate_editor", task_estimate_editor, task_estimate_editor_length) { return false }
+    if project_choice[0] != (0 as Int64) { return false }
+    if task_choice[0] != (0 as Int64) { return false }
+    if selected_task_id[0] != (1 as Int64) { return false }
+    if next_task_id[0] != (3 as Int64) { return false }
+    if checkpoint_slot[0] != (0 as Int64) { return false }
+    if filtered_project_choice[0] != (-1 as Int64) { return false }
+    if filtered_task_choice[0] != (-1 as Int64) { return false }
+    if project_filter_length[0] != 0usize { return false }
+    if project_draft_length[0] != 0usize { return false }
+    if task_filter_length[0] != 0usize { return false }
+    if project_editor_length[0] != 0usize { return false }
+    if task_editor_length[0] != 0usize { return false }
+    if task_status_editor_length[0] != 0usize { return false }
+    if task_estimate_editor_length[0] != 0usize { return false }
+    if app_list_count(1) != 2 { return false }
+    if app_list_count(2) != 0 { return false }
+    if app_table_row_count(1) != 0 { return false }
+    if app_table_read_int(0, 0, 4) != 30 as Int64 { return false }
+    if app_table_read_int(0, 1, 4) != 45 as Int64 { return false }
+    if app_table_read_int(0, 0, 5) != 0 as Int64 { return false }
+    if app_table_read_int(0, 1, 5) != 0 as Int64 { return false }
+    if app_table_read_int(0, 0, 6) != 1 as Int64 { return false }
+    if app_table_read_int(0, 1, 6) != 2 as Int64 { return false }
+    if !task_projects_are_valid() { return false }
+    if !task_reminders_are_valid() { return false }
+    return app_scheduler_count() == 0usize
+}
+
+pub fn verify_filtered_projects_smoke_model() -> Bool {
+    if app_list_count(0) != 2 { return false }
+    if app_list_count(2) != 1 { return false }
+    var selection: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("filtered_project_choice", selection) { return false }
+    if selection[0] != 0 as Int64 { return false }
+    var query: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var query_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("project_filter", query, query_length) { return false }
+    if query_length[0] != 8usize { return false }
+    if query[0] != 82u8 { return false }
+    if query[1] != 69u8 { return false }
+    if query[2] != 86u8 { return false }
+    if query[3] != 73u8 { return false }
+    if query[4] != 69u8 { return false }
+    if query[5] != 87u8 { return false }
+    if query[6] != 69u8 { return false }
+    if query[7] != 68u8 { return false }
+    var matched_project: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var match_length: [UIntSize; 1] = [0usize]
+    if !app_list_read_text_exact(2, 0, matched_project, match_length) { return false }
+    if match_length[0] != 14usize { return false }
+    if matched_project[0] != 84u8 { return false }
+    if matched_project[5] != 32u8 { return false }
+    if matched_project[13] != 100u8 { return false }
+    return true
+}
+
+pub fn verify_filtered_tasks_smoke_model() -> Bool {
+    if app_table_row_count(0) != 3 { return false }
+    if app_table_row_count(1) != 1 { return false }
+    var selection: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("filtered_task_choice", selection) { return false }
+    if selection[0] != 0 as Int64 { return false }
+    var query: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var query_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_filter", query, query_length) { return false }
+    if query_length[0] != 3usize { return false }
+    if query[0] != 68u8 { return false }
+    if query[1] != 85u8 { return false }
+    if query[2] != 69u8 { return false }
+    var task: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var task_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(1, 0, 0, task, task_length) { return false }
+    if task_length[0] != 19usize { return false }
+    if task[0] != 82u8 { return false }
+    if task[18] != 107u8 { return false }
+    var status: [UInt8; 3] = [0u8, 0u8, 0u8]
+    var status_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(1, 0, 1, status, status_length) { return false }
+    if status_length[0] != 3usize { return false }
+    if status[0] != 68u8 { return false }
+    if status[2] != 101u8 { return false }
+    var project: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var project_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(1, 0, 2, project, project_length) { return false }
+    if project_length[0] != 5usize { return false }
+    if project[0] != 73u8 { return false }
+    if project[4] != 120u8 { return false }
+    return app_table_read_int(1, 0, 4) == 75 as Int64
+}
+
+// The project editor is independently retained and backed by the selected
+// source-list item. Its value must survive the same checkpoint and table-only
+// JSON backup flows as the rest of the model.
+pub fn verify_selected_project_editor() -> Bool {
+    var project_choice: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("project_choice", project_choice) { return false }
+    if project_choice[0] != 1 as Int64 { return false }
+    var editor: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var editor_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("project_editor", editor, editor_length) { return false }
+    if editor_length[0] != 14usize { return false }
+    if editor[0] != 84u8 { return false }
+    if editor[5] != 32u8 { return false }
+    if editor[13] != 100u8 { return false }
+    var project: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var project_length: [UIntSize; 1] = [0usize]
+    if !app_list_read_text_exact(0, 1, project, project_length) { return false }
+    if project_length[0] != 14usize { return false }
+    if project[0] != 84u8 { return false }
+    if project[5] != 32u8 { return false }
+    return project[13] == 100u8
+}
+
+pub fn verify_interaction_smoke_model() -> Bool {
+    if app_list_count(0) != 2 { return false }
+    if app_table_row_count(0) != 3 { return false }
+    var project_choice: [Int64; 1] = [0 as Int64]
+    var task_choice: [Int64; 1] = [0 as Int64]
+    var selected_task_id: [Int64; 1] = [0 as Int64]
+    var next_task_id: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("project_choice", project_choice) { return false }
+    if !app_state_read_int("task_choice", task_choice) { return false }
+    if !app_state_read_int("selected_task_id", selected_task_id) { return false }
+    if !app_state_read_int("next_task_id", next_task_id) { return false }
+    if project_choice[0] != 1 as Int64 { return false }
+    if task_choice[0] != 2 as Int64 { return false }
+    if selected_task_id[0] != 3 as Int64 { return false }
+    if next_task_id[0] != 4 as Int64 { return false }
+    if !verify_selected_project_editor() { return false }
+    if !task_projects_are_valid() { return false }
+    if app_list_count(1) != 2 { return false }
+    var draft: [UInt8; 1] = [0u8]
+    var draft_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("draft", draft, draft_length) { return false }
+    if draft_length[0] != 0usize { return false }
+    var project_draft: [UInt8; 1] = [0u8]
+    var project_draft_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("project_draft", project_draft, project_draft_length) { return false }
+    if project_draft_length[0] != 0usize { return false }
+    var task_editor: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var task_editor_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_editor", task_editor, task_editor_length) { return false }
+    if task_editor_length[0] != 19usize { return false }
+    if task_editor[0] != 82u8 { return false }
+    if task_editor[18] != 107u8 { return false }
+    var task_status_editor: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var task_status_editor_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_status_editor", task_status_editor, task_status_editor_length) { return false }
+    if task_status_editor_length[0] != 8usize { return false }
+    if task_status_editor[0] != 70u8 { return false }
+    if task_status_editor[7] != 100u8 { return false }
+    var task_notes_editor: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var task_notes_editor_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_notes_editor", task_notes_editor, task_notes_editor_length) { return false }
+    if task_notes_editor_length[0] != 11usize { return false }
+    if task_notes_editor[0] != 78u8 { return false }
+    if task_notes_editor[10] != 101u8 { return false }
+    var task_estimate_editor: [UInt8; 2] = [0u8, 0u8]
+    var task_estimate_editor_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact(
+        "task_estimate_editor", task_estimate_editor, task_estimate_editor_length
+    ) { return false }
+    if task_estimate_editor_length[0] != 2usize { return false }
+    if task_estimate_editor[0] != 55u8 { return false }
+    if task_estimate_editor[1] != 53u8 { return false }
+    var task_reminder_due_editor: [UInt8; 3] = [0u8, 0u8, 0u8]
+    var task_reminder_due_editor_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact(
+        "task_reminder_due_editor", task_reminder_due_editor, task_reminder_due_editor_length
+    ) { return false }
+    if task_reminder_due_editor_length[0] != 3usize { return false }
+    if task_reminder_due_editor[0] != 53u8 { return false }
+    if task_reminder_due_editor[1] != 48u8 { return false }
+    if task_reminder_due_editor[2] != 48u8 { return false }
+    var task: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var task_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, 2, 0, task, task_length) { return false }
+    if task_length[0] != 19usize { return false }
+    if task[0] != 82u8 { return false }
+    if task[18] != 107u8 { return false }
+    var status: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var status_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, 2, 1, status, status_length) { return false }
+    if status_length[0] != 8usize { return false }
+    if status[0] != 70u8 { return false }
+    if status[7] != 100u8 { return false }
+    var project: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var project_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, 2, 2, project, project_length) { return false }
+    if project_length[0] != 5usize { return false }
+    if project[0] != 73u8 { return false }
+    if project[4] != 120u8 { return false }
+    if !app_table_read_cell_exact(0, 2, 3, task_notes_editor, task_notes_editor_length) { return false }
+    if task_notes_editor_length[0] != 11usize { return false }
+    if app_table_read_int(0, 2, 4) != 75 as Int64 { return false }
+    if app_table_read_int(0, 2, 5) != 500 as Int64 { return false }
+    if app_table_read_int(0, 2, 6) != 3 as Int64 { return false }
+    if app_scheduler_count() != 1usize { return false }
+    var next_due: [Int64; 1] = [0 as Int64]
+    var has_due: [Bool; 1] = [false]
+    if !app_scheduler_next_due_exact(next_due, has_due) { return false }
+    if !has_due[0] { return false }
+    return next_due[0] == 500 as Int64
+}
+
+pub fn verify_due_reminder_smoke_model() -> Bool {
+    if app_scheduler_count() != 0usize { return false }
+    let row: Int32 = app_table_find_int(0, 6, 3 as Int64, 0)
+    if row < 0 { return false }
+    if app_table_read_int(0, row, 5) != 0 as Int64 { return false }
+    var status: [UInt8; 3] = [0u8, 0u8, 0u8]
+    var status_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, row, 1, status, status_length) { return false }
+    if status_length[0] != 3usize { return false }
+    if status[0] != 68u8 { return false }
+    if status[1] != 117u8 { return false }
+    if status[2] != 101u8 { return false }
+    var reminder: [UInt8; 1] = [0u8]
+    var reminder_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_reminder_due_editor", reminder, reminder_length) {
+        return false
+    }
+    if reminder_length[0] != 1usize { return false }
+    return reminder[0] == 48u8
+}
+
+pub fn verify_scheduled_reminder_smoke_model() -> Bool {
+    if !task_reminders_are_valid() { return false }
+    if app_scheduler_count() != 1usize { return false }
+    let row: Int32 = app_table_find_int(0, 6, 3 as Int64, 0)
+    if row < 0 { return false }
+    if app_table_read_int(0, row, 5) != 2000000000 as Int64 { return false }
+    var next_due: [Int64; 1] = [0 as Int64]
+    var has_due: [Bool; 1] = [false]
+    if !app_scheduler_next_due_exact(next_due, has_due) { return false }
+    if !has_due[0] { return false }
+    if next_due[0] != 2000000000 as Int64 { return false }
+    var reminder: [UInt8; 10] = [0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8]
+    var reminder_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_reminder_due_editor", reminder, reminder_length) {
+        return false
+    }
+    if reminder_length[0] != 10usize { return false }
+    if reminder[0] != 50u8 { return false }
+    return reminder[9] == 48u8
+}
+
+pub fn verify_tasks_ascending_smoke_model() -> Bool {
+    if app_table_row_count(0) != 3 { return false }
+    if !verify_selected_project_editor() { return false }
+    var selection: [Int64; 1] = [0 as Int64]
+    var selected_task_id: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("task_choice", selection) { return false }
+    if !app_state_read_int("selected_task_id", selected_task_id) { return false }
+    if selection[0] != 1 as Int64 { return false }
+    if selected_task_id[0] != 3 as Int64 { return false }
+    var editor: [UInt8; 24] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var editor_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_editor", editor, editor_length) { return false }
+    if editor_length[0] != 19usize { return false }
+    if editor[0] != 82u8 { return false }
+    if editor[18] != 107u8 { return false }
+    var first: [UInt8; 24] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var first_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, 0, 0, first, first_length) { return false }
+    if first_length[0] != 17usize { return false }
+    if first[0] != 70u8 { return false }
+    if first[16] != 107u8 { return false }
+    if app_table_read_int(0, 1, 4) != 75 as Int64 { return false }
+    return app_table_read_int(0, 1, 6) == 3 as Int64
+}
+
+pub fn verify_tasks_descending_smoke_model() -> Bool {
+    if app_table_row_count(0) != 3 { return false }
+    if !verify_selected_project_editor() { return false }
+    var selection: [Int64; 1] = [0 as Int64]
+    var selected_task_id: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("task_choice", selection) { return false }
+    if !app_state_read_int("selected_task_id", selected_task_id) { return false }
+    if selection[0] != 1 as Int64 { return false }
+    if selected_task_id[0] != 3 as Int64 { return false }
+    var editor: [UInt8; 24] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var editor_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_editor", editor, editor_length) { return false }
+    if editor_length[0] != 19usize { return false }
+    if editor[0] != 82u8 { return false }
+    if editor[18] != 107u8 { return false }
+    var first: [UInt8; 24] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var first_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, 0, 0, first, first_length) { return false }
+    if first_length[0] != 16usize { return false }
+    if first[0] != 82u8 { return false }
+    if first[15] != 108u8 { return false }
+    if app_table_read_int(0, 1, 4) != 75 as Int64 { return false }
+    return app_table_read_int(0, 1, 6) == 3 as Int64
+}
+
+pub fn verify_removal_smoke_model() -> Bool {
+    if app_list_count(0) != 2 { return false }
+    if app_table_row_count(0) != 2 { return false }
+    if !verify_selected_project_editor() { return false }
+    var task_choice: [Int64; 1] = [0 as Int64]
+    var selected_task_id: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("task_choice", task_choice) { return false }
+    if !app_state_read_int("selected_task_id", selected_task_id) { return false }
+    if task_choice[0] != 1 as Int64 { return false }
+    if selected_task_id[0] != 1 as Int64 { return false }
+    var task: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var task_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, 1, 0, task, task_length) { return false }
+    if task_length[0] != 17usize { return false }
+    if task[0] != 70u8 { return false }
+    if task[16] != 107u8 { return false }
+    var status: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var status_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, 1, 1, status, status_length) { return false }
+    if status_length[0] != 4usize { return false }
+    if status[0] != 79u8 { return false }
+    if status[3] != 110u8 { return false }
+    var editor: [UInt8; 24] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var editor_length: [UIntSize; 1] = [0usize]
+    if !app_state_read_text_exact("task_editor", editor, editor_length) { return false }
+    if editor_length[0] != 17usize { return false }
+    if editor[0] != 70u8 { return false }
+    if editor[16] != 107u8 { return false }
+    if app_table_read_int(0, 1, 4) != 30 as Int64 { return false }
+    if app_table_read_int(0, 1, 6) != 1 as Int64 { return false }
+    if !task_reminders_are_valid() { return false }
+    return app_scheduler_count() == 0usize
+}
+
+"#;
+
+const FULL_APP_TEMPLATE_CONTROLLER: &str = r#"module {module}.controller
+
+import {module}.model.add_draft_task
+import {module}.model.add_project
+import {module}.model.complete_selected_task
+import {module}.model.rename_selected_project
+import {module}.model.remove_selected_project
+import {module}.model.load_selected_task_fields
+import {module}.model.rename_selected_task
+import {module}.model.remove_selected_task
+import {module}.model.refresh_project_filter
+import {module}.model.refresh_task_filter
+import {module}.model.sort_tasks_by_title
+import {module}.model.sync_selected_project_from_list
+import {module}.model.sync_selected_task_from_row
+import {module}.model.task_ids_are_unique
+import {module}.model.task_projects_are_valid
+import {module}.model.task_reminders_are_valid
+import {module}.model.normalize_next_task_id
+import {module}.model.move_selected_task_to_selected_project
+import {module}.model.update_selected_task_estimate
+import {module}.model.update_selected_task_notes
+import {module}.model.update_selected_task_reminder
+import {module}.model.update_selected_task_status
+import {module}.model.rebuild_task_reminders
+import {module}.model.poll_due_task_reminders
+import {module}.exports.export_list_csv_durable
+import {module}.exports.export_table_csv_durable
+import {module}.storage.load_checkpoint
+import {module}.storage.save_checkpoint_durable
+
+// The retained native runtime synchronizes bound input and selection state
+// before this callback runs. The controller alone chooses model mutations.
+pub fn handle(event_id: Int32) -> Int32 {
+    // The list binding has already written project_choice. Refresh only its
+    // explicit editor readback; list mutations remain controller-owned.
+    if event_id == 20 {
+        if !sync_selected_project_from_list() { return 20 }
+        return 0
+    }
+    // The table binding has already written task_choice before the controller
+    // runs. Derive its stable TaskId before any command relies on selection.
+    if event_id == 30 {
+        if !sync_selected_task_from_row() { return 18 }
+        return 0
+    }
+    if event_id == 40 {
+        if !add_draft_task() { return 1 }
+        return 0
+    }
+    if event_id == 58 {
+        if !add_project() { return 22 }
+        return 0
+    }
+    if event_id == 41 {
+        if !complete_selected_task() { return 2 }
+        return 0
+    }
+    if event_id == 42 {
+        if !save_interactive_checkpoint() { return 3 }
+        return 0
+    }
+    if event_id == 43 {
+        if !restore_interactive_checkpoint() { return 4 }
+        return 0
+    }
+    if event_id == 44 {
+        if !export_interactive_list() { return 5 }
+        return 0
+    }
+    if event_id == 45 {
+        if !export_interactive_table() { return 6 }
+        return 0
+    }
+    if event_id == 46 {
+        if !remove_selected_task() { return 7 }
+        return 0
+    }
+    if event_id == 47 {
+        if !refresh_project_filter() { return 8 }
+        return 0
+    }
+    if event_id == 48 {
+        if !refresh_task_filter() { return 9 }
+        return 0
+    }
+    if event_id == 49 {
+        if !rename_selected_task() { return 10 }
+        return 0
+    }
+    if event_id == 51 {
+        if !load_selected_task_fields() { return 11 }
+        return 0
+    }
+    if event_id == 52 {
+        if !export_interactive_table_json() { return 12 }
+        return 0
+    }
+    if event_id == 53 {
+        if !import_interactive_table_json() { return 13 }
+        return 0
+    }
+    if event_id == 54 {
+        if !sort_tasks_by_title(false) { return 14 }
+        if !refresh_task_filter() { return 15 }
+        return 0
+    }
+    if event_id == 55 {
+        if !sort_tasks_by_title(true) { return 16 }
+        if !refresh_task_filter() { return 17 }
+        return 0
+    }
+    if event_id == 56 {
+        if !update_selected_task_status() { return 19 }
+        return 0
+    }
+    if event_id == 57 {
+        if !rename_selected_project() { return 21 }
+        return 0
+    }
+    if event_id == 59 {
+        if !remove_selected_project() { return 23 }
+        return 0
+    }
+    if event_id == 60 {
+        if !move_selected_task_to_selected_project() { return 24 }
+        return 0
+    }
+    if event_id == 61 {
+        if !update_selected_task_notes() { return 25 }
+        return 0
+    }
+    if event_id == 62 {
+        if !update_selected_task_estimate() { return 26 }
+        return 0
+    }
+    if event_id == 63 {
+        if !update_selected_task_reminder() { return 27 }
+        return 0
+    }
+    if event_id == 64 {
+        if !poll_due_task_reminders() { return 28 }
+        return 0
+    }
+    return 0
+}
+
+// The retained storage-slot list chooses one of two named local locations.
+// A product replaces this demonstration policy with its own path picker,
+// permission model and lifecycle policy.
+fn interactive_checkpoint_slot() -> Int32 {
+    var slot: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("checkpoint_slot", slot) { return -1 }
+    if slot[0] == 0 as Int64 { return 0 }
+    if slot[0] == 1 as Int64 { return 1 }
+    return -1
+}
+
+pub fn save_interactive_checkpoint() -> Bool {
+    let slot: Int32 = interactive_checkpoint_slot()
+    if slot < 0 { return false }
+    directory_create("target/jadren")
+    if slot == 0 {
+        file_delete("target/jadren/{module}-interactive.tmp")
+        file_delete("target/jadren/{module}-interactive.lock")
+        return save_checkpoint_durable(
+            "target/jadren/{module}-interactive.tmp",
+            "target/jadren/{module}-interactive.data",
+            "target/jadren/{module}-interactive.lock"
+        )
+    }
+    file_delete("target/jadren/{module}-interactive-backup.tmp")
+    file_delete("target/jadren/{module}-interactive-backup.lock")
+    return save_checkpoint_durable(
+        "target/jadren/{module}-interactive-backup.tmp",
+        "target/jadren/{module}-interactive-backup.data",
+        "target/jadren/{module}-interactive-backup.lock"
+    )
+}
+
+pub fn restore_interactive_checkpoint() -> Bool {
+    let slot: Int32 = interactive_checkpoint_slot()
+    if slot == 0 {
+        if !file_exists("target/jadren/{module}-interactive.data") { return false }
+        return load_checkpoint("target/jadren/{module}-interactive.data")
+    }
+    if slot == 1 {
+        if !file_exists("target/jadren/{module}-interactive-backup.data") { return false }
+        return load_checkpoint("target/jadren/{module}-interactive-backup.data")
+    }
+    return false
+}
+
+pub fn verify_interactive_checkpoint_slot() -> Bool {
+    if interactive_checkpoint_slot() != 1 { return false }
+    if file_exists("target/jadren/{module}-interactive.data") { return false }
+    if !file_exists("target/jadren/{module}-interactive-backup.data") { return false }
+    if file_size("target/jadren/{module}-interactive-backup.data") == 0usize { return false }
+    return true
+}
+
+pub fn cleanup_interactive_checkpoint() -> Bool {
+    file_delete("target/jadren/{module}-interactive.tmp")
+    if file_exists("target/jadren/{module}-interactive.data") {
+        if !file_delete("target/jadren/{module}-interactive.data") { return false }
+    }
+    file_delete("target/jadren/{module}-interactive.lock")
+    file_delete("target/jadren/{module}-interactive-backup.tmp")
+    if file_exists("target/jadren/{module}-interactive-backup.data") {
+        if !file_delete("target/jadren/{module}-interactive-backup.data") { return false }
+    }
+    file_delete("target/jadren/{module}-interactive-backup.lock")
+    return true
+}
+
+// Exports remain an explicit controller action. The generated paths prove the
+// native wiring only; products must choose their own destination and policy.
+pub fn export_interactive_list() -> Bool {
+    directory_create("target/jadren")
+    file_delete("target/jadren/{module}-interactive-list.tmp")
+    file_delete("target/jadren/{module}-interactive-list.csv")
+    return export_list_csv_durable(
+        "target/jadren/{module}-interactive-list.csv",
+        "target/jadren/{module}-interactive-list.tmp"
+    )
+}
+
+pub fn export_interactive_table() -> Bool {
+    directory_create("target/jadren")
+    file_delete("target/jadren/{module}-interactive-table.tmp")
+    file_delete("target/jadren/{module}-interactive-table.csv")
+    return export_table_csv_durable(
+        "target/jadren/{module}-interactive-table.csv",
+        "target/jadren/{module}-interactive-table.tmp"
+    )
+}
+
+pub fn verify_interactive_exports() -> Bool {
+    if !file_exists("target/jadren/{module}-interactive-list.csv") { return false }
+    if file_size("target/jadren/{module}-interactive-list.csv") == 0usize { return false }
+    if !file_exists("target/jadren/{module}-interactive-table.csv") { return false }
+    if file_size("target/jadren/{module}-interactive-table.csv") == 0usize { return false }
+    return true
+}
+
+pub fn cleanup_interactive_exports() -> Bool {
+    file_delete("target/jadren/{module}-interactive-list.tmp")
+    if file_exists("target/jadren/{module}-interactive-list.csv") {
+        if !file_delete("target/jadren/{module}-interactive-list.csv") { return false }
+    }
+    file_delete("target/jadren/{module}-interactive-table.tmp")
+    if file_exists("target/jadren/{module}-interactive-table.csv") {
+        if !file_delete("target/jadren/{module}-interactive-table.csv") { return false }
+    }
+    return true
+}
+
+// JSON is the lossless local table backup, unlike the user-facing CSV exports.
+// The paths are fixed demonstration paths; a product must own its picker,
+// permissions and backup naming policy.
+pub fn export_interactive_table_json() -> Bool {
+    directory_create("target/jadren")
+    file_delete("target/jadren/{module}-interactive-tasks.tmp")
+    return app_table_export_json_file_durable(
+        0,
+        "target/jadren/{module}-interactive-tasks.json",
+        "target/jadren/{module}-interactive-tasks.tmp"
+    )
+}
+
+// The low-level import validates the entire JSON document before replacing the
+// table. Only after success does this controller normalize selection, reload
+// the editor and explicitly refresh the separate filtered-table projection.
+pub fn import_interactive_table_json() -> Bool {
+    if !file_exists("target/jadren/{module}-interactive-tasks.json") { return false }
+    let expected_revision: UInt64 = app_data_revision()
+    if !app_data_tx_begin_if_revision(expected_revision) { return false }
+    if !app_table_import_json_file(0, "target/jadren/{module}-interactive-tasks.json") {
+        app_data_tx_rollback()
+        return false
+    }
+    if !task_ids_are_unique() {
+        app_data_tx_rollback()
+        return false
+    }
+    if !task_projects_are_valid() {
+        app_data_tx_rollback()
+        return false
+    }
+    if !task_reminders_are_valid() {
+        app_data_tx_rollback()
+        return false
+    }
+    if !normalize_next_task_id() {
+        app_data_tx_rollback()
+        return false
+    }
+    let rows: Int32 = app_table_row_count(0)
+    if rows == 0 {
+        if !app_state_set_int("task_choice", -1 as Int64) {
+            app_data_tx_rollback()
+            return false
+        }
+        if !app_state_set_int("selected_task_id", 0 as Int64) {
+            app_data_tx_rollback()
+            return false
+        }
+        if !app_state_set_text("task_editor", "") {
+            app_data_tx_rollback()
+            return false
+        }
+        if !app_state_set_text("task_status_editor", "") {
+            app_data_tx_rollback()
+            return false
+        }
+        if !refresh_task_filter() {
+            app_data_tx_rollback()
+            return false
+        }
+        if !app_data_tx_commit() {
+            app_data_tx_rollback()
+            return false
+        }
+        return rebuild_task_reminders()
+    }
+    var selected_task_id: [Int64; 1] = [0 as Int64]
+    if !app_state_read_int("selected_task_id", selected_task_id) {
+        app_data_tx_rollback()
+        return false
+    }
+    let preserved_row: Int32 = app_table_find_int(0, 6, selected_task_id[0], 0)
+    if preserved_row >= 0 {
+        if !app_state_set_int("task_choice", preserved_row as Int64) {
+            app_data_tx_rollback()
+            return false
+        }
+        if !load_selected_task_fields() {
+            app_data_tx_rollback()
+            return false
+        }
+    } else {
+        let fallback_row: Int32 = rows - 1
+        if !app_state_set_int("task_choice", fallback_row as Int64) {
+            app_data_tx_rollback()
+            return false
+        }
+        if !sync_selected_task_from_row() {
+            app_data_tx_rollback()
+            return false
+        }
+    }
+    if !refresh_task_filter() {
+        app_data_tx_rollback()
+        return false
+    }
+    if !app_data_tx_commit() {
+        app_data_tx_rollback()
+        return false
+    }
+    return rebuild_task_reminders()
+}
+
+pub fn verify_interactive_json_backup() -> Bool {
+    if !file_exists("target/jadren/{module}-interactive-tasks.json") { return false }
+    if file_size("target/jadren/{module}-interactive-tasks.json") == 0usize { return false }
+    return !file_exists("target/jadren/{module}-interactive-tasks.tmp")
+}
+
+pub fn cleanup_interactive_json_backup() -> Bool {
+    file_delete("target/jadren/{module}-interactive-tasks.tmp")
+    if file_exists("target/jadren/{module}-interactive-tasks.json") {
+        if !file_delete("target/jadren/{module}-interactive-tasks.json") { return false }
+    }
+    return true
+}
+"#;
+
+const FULL_APP_TEMPLATE_VIEW: &str = r#"module {module}.view
+
+// The view creates native retained controls and binds them to the model. It
+// does not create or mutate application rows directly.
+import {module}.controller.handle
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return handle(event_id)
+}
+
+pub fn build() -> Bool {
+    let root: Int32 = ui_app_begin("Jadren native application", 1024, 1900, 0xF6F8FCu32)
+    if root == 0 { return false }
+    let panel: Int32 = ui_app_panel(root, 920, 1790, 0xFFFFFFu32, 12, 16, 10, 0, 1)
+    if panel == 0 { return false }
+    let title: Int32 = ui_app_label(panel, "Jadren native application", 840, 42,
+        0x111827u32, 0xFFFFFFu32, 8, 0)
+    if title == 0 { return false }
+    let input: Int32 = ui_app_text_input(panel, "Draft task", 10, 840, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if input == 0 { return false }
+    let project_draft: Int32 = ui_app_text_input(panel, "New project", 17, 840, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if project_draft == 0 { return false }
+    let projects: Int32 = ui_app_list(panel, 20, 840, 94,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if projects == 0 { return false }
+    let tasks: Int32 = ui_app_table(panel, 30, 840, 180,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if tasks == 0 { return false }
+    let task_editor: Int32 = ui_app_text_input(panel, "Edit selected task", 14, 840, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if task_editor == 0 { return false }
+    let task_status_editor: Int32 = ui_app_text_input(panel, "Edit selected status", 15, 840, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if task_status_editor == 0 { return false }
+    let task_notes_editor: Int32 = ui_app_text_input(panel, "Edit selected notes", 18, 840, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if task_notes_editor == 0 { return false }
+    let task_estimate_editor: Int32 = ui_app_text_input(panel, "Estimate minutes", 19, 840, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if task_estimate_editor == 0 { return false }
+    let task_reminder_due_editor: Int32 = ui_app_text_input(
+        panel, "Reminder due (Unix seconds, 0 clears)", 21, 840, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1
+    )
+    if task_reminder_due_editor == 0 { return false }
+    let project_editor: Int32 = ui_app_text_input(panel, "Edit selected project", 16, 840, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if project_editor == 0 { return false }
+    let project_filter: Int32 = ui_app_text_input(panel, "Filter projects", 12, 840, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if project_filter == 0 { return false }
+    let filtered_projects: Int32 = ui_app_list(panel, 22, 840, 70,
+        0x111827u32, 0xF8FAFCu32, 8, 1)
+    if filtered_projects == 0 { return false }
+    let task_filter: Int32 = ui_app_text_input(panel, "Filter tasks", 13, 840, 38,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if task_filter == 0 { return false }
+    let filtered_tasks: Int32 = ui_app_table(panel, 31, 840, 130,
+        0x111827u32, 0xFFFFFFu32, 8, 1)
+    if filtered_tasks == 0 { return false }
+    let checkpoint_slots: Int32 = ui_app_list(panel, 50, 840, 70,
+        0x111827u32, 0xF8FAFCu32, 8, 1)
+    if checkpoint_slots == 0 { return false }
+    if !ui_app_table_column(tasks, 0, "Task", 130) { return false }
+    if !ui_app_table_column(tasks, 1, "Status", 95) { return false }
+    if !ui_app_table_column(tasks, 2, "Project", 115) { return false }
+    if !ui_app_table_column(tasks, 3, "Notes", 185) { return false }
+    if !ui_app_table_column(tasks, 4, "Estimate minutes", 105) { return false }
+    if !ui_app_table_column(tasks, 5, "Reminder due (Unix)", 210) { return false }
+    if !ui_app_table_column(filtered_tasks, 0, "Task", 130) { return false }
+    if !ui_app_table_column(filtered_tasks, 1, "Status", 95) { return false }
+    if !ui_app_table_column(filtered_tasks, 2, "Project", 115) { return false }
+    if !ui_app_table_column(filtered_tasks, 3, "Notes", 185) { return false }
+    if !ui_app_table_column(filtered_tasks, 4, "Estimate minutes", 105) { return false }
+    if !ui_app_table_column(filtered_tasks, 5, "Reminder due (Unix)", 210) { return false }
+    if !ui_app_bind_app_state_exact(input, "draft") { return false }
+    if !ui_app_bind_app_state_exact(project_draft, "project_draft") { return false }
+    if !ui_app_bind_app_state_exact(task_editor, "task_editor") { return false }
+    if !ui_app_bind_app_state_exact(task_status_editor, "task_status_editor") { return false }
+    if !ui_app_bind_app_state_exact(task_notes_editor, "task_notes_editor") { return false }
+    if !ui_app_bind_app_state_exact(task_estimate_editor, "task_estimate_editor") { return false }
+    if !ui_app_bind_app_state_exact(task_reminder_due_editor, "task_reminder_due_editor") { return false }
+    if !ui_app_bind_app_state_exact(project_editor, "project_editor") { return false }
+    if !ui_app_bind_app_state_exact(project_filter, "project_filter") { return false }
+    if !ui_app_bind_app_state_exact(task_filter, "task_filter") { return false }
+    if !ui_app_list_bind_app(projects, 0) { return false }
+    if !ui_app_list_bind_app(filtered_projects, 2) { return false }
+    if !ui_app_list_bind_app(checkpoint_slots, 1) { return false }
+    // TaskId is internal model identity; six application fields are projected.
+    if !ui_app_table_bind_app(tasks, 0, 6) { return false }
+    if !ui_app_table_bind_app(filtered_tasks, 1, 6) { return false }
+    if !ui_app_bind_app_state_exact(projects, "project_choice") { return false }
+    if !ui_app_bind_app_state_exact(filtered_projects, "filtered_project_choice") { return false }
+    if !ui_app_bind_app_state_exact(tasks, "task_choice") { return false }
+    if !ui_app_bind_app_state_exact(filtered_tasks, "filtered_task_choice") { return false }
+    if !ui_app_bind_app_state_exact(checkpoint_slots, "checkpoint_slot") { return false }
+    let primary_actions: Int32 = ui_app_row(panel, 840, 40, 0, 10, 0, 1)
+    if primary_actions == 0 { return false }
+    let add: Int32 = ui_app_button(primary_actions, "Add draft task", 40, 240, 40,
+        0xFFFFFFu32, 0x168EF5u32, 8, 0)
+    if add == 0 { return false }
+    let complete: Int32 = ui_app_button(primary_actions, "Complete selected task", 41, 260, 40,
+        0xFFFFFFu32, 0x18C964u32, 8, 0)
+    if complete == 0 { return false }
+    let remove: Int32 = ui_app_button(primary_actions, "Remove selected task", 46, 220, 40,
+        0xFFFFFFu32, 0xDC2626u32, 8, 0)
+    if remove == 0 { return false }
+    if !ui_app_end(primary_actions) { return false }
+    let project_edit_actions: Int32 = ui_app_row(panel, 840, 40, 0, 10, 0, 1)
+    if project_edit_actions == 0 { return false }
+    let add_project: Int32 = ui_app_button(project_edit_actions, "Add project", 58, 240, 40,
+        0xFFFFFFu32, 0x168EF5u32, 8, 0)
+    if add_project == 0 { return false }
+    let rename_project: Int32 = ui_app_button(project_edit_actions, "Rename selected project", 57, 320, 40,
+        0xFFFFFFu32, 0x7C3AEDu32, 8, 0)
+    if rename_project == 0 { return false }
+    let remove_project: Int32 = ui_app_button(project_edit_actions, "Remove unused project", 59, 280, 40,
+        0xFFFFFFu32, 0xDC2626u32, 8, 0)
+    if remove_project == 0 { return false }
+    if !ui_app_end(project_edit_actions) { return false }
+    let edit_actions: Int32 = ui_app_row(panel, 840, 40, 0, 10, 0, 1)
+    if edit_actions == 0 { return false }
+    let load_editor: Int32 = ui_app_button(edit_actions, "Load selected task fields", 51, 250, 40,
+        0xFFFFFFu32, 0x0369A1u32, 8, 0)
+    if load_editor == 0 { return false }
+    let rename: Int32 = ui_app_button(edit_actions, "Rename task", 49, 240, 40,
+        0xFFFFFFu32, 0x7C3AEDu32, 8, 0)
+    if rename == 0 { return false }
+    let update_status: Int32 = ui_app_button(edit_actions, "Update status", 56, 260, 40,
+        0xFFFFFFu32, 0x7C3AEDu32, 8, 0)
+    if update_status == 0 { return false }
+    if !ui_app_end(edit_actions) { return false }
+    let detail_actions: Int32 = ui_app_row(panel, 840, 40, 0, 10, 0, 1)
+    if detail_actions == 0 { return false }
+    let update_notes: Int32 = ui_app_button(detail_actions, "Update notes", 61, 220, 40,
+        0xFFFFFFu32, 0x7C3AEDu32, 8, 0)
+    if update_notes == 0 { return false }
+    let update_estimate: Int32 = ui_app_button(detail_actions, "Update estimate", 62, 240, 40,
+        0xFFFFFFu32, 0x7C3AEDu32, 8, 0)
+    if update_estimate == 0 { return false }
+    let move_task: Int32 = ui_app_button(detail_actions, "Assign task to selected project", 60, 320, 40,
+        0xFFFFFFu32, 0x0369A1u32, 8, 0)
+    if move_task == 0 { return false }
+    if !ui_app_end(detail_actions) { return false }
+    let reminder_actions: Int32 = ui_app_row(panel, 840, 40, 0, 10, 0, 1)
+    if reminder_actions == 0 { return false }
+    let schedule_reminder: Int32 = ui_app_button(
+        reminder_actions, "Schedule reminder", 63, 300, 40,
+        0xFFFFFFu32, 0x7C3AEDu32, 8, 0
+    )
+    if schedule_reminder == 0 { return false }
+    let check_due_reminders: Int32 = ui_app_button(
+        reminder_actions, "Check due reminders", 64, 300, 40,
+        0xFFFFFFu32, 0xB45309u32, 8, 0
+    )
+    if check_due_reminders == 0 { return false }
+    if !ui_app_end(reminder_actions) { return false }
+    let filter_actions: Int32 = ui_app_row(panel, 840, 40, 0, 10, 0, 1)
+    if filter_actions == 0 { return false }
+    let apply_project_filter: Int32 = ui_app_button(filter_actions, "Apply project filter", 47, 260, 40,
+        0xFFFFFFu32, 0x0369A1u32, 8, 0)
+    if apply_project_filter == 0 { return false }
+    let apply_task_filter: Int32 = ui_app_button(filter_actions, "Apply task filter", 48, 240, 40,
+        0xFFFFFFu32, 0x0369A1u32, 8, 0)
+    if apply_task_filter == 0 { return false }
+    if !ui_app_end(filter_actions) { return false }
+    let sort_actions: Int32 = ui_app_row(panel, 840, 40, 0, 10, 0, 1)
+    if sort_actions == 0 { return false }
+    let sort_ascending: Int32 = ui_app_button(sort_actions, "Sort tasks A-Z", 54, 230, 40,
+        0xFFFFFFu32, 0x0369A1u32, 8, 0)
+    if sort_ascending == 0 { return false }
+    let sort_descending: Int32 = ui_app_button(sort_actions, "Sort tasks Z-A", 55, 230, 40,
+        0xFFFFFFu32, 0x0369A1u32, 8, 0)
+    if sort_descending == 0 { return false }
+    if !ui_app_end(sort_actions) { return false }
+    let persistence_actions: Int32 = ui_app_row(panel, 840, 40, 0, 10, 0, 1)
+    if persistence_actions == 0 { return false }
+    let save: Int32 = ui_app_button(persistence_actions, "Save local checkpoint", 42, 250, 40,
+        0xFFFFFFu32, 0x7C3AEDu32, 8, 0)
+    if save == 0 { return false }
+    let restore: Int32 = ui_app_button(persistence_actions, "Restore local checkpoint", 43, 270, 40,
+        0xFFFFFFu32, 0xB45309u32, 8, 0)
+    if restore == 0 { return false }
+    if !ui_app_end(persistence_actions) { return false }
+    let export_actions: Int32 = ui_app_row(panel, 840, 40, 0, 10, 0, 1)
+    if export_actions == 0 { return false }
+    let export_list: Int32 = ui_app_button(export_actions, "Export project list CSV", 44, 270, 40,
+        0xFFFFFFu32, 0x0F766Eu32, 8, 0)
+    if export_list == 0 { return false }
+    let export_table: Int32 = ui_app_button(export_actions, "Export task table CSV", 45, 270, 40,
+        0xFFFFFFu32, 0x0F766Eu32, 8, 0)
+    if export_table == 0 { return false }
+    if !ui_app_end(export_actions) { return false }
+    let json_backup_actions: Int32 = ui_app_row(panel, 840, 40, 0, 10, 0, 1)
+    if json_backup_actions == 0 { return false }
+    let export_table_json: Int32 = ui_app_button(json_backup_actions, "Backup task table JSON", 52, 290, 40,
+        0xFFFFFFu32, 0x0F766Eu32, 8, 0)
+    if export_table_json == 0 { return false }
+    let import_table_json: Int32 = ui_app_button(json_backup_actions, "Restore task table JSON", 53, 290, 40,
+        0xFFFFFFu32, 0xB45309u32, 8, 0)
+    if import_table_json == 0 { return false }
+    if !ui_app_end(json_backup_actions) { return false }
+    if !ui_app_end(panel) { return false }
+    return ui_app_end(root)
+}
+
+pub fn verify_smoke_view() -> Bool {
+    if ui_input_length(10) != 17usize { return false }
+    if ui_input_length(17) != 0usize { return false }
+    if ui_list_count(20) != 2 { return false }
+    if ui_list_index(20) != 0 { return false }
+    if ui_table_row_count(30) != 2 { return false }
+    if ui_table_selected_row(30) != 0 { return false }
+    if ui_input_length(14) != 0usize { return false }
+    if ui_input_length(15) != 0usize { return false }
+    if ui_input_length(18) != 0usize { return false }
+    if ui_input_length(19) != 0usize { return false }
+    if ui_input_length(21) != 0usize { return false }
+    if ui_input_length(16) != 0usize { return false }
+    if ui_input_length(12) != 0usize { return false }
+    if ui_list_count(22) != 0 { return false }
+    if ui_list_index(22) != -1 { return false }
+    if ui_input_length(13) != 0usize { return false }
+    if ui_table_row_count(31) != 0 { return false }
+    if ui_table_selected_row(31) != -1 { return false }
+    if ui_list_count(50) != 2 { return false }
+    if ui_list_index(50) != 0 { return false }
+    return true
+}
+
+// Each accepted retained control event is recorded before the native callback.
+// The full-app smoke clears this bounded audit FIFO before dispatching its
+// deterministic interaction flow, then reads the complete trace outside every
+// callback. This is an observable event boundary, not a second reactive loop.
+pub fn reset_smoke_event_queue() -> Bool {
+    ui_event_queue_clear()
+    if ui_event_queue_count() != 0usize { return false }
+    return ui_event_queue_dropped() == 0usize
+}
+// Deterministic native-event proof: selection events first enter their
+// app-state bindings, then the input-bound add and complete buttons mutate
+// both dynamic stores through the controller.
+pub fn dispatch_smoke_actions() -> Bool {
+    ui_list_set_index(20, 1)
+    if !ui_dispatch_event(20) { return false }
+    ui_table_set_selected_row(30, 1)
+    if !ui_dispatch_event(30) { return false }
+    ui_set_input_text(10, "Appended native task")
+    if !ui_dispatch_event(40) { return false }
+    return ui_dispatch_event(41)
+}
+
+// The edit input reaches app_state before one explicit controller event updates
+// the already selected source-table row.
+pub fn dispatch_smoke_edit() -> Bool {
+    ui_set_input_text(17, "Project Alpha")
+    if !ui_dispatch_event(17) { return false }
+    if !ui_dispatch_event(58) { return false }
+    ui_list_set_index(20, 1)
+    if !ui_dispatch_event(20) { return false }
+    if ui_input_length(16) != 5usize { return false }
+    ui_set_input_text(16, "Today reviewed")
+    if !ui_dispatch_event(16) { return false }
+    if !ui_dispatch_event(57) { return false }
+    if !ui_dispatch_event(59) { return false }
+    if app_list_count(0) != 3 { return false }
+    ui_list_set_index(20, 2)
+    if !ui_dispatch_event(20) { return false }
+    if !ui_dispatch_event(59) { return false }
+    ui_list_set_index(20, 1)
+    if !ui_dispatch_event(20) { return false }
+    if !ui_dispatch_event(51) { return false }
+    if ui_input_length(14) != 20usize { return false }
+    if ui_input_length(15) != 4usize { return false }
+    ui_set_input_text(14, "Renamed native task")
+    if !ui_dispatch_event(14) { return false }
+    if !ui_dispatch_event(49) { return false }
+    ui_set_input_text(15, "Finished")
+    if !ui_dispatch_event(15) { return false }
+    if !ui_dispatch_event(56) { return false }
+    ui_set_input_text(18, "Native note")
+    if !ui_dispatch_event(18) { return false }
+    if !ui_dispatch_event(61) { return false }
+    ui_set_input_text(19, "75")
+    if !ui_dispatch_event(19) { return false }
+    if !ui_dispatch_event(62) { return false }
+    ui_set_input_text(21, "500")
+    if !ui_dispatch_event(21) { return false }
+    if !ui_dispatch_event(63) { return false }
+    ui_list_set_index(20, 0)
+    if !ui_dispatch_event(20) { return false }
+    if !ui_dispatch_event(60) { return false }
+    ui_list_set_index(20, 1)
+    return ui_dispatch_event(20)
+}
+
+pub fn dispatch_smoke_due_reminders() -> Bool {
+    return ui_dispatch_event(64)
+}
+
+pub fn dispatch_smoke_future_reminder() -> Bool {
+    ui_set_input_text(21, "2000000000")
+    if !ui_dispatch_event(21) { return false }
+    return ui_dispatch_event(63)
+}
+
+// The filter is explicit: the bound input first enters app_state, then the
+// controller refreshes a separate bounded projection from the source list.
+pub fn dispatch_smoke_filter() -> Bool {
+    ui_set_input_text(12, "REVIEWED")
+    if !ui_dispatch_event(12) { return false }
+    if !ui_dispatch_event(47) { return false }
+    ui_set_input_text(13, "DUE")
+    if !ui_dispatch_event(13) { return false }
+    return ui_dispatch_event(48)
+}
+
+// Save the completed third row, create a fourth unsaved row and restore the
+// checkpoint through the same native controller callbacks as the desktop UI.
+pub fn dispatch_smoke_persistence() -> Bool {
+    ui_list_set_index(50, 1)
+    if !ui_dispatch_event(50) { return false }
+    if !ui_dispatch_event(42) { return false }
+    ui_set_input_text(10, "Unsaved native task")
+    if !ui_dispatch_event(40) { return false }
+    return ui_dispatch_event(43)
+}
+
+// Exercise the same explicit export buttons as the native desktop user.
+pub fn dispatch_smoke_exports() -> Bool {
+    if !ui_dispatch_event(44) { return false }
+    return ui_dispatch_event(45)
+}
+
+// A JSON backup is lossless for the typed source table. The smoke changes the
+// selected task after export, then restores it via the same retained buttons.
+pub fn dispatch_smoke_json_backup() -> Bool {
+    if !ui_dispatch_event(52) { return false }
+    ui_set_input_text(14, "Changed native task")
+    if !ui_dispatch_event(14) { return false }
+    if !ui_dispatch_event(49) { return false }
+    return ui_dispatch_event(53)
+}
+
+pub fn dispatch_smoke_sort_ascending() -> Bool {
+    return ui_dispatch_event(54)
+}
+
+pub fn dispatch_smoke_sort_descending() -> Bool {
+    return ui_dispatch_event(55)
+}
+
+// The smoke removes the same completed row selected by the desktop table.
+pub fn dispatch_smoke_removal() -> Bool {
+    return ui_dispatch_event(46)
+}
+
+pub fn verify_interaction_smoke_view() -> Bool {
+    if ui_input_length(10) != 0usize { return false }
+    if ui_input_length(17) != 0usize { return false }
+    if ui_input_length(14) != 19usize { return false }
+    if ui_input_length(15) != 8usize { return false }
+    if ui_input_length(18) != 11usize { return false }
+    if ui_input_length(19) != 2usize { return false }
+    if ui_input_length(21) != 3usize { return false }
+    if ui_input_length(16) != 14usize { return false }
+    if ui_list_count(20) != 2 { return false }
+    if ui_list_index(20) != 1 { return false }
+    if ui_table_row_count(30) != 3 { return false }
+    if ui_table_selected_row(30) != 2 { return false }
+    var notes: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    if ui_table_read_cell(30, 2, 3, notes) != 11usize { return false }
+    if notes[0] != 78u8 { return false }
+    if notes[10] != 101u8 { return false }
+    var estimate: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    if ui_table_read_cell(30, 2, 4, estimate) != 2usize { return false }
+    if estimate[0] != 55u8 { return false }
+    if estimate[1] != 53u8 { return false }
+    var reminder: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    if ui_table_read_cell(30, 2, 5, reminder) != 3usize { return false }
+    if reminder[0] != 53u8 { return false }
+    if reminder[1] != 48u8 { return false }
+    if reminder[2] != 48u8 { return false }
+    return true
+}
+
+pub fn verify_due_reminder_smoke_view() -> Bool {
+    if ui_input_length(15) != 3usize { return false }
+    if ui_input_length(21) != 1usize { return false }
+    var status: [UInt8; 3] = [0u8, 0u8, 0u8]
+    if ui_table_read_cell(30, 2, 1, status) != 3usize { return false }
+    if status[0] != 68u8 { return false }
+    if status[1] != 117u8 { return false }
+    if status[2] != 101u8 { return false }
+    var reminder: [UInt8; 1] = [0u8]
+    if ui_table_read_cell(30, 2, 5, reminder) != 1usize { return false }
+    return reminder[0] == 48u8
+}
+
+pub fn verify_scheduled_reminder_smoke_view() -> Bool {
+    if ui_input_length(15) != 3usize { return false }
+    if ui_input_length(21) != 10usize { return false }
+    var reminder: [UInt8; 10] = [0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8]
+    if ui_table_read_cell(30, 2, 5, reminder) != 10usize { return false }
+    if reminder[0] != 50u8 { return false }
+    return reminder[9] == 48u8
+}
+
+pub fn verify_filtered_projects_smoke_view() -> Bool {
+    if ui_input_length(12) != 8usize { return false }
+    if ui_list_count(22) != 1 { return false }
+    return ui_list_index(22) == 0
+}
+
+pub fn verify_filtered_tasks_smoke_view() -> Bool {
+    if ui_input_length(13) != 3usize { return false }
+    if ui_table_row_count(31) != 1 { return false }
+    if ui_table_selected_row(31) != 0 { return false }
+    var estimate: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]
+    if ui_table_read_cell(31, 0, 4, estimate) != 2usize { return false }
+    if estimate[0] != 55u8 { return false }
+    return estimate[1] == 53u8
+}
+
+pub fn verify_tasks_ascending_smoke_view() -> Bool {
+    if ui_input_length(14) != 19usize { return false }
+    if ui_input_length(15) != 3usize { return false }
+    if ui_input_length(19) != 2usize { return false }
+    if ui_input_length(21) != 10usize { return false }
+    if ui_input_length(16) != 14usize { return false }
+    if ui_table_row_count(30) != 3 { return false }
+    if ui_table_selected_row(30) != 1 { return false }
+    if ui_table_row_count(31) != 1 { return false }
+    return ui_table_selected_row(31) == 0
+}
+
+pub fn verify_tasks_descending_smoke_view() -> Bool {
+    if ui_input_length(14) != 19usize { return false }
+    if ui_input_length(15) != 3usize { return false }
+    if ui_input_length(19) != 2usize { return false }
+    if ui_input_length(21) != 10usize { return false }
+    if ui_input_length(16) != 14usize { return false }
+    if ui_table_row_count(30) != 3 { return false }
+    if ui_table_selected_row(30) != 1 { return false }
+    if ui_table_row_count(31) != 1 { return false }
+    return ui_table_selected_row(31) == 0
+}
+
+pub fn verify_interactive_checkpoint_slot_view() -> Bool {
+    if ui_list_count(50) != 2 { return false }
+    if ui_list_index(50) != 1 { return false }
+    return true
+}
+
+pub fn verify_removal_smoke_view() -> Bool {
+    if ui_input_length(10) != 0usize { return false }
+    if ui_input_length(14) != 17usize { return false }
+    if ui_input_length(15) != 4usize { return false }
+    if ui_input_length(19) != 2usize { return false }
+    if ui_input_length(21) != 1usize { return false }
+    if ui_input_length(16) != 14usize { return false }
+    if ui_list_count(20) != 2 { return false }
+    if ui_list_index(20) != 1 { return false }
+    if ui_table_row_count(30) != 2 { return false }
+    if ui_table_selected_row(30) != 1 { return false }
+    return true
+}
+
+// The 47 events below are the explicit UI actions dispatched by the bounded
+// full-app smoke. Exact polling proves FIFO order, complete caller-owned
+// output capacity and zero newest-drop overflow without re-entering a callback.
+pub fn verify_smoke_event_queue() -> Bool {
+    if ui_event_queue_count() != 47usize { return false }
+    if ui_event_queue_dropped() != 0usize { return false }
+    var events: [Int32; 47] = [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    ]
+    var event_count: [UIntSize; 1] = [0usize]
+    if !ui_event_queue_poll_exact(events, event_count) { return false }
+    if event_count[0] != 47usize { return false }
+    var expected_events: [Int32; 47] = [
+        20, 30, 40, 41, 17, 58, 20, 16, 57, 59, 20, 59, 20, 51,
+        14, 49, 15, 56, 18, 61, 19, 62, 21, 63, 20, 60, 20, 64, 21,
+        63, 12, 47, 13, 48, 50, 42, 40, 43, 52, 14, 49, 53, 54, 55,
+        44, 45, 46
+    ]
+    var index: UIntSize = 0usize
+    while index < 47usize {
+        if events[index] != expected_events[index] { return false }
+        index = index + 1usize
+    }
+    if ui_event_queue_count() != 0usize { return false }
+    return ui_event_queue_dropped() == 0usize
+}
+
+"#;
+
+const FULL_APP_TEMPLATE_DATA: &str = r#"module {module}.data
+
+// Self-contained facade used by the generated template. It keeps the same
+// caller-owned complete-model contract as `jadren.app.data`, while the
+// template remains portable and does not require a repository-relative path
+// dependency just to compile.
+pub fn snapshot_length() -> UIntSize {
+    return app_data_snapshot_length()
+}
+
+// Natural complete-model spelling of the current equality token.
+pub fn revision() -> UInt64 {
+    return app_data_revision()
+}
+
+// Natural complete-model spelling of the guarded snapshot sizing query.
+pub fn snapshot_length_if_model_revision(expected_revision: UInt64) -> UIntSize {
+    return app_data_snapshot_length_if_revision(expected_revision)
+}
+
+pub fn write_exact(
+    output: write Slice<UInt8>,
+    output_length: write Slice<UIntSize>,
+) -> Bool {
+    return app_data_write_exact(output, output_length)
+}
+
+pub fn write_exact_if_model_revision(
+    output: write Slice<UInt8>,
+    output_length: write Slice<UIntSize>,
+    expected_revision: UInt64,
+) -> Bool {
+    return app_data_write_exact_if_revision(output, output_length, expected_revision)
+}
+
+pub fn load_exact_if_model_revision(
+    input: read Slice<UInt8>,
+    input_length: UIntSize,
+    expected_revision: UInt64,
+) -> Bool {
+    return app_data_load_exact_if_revision(input, input_length, expected_revision)
+}
+
+pub fn save_atomic_durable(
+    temporary_path: String,
+    target_path: String,
+    directory_path: String,
+    output: write Slice<UInt8>,
+) -> Bool {
+    var output_length: [UIntSize; 1] = [0usize]
+    if !app_data_write_exact(output, output_length) { return false }
+    return file_write_atomic_durable(
+        temporary_path,
+        target_path,
+        directory_path,
+        output,
+        output_length[0],
+    )
+}
+
+pub fn save_atomic_durable_if_revision(
+    temporary_path: String,
+    target_path: String,
+    directory_path: String,
+    output: write Slice<UInt8>,
+    expected_revision: UInt64,
+) -> Bool {
+    let planned_length: UIntSize = app_data_snapshot_length_if_revision(expected_revision)
+    if planned_length == 0usize { return false }
+    var output_length: [UIntSize; 1] = [0usize]
+    if !app_data_write_exact_if_revision(output, output_length, expected_revision) { return false }
+    if output_length[0] != planned_length { return false }
+    if app_data_revision() != expected_revision { return false }
+    return file_write_atomic_durable(
+        temporary_path,
+        target_path,
+        directory_path,
+        output,
+        output_length[0],
+    )
+}
+
+// Natural complete-model spelling of the guarded durable snapshot publish.
+// Keep the revision-suffixed wrapper above as a compatibility spelling for
+// existing generated projects while new projects use this contract.
+pub fn save_atomic_durable_if_model_revision(
+    temporary_path: String,
+    target_path: String,
+    directory_path: String,
+    output: write Slice<UInt8>,
+    expected_revision: UInt64,
+) -> Bool {
+    return save_atomic_durable_if_revision(
+        temporary_path,
+        target_path,
+        directory_path,
+        output,
+        expected_revision,
+    )
+}
+
+pub fn load_file(path: String, input: write Slice<UInt8>) -> Bool {
+    var input_length: [UIntSize; 1] = [0usize]
+    if !file_read_exact(path, input, input_length) { return false }
+    return app_data_load_exact(input, input_length[0])
+}
+
+pub fn load_file_if_revision(
+    path: String,
+    input: write Slice<UInt8>,
+    expected_revision: UInt64,
+) -> Bool {
+    var input_length: [UIntSize; 1] = [0usize]
+    if !file_read_exact(path, input, input_length) { return false }
+    return app_data_load_exact_if_revision(input, input_length[0], expected_revision)
+}
+
+// Natural complete-model spelling of the guarded file restore. A stale
+// revision is rejected before the transactional model load can mutate state.
+pub fn load_file_if_model_revision(
+    path: String,
+    input: write Slice<UInt8>,
+    expected_revision: UInt64,
+) -> Bool {
+    return load_file_if_revision(path, input, expected_revision)
+}
+
+// Natural complete-model transaction aliases keep the generated starter's
+// storage layer independent from builtin revision suffixes.
+pub fn tx_begin_if_model_revision(expected_revision: UInt64) -> Bool {
+    return app_data_tx_begin_if_revision(expected_revision)
+}
+
+pub fn tx_commit_durable_if_model_revision(
+    temporary_path: String,
+    target_path: String,
+    lock_path: String,
+    expected_revision: UInt64,
+) -> Bool {
+    return app_data_tx_commit_durable_if_revision(
+        temporary_path,
+        target_path,
+        lock_path,
+        expected_revision,
+    )
+}
+
+pub fn tx_commit_durable_retry_if_model_revision(
+    temporary_path: String,
+    target_path: String,
+    lock_path: String,
+    expected_revision: UInt64,
+    max_attempts: UIntSize,
+    retry_delay_ms: UIntSize,
+) -> Bool {
+    return app_data_tx_commit_durable_retry_if_revision(
+        temporary_path,
+        target_path,
+        lock_path,
+        expected_revision,
+        max_attempts,
+        retry_delay_ms,
+    )
+}
+
+pub fn tx_commit_durable_directory_if_model_revision(
+    temporary_path: String,
+    target_path: String,
+    directory_path: String,
+    lock_path: String,
+    expected_revision: UInt64,
+) -> Bool {
+    return app_data_tx_commit_durable_directory_if_revision(
+        temporary_path,
+        target_path,
+        directory_path,
+        lock_path,
+        expected_revision,
+    )
+}
+
+pub fn tx_rollback() -> Bool {
+    return app_data_tx_rollback()
+}
+
+pub fn load_exact(input: read Slice<UInt8>, input_length: UIntSize) -> Bool {
+    return app_data_load_exact(input, input_length)
+}
+"#;
+
+const FULL_APP_TEMPLATE_STORAGE: &str = r#"module {module}.storage
+
+import {module}.data.load_exact
+import {module}.data.load_file
+import {module}.data.load_file_if_model_revision
+import {module}.data.save_atomic_durable
+import {module}.data.save_atomic_durable_if_model_revision
+import {module}.data.snapshot_length
+import {module}.data.snapshot_length_if_model_revision
+import {module}.data.tx_begin_if_model_revision
+import {module}.data.tx_commit_durable_directory_if_model_revision
+import {module}.data.tx_rollback
+import {module}.model.normalize_next_task_id
+import {module}.model.task_projects_are_valid
+import {module}.model.task_reminders_are_valid
+import {module}.model.rebuild_task_reminders
+import {module}.model.verify_smoke_model
+
+// File-backed complete-model helpers keep the byte buffer caller-owned while
+// the stdlib owns serialization, durable replacement and transactional load.
+// The application still chooses paths and decides when to invoke them.
+pub fn save_model_file(
+    temporary_path: String,
+    target_path: String,
+    directory_path: String,
+    snapshot: write Slice<UInt8>
+) -> Bool {
+    return save_atomic_durable(
+        temporary_path,
+        target_path,
+        directory_path,
+        snapshot,
+    )
+}
+
+pub fn save_model_file_if_revision(
+    temporary_path: String,
+    target_path: String,
+    directory_path: String,
+    snapshot: write Slice<UInt8>,
+    expected_revision: UInt64
+) -> Bool {
+    return save_atomic_durable_if_model_revision(
+        temporary_path,
+        target_path,
+        directory_path,
+        snapshot,
+        expected_revision,
+    )
+}
+
+pub fn save_model_file_if_model_revision(
+    temporary_path: String,
+    target_path: String,
+    directory_path: String,
+    snapshot: write Slice<UInt8>,
+    expected_revision: UInt64
+) -> Bool {
+    return save_atomic_durable_if_model_revision(
+        temporary_path,
+        target_path,
+        directory_path,
+        snapshot,
+        expected_revision,
+    )
+}
+
+pub fn load_model_file(path: String, snapshot: write Slice<UInt8>) -> Bool {
+    return load_file(path, snapshot)
+}
+
+pub fn load_model_file_if_revision(
+    path: String,
+    snapshot: write Slice<UInt8>,
+    expected_revision: UInt64
+) -> Bool {
+    return load_file_if_model_revision(path, snapshot, expected_revision)
+}
+
+pub fn load_model_file_if_model_revision(
+    path: String,
+    snapshot: write Slice<UInt8>,
+    expected_revision: UInt64
+) -> Bool {
+    return load_file_if_model_revision(path, snapshot, expected_revision)
+}
+
+// Persist the complete bounded model through a caller-selected temporary file,
+// target file and lock path. Callers decide where and when this happens.
+pub fn save_checkpoint_durable(
+    temporary_path: String,
+    target_path: String,
+    lock_path: String
+) -> Bool {
+    let expected_revision: UInt64 = app_data_revision()
+    if !tx_begin_if_model_revision(expected_revision) { return false }
+    let commit_revision: UInt64 = app_data_revision()
+    if !tx_commit_durable_directory_if_model_revision(
+        temporary_path,
+        target_path,
+        "target/jadren",
+        lock_path,
+        commit_revision
+    ) {
+        tx_rollback()
+        return false
+    }
+    return true
+}
+
+// The generic JSON document keeps non-negative numbers numeric. Re-establish
+// the model-owned Int64 selection keys after loading, with the model's own
+// bounds, before exact retained UI bindings observe them.
+fn restore_project_choice() -> Bool {
+    let upper_bound: Int32 = app_list_count(0)
+    if upper_bound < 0 { return false }
+    var signed_value: [Int64; 1] = [0 as Int64]
+    if app_state_read_int("project_choice", signed_value) {
+        if signed_value[0] < (-1 as Int64) { return false }
+        if signed_value[0] >= (upper_bound as Int64) { return false }
+        return true
+    }
+
+    var unsigned_value: [UInt64; 1] = [0u64]
+    if !app_state_read_uint("project_choice", unsigned_value) { return false }
+    if unsigned_value[0] >= (upper_bound as UInt64) { return false }
+    return app_state_set_int("project_choice", unsigned_value[0] as Int64)
+}
+
+fn restore_task_choice() -> Bool {
+    let upper_bound: Int32 = app_table_row_count(0)
+    if upper_bound < 0 { return false }
+    var signed_value: [Int64; 1] = [0 as Int64]
+    if app_state_read_int("task_choice", signed_value) {
+        if signed_value[0] < (-1 as Int64) { return false }
+        if signed_value[0] >= (upper_bound as Int64) { return false }
+        return true
+    }
+
+    var unsigned_value: [UInt64; 1] = [0u64]
+    if !app_state_read_uint("task_choice", unsigned_value) { return false }
+    if unsigned_value[0] >= (upper_bound as UInt64) { return false }
+    return app_state_set_int("task_choice", unsigned_value[0] as Int64)
+}
+
+// TaskId is a model identity rather than a retained-control index. Check that
+// it names a current source row before an exact binding can observe it.
+fn restore_selected_task_id() -> Bool {
+    var signed_value: [Int64; 1] = [0 as Int64]
+    if app_state_read_int("selected_task_id", signed_value) {
+        if signed_value[0] == 0 as Int64 { return app_table_row_count(0) == 0 }
+        if signed_value[0] < 0 as Int64 { return false }
+        return app_table_find_int(0, 6, signed_value[0], 0) >= 0
+    }
+
+    var unsigned_value: [UInt64; 1] = [0u64]
+    if !app_state_read_uint("selected_task_id", unsigned_value) { return false }
+    if unsigned_value[0] > 2147483646u64 { return false }
+    if !app_state_set_int("selected_task_id", unsigned_value[0] as Int64) { return false }
+    if unsigned_value[0] == 0u64 { return app_table_row_count(0) == 0 }
+    return app_table_find_int(0, 6, unsigned_value[0] as Int64, 0) >= 0
+}
+
+// The generic document also reloads positive counters as UInt64. Restore the
+// model's Int64 representation, then keep it above all restored TaskIds.
+fn restore_next_task_id() -> Bool {
+    var signed_value: [Int64; 1] = [0 as Int64]
+    if app_state_read_int("next_task_id", signed_value) {
+        if signed_value[0] <= 0 as Int64 { return false }
+        return normalize_next_task_id()
+    }
+
+    var unsigned_value: [UInt64; 1] = [0u64]
+    if !app_state_read_uint("next_task_id", unsigned_value) { return false }
+    if unsigned_value[0] == 0u64 { return false }
+    if unsigned_value[0] > 2147483646u64 { return false }
+    if !app_state_set_int("next_task_id", unsigned_value[0] as Int64) { return false }
+    return normalize_next_task_id()
+}
+
+fn restore_filtered_project_choice() -> Bool {
+    let upper_bound: Int32 = app_list_count(2)
+    if upper_bound < 0 { return false }
+    var signed_value: [Int64; 1] = [0 as Int64]
+    if app_state_read_int("filtered_project_choice", signed_value) {
+        if signed_value[0] < (-1 as Int64) { return false }
+        if signed_value[0] >= (upper_bound as Int64) { return false }
+        return true
+    }
+
+    var unsigned_value: [UInt64; 1] = [0u64]
+    if !app_state_read_uint("filtered_project_choice", unsigned_value) { return false }
+    if unsigned_value[0] >= (upper_bound as UInt64) { return false }
+    return app_state_set_int("filtered_project_choice", unsigned_value[0] as Int64)
+}
+
+fn restore_filtered_task_choice() -> Bool {
+    let upper_bound: Int32 = app_table_row_count(1)
+    if upper_bound < 0 { return false }
+    var signed_value: [Int64; 1] = [0 as Int64]
+    if app_state_read_int("filtered_task_choice", signed_value) {
+        if signed_value[0] < (-1 as Int64) { return false }
+        if signed_value[0] >= (upper_bound as Int64) { return false }
+        return true
+    }
+
+    var unsigned_value: [UInt64; 1] = [0u64]
+    if !app_state_read_uint("filtered_task_choice", unsigned_value) { return false }
+    if unsigned_value[0] >= (upper_bound as UInt64) { return false }
+    return app_state_set_int("filtered_task_choice", unsigned_value[0] as Int64)
+}
+
+fn restore_checkpoint_slot() -> Bool {
+    var signed_value: [Int64; 1] = [0 as Int64]
+    if app_state_read_int("checkpoint_slot", signed_value) {
+        if signed_value[0] < 0 as Int64 { return false }
+        if signed_value[0] > 1 as Int64 { return false }
+        return true
+    }
+
+    var unsigned_value: [UInt64; 1] = [0u64]
+    if !app_state_read_uint("checkpoint_slot", unsigned_value) { return false }
+    if unsigned_value[0] > 1u64 { return false }
+    return app_state_set_int("checkpoint_slot", unsigned_value[0] as Int64)
+}
+
+pub fn normalize_selection_keys() -> Bool {
+    if !restore_project_choice() { return false }
+    if !restore_task_choice() { return false }
+    if !restore_selected_task_id() { return false }
+    if !restore_next_task_id() { return false }
+    if !restore_filtered_project_choice() { return false }
+    if !restore_filtered_task_choice() { return false }
+    if !restore_checkpoint_slot() { return false }
+    if !task_projects_are_valid() { return false }
+    return task_reminders_are_valid()
+}
+
+pub fn load_checkpoint(target_path: String) -> Bool {
+    if !app_data_load(target_path) { return false }
+    if !normalize_selection_keys() { return false }
+    return rebuild_task_reminders()
+}
+
+// caller-owned buffer matches the template's 3072-byte model transport bound.
+// Bounded proof for the natural file-backed complete-model API. The fixed
+// caller-owned buffer matches the template's 3072-byte model transport bound.
+// caller-owned buffer matches the template's 3072-byte model transport bound.
+pub fn smoke_file_backed_model_roundtrip() -> Bool {
+    let initial_revision: UInt64 = app_data_revision()
+    let planned_length: UIntSize = snapshot_length_if_model_revision(initial_revision)
+    if planned_length == 0usize { return false }
+    if planned_length > 3072usize { return false }
+
+    var snapshot: [UInt8; 3072] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    ]
+    directory_create("target/jadren")
+    file_delete("target/jadren/{module}-full-app-model.tmp")
+    file_delete("target/jadren/{module}-full-app-model.data")
+    if !save_model_file(
+        "target/jadren/{module}-full-app-model.tmp",
+        "target/jadren/{module}-full-app-model.data",
+        "target/jadren",
+        snapshot,
+    ) { return false }
+    if !file_exists("target/jadren/{module}-full-app-model.data") { return false }
+    if file_exists("target/jadren/{module}-full-app-model.tmp") { return false }
+
+    file_delete("target/jadren/{module}-full-app-model-guarded.tmp")
+    file_delete("target/jadren/{module}-full-app-model-guarded.data")
+    let expected_revision: UInt64 = app_data_revision()
+    if !save_model_file_if_model_revision(
+        "target/jadren/{module}-full-app-model-guarded.tmp",
+        "target/jadren/{module}-full-app-model-guarded.data",
+        "target/jadren",
+        snapshot,
+        expected_revision,
+    ) { return false }
+    if !file_exists("target/jadren/{module}-full-app-model-guarded.data") { return false }
+    if !app_state_set_int("guarded_probe", 42 as Int64) { return false }
+    if save_model_file_if_model_revision(
+        "target/jadren/{module}-full-app-model-guarded.tmp",
+        "target/jadren/{module}-full-app-model-guarded.data",
+        "target/jadren",
+        snapshot,
+        expected_revision,
+    ) { return false }
+    let current_revision: UInt64 = app_data_revision()
+    if !save_model_file_if_model_revision(
+        "target/jadren/{module}-full-app-model-guarded.tmp",
+        "target/jadren/{module}-full-app-model-guarded.data",
+        "target/jadren",
+        snapshot,
+        current_revision,
+    ) { return false }
+
+    let guarded_load_revision: UInt64 = app_data_revision()
+    if !app_state_set_int("guarded_probe", 43 as Int64) { return false }
+    if load_model_file_if_model_revision(
+        "target/jadren/{module}-full-app-model-guarded.data",
+        snapshot,
+        guarded_load_revision,
+    ) { return false }
+    if app_state_get_int("guarded_probe") != (43 as Int64) { return false }
+    let current_load_revision: UInt64 = app_data_revision()
+    if !load_model_file_if_model_revision(
+        "target/jadren/{module}-full-app-model-guarded.data",
+        snapshot,
+        current_load_revision,
+    ) { return false }
+
+    app_state_clear()
+    app_list_clear(0)
+    app_list_clear(1)
+    app_list_clear(2)
+    app_table_clear(0)
+    app_table_clear(1)
+    if !load_model_file(
+        "target/jadren/{module}-full-app-model.data",
+        snapshot,
+    ) { return false }
+    if !normalize_selection_keys() { return false }
+    if !rebuild_task_reminders() { return false }
+    if !verify_smoke_model() { return false }
+
+    app_state_clear()
+    app_list_clear(0)
+    app_list_clear(1)
+    app_list_clear(2)
+    app_table_clear(0)
+    app_table_clear(1)
+    if !load_model_file(
+        "target/jadren/{module}-full-app-model-guarded.data",
+        snapshot,
+    ) { return false }
+    if !normalize_selection_keys() { return false }
+    if !rebuild_task_reminders() { return false }
+    if !verify_smoke_model() { return false }
+    if app_state_get_int("guarded_probe") != (42 as Int64) { return false }
+
+    // Corrupt the caller-owned copy and prove the transactional loader leaves
+    // the restored live model untouched when the document is malformed.
+    snapshot[0] = 0u8
+    if load_exact(snapshot, planned_length) { return false }
+    if !verify_smoke_model() { return false }
+
+    if !file_delete("target/jadren/{module}-full-app-model.data") { return false }
+    if file_exists("target/jadren/{module}-full-app-model.data") { return false }
+    file_delete("target/jadren/{module}-full-app-model.tmp")
+    if !file_delete("target/jadren/{module}-full-app-model-guarded.data") { return false }
+    file_delete("target/jadren/{module}-full-app-model-guarded.tmp")
+    return true
+}
+
+// Bounded local proof only. It creates a checkpoint, clears the in-process
+// model, restores it and removes the smoke files again.
+pub fn smoke_checkpoint_roundtrip() -> Bool {
+    directory_create("target/jadren")
+    file_delete("target/jadren/{module}-full-app-smoke.tmp")
+    file_delete("target/jadren/{module}-full-app-smoke.data")
+    file_delete("target/jadren/{module}-full-app-smoke.lock")
+    if !save_checkpoint_durable(
+        "target/jadren/{module}-full-app-smoke.tmp",
+        "target/jadren/{module}-full-app-smoke.data",
+        "target/jadren/{module}-full-app-smoke.lock"
+    ) { return false }
+    if !file_exists("target/jadren/{module}-full-app-smoke.data") { return false }
+    if file_exists("target/jadren/{module}-full-app-smoke.tmp") { return false }
+
+    app_state_clear()
+    app_list_clear(0)
+    app_list_clear(1)
+    app_list_clear(2)
+    app_table_clear(0)
+    app_table_clear(1)
+    if !load_checkpoint("target/jadren/{module}-full-app-smoke.data") { return false }
+
+    if !file_delete("target/jadren/{module}-full-app-smoke.data") { return false }
+    if file_exists("target/jadren/{module}-full-app-smoke.data") { return false }
+    file_delete("target/jadren/{module}-full-app-smoke.tmp")
+    file_delete("target/jadren/{module}-full-app-smoke.lock")
+    return true
+}
+"#;
+
+const FULL_APP_TEMPLATE_EXPORTS: &str = r#"module {module}.exports
+
+// Write caller-selected bounded list/table projections through flushed
+// temporary files and atomic replacement. Schema and destination stay owned by
+// the application rather than a hidden export service.
+pub fn export_list_csv_durable(output_path: String, temporary_path: String) -> Bool {
+    return app_list_export_csv_file_durable(0, output_path, temporary_path)
+}
+
+pub fn export_table_csv_durable(output_path: String, temporary_path: String) -> Bool {
+    return app_table_export_csv_file_durable(0, output_path, temporary_path)
+}
+
+// Bounded local proof only. Smoke outputs are removed after their durable
+// existence and non-empty content have been confirmed.
+pub fn smoke_durable_exports() -> Bool {
+    directory_create("target/jadren")
+    file_delete("target/jadren/{module}-full-app-list.csv")
+    file_delete("target/jadren/{module}-full-app-list.tmp")
+    file_delete("target/jadren/{module}-full-app-table.csv")
+    file_delete("target/jadren/{module}-full-app-table.tmp")
+    if !export_list_csv_durable(
+        "target/jadren/{module}-full-app-list.csv",
+        "target/jadren/{module}-full-app-list.tmp"
+    ) { return false }
+    if !export_table_csv_durable(
+        "target/jadren/{module}-full-app-table.csv",
+        "target/jadren/{module}-full-app-table.tmp"
+    ) { return false }
+    if !file_exists("target/jadren/{module}-full-app-list.csv") { return false }
+    if !file_exists("target/jadren/{module}-full-app-table.csv") { return false }
+    if file_size("target/jadren/{module}-full-app-list.csv") == 0usize { return false }
+    if file_size("target/jadren/{module}-full-app-table.csv") == 0usize { return false }
+    if file_exists("target/jadren/{module}-full-app-list.tmp") { return false }
+    if file_exists("target/jadren/{module}-full-app-table.tmp") { return false }
+    if !file_delete("target/jadren/{module}-full-app-list.csv") { return false }
+    if !file_delete("target/jadren/{module}-full-app-table.csv") { return false }
+    return true
+}
+"#;
+
+const FULL_APP_TEMPLATE_API: &str = r#"module {module}.api
+
+import {module}.data.load_exact
+import {module}.data.load_exact_if_model_revision
+import {module}.data.revision
+import {module}.data.snapshot_length_if_model_revision
+import {module}.data.write_exact
+import {module}.data.write_exact_if_model_revision
+import {module}.storage.load_checkpoint
+import {module}.storage.normalize_selection_keys
+import {module}.model.task_projects_are_valid
+import {module}.model.task_reminders_are_valid
+import {module}.model.rebuild_task_reminders
+
+// A bounded one-request local API proof. The service lifecycle, socket,
+// router and response framing remain in Jadren; deployment policy stays with
+// the application instead of becoming an implicit background service.
+pub fn serve_health_once(port: UInt16) -> Bool {
+    let listener: UIntSize = net_tcp_listen(port)
+    if (listener as Int32) == 0 { return false }
+
+    http_router_clear()
+    var body: [UInt8; 21] = [74u8, 97u8, 100u8, 114u8, 101u8, 110u8, 32u8,
+        102u8, 117u8, 108u8, 108u8, 45u8, 97u8, 112u8, 112u8, 32u8,
+        114u8, 101u8, 97u8, 100u8, 121u8]
+    if !http_router_add("GET", "/healthz", 200u16, "text/plain", body) {
+        net_socket_close(listener)
+        return false
+    }
+
+    let session: UIntSize = http_session_open(listener, 1u32, 1024u32, 1024u32)
+    if (session as Int32) == 0 {
+        net_socket_close(listener)
+        return false
+    }
+    let state: UInt32 = http_session_step(session, 5000u32)
+    let closed: Bool = http_session_close(session)
+    if state == 0u32 { return false }
+    return closed
+}
+
+// Publish one explicit snapshot of the template model. The router copies only
+// the verified JSON prefixes, then the bounded session accepts four requests
+// and exits. This is intentionally read-only and local: it does not claim an
+// application protocol, authentication, TLS or a long-running server.
+pub fn serve_snapshot(port: UInt16) -> Bool {
+    let listener: UIntSize = net_tcp_listen(port)
+    if (listener as Int32) == 0 { return false }
+
+    http_router_clear()
+    var health_body: [UInt8; 21] = [74u8, 97u8, 100u8, 114u8, 101u8, 110u8, 32u8,
+        102u8, 117u8, 108u8, 108u8, 45u8, 97u8, 112u8, 112u8, 32u8,
+        114u8, 101u8, 97u8, 100u8, 121u8]
+    var state_body: [UInt8; 512] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var state_length: [UIntSize; 1] = [0usize]
+    var list_body: [UInt8; 256] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var list_length: [UIntSize; 1] = [0usize]
+    var table_body: [UInt8; 1024] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var table_length: [UIntSize; 1] = [0usize]
+
+    if !app_state_write_json_exact(state_body, state_length) {
+        net_socket_close(listener)
+        return false
+    }
+    if !app_list_export_json_exact(0, list_body, list_length) {
+        net_socket_close(listener)
+        return false
+    }
+    if !app_table_export_json_exact(0, table_body, table_length) {
+        net_socket_close(listener)
+        return false
+    }
+    if !http_router_add("GET", "/healthz", 200u16, "text/plain", health_body) {
+        net_socket_close(listener)
+        return false
+    }
+    if !http_router_add_exact(
+        "GET", "/api/state", 200u16, "application/json", state_body, state_length[0]
+    ) {
+        net_socket_close(listener)
+        return false
+    }
+    if !http_router_add_exact(
+        "GET", "/api/lists/0", 200u16, "application/json", list_body, list_length[0]
+    ) {
+        net_socket_close(listener)
+        return false
+    }
+    if !http_router_add_exact(
+        "GET", "/api/tables/0", 200u16, "application/json", table_body, table_length[0]
+    ) {
+        net_socket_close(listener)
+        return false
+    }
+
+    let session: UIntSize = http_session_open(listener, 4u32, 1024u32, 1024u32)
+    if (session as Int32) == 0 {
+        net_socket_close(listener)
+        return false
+    }
+    var handled: UInt32 = 0u32
+    var attempts: UInt32 = 0u32
+    while attempts < 8u32 {
+        if handled == 4u32 { break }
+        let state: UInt32 = http_session_step(session, 2000u32)
+        attempts = attempts + 1u32
+        if state != 0u32 { handled = handled + 1u32 }
+    }
+    let closed: Bool = http_session_close(session)
+    if handled != 4u32 { return false }
+    return closed
+}
+
+fn full_app_draft_body_is_valid(body: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length == 0usize { return false }
+    if length > 64usize { return false }
+    var index: UIntSize = 0usize
+    while index < length {
+        if body[index] < 32u8 { return false }
+        if body[index] > 126u8 { return false }
+        index = index + 1usize
+    }
+    return true
+}
+
+// `--serve-draft` is an explicit, bounded command endpoint. It accepts three
+// separate connection-close requests: valid POST update, rejected POST update
+// and current-value GET. It keeps state in-process only; durable checkpoints
+// remain an application-controlled call in `storage.jdn`.
+pub fn serve_draft_update(port: UInt16) -> Bool {
+    let listener: UIntSize = net_tcp_listen(port)
+    if (listener as Int32) == 0 { return false }
+    var request: [UInt8; 1024] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var chunk: [UInt8; 256] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var draft: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var response: [UInt8; 512] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var rejected: [UInt8; 13] = [105u8, 110u8, 118u8, 97u8, 108u8, 105u8,
+        100u8, 32u8, 100u8, 114u8, 97u8, 102u8, 116u8]
+    var handled: UInt32 = 0u32
+
+    while handled < 3u32 {
+        let client: UIntSize = net_tcp_accept(listener)
+        if (client as Int32) == 0 {
+            net_socket_close(listener)
+            return false
+        }
+        if !net_socket_set_timeout(client, 3000u32) {
+            net_socket_close(client)
+            net_socket_close(listener)
+            return false
+        }
+        var received: UIntSize = 0usize
+        var reads: UIntSize = 0usize
+        while reads < 8usize {
+            if received >= 1024usize { break }
+            let chunk_received: UIntSize = net_tcp_receive(client, chunk)
+            if chunk_received == 0usize { break }
+            let appended: UIntSize = http_request_append(request, received, chunk, chunk_received)
+            if appended == 0usize { break }
+            received = appended
+            reads = reads + 1usize
+            if http_request_is_complete_prefix(request, received) { break }
+        }
+
+        var draft_length: [UIntSize; 1] = [0usize]
+        var accepted: Bool = false
+        if received > 0usize {
+            if http_request_is_complete_prefix(request, received) {
+                if http_route_match_prefix(request, received, "POST", "/api/draft") {
+                    if http_request_body_exact_prefix(request, received, draft, draft_length) {
+                        if full_app_draft_body_is_valid(draft, draft_length[0]) {
+                            accepted = app_state_set_text_bytes("draft", draft, draft_length[0])
+                        }
+                    }
+                } else if http_route_match_prefix(request, received, "GET", "/api/draft") {
+                    accepted = app_state_read_text_exact("draft", draft, draft_length)
+                }
+            }
+        }
+
+        var response_length: UIntSize = 0usize
+        if accepted {
+            response_length = http_response_write_header_prefix(
+                200u16, "text/plain", "X-Jadren-Draft", "native",
+                draft, draft_length[0], response
+            )
+        } else {
+            response_length = http_response_write_header_prefix(
+                400u16, "text/plain", "X-Jadren-Draft", "rejected",
+                rejected, 13usize, response
+            )
+        }
+        if response_length == 0usize {
+            net_socket_close(client)
+            net_socket_close(listener)
+            return false
+        }
+        let sent: UIntSize = net_tcp_send_all_prefix(client, response, response_length)
+        let closed: Bool = net_socket_close(client)
+        if sent != response_length {
+            net_socket_close(listener)
+            return false
+        }
+        if !closed {
+            net_socket_close(listener)
+            return false
+        }
+        handled = handled + 1u32
+    }
+    return net_socket_close(listener)
+}
+
+fn full_app_draft_commit_cleanup() {
+    file_delete("target/jadren/{module}-full-app-draft-commit.tmp")
+    file_delete("target/jadren/{module}-full-app-draft-commit.data")
+    file_delete("target/jadren/{module}-full-app-draft-commit.lock")
+}
+
+// 0=committed, 1=stale before the transaction, 2=invalid state write,
+// 3=durable commit failed. The transaction is rolled back on every nonzero
+// result after it begins.
+fn full_app_commit_draft_if_revision(
+    expected_revision: UInt64,
+    value: read Slice<UInt8>,
+    value_length: UIntSize
+) -> Int32 {
+    if !app_data_tx_begin_if_revision(expected_revision) { return 1 }
+    if !app_state_set_text_bytes("draft", value, value_length) {
+        app_data_tx_rollback()
+        return 2
+    }
+    let commit_revision: UInt64 = app_data_revision()
+    if !app_data_tx_commit_durable_if_revision(
+        "target/jadren/{module}-full-app-draft-commit.tmp",
+        "target/jadren/{module}-full-app-draft-commit.data",
+        "target/jadren/{module}-full-app-draft-commit.lock",
+        commit_revision
+    ) {
+        app_data_tx_rollback()
+        return 3
+    }
+    return 0
+}
+
+// serve-draft-commit is the durable counterpart to serve-draft. The caller
+// supplies X-Jadren-Revision; the server begins a whole-model transaction
+// only for the matching equality token, writes the draft, flushes and
+// atomically promotes the explicit checkpoint, then reloads it before
+// readback. A stale request is rejected without opening a transaction.
+pub fn serve_draft_commit(port: UInt16) -> Bool {
+    directory_create("target/jadren")
+    full_app_draft_commit_cleanup()
+    let listener: UIntSize = net_tcp_listen(port)
+    if (listener as Int32) == 0 { return false }
+    var request: [UInt8; 1024] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var chunk: [UInt8; 256] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var draft: [UInt8; 64] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var revision_text: [UInt8; 24] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var response: [UInt8; 512] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var rejected: [UInt8; 13] = [105u8, 110u8, 118u8, 97u8, 108u8, 105u8,
+        100u8, 32u8, 100u8, 114u8, 97u8, 102u8, 116u8]
+    var stale_body: [UInt8; 14] = [115u8, 116u8, 97u8, 108u8, 101u8, 32u8,
+        114u8, 101u8, 118u8, 105u8, 115u8, 105u8, 111u8, 110u8]
+    var failed_body: [UInt8; 13] = [99u8, 111u8, 109u8, 109u8, 105u8, 116u8,
+        32u8, 102u8, 97u8, 105u8, 108u8, 101u8, 100u8]
+    var handled: UInt32 = 0u32
+    var committed: Bool = false
+
+    while handled < 4u32 {
+        let client: UIntSize = net_tcp_accept(listener)
+        if (client as Int32) == 0 {
+            net_socket_close(listener)
+            full_app_draft_commit_cleanup()
+            return false
+        }
+        if !net_socket_set_timeout(client, 3000u32) {
+            net_socket_close(client)
+            net_socket_close(listener)
+            full_app_draft_commit_cleanup()
+            return false
+        }
+        var received: UIntSize = 0usize
+        var reads: UIntSize = 0usize
+        while reads < 8usize {
+            if received >= 1024usize { break }
+            let chunk_received: UIntSize = net_tcp_receive(client, chunk)
+            if chunk_received == 0usize { break }
+            let appended: UIntSize = http_request_append(request, received, chunk, chunk_received)
+            if appended == 0usize { break }
+            received = appended
+            reads = reads + 1usize
+            if http_request_is_complete_prefix(request, received) { break }
+        }
+
+        var draft_length: [UIntSize; 1] = [0usize]
+        var revision_length: [UIntSize; 1] = [0usize]
+        var revision_response: Bool = false
+        var accepted: Bool = false
+        var stale: Bool = false
+        var commit_failed: Bool = false
+        if received > 0usize {
+            if http_request_is_complete_prefix(request, received) {
+                if http_route_match_prefix(request, received, "GET", "/api/revision") {
+                    revision_length[0] = format_uint(app_data_revision(), revision_text)
+                    if revision_length[0] == 0usize {
+                        commit_failed = true
+                    } else {
+                        revision_response = true
+                    }
+                } else if http_route_match_prefix(request, received, "POST", "/api/draft") {
+                    if http_request_header_exact(
+                        request, "X-Jadren-Revision", revision_text, revision_length
+                    ) {
+                        var expected: [UInt64; 1] = [0u64]
+                        if parse_uint(revision_text, revision_length[0], expected) {
+                            if app_data_revision() != expected[0] {
+                                stale = true
+                            } else if http_request_body_exact_prefix(
+                                request, received, draft, draft_length
+                            ) {
+                                if full_app_draft_body_is_valid(draft, draft_length[0]) {
+                                    let commit_state: Int32 = full_app_commit_draft_if_revision(
+                                        expected[0], draft, draft_length[0]
+                                    )
+                                    if commit_state == 0 { accepted = true }
+                                    if commit_state == 0 { committed = true }
+                                    if commit_state == 1 { stale = true }
+                                    if commit_state == 3 { commit_failed = true }
+                                }
+                            }
+                        }
+                    }
+                } else if http_route_match_prefix(request, received, "GET", "/api/draft") {
+                    if committed {
+                        if !load_checkpoint(
+                            "target/jadren/{module}-full-app-draft-commit.data"
+                        ) {
+                            commit_failed = true
+                        }
+                    }
+                    if !commit_failed {
+                        accepted = app_state_read_text_exact("draft", draft, draft_length)
+                    }
+                }
+            }
+        }
+
+        var response_length: UIntSize = 0usize
+        if revision_response {
+            response_length = http_response_write_header_prefix(
+                200u16, "text/plain", "X-Jadren-Draft", "revision",
+                revision_text, revision_length[0], response
+            )
+        } else if accepted {
+            response_length = http_response_write_header_prefix(
+                200u16, "text/plain", "X-Jadren-Draft", "committed",
+                draft, draft_length[0], response
+            )
+        } else if stale {
+            response_length = http_response_write_header_prefix(
+                409u16, "text/plain", "X-Jadren-Draft", "stale",
+                stale_body, 14usize, response
+            )
+        } else if commit_failed {
+            response_length = http_response_write_header_prefix(
+                500u16, "text/plain", "X-Jadren-Draft", "commit-failed",
+                failed_body, 13usize, response
+            )
+        } else {
+            response_length = http_response_write_header_prefix(
+                400u16, "text/plain", "X-Jadren-Draft", "rejected",
+                rejected, 13usize, response
+            )
+        }
+        if response_length == 0usize {
+            net_socket_close(client)
+            net_socket_close(listener)
+            full_app_draft_commit_cleanup()
+            return false
+        }
+        let sent: UIntSize = net_tcp_send_all_prefix(client, response, response_length)
+        let closed: Bool = net_socket_close(client)
+        if sent != response_length {
+            net_socket_close(listener)
+            full_app_draft_commit_cleanup()
+            return false
+        }
+        if !closed {
+            net_socket_close(listener)
+            full_app_draft_commit_cleanup()
+            return false
+        }
+        handled = handled + 1u32
+    }
+    let listener_closed: Bool = net_socket_close(listener)
+    full_app_draft_commit_cleanup()
+    return listener_closed
+}
+// Load a full bounded model only for the matching equality token. The generic
+// loader first validates into temporary stores. Template-owned selection keys
+// are normalized after load; if normalization fails, the known pre-load model
+// is restored before the request is rejected.
+fn full_app_load_model_if_revision(
+    input: read Slice<UInt8>,
+    input_length: UIntSize,
+    expected_revision: UInt64,
+    rollback: write Slice<UInt8>,
+    rollback_length: write Slice<UIntSize>
+) -> Int32 {
+    if revision() != expected_revision { return 1 }
+    if !write_exact(rollback, rollback_length) { return 3 }
+    if !load_exact_if_model_revision(input, input_length, expected_revision) {
+        return 2
+    }
+    if normalize_selection_keys() {
+        if task_projects_are_valid() {
+            if task_reminders_are_valid() {
+                if rebuild_task_reminders() { return 0 }
+            }
+        }
+    }
+    if !load_exact(rollback, rollback_length[0]) { return 4 }
+    if !normalize_selection_keys() { return 4 }
+    if !rebuild_task_reminders() { return 4 }
+    return 2
+}
+
+// Serialize one complete model snapshot only when the revision remains stable
+// across the sizing and export operations. The explicit size probe prevents a
+// stale or oversized document from being partially written to the response.
+fn full_app_write_model_snapshot(
+    output: write Slice<UInt8>,
+    output_length: write Slice<UIntSize>
+) -> Bool {
+    let expected_revision: UInt64 = revision()
+    let planned_length: UIntSize = snapshot_length_if_model_revision(expected_revision)
+    if planned_length == 0usize { return false }
+    if planned_length > 3072usize { return false }
+    return write_exact_if_model_revision(output, output_length, expected_revision)
+}
+
+// serve-model-sync is a bounded, process-local whole-model exchange.
+// GET /api/model/revision returns the current equality token. GET /api/model
+// returns the canonical document. POST /api/model requires that token and accepts
+// only a complete document fitting the template's 3072-byte model bound.
+// It serves seven connections then exits; it has no authentication, TLS,
+// background lifecycle or implicit durable write policy.
+pub fn serve_model_sync(port: UInt16) -> Bool {
+    let listener: UIntSize = net_tcp_listen(port)
+    if (listener as Int32) == 0 { return false }
+    var request: [UInt8; 4096] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var chunk: [UInt8; 256] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var model: [UInt8; 3072] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var rollback: [UInt8; 3072] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var revision_text: [UInt8; 24] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var response: [UInt8; 4096] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var rejected_body: [UInt8; 13] = [
+        105u8, 110u8, 118u8, 97u8, 108u8, 105u8, 100u8,
+        32u8, 109u8, 111u8, 100u8, 101u8, 108u8
+    ]
+    var stale_body: [UInt8; 14] = [
+        115u8, 116u8, 97u8, 108u8, 101u8, 32u8, 114u8,
+        101u8, 118u8, 105u8, 115u8, 105u8, 111u8, 110u8
+    ]
+    var failed_body: [UInt8; 12] = [
+        115u8, 121u8, 110u8, 99u8, 32u8, 102u8,
+        97u8, 105u8, 108u8, 117u8, 114u8, 101u8
+    ]
+    var handled: UInt32 = 0u32
+
+    while handled < 7u32 {
+        let client: UIntSize = net_tcp_accept(listener)
+        if (client as Int32) == 0 {
+            net_socket_close(listener)
+            return false
+        }
+        if !net_socket_set_timeout(client, 3000u32) {
+            net_socket_close(client)
+            net_socket_close(listener)
+            return false
+        }
+        var received: UIntSize = 0usize
+        var reads: UIntSize = 0usize
+        while reads < 16usize {
+            if received >= 4096usize { break }
+            let chunk_received: UIntSize = net_tcp_receive(client, chunk)
+            if chunk_received == 0usize { break }
+            let appended: UIntSize = http_request_append(request, received, chunk, chunk_received)
+            if appended == 0usize { break }
+            received = appended
+            reads = reads + 1usize
+            if http_request_is_complete_prefix(request, received) { break }
+        }
+
+        var model_length: [UIntSize; 1] = [0usize]
+        var rollback_length: [UIntSize; 1] = [0usize]
+        var revision_length: [UIntSize; 1] = [0usize]
+        var revision_response: Bool = false
+        var model_response: Bool = false
+        var stale: Bool = false
+        var failed: Bool = false
+        if received > 0usize {
+            if http_request_is_complete_prefix(request, received) {
+                if http_route_match_prefix(request, received, "GET", "/api/model/revision") {
+                    revision_length[0] = format_uint(app_data_revision(), revision_text)
+                    if revision_length[0] == 0usize {
+                        failed = true
+                    } else {
+                        revision_response = true
+                    }
+                } else if http_route_match_prefix(request, received, "GET", "/api/model") {
+                    if full_app_write_model_snapshot(model, model_length) {
+                        model_response = true
+                    } else {
+                        failed = true
+                    }
+                } else if http_route_match_prefix(request, received, "POST", "/api/model") {
+                    if http_request_header_exact(
+                        request, "X-Jadren-Revision", revision_text, revision_length
+                    ) {
+                        var expected: [UInt64; 1] = [0u64]
+                        if parse_uint(revision_text, revision_length[0], expected) {
+                            if app_data_revision() != expected[0] {
+                                stale = true
+                            } else if http_request_body_exact_prefix(
+                                request, received, model, model_length
+                            ) {
+                                let load_state: Int32 = full_app_load_model_if_revision(
+                                    model,
+                                    model_length[0],
+                                    expected[0],
+                                    rollback,
+                                    rollback_length
+                                )
+                                if load_state == 0 {
+                                    if full_app_write_model_snapshot(model, model_length) {
+                                        model_response = true
+                                    } else {
+                                        failed = true
+                                    }
+                                } else if load_state == 1 {
+                                    stale = true
+                                } else if load_state >= 3 {
+                                    failed = true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        var response_length: UIntSize = 0usize
+        if revision_response {
+            response_length = http_response_write_header_prefix(
+                200u16, "text/plain", "X-Jadren-Model", "revision",
+                revision_text, revision_length[0], response
+            )
+        } else if model_response {
+            response_length = http_response_write_header_prefix(
+                200u16,
+                "application/octet-stream",
+                "X-Jadren-Model",
+                "snapshot",
+                model,
+                model_length[0],
+                response
+            )
+        } else if stale {
+            response_length = http_response_write_header_prefix(
+                409u16, "text/plain", "X-Jadren-Model-Revision", "stale",
+                stale_body, 14usize, response
+            )
+        } else if failed {
+            response_length = http_response_write_header_prefix(
+                500u16, "text/plain", "X-Jadren-Model-Revision", "failed",
+                failed_body, 12usize, response
+            )
+        } else {
+            response_length = http_response_write_header_prefix(
+                400u16, "text/plain", "X-Jadren-Model-Revision", "rejected",
+                rejected_body, 13usize, response
+            )
+        }
+        if response_length == 0usize {
+            net_socket_close(client)
+            net_socket_close(listener)
+            return false
+        }
+        let sent: UIntSize = net_tcp_send_all_prefix(client, response, response_length)
+        let closed: Bool = net_socket_close(client)
+        if sent != response_length {
+            net_socket_close(listener)
+            return false
+        }
+        if !closed {
+            net_socket_close(listener)
+            return false
+        }
+        handled = handled + 1u32
+    }
+    return net_socket_close(listener)
+}
+
+"#;
+
+const FULL_APP_TEMPLATE_README: &str = r#"# Jadren native application
+
+This project was created by `jadren init --template full-app`.
+
+```powershell
+jadren check .
+jadren build . -o target/jadren-app.exe --profile release
+target/jadren-app.exe
+target/jadren-app.exe --smoke
+target/jadren-app.exe --serve-once 38159
+target/jadren-app.exe --serve-api 38160
+target/jadren-app.exe --serve-draft 38161
+target/jadren-app.exe --serve-draft-commit 38165
+target/jadren-app.exe --serve-model-sync 38166
+```
+
+`src/model.jdn` owns a small application model; `src/data.jdn` provides a
+portable caller-owned complete-model file facade equivalent to the natural
+`jadren.app.data` API, including `_if_model_revision` sizing, durable publish,
+file restore and transaction aliases; `src/controller.jdn` owns
+native event decisions; `src/view.jdn` binds its text input, dynamic list
+and table to retained native controls; `src/storage.jdn`
+provides explicit directory-flushed durable checkpoint functions through
+native app-data/filesystem builtins; `src/exports.jdn` provides explicit durable
+CSV output functions; `src/api.jdn` provides a bounded
+native health, snapshot and model-sync API; and `src/main.jdn` owns the
+lifecycle.
+The application has no Electron, Node.js or browser bridge. A product chooses
+the checkpoint, lock, export and server paths/limits and when to call them.
+`--smoke` is a bounded local validation mode: it verifies both the natural
+file-backed complete-model facade (including restart restore and malformed
+input rejection) and the durable complete-model checkpoint/restore, lossless table JSON backup/restore and durable CSV
+exports, creates the native retained tree, checks its bindings and removes its
+smoke files before exiting with 0.
+`--smoke` also dispatches the same native events as the UI: it changes the
+bound input, adds that draft atomically to the list and table, updates the
+bound selections, marks the new table row done, reads its Task, Status, Notes,
+Estimate minutes and Reminder due into five bound editor inputs, then atomically renames
+the task, updates its status, stores its notes and parses/stores its nonnegative
+estimate through the same stable TaskId. The explicit reminder action stores a
+nonnegative Unix timestamp; the explicit due check polls the bounded
+process-local scheduler, marks a due task `Due` and clears its persistent
+term. It
+creates projects through a separate
+bound input, assigns each new task to the selected project, and atomically
+renames a selected project together with every referencing task and the
+explicit filtered-project projection. `Remove unused project` rejects a
+referenced or final remaining project, so the template cannot create a
+dangling Project value. `Assign task to selected project` moves the stable
+selected task through the same explicit model boundary. It then selects the named Backup local
+checkpoint from a bound native list, uses the explicit local Save button,
+creates an unsaved fourth row and uses Restore to prove the checkpoint brings
+back the saved three-row model.
+Before dispatching this sequence, `--smoke` clears the bounded native UI event
+FIFO. After the last UI action it reads the complete caller-owned trace and
+checks the exact ordered 47 events, with no overflow. This is an audit boundary
+outside callbacks, not a second reactive loop, persistent log or worker.
+The smoke also writes ASCII queries into separate bound project and task
+inputs and explicitly refreshes case-insensitive contains-filter projections.
+It proves the source list and table stay unchanged while matching native list
+and table projections are restored with the checkpoint. These are explicit
+controller actions, not a hidden reactive graph.
+The source table keeps typed `EstimateMinutes`, `ReminderDueUnixSeconds` and
+internal positive `TaskId` (`Int64`) beside its text columns Task, Status,
+Project and Notes. Its retained projection shows all six application fields,
+while Notes, Estimate minutes and Reminder due have their own bound editors.
+Checkpoint, JSON and complete-model import validate this reminder field then
+rebuild the bounded process-local scheduler; no background worker is started.
+Selection events
+derive that stable identity before a command uses it, so the explicit A-Z and Z-A buttons find the same task after
+reordering, update only its displayed row index and read it back into the
+editor. They then refresh the separate task-filter projection and do not
+reorder the unrelated project list.
+It then creates a fixed-path lossless JSON backup of the task table, changes
+the selected task and restores that backup through the same native buttons. An
+import runs inside an app-data transaction, accepts only the current typed
+schema with nonnegative reminder timestamps, positive unique TaskIds and
+Project values that name the current project list, advances the next generated
+ID when needed and preserves the
+selected task when it is present; it is not a
+migration facility for older template schemas.
+Finally it dispatches the explicit list and table CSV export buttons, verifies
+both non-empty files and removes the local test artifacts. It then removes the
+selected completed task, cancels its active reminder if present, verifies the
+surviving table row and repaired native selection, and exits without entering
+the interactive loop.
+`--serve-once <port>` initializes the model, serves exactly one local
+`GET /healthz` response and exits with 0. It is a local API foundation rather
+than a production deployment, TLS or authentication claim. `--serve-api
+<port>` serves exactly four local `GET` routes and exits: `/healthz`,
+`/api/state`, `/api/lists/0` and `/api/tables/0`. The three model routes are
+bounded JSON snapshots taken before the first request; they are read-only and
+do not provide authentication, streaming or long-running hosting.
+`--serve-draft <port>` handles exactly three local requests: a printable ASCII
+`POST /api/draft` body with 1..64 bytes, one rejected update, and
+`GET /api/draft` readback. It proves bounded request-body parsing and state
+preservation after rejection, but writes only to this process-local model;
+durable checkpoints remain an explicit application decision.
+`--serve-draft-commit <port>` is a separate bounded durability proof: it
+serves `GET /api/revision`, accepts a `POST /api/draft` only when its
+`X-Jadren-Revision` header matches, rejects a stale revision, reloads the
+atomic durable checkpoint, and returns `GET /api/draft`. Its local files are
+test artifacts removed before exit; production paths and lifetime remain an
+application-owned decision.
+`--serve-model-sync <port>` is a separate process-local whole-model
+exchange. It serves seven connections and then exits: `GET /api/model/revision`,
+`GET /api/model`, one revision-guarded `POST /api/model`, one stale
+rejection, a current-revision malformed-document rejection and a final
+`GET /api/model` readback. The request body is a
+canonical complete app-data document bounded to 3072 B in this template.
+Both GET snapshots and the response after a successful POST use an explicit
+revision-guarded size probe followed by a revision-guarded exact export, so a
+model change cannot leave a partial response in the caller-owned buffer.
+Malformed documents are rejected without application state change; selection
+normalization failure restores the pre-request model. This command performs
+no durable write and makes no authentication, TLS, streaming or production
+server claim.
+"#;
+
+const SERVER_TEMPLATE_MAIN: &str = r#"module {module}.main
+
+// Minimal native HTTP service. The session, router, socket lifetime and
+// response framing stay in Jadren; no Node.js or Electron process is needed.
+// The default process is long-lived. Pass --once for a bounded smoke run.
+fn server_flag_once(value: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length != 6usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 111u8 { return false }
+    if value[3] != 110u8 { return false }
+    if value[4] != 99u8 { return false }
+    if value[5] != 101u8 { return false }
+    return true
+}
+
+fn server_flag_port(value: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length != 6usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 112u8 { return false }
+    if value[3] != 111u8 { return false }
+    if value[4] != 114u8 { return false }
+    if value[5] != 116u8 { return false }
+    return true
+}
+
+fn server_flag_max_requests(value: read Slice<UInt8>, length: UIntSize) -> Bool {
+    if length != 14usize { return false }
+    if value[0] != 45u8 { return false }
+    if value[1] != 45u8 { return false }
+    if value[2] != 109u8 { return false }
+    if value[3] != 97u8 { return false }
+    if value[4] != 120u8 { return false }
+    if value[5] != 45u8 { return false }
+    if value[6] != 114u8 { return false }
+    if value[7] != 101u8 { return false }
+    if value[8] != 113u8 { return false }
+    if value[9] != 117u8 { return false }
+    if value[10] != 101u8 { return false }
+    if value[11] != 115u8 { return false }
+    if value[12] != 116u8 { return false }
+    if value[13] != 115u8 { return false }
+    return true
+}
+
+fn server_parse_port(value: read Slice<UInt8>, length: UIntSize) -> UInt16 {
+    var parsed: [UInt64; 1] = [0u64]
+    if !parse_uint(value, length, parsed) { return 0u16 }
+    if parsed[0] == 0u64 { return 0u16 }
+    if parsed[0] > 65535u64 { return 0u16 }
+    return parsed[0] as UInt16
+}
+
+fn server_parse_max_requests(value: read Slice<UInt8>, length: UIntSize) -> UInt32 {
+    var parsed: [UInt64; 1] = [0u64]
+    if !parse_uint(value, length, parsed) { return 0u32 }
+    if parsed[0] == 0u64 { return 0u32 }
+    if parsed[0] > 4294967295u64 { return 0u32 }
+    return parsed[0] as UInt32
+}
+
+fn main() -> Int32 {
+    var port: UInt16 = 38159u16
+    var max_requests: UInt32 = 0u32
+    var once: Bool = false
+    var port_seen: Bool = false
+    var max_requests_seen: Bool = false
+    let argument_count: UIntSize = process_arg_count()
+    var argument_index: UIntSize = 1usize
+    while argument_index < argument_count {
+        var flag: [UInt8; 34] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8]
+        let flag_length: UIntSize = process_arg_read(argument_index, flag)
+        if server_flag_once(flag, flag_length) {
+            if once { return 10 }
+            if max_requests_seen { return 10 }
+            once = true
+            max_requests = 1u32
+            argument_index = argument_index + 1usize
+        } else if server_flag_port(flag, flag_length) {
+            if port_seen { return 11 }
+            if argument_index + 1usize >= argument_count { return 11 }
+            var value: [UInt8; 33] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                0u8, 0u8]
+            let value_length: UIntSize = process_arg_read(argument_index + 1usize, value)
+            let parsed_port: UInt16 = server_parse_port(value, value_length)
+            if parsed_port == 0u16 { return 12 }
+            port = parsed_port
+            port_seen = true
+            argument_index = argument_index + 2usize
+        } else if server_flag_max_requests(flag, flag_length) {
+            if max_requests_seen { return 13 }
+            if once { return 13 }
+            if argument_index + 1usize >= argument_count { return 13 }
+            var value: [UInt8; 33] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                0u8, 0u8]
+            let value_length: UIntSize = process_arg_read(argument_index + 1usize, value)
+            let parsed_max: UInt32 = server_parse_max_requests(value, value_length)
+            if parsed_max == 0u32 { return 14 }
+            max_requests = parsed_max
+            max_requests_seen = true
+            argument_index = argument_index + 2usize
+        } else {
+            return 15
+        }
+    }
+
+    let listener: UIntSize = net_tcp_listen(port)
+    if (listener as Int32) == 0 { return 20 }
+
+    http_router_clear()
+    var body: [UInt8; 2] = [79u8, 75u8]
+    if !http_router_add("GET", "/healthz", 200u16, "text/plain", body) {
+        net_socket_close(listener)
+        return 21
+    }
+
+    let session: UIntSize = http_session_open(listener, 8u32, 1024u32, 1024u32)
+    if (session as Int32) == 0 {
+        net_socket_close(listener)
+        return 22
+    }
+
+    var served: UInt32 = 0u32
+    var running: Bool = true
+    while running {
+        let state: UInt32 = http_session_step(session, 5000u32)
+        if state > 0u32 {
+            served = served + 1u32
+            if max_requests > 0u32 {
+                if served >= max_requests { running = false }
+            }
+        }
+    }
+
+    let closed: Bool = http_session_close(session)
+    if !closed { return 23 }
+    if served == 0u32 { return 24 }
+    return 0
+}
+"#;
+
+const SERVER_TEMPLATE_README: &str = r#"# Jadren native HTTP server
+
+This project was created by `jadren init --template server`.
+
+```powershell
+jadren check .
+jadren build . -o target/jadren-server.exe --profile release
+target/jadren-server.exe
+```
+
+The starter binds 127.0.0.1:38159 by default, serves bounded GET /healthz
+requests and keeps running as a native service. Use --port <u16> to select a
+different loopback port. Pass --once for one request, or
+--max-requests <u32> for a bounded graceful supervisor run; both modes exit
+with code 0 after the requested responses. It uses Jadren's native TCP, HTTP
+router and session APIs; there is no Node.js or Electron bridge. Copy the
+source and adjust the route table and session limits before putting it behind
+a reverse proxy such as Cloudflare. TLS, authentication and production
+hardening remain explicit deployment decisions.
+"#;
 
 fn main() -> ExitCode {
     match run(env::args_os().skip(1).collect()) {
@@ -97,7 +6688,7 @@ fn doctor(arguments: &[OsString]) -> Result<(), String> {
         llvm_prefix.display()
     );
     println!(
-        "JIR model: LLVM/COFF/ELF/link/debug/emit/differential pipeline and runtime ABI 0.21 system+region allocators, abort panic boundary, callbacks, Buffer/Slice, UTF-8 String, math scalar, vector value, quaternion Slerp, enum carrier branch tables, field tables, direct/nested drop-only record remove and caller-owned insert/remove/pop move available"
+        "JIR model: LLVM/COFF/ELF/link/debug/emit/differential pipeline and runtime ABI 0.22 system+region allocators, abort panic boundary, callbacks, Buffer/Slice, UTF-8 String, math scalar, vector value, quaternion Slerp, enum carrier branch tables, field tables, direct/nested drop-only record remove and caller-owned insert/remove/pop move available"
     );
     println!(
         "native backend: host x86-64 object/assembly emission; Linux hosts emit ELF and Windows hosts emit COFF"
@@ -319,6 +6910,13 @@ fn check_package(path: &Path, config: CompilerConfig) -> Result<(), String> {
 /// Validates package metadata and returns all source files from the local
 /// dependency graph in stable path order.
 fn package_source_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+    package_source_files_with_examples(path, true)
+}
+
+fn package_source_files_with_examples(
+    path: &Path,
+    include_examples: bool,
+) -> Result<Vec<PathBuf>, String> {
     let manifest_path = path.join(MANIFEST_FILE);
     let manifest_text = read_utf8(&manifest_path)?;
     let manifest = PackageManifest::parse(&manifest_text).map_err(|error| {
@@ -353,7 +6951,20 @@ fn package_source_files(path: &Path) -> Result<Vec<PathBuf>, String> {
                 package.manifest_path.display()
             )
         })?;
-        files.extend(collect_jadren_files(package_root)?);
+        let package_files = collect_jadren_files(package_root)?;
+        if include_examples {
+            files.extend(package_files);
+        } else {
+            files.extend(package_files.into_iter().filter(|file| {
+                let relative = file.strip_prefix(package_root).ok();
+                let first_component = relative.and_then(|candidate| candidate.components().next());
+                !matches!(
+                    first_component,
+                    Some(std::path::Component::Normal(component))
+                        if component == std::ffi::OsStr::new("examples")
+                )
+            }));
+        }
     }
     files.sort_by_key(|file| file.display().to_string());
     files.dedup();
@@ -364,6 +6975,21 @@ fn package_source_files(path: &Path) -> Result<Vec<PathBuf>, String> {
         ));
     }
     Ok(files)
+}
+
+/// Returns the native build units for a package graph. Package `examples/`
+/// trees are checked as documentation/examples, but they are not link units:
+/// a dependency may contain its own demo `fn main`, which must not compete
+/// with the application entry point of the root package.
+fn package_build_source_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+    let build_files = package_source_files_with_examples(path, false)?;
+    if build_files.is_empty() {
+        return Err(format!(
+            "build package `{}` contains no source units outside examples",
+            path.display()
+        ));
+    }
+    Ok(build_files)
 }
 
 fn test_sources(arguments: &[OsString]) -> Result<(), String> {
@@ -559,6 +7185,7 @@ fn init_package(arguments: &[OsString]) -> Result<(), String> {
     let mut directory = PathBuf::from(".");
     let mut directory_set = false;
     let mut package_name = None;
+    let mut template = None;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].to_str() {
@@ -571,6 +7198,19 @@ fn init_package(arguments: &[OsString]) -> Result<(), String> {
                         .ok_or_else(|| "`--name` requires a package identifier".to_owned())?
                         .to_owned(),
                 );
+            }
+            Some("--template") => {
+                index += 1;
+                let value = arguments
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| "`--template` requires a template name".to_owned())?;
+                if value != "desktop" && value != "full-app" && value != "server" {
+                    return Err(format!(
+                        "unknown init template `{value}`; supported templates: desktop, full-app, server"
+                    ));
+                }
+                template = Some(value.to_owned());
             }
             Some(value) if value.starts_with('-') => {
                 return Err(format!("unknown option `{value}`"));
@@ -605,10 +7245,67 @@ fn init_package(arguments: &[OsString]) -> Result<(), String> {
         .map_err(|error| format!("failed to write `{}`: {error}", manifest_path.display()))?;
     fs::write(&lock_path, lockfile.to_toml())
         .map_err(|error| format!("failed to write `{}`: {error}", lock_path.display()))?;
+    if matches!(
+        template.as_deref(),
+        Some("desktop") | Some("full-app") | Some("server")
+    ) {
+        let source_directory = directory.join("src");
+        fs::create_dir_all(&source_directory).map_err(|error| {
+            format!(
+                "failed to create template source directory `{}`: {error}",
+                source_directory.display()
+            )
+        })?;
+        let module_name = manifest.package.name.replace('-', "_");
+        let (source_templates, readme): (&[(&str, &str)], &str) = match template.as_deref() {
+            Some("server") => (
+                &[("main.jdn", SERVER_TEMPLATE_MAIN)],
+                SERVER_TEMPLATE_README,
+            ),
+            Some("full-app") => (
+                &[
+                    ("main.jdn", FULL_APP_TEMPLATE_MAIN),
+                    ("data.jdn", FULL_APP_TEMPLATE_DATA),
+                    ("model.jdn", FULL_APP_TEMPLATE_MODEL),
+                    ("controller.jdn", FULL_APP_TEMPLATE_CONTROLLER),
+                    ("view.jdn", FULL_APP_TEMPLATE_VIEW),
+                    ("storage.jdn", FULL_APP_TEMPLATE_STORAGE),
+                    ("exports.jdn", FULL_APP_TEMPLATE_EXPORTS),
+                    ("api.jdn", FULL_APP_TEMPLATE_API),
+                ],
+                FULL_APP_TEMPLATE_README,
+            ),
+            Some("desktop") => (
+                &[("main.jdn", DESKTOP_TEMPLATE_MAIN)],
+                DESKTOP_TEMPLATE_README,
+            ),
+            _ => unreachable!("validated template must have a source and README"),
+        };
+        for (file_name, source_template) in source_templates {
+            let source_path = source_directory.join(file_name);
+            let source = source_template.replace("{module}", &module_name);
+            fs::write(&source_path, source).map_err(|error| {
+                format!(
+                    "failed to write template source `{}`: {error}",
+                    source_path.display()
+                )
+            })?;
+        }
+        fs::write(directory.join("README.md"), readme).map_err(|error| {
+            format!(
+                "failed to write template README `{}`: {error}",
+                directory.join("README.md").display()
+            )
+        })?;
+    }
     println!(
-        "initialized package `{}` at {}",
+        "initialized package `{}` at {}{}",
         manifest.package.name,
-        directory.display()
+        directory.display(),
+        template
+            .as_deref()
+            .map(|value| format!(" (template={value})"))
+            .unwrap_or_default()
     );
     Ok(())
 }
@@ -1362,6 +8059,10 @@ struct ExecutableArguments {
     output: Option<PathBuf>,
     profile: BuildProfile,
     cpu: String,
+    /// Arguments passed to the generated program by `jadren run` after `--`.
+    /// Build options are intentionally parsed before the separator so a
+    /// program can receive arbitrary, non-UTF-8 OS arguments unchanged.
+    program_arguments: Vec<OsString>,
 }
 
 /// One independently lowered source module in a package executable build.
@@ -1398,7 +8099,12 @@ struct CheckedBuildSources {
 
 fn executable_usage(command: &str) -> String {
     format!(
-        "usage: jadren {command} <file.jdn|package-dir> [-o <output.exe>] [--profile debug|release] [--cpu baseline|avx2]"
+        "usage: jadren {command} <file.jdn|package-dir> [-o <output.exe>] [--profile debug|release] [--cpu baseline|avx2]{}",
+        if command == "run" {
+            " [-- <program-arg> ...]"
+        } else {
+            ""
+        }
     )
 }
 
@@ -1418,9 +8124,19 @@ fn parse_executable_arguments(
         output: None,
         profile: BuildProfile::Debug,
         cpu: "baseline".to_owned(),
+        program_arguments: Vec::new(),
     };
     let mut index = 1;
     while index < arguments.len() {
+        if arguments[index].to_str() == Some("--") {
+            if command != "run" {
+                return Err(
+                    "`--` program argument separator is only supported by `jadren run`".to_owned(),
+                );
+            }
+            parsed.program_arguments = arguments[index + 1..].to_vec();
+            break;
+        }
         let flag = arguments[index]
             .to_str()
             .ok_or_else(|| "executable option must be UTF-8".to_owned())?;
@@ -1473,6 +8189,7 @@ fn run_executable(arguments: &[OsString]) -> Result<(), String> {
     let output = build_host_executable(&arguments)?;
     println!("running {}", output.display());
     let status = Command::new(&output)
+        .args(&arguments.program_arguments)
         .status()
         .map_err(|error| format!("failed to run `{}`: {error}", output.display()))?;
     if !status.success() {
@@ -1512,17 +8229,26 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "time_now_monotonic_ms"
                 | "process_arg_count"
                 | "process_arg_read"
+                | "site_server_start"
+                | "site_server_start_with_webroot"
+                | "site_server_is_running"
+                | "site_server_stop"
                 | "time_utc_parts"
                 | "time_utc_offset_parts"
                 | "app_scheduler_clear"
                 | "app_scheduler_set"
                 | "app_scheduler_cancel"
                 | "app_scheduler_poll"
+                | "app_scheduler_poll_exact"
+                | "app_scheduler_next_due_exact"
+                | "app_scheduler_write_exact"
+                | "app_scheduler_load_exact"
                 | "app_scheduler_count"
                 | "string_length"
                 | "string_equals"
                 | "string_builder_append"
                 | "string_builder_append_bytes"
+                | "string_builder_append_bytes_prefix"
                 | "string_owned_create"
                 | "string_owned_from"
                 | "string_owned_append"
@@ -1532,23 +8258,39 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "jadren_rt_owned_string_destroy"
                 | "jadren_rt_buffer_destroy_owned_string"
                 | "file_delete"
+                | "file_delete_path"
                 | "file_flush"
+                | "file_flush_path"
+                | "directory_flush"
                 | "file_lock"
+                | "file_lock_path"
+                | "file_lock_path_retry"
                 | "file_unlock"
                 | "file_exists"
+                | "file_exists_path"
+                | "file_path_valid"
                 | "file_copy"
                 | "directory_create"
                 | "directory_exists"
                 | "directory_delete"
                 | "directory_list"
                 | "directory_list_ex"
+                | "directory_list_ex_exact"
                 | "file_read"
                 | "file_read_at"
+                | "file_size_path"
+                | "file_mtime_unix_nanos_path"
+                | "file_read_at_path"
                 | "file_read_text"
                 | "file_read_exact"
                 | "file_read_text_exact"
                 | "file_write_at"
+                | "file_write_prefix"
+                | "file_write_prefix_path"
                 | "file_replace_atomic"
+                | "file_replace_atomic_paths"
+                | "file_write_atomic"
+                | "file_write_atomic_durable"
                 | "file_size"
                 | "file_write"
                 | "file_write_text"
@@ -1588,18 +8330,34 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_state_revision"
                 | "app_data_revision"
                 | "app_data_validate"
+                | "app_data_snapshot_length"
+                | "app_data_snapshot_length_if_revision"
                 | "app_state_exists"
                 | "app_state_remove"
+                | "app_state_remove_if_revision"
                 | "app_state_set_int"
+                | "app_state_set_int_if_revision"
+                | "app_state_add_int"
+                | "app_state_add_int_if_revision"
                 | "app_state_get_int"
                 | "app_state_set_uint"
+                | "app_state_set_uint_if_revision"
+                | "app_state_add_uint"
+                | "app_state_add_uint_if_revision"
+                | "app_state_add_float"
+                | "app_state_add_float_if_revision"
                 | "app_state_get_uint"
                 | "app_state_set_float"
+                | "app_state_set_float_if_revision"
                 | "app_state_get_float"
                 | "app_state_set_bool"
+                | "app_state_set_bool_if_revision"
                 | "app_state_get_bool"
                 | "app_state_set_text"
+                | "app_state_set_text_if_revision"
                 | "app_state_set_text_bytes"
+                | "app_state_set_text_bytes_if_revision"
+                | "app_state_set_text_bytes_if_model_revision"
                 | "app_state_read_text"
                 | "app_state_read_text_exact"
                 | "app_state_write_json_exact"
@@ -1609,9 +8367,12 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_state_read_float"
                 | "app_state_read_bool"
                 | "app_state_read_key"
+                | "app_state_read_key_exact"
                 | "app_state_type_at"
                 | "app_state_save"
                 | "app_state_save_atomic"
+                | "app_state_save_atomic_durable"
+                | "app_state_save_atomic_durable_if_revision"
                 | "app_state_save_atomic_if_revision"
                 | "app_state_load"
                 | "app_state_tx_begin"
@@ -1628,6 +8389,11 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_data_save_atomic_if_revision"
                 | "app_data_tx_save_atomic"
                 | "app_data_tx_commit_durable"
+                | "app_data_tx_commit_durable_retry"
+                | "app_data_tx_commit_durable_retry_if_revision"
+                | "app_data_tx_commit_durable_if_revision"
+                | "app_data_tx_commit_durable_directory"
+                | "app_data_tx_commit_durable_directory_if_revision"
                 | "app_data_journal_append"
                 | "app_data_journal_append_durable"
                 | "app_data_journal_recover"
@@ -1656,43 +8422,105 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_data_load_exact"
                 | "app_data_load_exact_if_revision"
                 | "app_list_clear"
+                | "app_list_clear_if_revision"
                 | "app_list_count"
                 | "app_list_push_text"
+                | "app_list_push_text_if_revision"
                 | "app_list_push_text_bytes"
+                | "app_list_push_text_bytes_if_revision"
+                | "app_list_insert_text"
+                | "app_list_insert_text_if_revision"
+                | "app_list_insert_text_bytes"
+                | "app_list_insert_text_bytes_if_revision"
+                | "app_list_move_text"
+                | "app_list_move_text_if_revision"
                 | "app_list_export_csv"
+                | "app_list_export_csv_file_durable"
+                | "app_list_export_csv_file_durable_if_revision"
+                | "app_list_export_json_file_durable"
+                | "app_list_export_json_file_durable_if_revision"
+                | "app_list_export_csv_exact"
+                | "app_list_export_json_exact"
                 | "app_list_sort_text"
                 | "app_list_sort_callback"
+                | "app_list_sort_callback_if_revision"
                 | "app_list_find_text"
                 | "app_list_filter_text"
+                | "app_list_filter_text_if_revision"
                 | "app_list_filter_text_ex"
+                | "app_list_filter_text_ex_if_revision"
                 | "app_list_filter_text_ex_bytes"
                 | "app_list_filter_callback"
+                | "app_list_filter_callback_if_revision"
                 | "app_list_page"
+                | "app_list_page_if_revision"
                 | "app_list_read_text"
                 | "app_list_read_text_exact"
                 | "app_list_set_text"
+                | "app_list_set_text_if_revision"
                 | "app_list_set_text_bytes"
+                | "app_list_set_text_bytes_if_revision"
                 | "app_list_remove"
+                | "app_list_remove_if_revision"
                 | "app_list_save"
                 | "app_list_save_atomic"
                 | "app_list_load"
+                | "app_list_import_json_exact"
+                | "app_list_import_json_exact_if_revision"
+                | "app_list_import_json_file"
+                | "app_list_import_json_file_if_revision"
+                | "app_list_import_csv"
+                | "app_list_import_csv_if_revision"
+                | "app_list_import_csv_file"
+                | "app_list_import_csv_file_if_revision"
                 | "ui_app_list_bind_app"
+                | "ui_app_list_filter_text"
+                | "ui_app_list_filter_text_if_revision"
+                | "ui_app_list_filter_text_ex"
+                | "ui_app_list_filter_text_ex_if_revision"
+                | "ui_app_list_filter_callback"
+                | "ui_app_list_filter_callback_if_revision"
+                | "ui_app_list_page"
+                | "ui_app_list_page_if_revision"
+                | "ui_app_list_sort_text"
+                | "ui_app_list_sort_text_if_revision"
                 | "ui_app_list_refresh"
                 | "ui_list_bind_app"
                 | "ui_list_refresh_app"
                 | "ui_input_bind_app_state"
+                | "ui_input_bind_app_state_exact"
                 | "ui_input_refresh_app_state"
+                | "ui_input_refresh_app_state_exact"
+                | "ui_input_refresh_app_state_if_revision"
+                | "ui_input_commit_app_state_if_revision"
                 | "ui_checkbox_bind_app_state"
                 | "ui_checkbox_refresh_app_state"
+                | "ui_checkbox_refresh_app_state_exact"
+                | "ui_checkbox_refresh_app_state_if_revision"
+                | "ui_checkbox_commit_app_state_if_revision"
                 | "ui_select_bind_app_state"
                 | "ui_select_refresh_app_state"
+                | "ui_select_refresh_app_state_exact"
+                | "ui_select_refresh_app_state_if_revision"
+                | "ui_select_commit_app_state_if_revision"
                 | "ui_list_bind_app_state"
                 | "ui_list_refresh_app_state"
+                | "ui_list_refresh_app_state_exact"
+                | "ui_list_refresh_app_state_if_revision"
+                | "ui_list_commit_app_state_if_revision"
                 | "ui_table_bind_app_state"
                 | "ui_table_refresh_app_state"
+                | "ui_table_refresh_app_state_exact"
+                | "ui_table_refresh_app_state_if_revision"
+                | "ui_table_commit_app_state_if_revision"
                 | "ui_app_bind_app_state"
+                | "ui_app_bind_app_state_exact"
                 | "ui_app_refresh_app_state"
+                | "ui_app_refresh_app_state_exact"
+                | "ui_app_refresh_app_state_if_revision"
+                | "ui_app_commit_app_state_if_revision"
                 | "app_table_clear"
+                | "app_table_clear_if_revision"
                 | "app_table_row_count"
                 | "app_table_tx_begin"
                 | "app_table_tx_commit"
@@ -1730,15 +8558,23 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_table_column_type"
                 | "app_table_validate"
                 | "app_table_append_row"
+                | "app_table_append_row_if_revision"
+                | "app_table_insert_row"
+                | "app_table_insert_row_if_revision"
+                | "app_table_move_row"
+                | "app_table_move_row_if_revision"
                 | "app_table_remove_row"
+                | "app_table_remove_row_if_revision"
                 | "app_table_remove_text"
                 | "app_table_remove_int"
                 | "app_table_remove_uint"
                 | "app_table_remove_float"
                 | "app_table_remove_bool"
                 | "app_table_set_cell"
+                | "app_table_set_cell_if_revision"
                 | "app_table_set_cell_bytes"
                 | "app_table_set_cell_bytes_ex"
+                | "app_table_set_cell_bytes_if_revision"
                 | "app_table_set_int"
                 | "app_table_set_uint"
                 | "app_table_set_float"
@@ -1758,8 +8594,15 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_table_sort_uint"
                 | "app_table_sort_float"
                 | "app_table_sort_bool"
+                | "app_table_sort_text_if_revision"
+                | "app_table_sort_int_if_revision"
+                | "app_table_sort_uint_if_revision"
+                | "app_table_sort_float_if_revision"
+                | "app_table_sort_bool_if_revision"
                 | "app_table_sort_callback"
+                | "app_table_sort_callback_if_revision"
                 | "app_table_page"
+                | "app_table_page_if_revision"
                 | "app_table_find_text"
                 | "app_table_find_int"
                 | "app_table_find_uint"
@@ -1778,25 +8621,53 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_table_index_build_pair"
                 | "app_table_index_clear"
                 | "app_table_index_find_text"
+                | "app_table_index_find_text_if_revision"
                 | "app_table_index_find_pair_text"
+                | "app_table_index_find_pair_text_if_revision"
                 | "app_table_index_find_int"
+                | "app_table_index_find_int_if_revision"
                 | "app_table_index_collect_int_range"
+                | "app_table_index_collect_int_range_if_revision"
                 | "app_table_index_collect_uint_range"
+                | "app_table_index_collect_uint_range_if_revision"
                 | "app_table_index_collect_float_range"
+                | "app_table_index_collect_float_range_if_revision"
                 | "app_table_index_find_uint"
+                | "app_table_index_find_uint_if_revision"
                 | "app_table_index_find_float"
+                | "app_table_index_find_float_if_revision"
                 | "app_table_index_find_bool"
+                | "app_table_index_find_bool_if_revision"
                 | "app_table_index_is_valid"
                 | "app_table_filter_text"
+                | "app_table_filter_text_if_revision"
                 | "app_table_filter_text_ex"
                 | "app_table_filter_text_ex_bytes"
                 | "app_table_filter_int"
+                | "app_table_filter_int_if_revision"
                 | "app_table_filter_uint"
+                | "app_table_filter_uint_if_revision"
                 | "app_table_filter_float"
+                | "app_table_filter_float_if_revision"
                 | "app_table_filter_bool"
+                | "app_table_filter_bool_if_revision"
                 | "app_table_filter_callback"
+                | "app_table_filter_callback_if_revision"
                 | "app_table_export_csv"
+                | "app_table_export_csv_file_durable"
+                | "app_table_export_csv_file_durable_if_revision"
+                | "app_table_export_json_file_durable"
+                | "app_table_export_json_file_durable_if_revision"
+                | "app_table_export_csv_exact"
+                | "app_table_export_json_exact"
                 | "app_table_import_csv"
+                | "app_table_import_csv_if_revision"
+                | "app_table_import_csv_file"
+                | "app_table_import_csv_file_if_revision"
+                | "app_table_import_json_exact"
+                | "app_table_import_json_exact_if_revision"
+                | "app_table_import_json_file"
+                | "app_table_import_json_file_if_revision"
                 | "app_table_save"
                 | "app_table_save_schema"
                 | "app_table_save_schema_atomic"
@@ -1808,18 +8679,34 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_table_load_schema_full"
                 | "app_table_load_schema_full_if_version"
                 | "ui_app_table_bind_app"
+                | "ui_app_table_index_find_pair_text_if_revision"
                 | "ui_app_table_refresh"
+                | "ui_app_table_page"
+                | "ui_app_table_page_if_revision"
                 | "ui_app_table_sort_text"
                 | "ui_app_table_sort_int"
                 | "ui_app_table_sort_uint"
                 | "ui_app_table_sort_float"
                 | "ui_app_table_sort_bool"
+                | "ui_app_table_sort_text_if_revision"
+                | "ui_app_table_sort_int_if_revision"
+                | "ui_app_table_sort_uint_if_revision"
+                | "ui_app_table_sort_float_if_revision"
+                | "ui_app_table_sort_bool_if_revision"
                 | "ui_app_table_filter_text"
+                | "ui_app_table_filter_text_if_revision"
                 | "ui_app_table_filter_text_ex"
+                | "ui_app_table_filter_text_ex_if_revision"
                 | "ui_app_table_filter_int"
+                | "ui_app_table_filter_int_if_revision"
                 | "ui_app_table_filter_uint"
+                | "ui_app_table_filter_uint_if_revision"
                 | "ui_app_table_filter_float"
+                | "ui_app_table_filter_float_if_revision"
                 | "ui_app_table_filter_bool"
+                | "ui_app_table_filter_bool_if_revision"
+                | "ui_app_table_filter_callback"
+                | "ui_app_table_filter_callback_if_revision"
                 | "ui_table_bind_app"
                 | "ui_table_refresh_app"
                 | "ui_table_sort_text"
@@ -1827,15 +8714,37 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "ui_table_sort_uint"
                 | "ui_table_sort_float"
                 | "ui_table_sort_bool"
+                | "ui_table_sort_text_if_revision"
+                | "ui_table_sort_int_if_revision"
+                | "ui_table_sort_uint_if_revision"
+                | "ui_table_sort_float_if_revision"
+                | "ui_table_sort_bool_if_revision"
+                | "ui_table_index_find_pair_text_if_revision"
                 | "ui_table_filter_text"
                 | "ui_table_filter_text_ex"
                 | "ui_refresh_bindings"
+                | "ui_refresh_bindings_if_revision"
+                | "ui_event_queue_clear"
+                | "ui_event_queue_count"
+                | "ui_event_queue_capacity"
+                | "ui_event_queue_dropped"
+                | "ui_event_queue_peek_exact"
+                | "ui_event_queue_poll_exact"
+                | "ui_event_queue_poll_batch_exact"
                 | "http_response_write"
+                | "http_response_write_chunked"
+                | "http_response_write_chunked_prefix"
+                | "http_response_write_chunked_header"
+                | "http_response_write_chunk"
+                | "http_response_write_chunk_prefix"
                 | "http_response_write_ex"
+                | "http_response_write_prefix_ex"
                 | "http_response_write_header"
+                | "http_response_write_header_prefix"
                 | "http_response_write_header_ex"
                 | "http_response_write_cookie"
                 | "http_response_write_cookie_ex"
+                | "http_response_write_cookie_policy"
                 | "http_response_write_header_block"
                 | "http_response_write_header_block_ex"
                 | "http_response_status"
@@ -1843,6 +8752,7 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "http_response_header"
                 | "http_response_header_prefix"
                 | "http_response_header_exact"
+                | "http_request_header_exact"
                 | "http_response_body"
                 | "http_response_body_prefix"
                 | "http_response_body_exact"
@@ -1850,8 +8760,13 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "http_request_body_chunked_exact"
                 | "http_request_write"
                 | "http_request_write_prefix"
+                | "http_request_write_prefix_ex"
                 | "http_request_write_header"
+                | "http_request_write_header_ex"
+                | "http_request_write_cookie"
+                | "http_request_write_cookie_block"
                 | "http_request_write_header_block"
+                | "http_request_write_header_block_ex"
                 | "http_request_append"
                 | "http_request_is_complete"
                 | "http_request_is_complete_prefix"
@@ -1861,10 +8776,15 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "http_request_keep_alive"
                 | "http_request_method"
                 | "http_request_target"
+                | "http_request_target_decode_exact"
                 | "http_request_header"
                 | "http_request_body"
+                | "http_request_body_exact"
+                | "http_request_body_exact_prefix"
                 | "http_query_param"
                 | "http_query_param_exact"
+                | "http_form_param_exact_prefix"
+                | "http_multipart_part_exact_prefix"
                 | "http_route_match"
                 | "http_route_match_prefix"
                 | "http_router_clear"
@@ -1875,25 +8795,41 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "http_router_remove_prefix"
                 | "http_router_respond"
                 | "http_router_respond_prefix"
+                | "http_router_respond_chunked"
+                | "http_router_respond_chunked_prefix"
                 | "http_router_count"
                 | "http_session_open"
+                | "http_session_open_chunked"
                 | "http_session_open_tls"
+                | "http_session_open_tls_chunked"
+                | "http_session_accept"
+                | "http_session_receive_request"
+                | "http_session_send"
+                | "http_session_send_prefix"
+                | "http_session_close_connection"
                 | "http_session_step"
                 | "http_session_close"
                 | "net_tls_open_client"
                 | "net_tls_open_server"
+                | "net_tls_open_server_paths"
                 | "net_tls_step"
                 | "net_tls_state"
                 | "net_tls_error"
                 | "net_tls_send"
+                | "net_tls_send_prefix"
+                | "net_tls_send_all_prefix"
                 | "net_tls_receive"
                 | "net_tls_close"
                 | "net_tcp_connect"
                 | "net_tcp_connect_dns"
                 | "net_tcp_listen"
+                | "net_tcp_listen_on"
+                | "net_tcp_listen_on_prefix"
                 | "net_tcp_accept"
                 | "net_tcp_send"
                 | "net_tcp_send_prefix"
+                | "net_tcp_send_all"
+                | "net_tcp_send_all_prefix"
                 | "net_tcp_receive"
                 | "net_socket_set_timeout"
                 | "net_socket_close"
@@ -1929,6 +8865,7 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                         | jadren_jir::InstructionKind::BufferResizeMoveNestedOwnedString { .. }
                         | jadren_jir::InstructionKind::RecursiveOwnedStringBufferDrop { .. }
                         | jadren_jir::InstructionKind::BufferRemoveDropOwnedString { .. }
+                        | jadren_jir::InstructionKind::BufferRemoveDropNestedOwnedString { .. }
                 )
             })
         })
@@ -1940,9 +8877,13 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
             "net_tcp_connect"
                 | "net_tcp_connect_dns"
                 | "net_tcp_listen"
+                | "net_tcp_listen_on"
+                | "net_tcp_listen_on_prefix"
                 | "net_tcp_accept"
                 | "net_tcp_send"
                 | "net_tcp_send_prefix"
+                | "net_tcp_send_all"
+                | "net_tcp_send_all_prefix"
                 | "net_tcp_receive"
                 | "net_socket_set_timeout"
                 | "net_socket_close"
@@ -1966,15 +8907,25 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "net_reactor_event_operation"
                 | "net_reactor_event_bytes"
                 | "http_session_open"
+                | "http_session_open_chunked"
                 | "http_session_open_tls"
+                | "http_session_open_tls_chunked"
+                | "http_session_accept"
+                | "http_session_receive_request"
+                | "http_session_send"
+                | "http_session_send_prefix"
+                | "http_session_close_connection"
                 | "http_session_step"
                 | "http_session_close"
                 | "net_tls_open_client"
                 | "net_tls_open_server"
+                | "net_tls_open_server_paths"
                 | "net_tls_step"
                 | "net_tls_state"
                 | "net_tls_error"
                 | "net_tls_send"
+                | "net_tls_send_prefix"
+                | "net_tls_send_all_prefix"
                 | "net_tls_receive"
                 | "net_tls_close"
         ) && function.linkage == jadren_jir::Linkage::Import
@@ -1984,11 +8935,15 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
             function.name.as_str(),
             "net_tls_open_client"
                 | "http_session_open_tls"
+                | "http_session_open_tls_chunked"
                 | "net_tls_open_server"
+                | "net_tls_open_server_paths"
                 | "net_tls_step"
                 | "net_tls_state"
                 | "net_tls_error"
                 | "net_tls_send"
+                | "net_tls_send_prefix"
+                | "net_tls_send_all_prefix"
                 | "net_tls_receive"
                 | "net_tls_close"
         ) && function.linkage == jadren_jir::Linkage::Import
@@ -2041,16 +8996,29 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
             })
         })
         .transpose()?;
-    let emit_object =
-        |unit: &CheckedBuildUnit, object_path: &Path, module_name: &str| -> Result<(), String> {
-            let bytes = match arguments.profile {
-                BuildProfile::Debug => {
-                    let debug_locals =
+    let emit_object = |unit: &CheckedBuildUnit,
+                       object_path: &Path,
+                       module_name: &str|
+     -> Result<(), String> {
+        let bytes = match arguments.profile {
+            BuildProfile::Debug => {
+                // JIR drops unresolved generic templates and can append
+                // materialized instances, so MIR declaration order is not
+                // a valid debug-function index. Match the concrete JIR
+                // definition name and key locals by that JIR index; this
+                // keeps debug metadata aligned across package generics.
+                let debug_locals = unit
+                    .jir
+                    .functions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, function)| function.linkage != jadren_jir::Linkage::Import)
+                    .filter_map(|(function, lowered)| {
                         unit.mir
                             .functions
                             .iter()
-                            .enumerate()
-                            .flat_map(|(function, source)| {
+                            .find(|source| source.name == lowered.name)
+                            .map(move |source| {
                                 source
                                     .locals
                                     .iter()
@@ -2062,48 +9030,50 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                                         name: local.name.clone(),
                                         span: local.span,
                                     })
-                            });
-                    let debug_config = DebugInfoConfig::from_source_manager(
-                        sources,
-                        compilation_directory
-                            .as_ref()
-                            .expect("debug profile has a compilation directory"),
-                        false,
+                            })
+                    })
+                    .flatten();
+                let debug_config = DebugInfoConfig::from_source_manager(
+                    sources,
+                    compilation_directory
+                        .as_ref()
+                        .expect("debug profile has a compilation directory"),
+                    false,
+                )
+                .and_then(|config| config.with_stack_locals(debug_locals))
+                .map_err(|error| {
+                    format!(
+                        "failed to prepare source debug metadata for `{}`: {error}",
+                        unit.path.display()
                     )
-                    .and_then(|config| config.with_stack_locals(debug_locals))
-                    .map_err(|error| {
-                        format!(
-                            "failed to prepare source debug metadata for `{}`: {error}",
-                            unit.path.display()
-                        )
-                    })?;
-                    lower_to_object_with_debug(
-                        &context,
-                        &unit.jir,
-                        module_name,
-                        &type_config,
-                        &debug_config,
-                        &object_options,
-                    )
-                }
-                BuildProfile::Release => lower_to_object(
+                })?;
+                lower_to_object_with_debug(
                     &context,
                     &unit.jir,
                     module_name,
                     &type_config,
+                    &debug_config,
                     &object_options,
-                ),
-                BuildProfile::Check => unreachable!("executable build does not use check profile"),
-            }
-            .map_err(|error| {
-                format!(
-                    "failed to emit executable object for `{}`: {error}",
-                    unit.path.display()
                 )
-            })?;
-            write_object(object_path, &bytes)
-                .map_err(|error| format!("failed to write `{}`: {error}", object_path.display()))
-        };
+            }
+            BuildProfile::Release => lower_to_object(
+                &context,
+                &unit.jir,
+                module_name,
+                &type_config,
+                &object_options,
+            ),
+            BuildProfile::Check => unreachable!("executable build does not use check profile"),
+        }
+        .map_err(|error| {
+            format!(
+                "failed to emit executable object for `{}`: {error}",
+                unit.path.display()
+            )
+        })?;
+        write_object(object_path, &bytes)
+            .map_err(|error| format!("failed to write `{}`: {error}", object_path.display()))
+    };
     let entry_module_name = checked.units[entry_index]
         .path
         .file_stem()
@@ -2143,6 +9113,12 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "jadren_win32_close_button"
                 | "jadren_win32_window_run"
                 | "ui_window"
+                | "ui_file_open_exact"
+                | "ui_directory_open_exact"
+                | "ui_file_open_extension_exact"
+                | "ui_file_save_exact"
+                | "ui_file_save_suggested_exact"
+                | "ui_file_save_extension_exact"
                 | "ui_app_begin"
                 | "ui_app_on_resize"
                 | "ui_app_on_close"
@@ -2160,43 +9136,108 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "ui_app_menu_item"
                 | "ui_app_tooltip"
                 | "ui_app_label"
+                | "ui_app_label_set_text"
                 | "ui_app_status"
                 | "ui_app_button"
+                | "ui_event_queue_clear"
+                | "ui_event_queue_count"
+                | "ui_event_queue_capacity"
+                | "ui_event_queue_dropped"
+                | "ui_event_queue_peek_exact"
+                | "ui_event_queue_poll_exact"
+                | "ui_event_queue_poll_batch_exact"
                 | "ui_app_checkbox"
+                | "ui_app_switch"
                 | "ui_app_select"
                 | "ui_app_select_index"
+                | "ui_app_select_index_if_revision"
                 | "ui_app_select_option"
                 | "ui_app_select_set_index"
                 | "ui_app_text_input"
+                | "ui_app_input_length"
+                | "ui_app_input_read"
+                | "ui_app_input_read_exact"
+                | "ui_app_input_read_exact_if_revision"
                 | "ui_app_list"
                 | "ui_app_list_bind_app"
+                | "ui_app_list_filter_text"
+                | "ui_app_list_filter_text_if_revision"
+                | "ui_app_list_filter_text_ex"
+                | "ui_app_list_filter_text_ex_if_revision"
+                | "ui_app_list_filter_callback"
+                | "ui_app_list_filter_callback_if_revision"
+                | "ui_app_list_page"
+                | "ui_app_list_page_if_revision"
+                | "ui_app_list_sort_text"
+                | "ui_app_list_sort_text_if_revision"
                 | "ui_app_list_clear"
                 | "ui_app_list_count"
+                | "ui_app_list_count_if_revision"
                 | "ui_app_list_index"
+                | "ui_app_list_index_if_revision"
                 | "ui_app_list_item"
+                | "ui_app_list_set_item"
+                | "ui_app_list_set_item_if_revision"
+                | "ui_app_list_insert_item"
+                | "ui_app_list_insert_item_if_revision"
+                | "ui_app_list_move_item"
+                | "ui_app_list_move_item_if_revision"
+                | "ui_app_list_remove_item"
+                | "ui_app_list_remove_item_if_revision"
                 | "ui_app_list_refresh"
+                | "ui_app_list_read_item_exact"
+                | "ui_app_list_read_item_exact_if_revision"
                 | "ui_app_list_set_index"
+                | "ui_app_list_set_index_if_revision"
                 | "ui_app_table"
                 | "ui_app_table_bind_app"
+                | "ui_app_table_index_find_pair_text_if_revision"
                 | "ui_app_table_cell"
+                | "ui_app_table_cell_if_revision"
+                | "ui_app_table_insert_row"
+                | "ui_app_table_insert_row_if_revision"
+                | "ui_app_table_move_row"
+                | "ui_app_table_move_row_if_revision"
+                | "ui_app_table_remove_row"
+                | "ui_app_table_remove_row_if_revision"
                 | "ui_app_table_clear"
                 | "ui_app_table_column"
                 | "ui_app_table_read_cell"
+                | "ui_app_table_read_cell_exact"
+                | "ui_app_table_read_cell_exact_if_revision"
                 | "ui_app_table_refresh"
+                | "ui_app_table_page"
+                | "ui_app_table_page_if_revision"
                 | "ui_app_table_sort_text"
                 | "ui_app_table_sort_int"
                 | "ui_app_table_sort_uint"
                 | "ui_app_table_sort_float"
                 | "ui_app_table_sort_bool"
+                | "ui_app_table_sort_text_if_revision"
+                | "ui_app_table_sort_int_if_revision"
+                | "ui_app_table_sort_uint_if_revision"
+                | "ui_app_table_sort_float_if_revision"
+                | "ui_app_table_sort_bool_if_revision"
                 | "ui_app_table_filter_text"
+                | "ui_app_table_filter_text_if_revision"
                 | "ui_app_table_filter_text_ex"
+                | "ui_app_table_filter_text_ex_if_revision"
                 | "ui_app_table_filter_int"
+                | "ui_app_table_filter_int_if_revision"
                 | "ui_app_table_filter_uint"
+                | "ui_app_table_filter_uint_if_revision"
                 | "ui_app_table_filter_float"
+                | "ui_app_table_filter_float_if_revision"
                 | "ui_app_table_filter_bool"
+                | "ui_app_table_filter_bool_if_revision"
+                | "ui_app_table_filter_callback"
+                | "ui_app_table_filter_callback_if_revision"
                 | "ui_app_table_row_count"
+                | "ui_app_table_row_count_if_revision"
                 | "ui_app_table_selected_row"
+                | "ui_app_table_selected_row_if_revision"
                 | "ui_app_table_set_selected_row"
+                | "ui_app_table_set_selected_row_if_revision"
                 | "ui_app_end"
                 | "ui_app_run"
                 | "ui_top_bar"
@@ -2208,18 +9249,25 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "ui_list"
                 | "ui_list_clear"
                 | "ui_list_count"
+                | "ui_list_count_if_revision"
                 | "ui_list_index"
+                | "ui_list_index_if_revision"
                 | "ui_list_item"
                 | "ui_list_read_item"
+                | "ui_list_read_item_exact"
+                | "ui_list_read_item_exact_if_revision"
                 | "ui_list_bind_app"
                 | "ui_list_refresh_app"
                 | "ui_list_set_index"
+                | "ui_list_set_index_if_revision"
                 | "ui_list_set_item"
                 | "ui_table"
                 | "ui_table_cell"
                 | "ui_table_clear"
                 | "ui_table_column"
                 | "ui_table_read_cell"
+                | "ui_table_read_cell_exact"
+                | "ui_table_read_cell_exact_if_revision"
                 | "ui_table_bind_app"
                 | "ui_table_refresh_app"
                 | "ui_table_sort_text"
@@ -2227,18 +9275,29 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "ui_table_sort_uint"
                 | "ui_table_sort_float"
                 | "ui_table_sort_bool"
+                | "ui_table_sort_text_if_revision"
+                | "ui_table_sort_int_if_revision"
+                | "ui_table_sort_uint_if_revision"
+                | "ui_table_sort_float_if_revision"
+                | "ui_table_sort_bool_if_revision"
+                | "ui_table_index_find_pair_text_if_revision"
                 | "ui_table_filter_text"
                 | "ui_table_filter_text_ex"
                 | "ui_refresh_bindings"
+                | "ui_refresh_bindings_if_revision"
                 | "ui_table_row_count"
+                | "ui_table_row_count_if_revision"
                 | "ui_table_selected_row"
+                | "ui_table_selected_row_if_revision"
                 | "ui_table_set_selected_row"
+                | "ui_table_set_selected_row_if_revision"
                 | "ui_text"
                 | "ui_status"
                 | "ui_tooltip"
                 | "ui_button"
                 | "ui_checkbox"
                 | "ui_checked"
+                | "ui_checked_if_revision"
                 | "ui_column"
                 | "ui_event_button"
                 | "ui_dispatch_event"
@@ -2257,21 +9316,43 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "ui_set_checked"
                 | "ui_set_input_enabled"
                 | "ui_set_input_text"
+                | "ui_set_input_text_exact"
                 | "ui_input_length"
                 | "ui_input_read"
                 | "ui_input_read_exact"
+                | "ui_input_read_exact_if_revision"
                 | "ui_input_bind_app_state"
+                | "ui_input_bind_app_state_exact"
                 | "ui_input_refresh_app_state"
+                | "ui_input_refresh_app_state_exact"
+                | "ui_input_refresh_app_state_if_revision"
+                | "ui_input_commit_app_state_if_revision"
                 | "ui_checkbox_bind_app_state"
                 | "ui_checkbox_refresh_app_state"
+                | "ui_checkbox_refresh_app_state_exact"
+                | "ui_checkbox_refresh_app_state_if_revision"
+                | "ui_checkbox_commit_app_state_if_revision"
                 | "ui_select_bind_app_state"
                 | "ui_select_refresh_app_state"
+                | "ui_select_refresh_app_state_exact"
+                | "ui_select_refresh_app_state_if_revision"
+                | "ui_select_commit_app_state_if_revision"
                 | "ui_list_bind_app_state"
                 | "ui_list_refresh_app_state"
+                | "ui_list_refresh_app_state_exact"
+                | "ui_list_refresh_app_state_if_revision"
+                | "ui_list_commit_app_state_if_revision"
                 | "ui_table_bind_app_state"
                 | "ui_table_refresh_app_state"
+                | "ui_table_refresh_app_state_exact"
+                | "ui_table_refresh_app_state_if_revision"
+                | "ui_table_commit_app_state_if_revision"
                 | "ui_app_bind_app_state"
+                | "ui_app_bind_app_state_exact"
                 | "ui_app_refresh_app_state"
+                | "ui_app_refresh_app_state_exact"
+                | "ui_app_refresh_app_state_if_revision"
+                | "ui_app_commit_app_state_if_revision"
                 | "ui_set_status"
                 | "ui_state_get"
                 | "ui_state_bind"
@@ -2282,6 +9363,7 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "ui_state_text_set"
                 | "ui_select"
                 | "ui_select_index"
+                | "ui_select_index_if_revision"
                 | "ui_select_option"
                 | "ui_select_set_index"
                 | "ui_scroll_panel"
@@ -2337,7 +9419,7 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
         )?);
     }
     let link_options = WindowsLinkOptions {
-        subsystem: if uses_windows_desktop_preview {
+        subsystem: if windows_subsystem::requires_gui(&modules, entry_index) {
             WindowsSubsystem::Windows
         } else {
             WindowsSubsystem::Console
@@ -2505,11 +9587,16 @@ fn build_windows_desktop_runtime(
     has_file_runtime: bool,
 ) -> Result<Vec<PathBuf>, String> {
     const DESKTOP_RUNTIME_C: &str = include_str!("win32_desktop_runtime.c");
-    const KERNEL32_DEF: &str = "LIBRARY kernel32.dll\nEXPORTS\nExitProcess\nGetModuleFileNameW\nGetModuleHandleW\nMultiByteToWideChar\nWideCharToMultiByte\n";
-    const USER32_DEF: &str = "LIBRARY user32.dll\nEXPORTS\nAppendMenuW\nBeginPaint\nCallWindowProcW\nCreatePopupMenu\nCreateWindowExW\nDefWindowProcW\nDestroyMenu\nDestroyWindow\nDispatchMessageW\nDrawTextW\nEnableWindow\nEndPaint\nFillRect\nFrameRect\nGetClientRect\nGetCursorPos\nGetDlgItem\nGetMessageW\nGetWindowTextW\nIsWindow\nLoadCursorW\nMessageBoxW\nMoveWindow\nPostMessageW\nPostQuitMessage\nRedrawWindow\nRegisterClassExW\nSendMessageW\nSetForegroundWindow\nSetWindowLongPtrW\nSetWindowPos\nSetWindowRgn\nSetWindowTextW\nShowWindow\nTrackMouseEvent\nTrackPopupMenu\nTranslateMessage\nUpdateWindow\n";
+    const KERNEL32_DEF: &str = "LIBRARY kernel32.dll\nEXPORTS\nExitProcess\nGetFileAttributesW\nGetModuleFileNameW\nGetModuleHandleW\nMultiByteToWideChar\nWideCharToMultiByte\n";
+    const USER32_DEF: &str = "LIBRARY user32.dll\nEXPORTS\nAppendMenuW\nBeginPaint\nCallWindowProcW\nCreatePopupMenu\nCreateWindowExW\nDefWindowProcW\nDestroyMenu\nDestroyWindow\nDispatchMessageW\nDrawTextW\nEnableWindow\nEndPaint\nFillRect\nFrameRect\nGetClientRect\nGetCursorPos\nGetDlgItem\nGetMessageW\nGetWindowTextW\nIsWindow\nLoadCursorW\nMessageBoxW\nMoveWindow\nPostMessageW\nPostQuitMessage\nRedrawWindow\nRegisterClassExW\nSendMessageW\nSetForegroundWindow\nSetScrollInfo\nSetWindowLongPtrW\nSetWindowPos\nSetWindowRgn\nSetWindowTextW\nShowScrollBar\nShowWindow\nTrackMouseEvent\nTrackPopupMenu\nTranslateMessage\nUpdateWindow\n";
     const GDI32_DEF: &str = "LIBRARY gdi32.dll\nEXPORTS\nCreateFontW\nCreateRoundRectRgn\nCreateSolidBrush\nDeleteObject\nFillRgn\nFrameRgn\nSetBkColor\nSetBkMode\nSetTextColor\n";
     const GDIPLUS_DEF: &str = "LIBRARY gdiplus.dll\nEXPORTS\nGdipCreateBitmapFromFile\nGdipCreateFromHDC\nGdipDeleteGraphics\nGdipDisposeImage\nGdipDrawImageRectI\nGdiplusShutdown\nGdiplusStartup\n";
     const COMCTL32_DEF: &str = "LIBRARY comctl32.dll\nEXPORTS\nInitCommonControlsEx\n";
+    const COMDLG32_DEF: &str =
+        "LIBRARY comdlg32.dll\nEXPORTS\nGetOpenFileNameW\nGetSaveFileNameW\n";
+    const SHELL32_DEF: &str =
+        "LIBRARY shell32.dll\nEXPORTS\nSHBrowseForFolderW\nSHGetPathFromIDListW\n";
+    const OLE32_DEF: &str = "LIBRARY ole32.dll\nEXPORTS\nCoTaskMemFree\n";
 
     let stem = output.with_extension("");
     let source_path = stem.with_extension("desktop.c");
@@ -2524,6 +9611,12 @@ fn build_windows_desktop_runtime(
     let gdiplus_import_library_path = stem.with_extension("desktop-gdiplus.lib");
     let comctl32_definition_path = stem.with_extension("desktop-comctl32.def");
     let comctl32_import_library_path = stem.with_extension("desktop-comctl32.lib");
+    let comdlg32_definition_path = stem.with_extension("desktop-comdlg32.def");
+    let comdlg32_import_library_path = stem.with_extension("desktop-comdlg32.lib");
+    let shell32_definition_path = stem.with_extension("desktop-shell32.def");
+    let shell32_import_library_path = stem.with_extension("desktop-shell32.lib");
+    let ole32_definition_path = stem.with_extension("desktop-ole32.def");
+    let ole32_import_library_path = stem.with_extension("desktop-ole32.lib");
     let runtime_source = format!(
         "#define JADREN_UI_HAS_EVENT_CALLBACK {}\n#define JADREN_UI_HAS_FILE_RUNTIME {}\n{DESKTOP_RUNTIME_C}",
         if has_event_callback { 1 } else { 0 },
@@ -2559,6 +9652,24 @@ fn build_windows_desktop_runtime(
         format!(
             "failed to write `{}`: {error}",
             comctl32_definition_path.display()
+        )
+    })?;
+    fs::write(&comdlg32_definition_path, COMDLG32_DEF).map_err(|error| {
+        format!(
+            "failed to write `{}`: {error}",
+            comdlg32_definition_path.display()
+        )
+    })?;
+    fs::write(&shell32_definition_path, SHELL32_DEF).map_err(|error| {
+        format!(
+            "failed to write `{}`: {error}",
+            shell32_definition_path.display()
+        )
+    })?;
+    fs::write(&ole32_definition_path, OLE32_DEF).map_err(|error| {
+        format!(
+            "failed to write `{}`: {error}",
+            ole32_definition_path.display()
         )
     })?;
 
@@ -2600,6 +9711,21 @@ fn build_windows_desktop_runtime(
             &comctl32_import_library_path,
             "comctl32.dll",
         ),
+        (
+            &comdlg32_definition_path,
+            &comdlg32_import_library_path,
+            "comdlg32.dll",
+        ),
+        (
+            &shell32_definition_path,
+            &shell32_import_library_path,
+            "shell32.dll",
+        ),
+        (
+            &ole32_definition_path,
+            &ole32_import_library_path,
+            "ole32.dll",
+        ),
     ] {
         run_native_tool(
             &llvm_prefix.join("bin").join("llvm-dlltool.exe"),
@@ -2623,6 +9749,9 @@ fn build_windows_desktop_runtime(
         &gdi_import_library_path,
         &gdiplus_import_library_path,
         &comctl32_import_library_path,
+        &comdlg32_import_library_path,
+        &shell32_import_library_path,
+        &ole32_import_library_path,
     ] {
         if !path.is_file() {
             return Err(format!(
@@ -2638,6 +9767,9 @@ fn build_windows_desktop_runtime(
         gdi_import_library_path,
         gdiplus_import_library_path,
         comctl32_import_library_path,
+        comdlg32_import_library_path,
+        shell32_import_library_path,
+        ole32_import_library_path,
     ])
 }
 
@@ -3025,6 +10157,11 @@ typedef struct JadrenBufferDescriptor {
     uint64_t capacity;
 } JadrenBufferDescriptor;
 
+typedef struct JadrenSliceDescriptor {
+    void *data;
+    uint64_t length;
+} JadrenSliceDescriptor;
+
 typedef struct JadrenCarrierDropBranch {
     uint64_t payload_variant;
     uint64_t depth;
@@ -3041,11 +10178,20 @@ typedef struct JadrenCarrierDropField {
 } JadrenCarrierDropField;
 
 #define JADREN_RECORD_FIELD_OWNED_STRING UINT64_C(4294967295)
+#define JADREN_ENUM_FIELD_MULTI_TAG_MARKER (UINT64_C(3) << 62)
+#define JADREN_ENUM_FIELD_MULTI_TAG_MASK ((UINT64_C(1) << 20) - 1U)
+#define JADREN_RECORD_FIELD_NAMED_ENUM_TAG_MARKER (UINT64_C(1) << 62)
+#define JADREN_RECORD_FIELD_NAMED_ENUM_TAG_DISTANCE_MASK ((UINT64_C(1) << 30) - 1U)
+#define JADREN_ENUM_FIELD_PATH_MARKER_BASE (UINT64_C(0xe0) << 56)
+#define JADREN_ENUM_FIELD_PATH_MAX_TAGS 7U
 extern int32_t jadren_rt_buffer_destroy(
     void *descriptor, uint64_t element_size, uint64_t alignment);
 extern int32_t jadren_rt_buffer_destroy_nested_buffer_recursive(
     void *descriptor, uint64_t element_size, uint64_t alignment,
     uint64_t depth, uint64_t leaf_element_size, uint64_t leaf_alignment);
+int32_t jadren_rt_carrier_destroy_record_fields(
+    void *record, uint64_t element_size,
+    const JadrenCarrierDropField *fields, uint64_t field_count);
 static int32_t jadren_destroy_record_field(
     unsigned char *record, const JadrenCarrierDropField *field) {
     if (field->depth == JADREN_RECORD_FIELD_OWNED_STRING) {
@@ -3092,6 +10238,40 @@ uint64_t buffer_length(const void *descriptor) {
 uint64_t buffer_capacity(const void *descriptor) {
     const JadrenBufferDescriptor *buffer = (const JadrenBufferDescriptor *)descriptor;
     return buffer == 0 ? 0U : buffer->capacity;
+}
+
+JadrenSliceDescriptor buffer_slice(const void *descriptor, uint64_t start,
+                                   uint64_t count, uint64_t element_size,
+                                   uint64_t alignment) {
+    const JadrenBufferDescriptor *buffer = (const JadrenBufferDescriptor *)descriptor;
+    JadrenSliceDescriptor result;
+    uintptr_t offset;
+    uintptr_t pointer;
+    result.data = 0;
+    result.length = 0U;
+    if (buffer == 0 || element_size == 0U || alignment == 0U ||
+        (alignment & (alignment - 1U)) != 0U ||
+        (buffer->data == 0 && buffer->capacity != 0U) ||
+        buffer->length > buffer->capacity || start > buffer->length ||
+        count > buffer->length - start || count == 0U ||
+        start > UINT64_MAX / element_size) {
+        return result;
+    }
+    offset = (uintptr_t)(start * element_size);
+    pointer = (uintptr_t)buffer->data;
+    if (pointer > UINTPTR_MAX - offset ||
+        ((pointer + offset) & (uintptr_t)(alignment - 1U)) != 0U) {
+        return result;
+    }
+    result.data = (void *)(pointer + offset);
+    result.length = count;
+    return result;
+}
+
+JadrenSliceDescriptor buffer_slice_write(const void *descriptor, uint64_t start,
+                                         uint64_t count, uint64_t element_size,
+                                         uint64_t alignment) {
+    return buffer_slice(descriptor, start, count, element_size, alignment);
 }
 
 int32_t buffer_resize_status(void *descriptor, uint64_t new_length) {
@@ -4027,6 +11207,60 @@ int32_t jadren_rt_buffer_destroy_nested_owned_string(
     return jadren_rt_buffer_destroy(buffer, element_size, alignment);
 }
 
+int32_t jadren_rt_buffer_remove_drop_nested_owned_string_status(
+    void *descriptor, uint64_t index, uint64_t element_size,
+    uint64_t alignment, uint64_t depth, uint64_t string_element_size,
+    uint64_t string_alignment) {
+    JadrenBufferDescriptor *buffer = (JadrenBufferDescriptor *)descriptor;
+    JadrenBufferDescriptor *base;
+    uint64_t current;
+    int32_t status;
+    if (buffer == 0 || depth == 0U ||
+        element_size != (uint64_t)sizeof(JadrenBufferDescriptor) ||
+        alignment != 8U ||
+        string_element_size != (uint64_t)sizeof(JadrenBufferDescriptor) ||
+        string_alignment != 8U) {
+        return -15;
+    }
+    if ((buffer->data == 0 && buffer->capacity != 0U) ||
+        buffer->length > buffer->capacity ||
+        buffer->capacity > UINT64_MAX / element_size) {
+        return -21;
+    }
+    if (index >= buffer->length) {
+        return -20;
+    }
+    base = (JadrenBufferDescriptor *)buffer->data;
+    if (depth == 1U) {
+        status = jadren_rt_buffer_destroy_owned_string(
+            &base[index], string_element_size, string_alignment);
+    } else {
+        status = jadren_rt_buffer_destroy_nested_owned_string(
+            &base[index], element_size, alignment, depth - 1U,
+            string_element_size, string_alignment);
+    }
+    if (status != 0) {
+        return status;
+    }
+    for (current = index; current + 1U < buffer->length; current += 1U) {
+        base[current] = base[current + 1U];
+        base[current + 1U].data = 0;
+        base[current + 1U].length = 0U;
+        base[current + 1U].capacity = 0U;
+    }
+    buffer->length -= 1U;
+    return 0;
+}
+
+int32_t jadren_rt_buffer_remove_drop_nested_owned_string(
+    void *descriptor, uint64_t index, uint64_t element_size,
+    uint64_t alignment, uint64_t depth, uint64_t string_element_size,
+    uint64_t string_alignment) {
+    return jadren_rt_buffer_remove_drop_nested_owned_string_status(
+        descriptor, index, element_size, alignment, depth,
+        string_element_size, string_alignment) == 0;
+}
+
 int32_t jadren_rt_buffer_resize_move_nested_owned_string_status(
     void *descriptor, uint64_t new_length, uint64_t element_size,
     uint64_t alignment, uint64_t depth, uint64_t string_element_size,
@@ -4257,7 +11491,31 @@ int32_t jadren_rt_carrier_destroy_buffer(
     if ((uint64_t)tag == payload_variant) {
         JadrenBufferDescriptor *nested = (JadrenBufferDescriptor *)
             (bytes + payload_offset);
-        if (depth == 1U) {
+        if (depth == JADREN_RECORD_FIELD_OWNED_STRING) {
+            JadrenBufferDescriptor *string = (JadrenBufferDescriptor *)nested;
+            status = 0;
+            if (string->data == 0 && string->capacity != 0U) {
+                status = -41;
+            } else if (string->length > string->capacity) {
+                status = -41;
+            } else {
+                if (string->data != 0) {
+#if defined(_WIN32)
+                    HANDLE heap = GetProcessHeap();
+                    if (heap == 0 || !HeapFree(heap, 0, string->data)) {
+                        status = -10;
+                    }
+#else
+                    free(string->data);
+#endif
+                }
+                if (status == 0) {
+                    string->data = 0;
+                    string->length = 0U;
+                    string->capacity = 0U;
+                }
+            }
+        } else if (depth == 1U) {
             status = jadren_rt_buffer_destroy(nested, leaf_element_size,
                                               leaf_alignment);
         } else {
@@ -4375,6 +11633,132 @@ static int32_t jadren_validate_enum_carrier_fields(
     const JadrenCarrierDropField *fields, uint64_t field_count,
     uint64_t element_size);
 
+static int32_t jadren_enum_carrier_field_is_active(
+    const unsigned char *carrier, const JadrenCarrierDropField *field,
+    int *active) {
+    uint32_t tag;
+    if (carrier == 0 || field == 0 || active == 0) {
+        return -15;
+    }
+    if ((field->payload_variant & JADREN_RECORD_FIELD_NAMED_ENUM_TAG_MARKER) != 0U &&
+        (field->payload_variant & JADREN_ENUM_FIELD_MULTI_TAG_MARKER) !=
+            JADREN_ENUM_FIELD_MULTI_TAG_MARKER) {
+        uint64_t distance_words =
+            (field->payload_variant >> 32) &
+            JADREN_RECORD_FIELD_NAMED_ENUM_TAG_DISTANCE_MASK;
+        uint64_t distance_bytes;
+        if (distance_words == 0U || distance_words > UINT64_MAX / 8U) {
+            return -15;
+        }
+        distance_bytes = distance_words * 8U;
+        if (distance_bytes > field->payload_offset) {
+            return -15;
+        }
+        tag = (uint32_t)carrier[field->payload_offset - distance_bytes] |
+            ((uint32_t)carrier[field->payload_offset - distance_bytes + 1U] << 8) |
+            ((uint32_t)carrier[field->payload_offset - distance_bytes + 2U] << 16) |
+            ((uint32_t)carrier[field->payload_offset - distance_bytes + 3U] << 24);
+        *active = ((uint64_t)tag ==
+            (field->payload_variant & UINT64_C(0xffffffff)));
+        return 0;
+    }
+    {
+        uint64_t path_byte = field->payload_variant >> 56;
+        if ((path_byte & UINT64_C(0xf0)) ==
+            (JADREN_ENUM_FIELD_PATH_MARKER_BASE >> 56)) {
+            uint64_t tag_count = path_byte & UINT64_C(0x0f);
+            uint64_t index;
+            if (tag_count < 2U || tag_count > JADREN_ENUM_FIELD_PATH_MAX_TAGS ||
+                field->payload_offset < tag_count * 8U) {
+                return -15;
+            }
+            for (index = 0U; index < tag_count; index += 1U) {
+                uint64_t shift = 8U * (tag_count - index - 1U);
+                uint64_t expected = (field->payload_variant >> shift) & UINT64_C(255);
+                uint32_t actual =
+                    (uint32_t)carrier[field->payload_offset - 8U * (tag_count - index)] |
+                    ((uint32_t)carrier[field->payload_offset - 8U * (tag_count - index) + 1U] << 8) |
+                    ((uint32_t)carrier[field->payload_offset - 8U * (tag_count - index) + 2U] << 16) |
+                    ((uint32_t)carrier[field->payload_offset - 8U * (tag_count - index) + 3U] << 24);
+                if ((uint64_t)actual != expected) {
+                    *active = 0;
+                    return 0;
+                }
+            }
+            *active = 1;
+            return 0;
+        }
+    }
+    if ((field->payload_variant & JADREN_ENUM_FIELD_MULTI_TAG_MARKER) ==
+            JADREN_ENUM_FIELD_MULTI_TAG_MARKER) {
+        uint32_t outer_tag;
+        uint32_t first_tag;
+        uint32_t second_tag;
+        uint64_t outer_variant;
+        uint64_t first_variant;
+        uint64_t second_variant;
+        if (field->payload_offset < 24U ||
+            (field->payload_variant & UINT64_C(1)) != 0U) {
+            return -15;
+        }
+        outer_tag = (uint32_t)carrier[0] |
+            ((uint32_t)carrier[1] << 8) |
+            ((uint32_t)carrier[2] << 16) |
+            ((uint32_t)carrier[3] << 24);
+        first_tag = (uint32_t)carrier[field->payload_offset - 16U] |
+            ((uint32_t)carrier[field->payload_offset - 15U] << 8) |
+            ((uint32_t)carrier[field->payload_offset - 14U] << 16) |
+            ((uint32_t)carrier[field->payload_offset - 13U] << 24);
+        second_tag = (uint32_t)carrier[field->payload_offset - 8U] |
+            ((uint32_t)carrier[field->payload_offset - 7U] << 8) |
+            ((uint32_t)carrier[field->payload_offset - 6U] << 16) |
+            ((uint32_t)carrier[field->payload_offset - 5U] << 24);
+        outer_variant = (field->payload_variant >> 41) &
+            JADREN_ENUM_FIELD_MULTI_TAG_MASK;
+        first_variant = (field->payload_variant >> 21) &
+            JADREN_ENUM_FIELD_MULTI_TAG_MASK;
+        second_variant = (field->payload_variant >> 1) &
+            JADREN_ENUM_FIELD_MULTI_TAG_MASK;
+        *active = ((uint64_t)outer_tag == outer_variant &&
+                   (uint64_t)first_tag == first_variant &&
+                   (uint64_t)second_tag == second_variant);
+        return 0;
+    }
+    if ((field->payload_variant & (UINT64_C(1) << 63)) != 0U) {
+        uint64_t outer_variant;
+        uint64_t inner_variant;
+        if (field->payload_offset < 8U) {
+            return -15;
+        }
+        tag = (uint32_t)carrier[0] |
+            ((uint32_t)carrier[1] << 8) |
+            ((uint32_t)carrier[2] << 16) |
+            ((uint32_t)carrier[3] << 24);
+        outer_variant = (field->payload_variant >> 32) & UINT64_C(0x7fffffff);
+        if ((uint64_t)tag != outer_variant) {
+            *active = 0;
+            return 0;
+        }
+        inner_variant = field->payload_variant & UINT64_C(0xffffffff);
+        if (inner_variant == UINT64_C(0xffffffff)) {
+            *active = 1;
+            return 0;
+        }
+        tag = (uint32_t)carrier[field->payload_offset - 8U] |
+            ((uint32_t)carrier[field->payload_offset - 7U] << 8) |
+            ((uint32_t)carrier[field->payload_offset - 6U] << 16) |
+            ((uint32_t)carrier[field->payload_offset - 5U] << 24);
+        *active = ((uint64_t)tag == inner_variant);
+        return 0;
+    }
+    tag = (uint32_t)carrier[0] |
+        ((uint32_t)carrier[1] << 8) |
+        ((uint32_t)carrier[2] << 16) |
+        ((uint32_t)carrier[3] << 24);
+    *active = ((uint64_t)tag == field->payload_variant);
+    return 0;
+}
+
 static const JadrenCarrierDropBranch *jadren_find_enum_carrier_branch(
     const JadrenCarrierDropBranch *branches, uint64_t branch_count,
     uint64_t tag) {
@@ -4464,26 +11848,10 @@ int32_t jadren_rt_buffer_destroy_record_fields(
     for (index = 0U; index < buffer->length; index += 1U) {
         unsigned char *record = (unsigned char *)buffer->data +
             index * element_size;
-        uint64_t field_index;
-        for (field_index = 0U; field_index < field_count; field_index += 1U) {
-            const JadrenCarrierDropField *field = &fields[field_index];
-            if (field->payload_variant != UINT64_MAX) {
-                uint32_t tag;
-                if (field->payload_offset < 8U) {
-                    return -15;
-                }
-                tag = (uint32_t)record[field->payload_offset - 8U] |
-                    ((uint32_t)record[field->payload_offset - 7U] << 8) |
-                    ((uint32_t)record[field->payload_offset - 6U] << 16) |
-                    ((uint32_t)record[field->payload_offset - 5U] << 24);
-                if ((uint64_t)tag != field->payload_variant) {
-                    continue;
-                }
-            }
-            status = jadren_destroy_record_field(record, field);
-            if (status != 0) {
-                return status;
-            }
+        status = jadren_rt_carrier_destroy_record_fields(
+            record, element_size, fields, field_count);
+        if (status != 0) {
+            return status;
         }
     }
     if (buffer->data != 0 && !HeapFree(GetProcessHeap(), 0, buffer->data)) {
@@ -4630,18 +11998,17 @@ int32_t jadren_rt_carrier_destroy_record_fields(
     }
     for (field_index = 0U; field_index < field_count; field_index += 1U) {
         const JadrenCarrierDropField *field = &fields[field_index];
-        if (field->payload_variant != UINT64_MAX) {
-            uint32_t tag;
-            if (field->payload_offset < 8U) {
-                return -15;
+        int active = 0;
+        if (field->payload_variant == UINT64_MAX) {
+            active = 1;
+        } else {
+            status = jadren_enum_carrier_field_is_active(bytes, field, &active);
+            if (status != 0) {
+                return status;
             }
-            tag = (uint32_t)bytes[field->payload_offset - 8U] |
-                ((uint32_t)bytes[field->payload_offset - 7U] << 8) |
-                ((uint32_t)bytes[field->payload_offset - 6U] << 16) |
-                ((uint32_t)bytes[field->payload_offset - 5U] << 24);
-            if ((uint64_t)tag != field->payload_variant) {
-                continue;
-            }
+        }
+        if (!active) {
+            continue;
         }
         status = jadren_destroy_record_field(bytes, field);
         if (status != 0) {
@@ -4824,6 +12191,60 @@ int32_t jadren_rt_buffer_remove_drop_nested_record_fields(
         record_element_size, record_alignment, fields, field_count) == 0;
 }
 
+int32_t jadren_rt_buffer_remove_drop_nested_buffer_status(
+    void *descriptor, uint64_t index, uint64_t element_size,
+    uint64_t alignment, uint64_t depth, uint64_t leaf_element_size,
+    uint64_t leaf_alignment) {
+    JadrenBufferDescriptor *buffer = (JadrenBufferDescriptor *)descriptor;
+    JadrenBufferDescriptor *base;
+    uint64_t current;
+    int32_t status;
+    if (buffer == 0 || depth == 0U ||
+        element_size != (uint64_t)sizeof(JadrenBufferDescriptor) ||
+        alignment != 8U || leaf_element_size == 0U ||
+        leaf_alignment == 0U ||
+        (leaf_alignment & (leaf_alignment - 1U)) != 0U) {
+        return -15;
+    }
+    if ((buffer->data == 0 && buffer->capacity != 0U) ||
+        buffer->length > buffer->capacity ||
+        buffer->capacity > UINT64_MAX / element_size) {
+        return -21;
+    }
+    if (index >= buffer->length) {
+        return -20;
+    }
+    base = (JadrenBufferDescriptor *)buffer->data;
+    if (depth == 1U) {
+        status = jadren_rt_buffer_destroy(
+            &base[index], leaf_element_size, leaf_alignment);
+    } else {
+        status = jadren_rt_buffer_destroy_nested_buffer_recursive(
+            &base[index], element_size, alignment, depth - 1U,
+            leaf_element_size, leaf_alignment);
+    }
+    if (status != 0) {
+        return status;
+    }
+    for (current = index; current + 1U < buffer->length; current += 1U) {
+        base[current] = base[current + 1U];
+        base[current + 1U].data = 0;
+        base[current + 1U].length = 0U;
+        base[current + 1U].capacity = 0U;
+    }
+    buffer->length -= 1U;
+    return 0;
+}
+
+int32_t jadren_rt_buffer_remove_drop_nested_buffer(
+    void *descriptor, uint64_t index, uint64_t element_size,
+    uint64_t alignment, uint64_t depth, uint64_t leaf_element_size,
+    uint64_t leaf_alignment) {
+    return jadren_rt_buffer_remove_drop_nested_buffer_status(
+        descriptor, index, element_size, alignment, depth,
+        leaf_element_size, leaf_alignment) == 0;
+}
+
 int32_t jadren_rt_carrier_destroy_enum_buffer(
     void *carrier, uint64_t element_size, uint64_t payload_offset,
     const JadrenCarrierDropBranch *branches, uint64_t branch_count) {
@@ -4878,6 +12299,9 @@ static int32_t jadren_validate_enum_carrier_fields(
         return -11;
     }
     for (index = 0U; index < field_count; index += 1U) {
+        uint64_t path_byte = fields[index].payload_variant >> 56;
+        int is_path = (path_byte & UINT64_C(0xf0)) ==
+            (JADREN_ENUM_FIELD_PATH_MARKER_BASE >> 56);
         if (fields[index].depth == 0U ||
             fields[index].leaf_element_size == 0U ||
             fields[index].leaf_alignment == 0U ||
@@ -4893,6 +12317,13 @@ static int32_t jadren_validate_enum_carrier_fields(
             (fields[index].leaf_element_size != 24U ||
              fields[index].leaf_alignment != 8U)) {
             return -11;
+        }
+        if (!is_path && fields[index].payload_variant != UINT64_MAX &&
+            (fields[index].payload_variant & JADREN_ENUM_FIELD_MULTI_TAG_MARKER) ==
+                JADREN_ENUM_FIELD_MULTI_TAG_MARKER &&
+            (fields[index].payload_offset < 24U ||
+             (fields[index].payload_variant & UINT64_C(1)) != 0U)) {
+            return -12;
         }
         for (previous = 0U; previous < index; previous += 1U) {
             if (fields[previous].payload_variant == fields[index].payload_variant &&
@@ -4923,14 +12354,14 @@ int32_t jadren_rt_buffer_destroy_enum_carrier_fields(
     for (index = 0U; index < buffer->length; index += 1U) {
         unsigned char *carrier = (unsigned char *)buffer->data +
             index * element_size;
-        uint32_t tag = (uint32_t)carrier[0] |
-            ((uint32_t)carrier[1] << 8) |
-            ((uint32_t)carrier[2] << 16) |
-            ((uint32_t)carrier[3] << 24);
         uint64_t field_index;
         for (field_index = 0U; field_index < field_count; field_index += 1U) {
             const JadrenCarrierDropField *field = &fields[field_index];
-            if (field->payload_variant != (uint64_t)tag) {
+            int active;
+            if (jadren_enum_carrier_field_is_active(carrier, field, &active) != 0) {
+                return -15;
+            }
+            if (!active) {
                 continue;
             }
             status = jadren_destroy_record_field(carrier, field);
@@ -4960,13 +12391,13 @@ int32_t jadren_rt_carrier_destroy_enum_fields(
         return field_status != 0 ? field_status : -15;
     }
     {
-        uint32_t tag = (uint32_t)bytes[0] |
-            ((uint32_t)bytes[1] << 8) |
-            ((uint32_t)bytes[2] << 16) |
-            ((uint32_t)bytes[3] << 24);
         for (field_index = 0U; field_index < field_count; field_index += 1U) {
             const JadrenCarrierDropField *field = &fields[field_index];
-            if (field->payload_variant != (uint64_t)tag) {
+            int active;
+            if (jadren_enum_carrier_field_is_active(bytes, field, &active) != 0) {
+                return -15;
+            }
+            if (!active) {
                 continue;
             }
             status = jadren_destroy_record_field(bytes, field);
@@ -5128,6 +12559,9 @@ typedef long long LONGLONG;
 typedef unsigned short wchar_t;
 typedef void *HANDLE;
 typedef const wchar_t *LPCWSTR;
+unsigned __int64 app_data_revision(void);
+unsigned __int64 app_data_snapshot_length(void);
+unsigned __int64 app_data_snapshot_length_if_revision(unsigned __int64 expected_revision);
 typedef struct JadrenFindDataW {
     DWORD file_attributes;
     DWORD creation_time_low;
@@ -5443,6 +12877,8 @@ extern int WriteFile(HANDLE handle, const void *buffer, DWORD length,
                      DWORD *written_count, void *overlapped);
 extern int GetFileSizeEx(HANDLE handle, JadrenLargeInteger *size);
 extern DWORD GetFileAttributesW(LPCWSTR filename);
+extern DWORD GetFullPathNameW(LPCWSTR filename, DWORD buffer_length,
+                              wchar_t *buffer, wchar_t **file_part);
 extern int CreateDirectoryW(LPCWSTR path, void *security_attributes);
 extern int RemoveDirectoryW(LPCWSTR path);
 extern HANDLE FindFirstFileW(LPCWSTR pattern, JadrenFindDataW *data);
@@ -5456,6 +12892,15 @@ extern void GetSystemTimeAsFileTime(JadrenFileTime *file_time);
 extern int QueryPerformanceCounter(JadrenLargeInteger *counter);
 extern int QueryPerformanceFrequency(JadrenLargeInteger *frequency);
 extern void Sleep(unsigned long milliseconds);
+extern DWORD GetModuleFileNameW(HANDLE module, wchar_t *filename, DWORD size);
+extern int CreateProcessW(LPCWSTR application_name, wchar_t *command_line,
+                          void *process_attributes, void *thread_attributes,
+                          int inherit_handles, DWORD creation_flags,
+                          void *environment, LPCWSTR current_directory,
+                          void *startup_info, void *process_information);
+extern int GetExitCodeProcess(HANDLE process, DWORD *exit_code);
+extern unsigned long WaitForSingleObject(HANDLE handle, unsigned long milliseconds);
+extern int TerminateProcess(HANDLE process, unsigned int exit_code);
 
 enum {
     CP_UTF8 = 65001,
@@ -5465,13 +12910,18 @@ enum {
     FILE_ATTRIBUTE_DIRECTORY = 0x00000010U,
     FILE_SHARE_READ = 0x00000001U,
     FILE_SHARE_WRITE = 0x00000002U,
+    FILE_SHARE_DELETE = 0x00000004U,
     CREATE_ALWAYS = 2,
     OPEN_EXISTING = 3,
     OPEN_ALWAYS = 4,
     FILE_BEGIN = 0,
     FILE_ATTRIBUTE_NORMAL = 0x00000080U,
+    FILE_FLAG_BACKUP_SEMANTICS = 0x02000000U,
     MOVEFILE_REPLACE_EXISTING = 0x00000001U,
     MOVEFILE_WRITE_THROUGH = 0x00000008U,
+    CREATE_NO_WINDOW = 0x08000000U,
+    STILL_ACTIVE = 259U,
+    WAIT_OBJECT_0 = 0U,
     INVALID_FILE_ATTRIBUTES = 0xFFFFFFFFU,
     SOL_SOCKET = 0xFFFF,
     SO_SNDTIMEO = 0x1005,
@@ -5631,6 +13081,258 @@ unsigned __int64 process_arg_read(unsigned __int64 index,
                                     wide_length, (char *)output_data, required,
                                     0, 0);
     return converted == required ? (unsigned __int64)converted : 0;
+}
+
+/* The site-server process boundary is intentionally specialized instead of
+ * exposing shell/command execution. It accepts only a port, resolves the
+ * sibling `jadrenserver.exe`, derives a bounded webroot, and returns an
+ * opaque slot token. No caller-controlled executable or argument string can
+ * cross this ABI. */
+typedef struct JadrenSiteServerStartupInfoW {
+    DWORD cb;
+    wchar_t *reserved;
+    wchar_t *desktop;
+    wchar_t *title;
+    DWORD x;
+    DWORD y;
+    DWORD x_size;
+    DWORD y_size;
+    DWORD x_count_chars;
+    DWORD y_count_chars;
+    DWORD fill_attribute;
+    DWORD flags;
+    unsigned short show_window;
+    unsigned short reserved2;
+    unsigned char *reserved3;
+    HANDLE standard_input;
+    HANDLE standard_output;
+    HANDLE standard_error;
+} JadrenSiteServerStartupInfoW;
+
+typedef struct JadrenSiteServerProcessInfoW {
+    HANDLE process;
+    HANDLE thread;
+    DWORD process_id;
+    DWORD thread_id;
+} JadrenSiteServerProcessInfoW;
+
+#define JADREN_SITE_SERVER_PROCESS_CAPACITY 4
+static HANDLE jadren_site_server_processes[JADREN_SITE_SERVER_PROCESS_CAPACITY];
+
+static int jadren_site_server_wide_append(wchar_t *output, int capacity,
+                                          int *length, const wchar_t *value) {
+    int index = 0;
+    if (output == 0 || length == 0 || value == 0) return 0;
+    while (value[index] != 0) {
+        if (*length >= capacity - 1) return 0;
+        output[*length] = value[index];
+        *length += 1;
+        index += 1;
+    }
+    output[*length] = 0;
+    return 1;
+}
+
+static int jadren_site_server_wide_append_decimal(wchar_t *output, int capacity,
+                                                   int *length,
+                                                   unsigned short value) {
+    wchar_t digits[6];
+    int count = 0;
+    int index;
+    if (value == 0 || output == 0 || length == 0) return 0;
+    while (value > 0 && count < 6) {
+        digits[count] = (wchar_t)('0' + (value % 10));
+        value = (unsigned short)(value / 10);
+        count += 1;
+    }
+    for (index = count - 1; index >= 0; index -= 1) {
+        if (*length >= capacity - 1) return 0;
+        output[*length] = digits[index];
+        *length += 1;
+    }
+    output[*length] = 0;
+    return 1;
+}
+
+static int jadren_site_server_paths(wchar_t *server_path, int server_capacity,
+                                    wchar_t *webroot, int webroot_capacity) {
+    wchar_t module_path[4096];
+    DWORD module_length;
+    int directory_length;
+    int parent_length;
+    int index;
+    if (server_path == 0 || webroot == 0 || server_capacity < 64 ||
+        webroot_capacity < 64) return 0;
+    module_length = GetModuleFileNameW(0, module_path,
+                                       (DWORD)(sizeof(module_path) /
+                                               sizeof(module_path[0])));
+    if (module_length == 0 || module_length >=
+        (DWORD)(sizeof(module_path) / sizeof(module_path[0]))) return 0;
+    directory_length = (int)module_length;
+    while (directory_length > 0 && module_path[directory_length - 1] != '\\' &&
+           module_path[directory_length - 1] != '/') {
+        directory_length -= 1;
+    }
+    if (directory_length == 0) return 0;
+    module_path[directory_length - 1] = 0;
+    server_path[0] = 0;
+    index = 0;
+    if (!jadren_site_server_wide_append(server_path, server_capacity, &index,
+                                        module_path) ||
+        !jadren_site_server_wide_append(server_path, server_capacity, &index,
+                                        L"\\jadrenserver.exe")) return 0;
+    parent_length = directory_length - 1;
+    while (parent_length > 0 && module_path[parent_length - 1] != '\\' &&
+           module_path[parent_length - 1] != '/') {
+        parent_length -= 1;
+    }
+    webroot[0] = 0;
+    index = 0;
+    if (parent_length > 0) {
+        module_path[parent_length] = 0;
+        if (!jadren_site_server_wide_append(webroot, webroot_capacity, &index,
+                                            module_path) ||
+            !jadren_site_server_wide_append(webroot, webroot_capacity, &index,
+                                            L"website")) return 0;
+        if (GetFileAttributesW(webroot) == INVALID_FILE_ATTRIBUTES) {
+            webroot[0] = 0;
+            index = 0;
+        }
+    }
+    if (index == 0) {
+        module_path[directory_length - 1] = 0;
+        if (!jadren_site_server_wide_append(webroot, webroot_capacity, &index,
+                                            module_path)) return 0;
+    }
+    return GetFileAttributesW(server_path) != INVALID_FILE_ATTRIBUTES;
+}
+
+static int jadren_site_server_slot(unsigned __int64 token) {
+    if (token == 0 || token > JADREN_SITE_SERVER_PROCESS_CAPACITY) return -1;
+    if (jadren_site_server_processes[token - 1] == 0) return -1;
+    return (int)(token - 1);
+}
+
+static void jadren_site_server_release_slot(int slot) {
+    if (slot < 0 || slot >= JADREN_SITE_SERVER_PROCESS_CAPACITY) return;
+    if (jadren_site_server_processes[slot] != 0) {
+        CloseHandle(jadren_site_server_processes[slot]);
+        jadren_site_server_processes[slot] = 0;
+    }
+}
+
+static unsigned __int64 jadren_site_server_start_internal(
+    unsigned short port, const wchar_t *webroot_override) {
+    wchar_t server_path[4096];
+    wchar_t webroot[4096];
+    wchar_t absolute_webroot[4096];
+    wchar_t command_line[8192];
+    JadrenSiteServerStartupInfoW startup;
+    JadrenSiteServerProcessInfoW process;
+    int slot = -1;
+    int length = 0;
+    int index;
+    if (port == 0) return 0;
+    if (!jadren_site_server_paths(server_path, 4096, webroot, 4096)) return 0;
+    if (webroot_override != 0) {
+        DWORD absolute_length = GetFullPathNameW(webroot_override, 4096,
+                                                 absolute_webroot, 0);
+        int webroot_length = 0;
+        if (absolute_length == 0 || absolute_length >= 4096 ||
+            GetFileAttributesW(absolute_webroot) == INVALID_FILE_ATTRIBUTES ||
+            (GetFileAttributesW(absolute_webroot) & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+            !jadren_site_server_wide_append(webroot, 4096, &webroot_length,
+                                            absolute_webroot)) {
+            return 0;
+        }
+    }
+    for (index = 0; index < JADREN_SITE_SERVER_PROCESS_CAPACITY; index += 1) {
+        if (jadren_site_server_processes[index] == 0) {
+            slot = index;
+            break;
+        }
+    }
+    if (slot < 0) return 0;
+    command_line[0] = 0;
+    if (!jadren_site_server_wide_append(command_line, 8192, &length, L"\"") ||
+        !jadren_site_server_wide_append(command_line, 8192, &length,
+                                        server_path) ||
+        !jadren_site_server_wide_append(command_line, 8192, &length,
+                                        L"\" --port ") ||
+        !jadren_site_server_wide_append_decimal(command_line, 8192, &length,
+                                                port)) return 0;
+    startup.cb = (DWORD)sizeof(startup);
+    startup.reserved = 0;
+    startup.desktop = 0;
+    startup.title = 0;
+    startup.x = 0;
+    startup.y = 0;
+    startup.x_size = 0;
+    startup.y_size = 0;
+    startup.x_count_chars = 0;
+    startup.y_count_chars = 0;
+    startup.fill_attribute = 0;
+    startup.flags = 0;
+    startup.show_window = 0;
+    startup.reserved2 = 0;
+    startup.reserved3 = 0;
+    startup.standard_input = 0;
+    startup.standard_output = 0;
+    startup.standard_error = 0;
+    process.process = 0;
+    process.thread = 0;
+    process.process_id = 0;
+    process.thread_id = 0;
+    if (!CreateProcessW(server_path, command_line, 0, 0, 0, CREATE_NO_WINDOW,
+                        0, webroot, &startup, &process)) return 0;
+    if (process.thread != 0) CloseHandle(process.thread);
+    jadren_site_server_processes[slot] = process.process;
+    return (unsigned __int64)(slot + 1);
+}
+
+unsigned __int64 site_server_start(unsigned short port) {
+    return jadren_site_server_start_internal(port, 0);
+}
+
+unsigned __int64 site_server_start_with_webroot(
+    unsigned short port, const unsigned char *webroot_data,
+    unsigned __int64 webroot_length) {
+    wchar_t webroot[4096];
+    if (!path_to_wide((const char *)webroot_data, webroot_length,
+                      webroot, 4096)) return 0;
+    return jadren_site_server_start_internal(port, webroot);
+}
+
+int site_server_is_running(unsigned __int64 token) {
+    int slot = jadren_site_server_slot(token);
+    DWORD exit_code = 0;
+    if (slot < 0 || !GetExitCodeProcess(jadren_site_server_processes[slot],
+                                        &exit_code)) return 0;
+    if (exit_code == STILL_ACTIVE) return 1;
+    jadren_site_server_release_slot(slot);
+    return 0;
+}
+
+int site_server_stop(unsigned __int64 token, unsigned int timeout_ms) {
+    int slot = jadren_site_server_slot(token);
+    DWORD exit_code = 0;
+    unsigned long wait_ms;
+    if (slot < 0) return 0;
+    if (!GetExitCodeProcess(jadren_site_server_processes[slot], &exit_code)) {
+        jadren_site_server_release_slot(slot);
+        return 0;
+    }
+    if (exit_code != STILL_ACTIVE) {
+        jadren_site_server_release_slot(slot);
+        return 1;
+    }
+    if (!TerminateProcess(jadren_site_server_processes[slot], 0U)) return 0;
+    wait_ms = timeout_ms < 100U ? 100U :
+              (timeout_ms > 5000U ? 5000U : (unsigned long)timeout_ms);
+    if (WaitForSingleObject(jadren_site_server_processes[slot], wait_ms) !=
+        WAIT_OBJECT_0) return 0;
+    jadren_site_server_release_slot(slot);
+    return 1;
 }
 
 #if JADREN_FILE_RUNTIME_HAS_NETWORK_SUPPORT
@@ -5817,12 +13519,57 @@ unsigned __int64 net_tcp_listen(unsigned short port) {
         return 0;
     }
     jadren_net_loopback_address(&address, port);
-    if (bind(socket_handle, &address, 16) != 0 || listen(socket_handle, 8) != 0) {
+    /* Keep a bounded queue for reverse-proxy bursts while the Jadren accept
+     * loop services one connection at a time.  This is an OS backlog only;
+     * it does not change the application-level request limit. */
+    if (bind(socket_handle, &address, 16) != 0 || listen(socket_handle, 128) != 0) {
         closesocket(socket_handle);
         return 0;
     }
     jadren_net_socket_count += 1;
     return (unsigned __int64)socket_handle + 1ULL;
+}
+
+unsigned __int64 net_tcp_listen_on(const char *address_data,
+                                   unsigned __int64 address_length,
+                                   unsigned short port) {
+    JadrenSockaddrIn address;
+    unsigned char parsed_address[4];
+    JadrenSocket socket_handle;
+    unsigned int index;
+    if (!jadren_net_startup() ||
+        !jadren_net_parse_ipv4(address_data, address_length, parsed_address)) {
+        return 0;
+    }
+    socket_handle = socket(2, 1, 6);
+    if (socket_handle == (JadrenSocket)-1) {
+        return 0;
+    }
+    address.family = 2;
+    address.port = jadren_net_htons(port);
+    address.address[0] = parsed_address[0];
+    address.address[1] = parsed_address[1];
+    address.address[2] = parsed_address[2];
+    address.address[3] = parsed_address[3];
+    for (index = 0; index < 8; index += 1) {
+        address.zero[index] = 0;
+    }
+    if (bind(socket_handle, &address, 16) != 0 || listen(socket_handle, 128) != 0) {
+        closesocket(socket_handle);
+        return 0;
+    }
+    jadren_net_socket_count += 1;
+    return (unsigned __int64)socket_handle + 1ULL;
+}
+
+unsigned __int64 net_tcp_listen_on_prefix(const char *address_data,
+                                          unsigned __int64 address_capacity,
+                                          unsigned __int64 address_length,
+                                          unsigned short port) {
+    if (address_length > address_capacity) {
+        return 0;
+    }
+    return net_tcp_listen_on(address_data, address_length, port);
 }
 
 unsigned __int64 net_tcp_accept(unsigned __int64 listener) {
@@ -5868,6 +13615,29 @@ unsigned __int64 net_tcp_send_prefix(unsigned __int64 socket_token,
     sent = send((JadrenSocket)(socket_token - 1ULL), (const char *)input_data,
                 (int)requested, 0);
     return sent > 0 ? (unsigned __int64)sent : 0;
+}
+
+unsigned __int64 net_tcp_send_all(unsigned __int64 socket_token,
+                                  const unsigned char *input_data,
+                                  unsigned __int64 input_length) {
+    unsigned __int64 total = 0;
+    while (total < input_length) {
+        unsigned __int64 sent = net_tcp_send_prefix(socket_token,
+                                                     input_data + total,
+                                                     input_length - total,
+                                                     input_length - total);
+        if (sent == 0) return total;
+        total += sent;
+    }
+    return total;
+}
+
+unsigned __int64 net_tcp_send_all_prefix(unsigned __int64 socket_token,
+                                         const unsigned char *input_data,
+                                         unsigned __int64 input_length,
+                                         unsigned __int64 send_length) {
+    if (send_length > input_length) return 0;
+    return net_tcp_send_all(socket_token, input_data, send_length);
 }
 
 unsigned __int64 net_tcp_receive(unsigned __int64 socket_token,
@@ -7180,6 +14950,30 @@ unsigned __int64 net_tls_open_server(unsigned __int64 socket_token,
     return JADREN_TLS_SERVER_TOKEN_BASE + (unsigned __int64)index + 1ULL;
 }
 
+/* Open a TLS server from caller-owned byte views. The explicit lengths are
+ * checked against the hidden slice capacities before reusing the legacy
+ * platform credential loader (PFX path + password on Windows, PEM paths on
+ * POSIX). */
+unsigned __int64 net_tls_open_server_paths(unsigned __int64 socket_token,
+                                           const unsigned char *certificate_data,
+                                           unsigned __int64 certificate_capacity,
+                                           unsigned __int64 certificate_length,
+                                           const unsigned char *private_key_data,
+                                           unsigned __int64 private_key_capacity,
+                                           unsigned __int64 private_key_length) {
+    if (certificate_length > certificate_capacity ||
+        private_key_length > private_key_capacity ||
+        (certificate_data == 0 && certificate_length > 0) ||
+        (private_key_data == 0 && private_key_length > 0)) {
+        return 0;
+    }
+    return net_tls_open_server(socket_token,
+                               (const char *)certificate_data,
+                               certificate_length,
+                               (const char *)private_key_data,
+                               private_key_length);
+}
+
 static int jadren_tls_receive_raw_server(JadrenTlsServer *server,
                                          unsigned char *data,
                                          unsigned long capacity) {
@@ -7439,6 +15233,35 @@ unsigned __int64 net_tls_send(unsigned __int64 token,
     return input_length;
 }
 
+/* Send only the explicit prefix of a caller-owned slice. The hidden slice
+ * capacity is checked before delegating to the regular TLS record sender. */
+unsigned __int64 net_tls_send_prefix(unsigned __int64 token,
+                                     const unsigned char *input_data,
+                                     unsigned __int64 input_capacity,
+                                     unsigned __int64 send_length) {
+    if (send_length > input_capacity) return 0;
+    return net_tls_send(token, input_data, send_length);
+}
+
+/* Send the complete explicit prefix, splitting it into native TLS records
+ * when the caller-owned payload exceeds the platform maximum message size. */
+unsigned __int64 net_tls_send_all_prefix(unsigned __int64 token,
+                                         const unsigned char *input_data,
+                                         unsigned __int64 input_capacity,
+                                         unsigned __int64 send_length) {
+    unsigned __int64 offset = 0;
+    if (send_length > input_capacity ||
+        (input_data == 0 && send_length > 0)) return 0;
+    while (offset < send_length) {
+        unsigned __int64 chunk = send_length - offset;
+        if (chunk > 16384ULL) chunk = 16384ULL;
+        unsigned __int64 sent = net_tls_send(token, input_data + offset, chunk);
+        if (sent == 0 || sent > chunk) return offset;
+        offset += sent;
+    }
+    return offset;
+}
+
 unsigned __int64 net_tls_receive(unsigned __int64 token,
                                  unsigned char *output_data,
                                  unsigned __int64 output_length) {
@@ -7664,6 +15487,30 @@ int file_flush(const char *path_data, unsigned __int64 path_length) {
     if (!path_to_wide(path_data, path_length, wide_path, 1024)) return 0;
     handle = CreateFileW(wide_path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                          0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    if (handle == INVALID_HANDLE_VALUE) return 0;
+    flushed = FlushFileBuffers(handle);
+    closed = CloseHandle(handle);
+    return flushed && closed;
+}
+
+/* Flushes an existing file through an explicit valid caller-owned UTF-8 path. */
+int file_flush_path(const unsigned char *path_data, unsigned __int64 path_capacity,
+                    unsigned __int64 path_length) {
+    if (path_length > path_capacity) return 0;
+    return file_flush((const char *)path_data, path_length);
+}
+
+/* Flushes directory metadata through the OS. This is the durability boundary
+ * required after rename/delete; filesystems may still decline the request. */
+int directory_flush(const char *path_data, unsigned __int64 path_length) {
+    wchar_t wide_path[1024];
+    HANDLE handle;
+    int flushed;
+    int closed;
+    if (!path_to_wide(path_data, path_length, wide_path, 1024)) return 0;
+    handle = CreateFileW(wide_path, GENERIC_READ | GENERIC_WRITE,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                         0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
     if (handle == INVALID_HANDLE_VALUE) return 0;
     flushed = FlushFileBuffers(handle);
     closed = CloseHandle(handle);
@@ -7930,6 +15777,92 @@ unsigned __int64 directory_list_ex(const char *path_data,
     return entry_count;
 }
 
+int directory_list_ex_exact(const char *path_data,
+                            unsigned __int64 path_length,
+                            unsigned char *names_data,
+                            unsigned __int64 names_capacity,
+                            unsigned __int64 *names_length_data,
+                            unsigned __int64 names_length_capacity,
+                            unsigned char *kinds_data,
+                            unsigned __int64 kinds_capacity,
+                            unsigned __int64 *item_count_data,
+                            unsigned __int64 item_count_capacity) {
+    wchar_t pattern[1024];
+    JadrenFindDataW find_data;
+    JadrenDirectoryEntryEx entries[128];
+    HANDLE search_handle;
+    unsigned int pattern_length = 0;
+    unsigned int entry_count = 0;
+    unsigned int index;
+    unsigned __int64 total = 0;
+    if (!path_to_wide(path_data, path_length, pattern, 1024) ||
+        names_length_data == 0 || names_length_capacity < 1 ||
+        item_count_data == 0 || item_count_capacity < 1) return 0;
+    while (pattern_length < 1024 && pattern[pattern_length] != 0) {
+        pattern_length += 1;
+    }
+    if (pattern_length == 0 || pattern_length + 2 >= 1024) return 0;
+    if (pattern[pattern_length - 1] != 0x5CU &&
+        pattern[pattern_length - 1] != 0x2FU) {
+        pattern[pattern_length++] = 0x5CU;
+    }
+    pattern[pattern_length++] = 0x2AU;
+    pattern[pattern_length] = 0;
+    search_handle = FindFirstFileW(pattern, &find_data);
+    if (search_handle == INVALID_HANDLE_VALUE) return 0;
+    for (;;) {
+        int is_dot = find_data.file_name[0] == 0x2EU &&
+                     find_data.file_name[1] == 0;
+        int is_dot_dot = find_data.file_name[0] == 0x2EU &&
+                         find_data.file_name[1] == 0x2EU &&
+                         find_data.file_name[2] == 0;
+        if (!is_dot && !is_dot_dot) {
+            if (entry_count >= 128 ||
+                !jadren_directory_wide_name_to_utf8(
+                    find_data.file_name, entries[entry_count].name,
+                    sizeof(entries[entry_count].name),
+                    &entries[entry_count].length)) {
+                (void)FindClose(search_handle);
+                return 0;
+            }
+            entries[entry_count].kind =
+                (find_data.file_attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? 2 : 1;
+            entry_count += 1;
+        }
+        if (!FindNextFileW(search_handle, &find_data)) break;
+    }
+    (void)FindClose(search_handle);
+    for (index = 0; index < entry_count; index += 1) {
+        unsigned int next;
+        for (next = index + 1; next < entry_count; next += 1) {
+            if (jadren_directory_entry_ex_less(&entries[next], &entries[index])) {
+                jadren_directory_entry_ex_swap(&entries[index], &entries[next]);
+            }
+        }
+        if (total > 0xFFFFFFFFFFFFFFFFULL - entries[index].length) return 0;
+        total += entries[index].length;
+        if (index + 1 < entry_count) {
+            if (total == 0xFFFFFFFFFFFFFFFFULL) return 0;
+            total += 1;
+        }
+    }
+    if (names_capacity < total || kinds_capacity < entry_count ||
+        (total != 0 && names_data == 0) ||
+        (entry_count != 0 && kinds_data == 0)) return 0;
+    total = 0;
+    for (index = 0; index < entry_count; index += 1) {
+        unsigned __int64 byte;
+        for (byte = 0; byte < entries[index].length; byte += 1) {
+            names_data[total++] = (unsigned char)entries[index].name[byte];
+        }
+        kinds_data[index] = entries[index].kind;
+        if (index + 1 < entry_count) names_data[total++] = 0x0AU;
+    }
+    *names_length_data = total;
+    *item_count_data = entry_count;
+    return 1;
+}
+
 int file_copy(const char *source_data, unsigned __int64 source_length,
               const char *target_data, unsigned __int64 target_length) {
     wchar_t source_path[1024];
@@ -8153,6 +16086,185 @@ unsigned __int64 app_scheduler_poll(long long now_unix_seconds,
     return (unsigned __int64)due_count;
 }
 
+int app_scheduler_poll_exact(long long now_unix_seconds,
+                             int *output_data,
+                             unsigned __int64 output_length,
+                             unsigned __int64 *due_count_output) {
+    unsigned __int64 due_count = 0;
+    int index;
+    if (due_count_output == 0 || (output_data == 0 && output_length > 0)) {
+        return 0;
+    }
+    for (index = 0; index < JADREN_SCHEDULER_CAPACITY; index += 1) {
+        if (jadren_scheduler_entries[index].active &&
+            jadren_scheduler_entries[index].due_unix_seconds <= now_unix_seconds) {
+            due_count += 1ULL;
+        }
+    }
+    if (due_count > output_length) {
+        return 0;
+    }
+    if (app_scheduler_poll(now_unix_seconds, output_data, output_length) != due_count) {
+        return 0;
+    }
+    *due_count_output = due_count;
+    return 1;
+}
+
+int app_scheduler_next_due_exact(long long *next_due_output,
+                                 unsigned __int64 next_due_length,
+                                 unsigned char *has_due_output,
+                                 unsigned __int64 has_due_length) {
+    int index;
+    int selected = -1;
+    if (next_due_output == 0 || next_due_length == 0 ||
+        has_due_output == 0 || has_due_length == 0) return 0;
+    for (index = 0; index < JADREN_SCHEDULER_CAPACITY; index += 1) {
+        JadrenSchedulerEntry *entry = &jadren_scheduler_entries[index];
+        if (!entry->active) continue;
+        if (selected < 0 ||
+            entry->due_unix_seconds < jadren_scheduler_entries[selected].due_unix_seconds ||
+            (entry->due_unix_seconds == jadren_scheduler_entries[selected].due_unix_seconds &&
+             entry->task_id < jadren_scheduler_entries[selected].task_id)) {
+            selected = index;
+        }
+    }
+    if (selected < 0) {
+        *has_due_output = 0;
+        return 1;
+    }
+    *next_due_output = jadren_scheduler_entries[selected].due_unix_seconds;
+    *has_due_output = 1;
+    return 1;
+}
+
+/* Deterministic caller-owned scheduler snapshot. The format is JDS1, a
+ * little-endian u32 active-count, then count records of
+ * {task_id:i32,due:i64,repeat:u64}; records are sorted by due then task ID. */
+static void app_scheduler_snapshot_write_u32(unsigned char *output,
+                                             unsigned __int64 offset,
+                                             unsigned int value) {
+    output[offset + 0] = (unsigned char)(value & 0xFFU);
+    output[offset + 1] = (unsigned char)((value >> 8) & 0xFFU);
+    output[offset + 2] = (unsigned char)((value >> 16) & 0xFFU);
+    output[offset + 3] = (unsigned char)((value >> 24) & 0xFFU);
+}
+
+static void app_scheduler_snapshot_write_u64(unsigned char *output,
+                                             unsigned __int64 offset,
+                                             unsigned __int64 value) {
+    unsigned int index;
+    for (index = 0; index < 8; index += 1) {
+        output[offset + index] = (unsigned char)((value >> (index * 8)) & 0xFFULL);
+    }
+}
+
+static unsigned int app_scheduler_snapshot_read_u32(const unsigned char *input,
+                                                    unsigned __int64 offset) {
+    return (unsigned int)input[offset + 0] |
+           ((unsigned int)input[offset + 1] << 8) |
+           ((unsigned int)input[offset + 2] << 16) |
+           ((unsigned int)input[offset + 3] << 24);
+}
+
+static unsigned __int64 app_scheduler_snapshot_read_u64(const unsigned char *input,
+                                                        unsigned __int64 offset) {
+    unsigned __int64 value = 0;
+    unsigned int index;
+    for (index = 0; index < 8; index += 1) {
+        value |= ((unsigned __int64)input[offset + index]) << (index * 8);
+    }
+    return value;
+}
+
+int app_scheduler_write_exact(unsigned char *output_data,
+                              unsigned __int64 output_length,
+                              unsigned __int64 *snapshot_length_output,
+                              unsigned __int64 snapshot_length_capacity) {
+    int selected[JADREN_SCHEDULER_CAPACITY];
+    int count = 0;
+    int index;
+    int position;
+    unsigned __int64 required;
+    if (snapshot_length_output == 0 || snapshot_length_capacity == 0) return 0;
+    for (index = 0; index < JADREN_SCHEDULER_CAPACITY; index += 1) {
+        JadrenSchedulerEntry *entry = &jadren_scheduler_entries[index];
+        if (!entry->active) continue;
+        position = count;
+        while (position > 0) {
+            JadrenSchedulerEntry *left = &jadren_scheduler_entries[selected[position - 1]];
+            if (left->due_unix_seconds < entry->due_unix_seconds ||
+                (left->due_unix_seconds == entry->due_unix_seconds &&
+                 left->task_id <= entry->task_id)) break;
+            selected[position] = selected[position - 1];
+            position -= 1;
+        }
+        selected[position] = index;
+        count += 1;
+    }
+    required = 8ULL + (unsigned __int64)count * 20ULL;
+    if ((output_data == 0 && required > 0) || output_length < required) return 0;
+    output_data[0] = (unsigned char)'J';
+    output_data[1] = (unsigned char)'D';
+    output_data[2] = (unsigned char)'S';
+    output_data[3] = (unsigned char)'1';
+    app_scheduler_snapshot_write_u32(output_data, 4, (unsigned int)count);
+    for (index = 0; index < count; index += 1) {
+        JadrenSchedulerEntry *entry = &jadren_scheduler_entries[selected[index]];
+        unsigned __int64 offset = 8ULL + (unsigned __int64)index * 20ULL;
+        app_scheduler_snapshot_write_u32(output_data, offset,
+                                         (unsigned int)entry->task_id);
+        app_scheduler_snapshot_write_u64(output_data, offset + 4,
+                                         (unsigned __int64)entry->due_unix_seconds);
+        app_scheduler_snapshot_write_u64(output_data, offset + 12,
+                                         entry->repeat_seconds);
+    }
+    snapshot_length_output[0] = required;
+    return 1;
+}
+
+int app_scheduler_load_exact(const unsigned char *input_data,
+                             unsigned __int64 input_capacity,
+                             unsigned __int64 input_length) {
+    JadrenSchedulerEntry parsed[JADREN_SCHEDULER_CAPACITY];
+    unsigned int count;
+    unsigned int index;
+    unsigned int other;
+    unsigned __int64 required;
+    if ((input_data == 0 && input_length > 0) || input_length > input_capacity ||
+        input_length < 8ULL || input_data[0] != (unsigned char)'J' ||
+        input_data[1] != (unsigned char)'D' || input_data[2] != (unsigned char)'S' ||
+        input_data[3] != (unsigned char)'1') return 0;
+    count = app_scheduler_snapshot_read_u32(input_data, 4);
+    if (count > JADREN_SCHEDULER_CAPACITY) return 0;
+    required = 8ULL + (unsigned __int64)count * 20ULL;
+    if (input_length != required) return 0;
+    for (index = 0; index < JADREN_SCHEDULER_CAPACITY; index += 1) {
+        parsed[index].active = 0;
+        parsed[index].task_id = 0;
+        parsed[index].due_unix_seconds = 0;
+        parsed[index].repeat_seconds = 0;
+    }
+    for (index = 0; index < count; index += 1) {
+        unsigned __int64 offset = 8ULL + (unsigned __int64)index * 20ULL;
+        unsigned int encoded_task = app_scheduler_snapshot_read_u32(input_data, offset);
+        unsigned __int64 encoded_due = app_scheduler_snapshot_read_u64(input_data, offset + 4);
+        unsigned __int64 repeat = app_scheduler_snapshot_read_u64(input_data, offset + 12);
+        parsed[index].active = 1;
+        parsed[index].task_id = (int)encoded_task;
+        parsed[index].due_unix_seconds = (long long)encoded_due;
+        parsed[index].repeat_seconds = repeat;
+        if (repeat > 9223372036854775807ULL) return 0;
+        for (other = 0; other < index; other += 1) {
+            if (parsed[other].task_id == parsed[index].task_id) return 0;
+        }
+    }
+    for (index = 0; index < JADREN_SCHEDULER_CAPACITY; index += 1) {
+        jadren_scheduler_entries[index] = parsed[index];
+    }
+    return 1;
+}
+
 unsigned __int64 string_length(const unsigned char *data,
                                unsigned __int64 length) {
     return data == 0 && length > 0 ? 0 : length;
@@ -8196,6 +16308,16 @@ unsigned __int64 string_builder_append_bytes(const unsigned char *data,
                                              unsigned __int64 output_length,
                                              unsigned __int64 offset) {
     return string_builder_append(data, length, output_data, output_length, offset);
+}
+
+unsigned __int64 string_builder_append_bytes_prefix(const unsigned char *data,
+                                                    unsigned __int64 data_length,
+                                                    unsigned __int64 prefix_length,
+                                                    unsigned char *output_data,
+                                                    unsigned __int64 output_length,
+                                                    unsigned __int64 offset) {
+    if (prefix_length > data_length) return 0;
+    return string_builder_append(data, prefix_length, output_data, output_length, offset);
 }
 
 typedef struct JadrenOwnedString {
@@ -8500,6 +16622,64 @@ unsigned __int64 file_read_at(const char *path_data, unsigned __int64 path_lengt
     return total;
 }
 
+unsigned __int64 file_size_path(const unsigned char *path_data,
+                                unsigned __int64 path_capacity,
+                                unsigned __int64 path_length) {
+    if (path_data == 0 || path_length > path_capacity) return 0;
+    return file_size((const char *)path_data, path_length);
+}
+
+int file_exists_path(const unsigned char *path_data,
+                     unsigned __int64 path_capacity,
+                     unsigned __int64 path_length) {
+    if (path_data == 0 || path_length > path_capacity) return 0;
+    return file_exists((const char *)path_data, path_length);
+}
+
+int file_path_valid(const unsigned char *path_data,
+                    unsigned __int64 path_capacity,
+                    unsigned __int64 path_length) {
+    wchar_t wide_path[1024];
+    if (path_data == 0 || path_length > path_capacity) return 0;
+    return path_to_wide((const char *)path_data, path_length,
+                        wide_path, 1024);
+}
+
+unsigned __int64 file_mtime_unix_nanos_path(const unsigned char *path_data,
+                                            unsigned __int64 path_capacity,
+                                            unsigned __int64 path_length) {
+    wchar_t wide_path[1024];
+    JadrenFindDataW metadata;
+    HANDLE search_handle;
+    const unsigned __int64 windows_epoch_100ns = 116444736000000000ULL;
+    unsigned __int64 timestamp_100ns;
+    unsigned __int64 elapsed_100ns;
+    if (path_data == 0 || path_length > path_capacity ||
+        !path_to_wide((const char *)path_data, path_length, wide_path, 1024)) {
+        return 0;
+    }
+    search_handle = FindFirstFileW(wide_path, &metadata);
+    if (search_handle == INVALID_HANDLE_VALUE) return 0;
+    (void)FindClose(search_handle);
+    timestamp_100ns = ((unsigned __int64)metadata.last_write_time_high << 32) |
+                       (unsigned __int64)metadata.last_write_time_low;
+    if (timestamp_100ns <= windows_epoch_100ns) return 0;
+    elapsed_100ns = timestamp_100ns - windows_epoch_100ns;
+    if (elapsed_100ns > 184467440737095516ULL) return 0;
+    return elapsed_100ns * 100ULL;
+}
+
+unsigned __int64 file_read_at_path(const unsigned char *path_data,
+                                   unsigned __int64 path_capacity,
+                                   unsigned __int64 path_length,
+                                   unsigned __int64 offset,
+                                   unsigned char *output_data,
+                                   unsigned __int64 output_length) {
+    if (path_data == 0 || path_length > path_capacity) return 0;
+    return file_read_at((const char *)path_data, path_length, offset,
+                        output_data, output_length);
+}
+
 unsigned __int64 file_read_text(const char *path_data, unsigned __int64 path_length,
                                 unsigned char *output_data,
                                 unsigned __int64 output_length) {
@@ -8598,6 +16778,26 @@ unsigned __int64 file_write(const char *path_data, unsigned __int64 path_length,
                             const unsigned char *input_data,
                             unsigned __int64 input_length) {
     return write_file_bytes(path_data, path_length, input_data, input_length);
+}
+
+/* Truncating write from an explicit valid prefix of a larger caller-owned buffer. */
+unsigned __int64 file_write_prefix(const char *path_data, unsigned __int64 path_length,
+                                   const unsigned char *input_data,
+                                   unsigned __int64 input_length,
+                                   unsigned __int64 write_length) {
+    if (write_length > input_length) return 0;
+    return write_file_bytes(path_data, path_length, input_data, write_length);
+}
+
+/* Truncating write through an explicit valid prefix of a caller-owned UTF-8 path. */
+unsigned __int64 file_write_prefix_path(const unsigned char *path_data,
+                                        unsigned __int64 path_capacity,
+                                        unsigned __int64 path_length,
+                                        const unsigned char *input_data,
+                                        unsigned __int64 input_capacity,
+                                        unsigned __int64 write_length) {
+    if (path_length > path_capacity || write_length > input_capacity) return 0;
+    return write_file_bytes((const char *)path_data, path_length, input_data, write_length);
 }
 
 unsigned __int64 file_write_at(const char *path_data, unsigned __int64 path_length,
@@ -8708,6 +16908,29 @@ unsigned __int64 format_uint(unsigned __int64 value, unsigned char *output_data,
         reversed[digits] = (unsigned char)('0' + (value % 10));
         digits += 1;
         value /= 10;
+    } while (value != 0);
+    if (digits > output_length) {
+        return 0;
+    }
+    for (index = 0; index < digits; index += 1) {
+        output_data[index] = reversed[digits - index - 1];
+    }
+    return digits;
+}
+
+unsigned __int64 format_hex_uint(unsigned __int64 value, unsigned char *output_data,
+                                 unsigned __int64 output_length) {
+    unsigned char reversed[16];
+    unsigned __int64 digits = 0;
+    unsigned __int64 index;
+    if (output_data == 0 || output_length == 0) {
+        return 0;
+    }
+    do {
+        unsigned char digit = (unsigned char)(value & 0xFULL);
+        reversed[digits] = (unsigned char)(digit < 10 ? ('0' + digit) : ('a' + digit - 10));
+        digits += 1;
+        value >>= 4;
     } while (value != 0);
     if (digits > output_length) {
         return 0;
@@ -9000,6 +17223,256 @@ unsigned __int64 http_response_write_ex(unsigned short status,
                                     body_data, body_length, keep_alive, output_data, output_length);
 }
 
+unsigned __int64 http_response_write_prefix_ex(unsigned short status,
+                                               const char *content_type_data,
+                                               unsigned __int64 content_type_length,
+                                               const unsigned char *body_data,
+                                               unsigned __int64 body_capacity,
+                                               unsigned __int64 body_length,
+                                               int keep_alive,
+                                               unsigned char *output_data,
+                                               unsigned __int64 output_length) {
+    if (body_length > body_capacity) return 0;
+    return http_response_write_mode(status, content_type_data, content_type_length,
+                                    body_data, body_length, keep_alive, output_data, output_length);
+}
+
+static unsigned __int64 http_response_write_chunked_prefix_mode(
+    unsigned short status,
+    const char *content_type_data,
+    unsigned __int64 content_type_length,
+    const unsigned char *body_data,
+    unsigned __int64 body_capacity,
+    unsigned __int64 body_length,
+    unsigned char *output_data,
+    unsigned __int64 output_length) {
+    const char *reason;
+    unsigned __int64 reason_length;
+    unsigned char status_text[20];
+    unsigned char chunk_length_text[16];
+    unsigned __int64 status_length;
+    unsigned __int64 chunk_text_length;
+    unsigned __int64 required = 0;
+    unsigned __int64 offset = 0;
+    unsigned __int64 index;
+    static const unsigned char prefix[] = "HTTP/1.1 ";
+    static const unsigned char type_prefix[] = "\r\nContent-Type: ";
+    static const unsigned char transfer_prefix[] = "\r\nTransfer-Encoding: chunked";
+    static const unsigned char suffix[] = "\r\nConnection: close\r\n\r\n";
+    static const unsigned char chunk_separator[] = "\r\n";
+    static const unsigned char final_chunk[] = "\r\n0\r\n\r\n";
+    static const unsigned char empty_final_chunk[] = "0\r\n\r\n";
+    if (status < 100 || status > 999 || content_type_data == 0 ||
+        content_type_length == 0 || body_length > body_capacity ||
+        (body_data == 0 && body_length > 0)) {
+        return 0;
+    }
+    for (index = 0; index < content_type_length; index += 1) {
+        unsigned char value = (unsigned char)content_type_data[index];
+        if (value < 0x20 || value > 0x7E) {
+            return 0;
+        }
+    }
+    reason = http_reason_text(status, &reason_length);
+    status_length = format_uint(status, status_text, sizeof(status_text));
+    chunk_text_length = format_hex_uint(body_length, chunk_length_text,
+                                        sizeof(chunk_length_text));
+    if (status_length == 0 || chunk_text_length == 0 ||
+        !http_add_length(&required, sizeof(prefix) - 1) ||
+        !http_add_length(&required, status_length) ||
+        !http_add_length(&required, 1) ||
+        !http_add_length(&required, reason_length) ||
+        !http_add_length(&required, sizeof(type_prefix) - 1) ||
+        !http_add_length(&required, content_type_length) ||
+        !http_add_length(&required, sizeof(transfer_prefix) - 1) ||
+        !http_add_length(&required, sizeof(suffix) - 1)) {
+        return 0;
+    }
+    if (body_length == 0) {
+        if (!http_add_length(&required, sizeof(empty_final_chunk) - 1)) {
+            return 0;
+        }
+    } else if (!http_add_length(&required, chunk_text_length) ||
+               !http_add_length(&required, sizeof(chunk_separator) - 1) ||
+               !http_add_length(&required, body_length) ||
+               !http_add_length(&required, sizeof(final_chunk) - 1)) {
+        return 0;
+    }
+    if (output_data == 0 || output_length < required) {
+        return 0;
+    }
+    http_copy_bytes(output_data, &offset, prefix, sizeof(prefix) - 1);
+    http_copy_bytes(output_data, &offset, status_text, status_length);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)" ", 1);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)reason, reason_length);
+    http_copy_bytes(output_data, &offset, type_prefix, sizeof(type_prefix) - 1);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)content_type_data,
+                    content_type_length);
+    http_copy_bytes(output_data, &offset, transfer_prefix, sizeof(transfer_prefix) - 1);
+    http_copy_bytes(output_data, &offset, suffix, sizeof(suffix) - 1);
+    if (body_length == 0) {
+        http_copy_bytes(output_data, &offset, empty_final_chunk,
+                        sizeof(empty_final_chunk) - 1);
+    } else {
+        http_copy_bytes(output_data, &offset, chunk_length_text, chunk_text_length);
+        http_copy_bytes(output_data, &offset, chunk_separator,
+                        sizeof(chunk_separator) - 1);
+        http_copy_bytes(output_data, &offset, body_data, body_length);
+        http_copy_bytes(output_data, &offset, final_chunk, sizeof(final_chunk) - 1);
+    }
+    return required;
+}
+
+unsigned __int64 http_response_write_chunked(unsigned short status,
+                                             const char *content_type_data,
+                                             unsigned __int64 content_type_length,
+                                             const unsigned char *body_data,
+                                             unsigned __int64 body_length,
+                                             unsigned char *output_data,
+                                             unsigned __int64 output_length) {
+    return http_response_write_chunked_prefix_mode(status, content_type_data,
+                                                   content_type_length, body_data,
+                                                   body_length, body_length,
+                                                   output_data, output_length);
+}
+
+unsigned __int64 http_response_write_chunked_prefix(
+    unsigned short status,
+    const char *content_type_data,
+    unsigned __int64 content_type_length,
+    const unsigned char *body_data,
+    unsigned __int64 body_capacity,
+    unsigned __int64 body_length,
+    unsigned char *output_data,
+    unsigned __int64 output_length) {
+    return http_response_write_chunked_prefix_mode(status, content_type_data,
+                                                   content_type_length, body_data,
+                                                   body_capacity, body_length,
+                                                   output_data, output_length);
+}
+
+/* Writes only the bounded response header for a caller-driven chunk stream.
+ * The caller owns connection policy and must send the returned header before
+ * one or more http_response_write_chunk calls. */
+unsigned __int64 http_response_write_chunked_header(
+    unsigned short status,
+    const char *content_type_data,
+    unsigned __int64 content_type_length,
+    unsigned char *output_data,
+    unsigned __int64 output_length) {
+    const char *reason;
+    unsigned __int64 reason_length;
+    unsigned char status_text[20];
+    unsigned __int64 status_length;
+    unsigned __int64 required = 0;
+    unsigned __int64 offset = 0;
+    unsigned __int64 index;
+    static const unsigned char prefix[] = "HTTP/1.1 ";
+    static const unsigned char type_prefix[] = "\r\nContent-Type: ";
+    static const unsigned char transfer_prefix[] = "\r\nTransfer-Encoding: chunked";
+    static const unsigned char suffix[] = "\r\n\r\n";
+    if (status < 100 || status > 999 || content_type_data == 0 ||
+        content_type_length == 0) {
+        return 0;
+    }
+    for (index = 0; index < content_type_length; index += 1) {
+        unsigned char value = (unsigned char)content_type_data[index];
+        if (value < 0x20 || value > 0x7E) {
+            return 0;
+        }
+    }
+    reason = http_reason_text(status, &reason_length);
+    status_length = format_uint(status, status_text, sizeof(status_text));
+    if (status_length == 0 ||
+        !http_add_length(&required, sizeof(prefix) - 1) ||
+        !http_add_length(&required, status_length) ||
+        !http_add_length(&required, 1) ||
+        !http_add_length(&required, reason_length) ||
+        !http_add_length(&required, sizeof(type_prefix) - 1) ||
+        !http_add_length(&required, content_type_length) ||
+        !http_add_length(&required, sizeof(transfer_prefix) - 1) ||
+        !http_add_length(&required, sizeof(suffix) - 1) ||
+        output_data == 0 || output_length < required) {
+        return 0;
+    }
+    http_copy_bytes(output_data, &offset, prefix, sizeof(prefix) - 1);
+    http_copy_bytes(output_data, &offset, status_text, status_length);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)" ", 1);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)reason, reason_length);
+    http_copy_bytes(output_data, &offset, type_prefix, sizeof(type_prefix) - 1);
+    http_copy_bytes(output_data, &offset,
+                    (const unsigned char *)content_type_data,
+                    content_type_length);
+    http_copy_bytes(output_data, &offset, transfer_prefix,
+                    sizeof(transfer_prefix) - 1);
+    http_copy_bytes(output_data, &offset, suffix, sizeof(suffix) - 1);
+    return required;
+}
+
+/* Writes one caller-driven HTTP/1.1 chunk. A non-final chunk must contain at
+ * least one byte. The final call appends the mandatory zero-length chunk, so
+ * callers can send each returned frame immediately without a hidden buffer or
+ * runtime-owned stream state. */
+unsigned __int64 http_response_write_chunk(
+    const unsigned char *body_data,
+    unsigned __int64 body_length,
+    int final_chunk,
+    unsigned char *output_data,
+    unsigned __int64 output_length) {
+    unsigned char chunk_length_text[16];
+    unsigned __int64 chunk_text_length;
+    unsigned __int64 required = 0;
+    unsigned __int64 offset = 0;
+    static const unsigned char separator[] = "\r\n";
+    static const unsigned char final_suffix[] = "0\r\n\r\n";
+    if ((body_data == 0 && body_length > 0) ||
+        (final_chunk == 0 && body_length == 0)) {
+        return 0;
+    }
+    if (final_chunk && body_length == 0) {
+        if (output_data == 0 || output_length < sizeof(final_suffix) - 1) {
+            return 0;
+        }
+        http_copy_bytes(output_data, &offset, final_suffix,
+                        sizeof(final_suffix) - 1);
+        return sizeof(final_suffix) - 1;
+    }
+    chunk_text_length = format_hex_uint(body_length, chunk_length_text,
+                                        sizeof(chunk_length_text));
+    if (chunk_text_length == 0 ||
+        !http_add_length(&required, chunk_text_length) ||
+        !http_add_length(&required, sizeof(separator) - 1) ||
+        !http_add_length(&required, body_length) ||
+        !http_add_length(&required, sizeof(separator) - 1) ||
+        (final_chunk && !http_add_length(&required, sizeof(final_suffix) - 1)) ||
+        output_data == 0 || output_length < required) {
+        return 0;
+    }
+    http_copy_bytes(output_data, &offset, chunk_length_text, chunk_text_length);
+    http_copy_bytes(output_data, &offset, separator, sizeof(separator) - 1);
+    http_copy_bytes(output_data, &offset, body_data, body_length);
+    http_copy_bytes(output_data, &offset, separator, sizeof(separator) - 1);
+    if (final_chunk) {
+        http_copy_bytes(output_data, &offset, final_suffix,
+                        sizeof(final_suffix) - 1);
+    }
+    return required;
+}
+
+unsigned __int64 http_response_write_chunk_prefix(
+    const unsigned char *body_data,
+    unsigned __int64 body_capacity,
+    unsigned __int64 body_length,
+    int final_chunk,
+    unsigned char *output_data,
+    unsigned __int64 output_length) {
+    if (body_length > body_capacity) {
+        return 0;
+    }
+    return http_response_write_chunk(body_data, body_length, final_chunk,
+                                     output_data, output_length);
+}
+
 static int http_response_header_name_is_token(unsigned char value) {
     return value >= 0x21 && value <= 0x7E && value != '(' && value != ')' &&
            value != '<' && value != '>' && value != '@' && value != ',' &&
@@ -9105,6 +17578,25 @@ unsigned __int64 http_response_write_header(unsigned short status,
                                             unsigned __int64 body_length,
                                             unsigned char *output_data,
                                             unsigned __int64 output_length) {
+    return http_response_write_header_mode(status, content_type_data, content_type_length,
+                                           header_name_data, header_name_length,
+                                           header_value_data, header_value_length,
+                                           body_data, body_length, 0, output_data, output_length);
+}
+
+unsigned __int64 http_response_write_header_prefix(unsigned short status,
+                                                   const char *content_type_data,
+                                                   unsigned __int64 content_type_length,
+                                                   const char *header_name_data,
+                                                   unsigned __int64 header_name_length,
+                                                   const char *header_value_data,
+                                                   unsigned __int64 header_value_length,
+                                                   const unsigned char *body_data,
+                                                   unsigned __int64 body_capacity,
+                                                   unsigned __int64 body_length,
+                                                   unsigned char *output_data,
+                                                   unsigned __int64 output_length) {
+    if (body_length > body_capacity) return 0;
     return http_response_write_header_mode(status, content_type_data, content_type_length,
                                            header_name_data, header_name_length,
                                            header_value_data, header_value_length,
@@ -9242,6 +17734,211 @@ unsigned __int64 http_response_write_cookie_ex(unsigned short status,
                                            cookie_attributes_data, cookie_attributes_length,
                                            body_data, body_length, keep_alive,
                                            output_data, output_length);
+}
+
+static int http_cookie_policy_value_is_valid(const char *data,
+                                             unsigned __int64 length) {
+    unsigned __int64 index;
+    if (data == 0 && length > 0) return 0;
+    for (index = 0; index < length; index += 1) {
+        unsigned char value = (unsigned char)data[index];
+        if (value < 0x21 || value > 0x7E || value == ';' || value == ',') return 0;
+    }
+    return 1;
+}
+
+static int http_cookie_policy_append(unsigned char *output_data,
+                                     unsigned __int64 *output_length,
+                                     unsigned __int64 output_capacity,
+                                     const unsigned char *input_data,
+                                     unsigned __int64 input_length) {
+    unsigned __int64 previous_length;
+    if (output_data == 0 || output_length == 0 ||
+        (input_data == 0 && input_length > 0) ||
+        *output_length > output_capacity) {
+        return 0;
+    }
+    previous_length = *output_length;
+    if (!http_add_length(output_length, input_length) || *output_length > output_capacity) return 0;
+    *output_length = previous_length;
+    return http_copy_bytes(output_data, output_length, input_data, input_length);
+}
+
+static unsigned __int64 http_response_write_cookie_policy_mode(
+    unsigned short status,
+    const char *content_type_data,
+    unsigned __int64 content_type_length,
+    const char *cookie_name_data,
+    unsigned __int64 cookie_name_length,
+    const char *cookie_value_data,
+    unsigned __int64 cookie_value_length,
+    const char *path_data,
+    unsigned __int64 path_length,
+    const char *domain_data,
+    unsigned __int64 domain_length,
+    long long max_age_seconds,
+    unsigned int same_site,
+    unsigned int flags,
+    const unsigned char *body_data,
+    unsigned __int64 body_length,
+    int keep_alive,
+    unsigned char *output_data,
+    unsigned __int64 output_length) {
+    unsigned char attributes[4096];
+    unsigned char max_age_text[32];
+    unsigned char cookie_data[4096];
+    unsigned __int64 attributes_length = 0;
+    unsigned __int64 max_age_length = 0;
+    unsigned __int64 cookie_length = 0;
+    unsigned __int64 index;
+    const char *same_site_text = 0;
+    unsigned __int64 same_site_length = 0;
+    if (cookie_name_data == 0 || cookie_name_length == 0 ||
+        (cookie_value_data == 0 && cookie_value_length > 0) ||
+        max_age_seconds < -1 || same_site > 3 || (flags & ~3U) != 0 ||
+        (same_site == 3 && (flags & 1U) == 0) ||
+        !http_cookie_policy_value_is_valid(path_data, path_length) ||
+        !http_cookie_policy_value_is_valid(domain_data, domain_length)) {
+        return 0;
+    }
+    for (index = 0; index < cookie_name_length; index += 1) {
+        if (!http_cookie_name_is_token((unsigned char)cookie_name_data[index])) return 0;
+    }
+    for (index = 0; index < cookie_value_length; index += 1) {
+        if (!http_cookie_value_is_octet((unsigned char)cookie_value_data[index])) return 0;
+    }
+    if (path_length > 0) {
+        if (!http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"Path=", 5) ||
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)path_data, path_length)) {
+            return 0;
+        }
+    }
+    if (domain_length > 0) {
+        if (attributes_length > 0 &&
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"; ", 2)) {
+            return 0;
+        }
+        if (!http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"Domain=", 7) ||
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)domain_data, domain_length)) {
+            return 0;
+        }
+    }
+    if (max_age_seconds != -1) {
+        max_age_length = format_int(max_age_seconds, max_age_text, sizeof(max_age_text));
+        if (max_age_length == 0) return 0;
+        if (attributes_length > 0 &&
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"; ", 2)) {
+            return 0;
+        }
+        if (!http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"Max-Age=", 8) ||
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       max_age_text, max_age_length)) {
+            return 0;
+        }
+    }
+    if (same_site != 0) {
+        if (same_site == 1) {
+            same_site_text = "Lax";
+            same_site_length = 3;
+        } else if (same_site == 2) {
+            same_site_text = "Strict";
+            same_site_length = 6;
+        } else {
+            same_site_text = "None";
+            same_site_length = 4;
+        }
+        if (attributes_length > 0 &&
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"; ", 2)) {
+            return 0;
+        }
+        if (!http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"SameSite=", 9) ||
+            !http_cookie_policy_append(attributes, &attributes_length,
+                                       sizeof(attributes),
+                                       (const unsigned char *)same_site_text,
+                                       same_site_length)) {
+            return 0;
+        }
+    }
+    if ((flags & 1U) != 0) {
+        if (attributes_length > 0 &&
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"; ", 2)) {
+            return 0;
+        }
+        if (!http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"Secure", 6)) {
+            return 0;
+        }
+    }
+    if ((flags & 2U) != 0) {
+        if (attributes_length > 0 &&
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"; ", 2)) {
+            return 0;
+        }
+        if (!http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"HttpOnly", 8)) {
+            return 0;
+        }
+    }
+    if (!http_add_length(&cookie_length, cookie_name_length) ||
+        !http_add_length(&cookie_length, 1) ||
+        !http_add_length(&cookie_length, cookie_value_length) ||
+        (attributes_length > 0 &&
+         (!http_add_length(&cookie_length, 2) ||
+          !http_add_length(&cookie_length, attributes_length))) ||
+        cookie_length > sizeof(cookie_data)) {
+        return 0;
+    }
+    index = 0;
+    http_copy_bytes(cookie_data, &index, (const unsigned char *)cookie_name_data, cookie_name_length);
+    http_copy_bytes(cookie_data, &index, (const unsigned char *)"=", 1);
+    http_copy_bytes(cookie_data, &index, (const unsigned char *)cookie_value_data, cookie_value_length);
+    if (attributes_length > 0) {
+        http_copy_bytes(cookie_data, &index, (const unsigned char *)"; ", 2);
+        http_copy_bytes(cookie_data, &index, attributes, attributes_length);
+    }
+    return http_response_write_header_mode(status, content_type_data, content_type_length,
+                                           "Set-Cookie", 10, (const char *)cookie_data,
+                                           cookie_length, body_data, body_length, keep_alive,
+                                           output_data, output_length);
+}
+
+unsigned __int64 http_response_write_cookie_policy(unsigned short status,
+                                                   const char *content_type_data,
+                                                   unsigned __int64 content_type_length,
+                                                   const char *cookie_name_data,
+                                                   unsigned __int64 cookie_name_length,
+                                                   const char *cookie_value_data,
+                                                   unsigned __int64 cookie_value_length,
+                                                   const char *path_data,
+                                                   unsigned __int64 path_length,
+                                                   const char *domain_data,
+                                                   unsigned __int64 domain_length,
+                                                   long long max_age_seconds,
+                                                   unsigned int same_site,
+                                                   unsigned int flags,
+                                                   const unsigned char *body_data,
+                                                   unsigned __int64 body_length,
+                                                   int keep_alive,
+                                                   unsigned char *output_data,
+                                                   unsigned __int64 output_length) {
+    return http_response_write_cookie_policy_mode(status, content_type_data, content_type_length,
+                                                  cookie_name_data, cookie_name_length,
+                                                  cookie_value_data, cookie_value_length,
+                                                  path_data, path_length, domain_data, domain_length,
+                                                  max_age_seconds, same_site, flags,
+                                                  body_data, body_length, keep_alive,
+                                                  output_data, output_length);
 }
 
 static int http_response_header_name_is_reserved(const unsigned char *name_data,
@@ -9395,7 +18092,7 @@ static int http_request_is_token(unsigned char value);
 static int http_request_header_name_is_reserved(const char *name_data,
                                                 unsigned __int64 name_length);
 
-unsigned __int64 http_request_write_prefix(const char *method_data,
+unsigned __int64 http_request_write_prefix_ex(const char *method_data,
                                            unsigned __int64 method_length,
                                            const char *target_data,
                                            unsigned __int64 target_length,
@@ -9404,11 +18101,15 @@ unsigned __int64 http_request_write_prefix(const char *method_data,
                                            const unsigned char *body_data,
                                            unsigned __int64 body_capacity,
                                            unsigned __int64 body_length,
+                                           int keep_alive,
                                            unsigned char *output_data,
                                            unsigned __int64 output_length) {
     static const unsigned char target_prefix[] = " HTTP/1.1\r\nHost: ";
     static const unsigned char length_prefix[] = "\r\nContent-Length: ";
-    static const unsigned char suffix[] = "\r\nConnection: close\r\n\r\n";
+    static const unsigned char close_suffix[] = "\r\nConnection: close\r\n\r\n";
+    static const unsigned char keep_alive_suffix[] = "\r\nConnection: keep-alive\r\n\r\n";
+    const unsigned char *suffix = keep_alive == 1 ? keep_alive_suffix : close_suffix;
+    unsigned __int64 suffix_length = keep_alive == 1 ? sizeof(keep_alive_suffix) - 1 : sizeof(close_suffix) - 1;
     unsigned char body_length_text[20];
     unsigned __int64 body_text_length;
     unsigned __int64 required = 0;
@@ -9435,7 +18136,7 @@ unsigned __int64 http_request_write_prefix(const char *method_data,
         !http_add_length(&required, host_length) ||
         !http_add_length(&required, sizeof(length_prefix) - 1) ||
         !http_add_length(&required, body_text_length) ||
-        !http_add_length(&required, sizeof(suffix) - 1) ||
+        !http_add_length(&required, suffix_length) ||
         !http_add_length(&required, body_length) || output_data == 0 ||
         output_length < required) return 0;
     http_copy_bytes(output_data, &offset, (const unsigned char *)method_data, method_length);
@@ -9445,9 +18146,26 @@ unsigned __int64 http_request_write_prefix(const char *method_data,
     http_copy_bytes(output_data, &offset, (const unsigned char *)host_data, host_length);
     http_copy_bytes(output_data, &offset, length_prefix, sizeof(length_prefix) - 1);
     http_copy_bytes(output_data, &offset, body_length_text, body_text_length);
-    http_copy_bytes(output_data, &offset, suffix, sizeof(suffix) - 1);
+    http_copy_bytes(output_data, &offset, suffix, suffix_length);
     http_copy_bytes(output_data, &offset, body_data, body_length);
     return required;
+}
+
+unsigned __int64 http_request_write_prefix(const char *method_data,
+                                           unsigned __int64 method_length,
+                                           const char *target_data,
+                                           unsigned __int64 target_length,
+                                           const char *host_data,
+                                           unsigned __int64 host_length,
+                                           const unsigned char *body_data,
+                                           unsigned __int64 body_capacity,
+                                           unsigned __int64 body_length,
+                                           unsigned char *output_data,
+                                           unsigned __int64 output_length) {
+    return http_request_write_prefix_ex(method_data, method_length, target_data,
+                                        target_length, host_data, host_length,
+                                        body_data, body_capacity, body_length, 0,
+                                        output_data, output_length);
 }
 
 unsigned __int64 http_request_write(const char *method_data,
@@ -9560,7 +18278,70 @@ unsigned __int64 http_request_write_header_block(
     return required;
 }
 
-unsigned __int64 http_request_write_header(const char *method_data,
+unsigned __int64 http_request_write_header_block_ex(
+    const char *method_data, unsigned __int64 method_length,
+    const char *target_data, unsigned __int64 target_length,
+    const char *host_data, unsigned __int64 host_length,
+    const char *header_data, unsigned __int64 header_length,
+    int keep_alive,
+    const unsigned char *body_data, unsigned __int64 body_length,
+    unsigned char *output_data, unsigned __int64 output_length) {
+    static const unsigned char target_prefix[] = " HTTP/1.1\r\nHost: ";
+    static const unsigned char header_prefix[] = "\r\n";
+    static const unsigned char length_prefix[] = "\r\nContent-Length: ";
+    static const unsigned char close_suffix[] = "\r\nConnection: close\r\n\r\n";
+    static const unsigned char keep_alive_suffix[] = "\r\nConnection: keep-alive\r\n\r\n";
+    const unsigned char *suffix = keep_alive == 1 ? keep_alive_suffix : close_suffix;
+    unsigned __int64 suffix_length = keep_alive == 1 ? sizeof(keep_alive_suffix) - 1 : sizeof(close_suffix) - 1;
+    unsigned char body_length_text[20];
+    unsigned __int64 body_text_length;
+    unsigned __int64 required = 0;
+    unsigned __int64 offset = 0;
+    unsigned __int64 index;
+    if (method_data == 0 || method_length == 0 || target_data == 0 || target_length == 0 ||
+        host_data == 0 || host_length == 0 || (header_data == 0 && header_length > 0) ||
+        (body_data == 0 && body_length > 0) ||
+        !http_request_header_block_is_valid(header_data, header_length)) return 0;
+    for (index = 0; index < method_length; index += 1) {
+        if (!http_request_is_token((unsigned char)method_data[index])) return 0;
+    }
+    for (index = 0; index < target_length; index += 1) {
+        unsigned char value = (unsigned char)target_data[index];
+        if (value < 0x21U || value > 0x7EU || value == '\r' || value == '\n') return 0;
+    }
+    for (index = 0; index < host_length; index += 1) {
+        unsigned char value = (unsigned char)host_data[index];
+        if (value < 0x21U || value > 0x7EU || value == '\r' || value == '\n') return 0;
+    }
+    body_text_length = format_uint(body_length, body_length_text, sizeof(body_length_text));
+    if (body_text_length == 0 || !http_add_length(&required, method_length) ||
+        !http_add_length(&required, 1) || !http_add_length(&required, target_length) ||
+        !http_add_length(&required, sizeof(target_prefix) - 1) ||
+        !http_add_length(&required, host_length) ||
+        (header_length > 0 && (!http_add_length(&required, sizeof(header_prefix) - 1) ||
+                               !http_add_length(&required, header_length))) ||
+        !http_add_length(&required, sizeof(length_prefix) - 1) ||
+        !http_add_length(&required, body_text_length) ||
+        !http_add_length(&required, suffix_length) ||
+        !http_add_length(&required, body_length) || output_data == 0 ||
+        output_length < required) return 0;
+    http_copy_bytes(output_data, &offset, (const unsigned char *)method_data, method_length);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)" ", 1);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)target_data, target_length);
+    http_copy_bytes(output_data, &offset, target_prefix, sizeof(target_prefix) - 1);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)host_data, host_length);
+    if (header_length > 0) {
+        http_copy_bytes(output_data, &offset, header_prefix, sizeof(header_prefix) - 1);
+        http_copy_bytes(output_data, &offset, (const unsigned char *)header_data, header_length);
+    }
+    http_copy_bytes(output_data, &offset, length_prefix, sizeof(length_prefix) - 1);
+    http_copy_bytes(output_data, &offset, body_length_text, body_text_length);
+    http_copy_bytes(output_data, &offset, suffix, suffix_length);
+    http_copy_bytes(output_data, &offset, body_data, body_length);
+    return required;
+}
+
+unsigned __int64 http_request_write_header_ex(const char *method_data,
                                            unsigned __int64 method_length,
                                            const char *target_data,
                                            unsigned __int64 target_length,
@@ -9570,6 +18351,7 @@ unsigned __int64 http_request_write_header(const char *method_data,
                                            unsigned __int64 header_name_length,
                                            const char *header_value_data,
                                            unsigned __int64 header_value_length,
+                                           int keep_alive,
                                            const unsigned char *body_data,
                                            unsigned __int64 body_length,
                                            unsigned char *output_data,
@@ -9578,7 +18360,10 @@ unsigned __int64 http_request_write_header(const char *method_data,
     static const unsigned char header_prefix[] = "\r\n";
     static const unsigned char header_separator[] = ": ";
     static const unsigned char length_prefix[] = "\r\nContent-Length: ";
-    static const unsigned char suffix[] = "\r\nConnection: close\r\n\r\n";
+    static const unsigned char close_suffix[] = "\r\nConnection: close\r\n\r\n";
+    static const unsigned char keep_alive_suffix[] = "\r\nConnection: keep-alive\r\n\r\n";
+    const unsigned char *suffix = keep_alive == 1 ? keep_alive_suffix : close_suffix;
+    unsigned __int64 suffix_length = keep_alive == 1 ? sizeof(keep_alive_suffix) - 1 : sizeof(close_suffix) - 1;
     unsigned char body_length_text[20];
     unsigned __int64 body_text_length;
     unsigned __int64 required = 0;
@@ -9618,7 +18403,7 @@ unsigned __int64 http_request_write_header(const char *method_data,
         !http_add_length(&required, header_value_length) ||
         !http_add_length(&required, sizeof(length_prefix) - 1) ||
         !http_add_length(&required, body_text_length) ||
-        !http_add_length(&required, sizeof(suffix) - 1) ||
+        !http_add_length(&required, suffix_length) ||
         !http_add_length(&required, body_length) || output_data == 0 ||
         output_length < required) return 0;
     http_copy_bytes(output_data, &offset, (const unsigned char *)method_data, method_length);
@@ -9632,9 +18417,173 @@ unsigned __int64 http_request_write_header(const char *method_data,
     http_copy_bytes(output_data, &offset, (const unsigned char *)header_value_data, header_value_length);
     http_copy_bytes(output_data, &offset, length_prefix, sizeof(length_prefix) - 1);
     http_copy_bytes(output_data, &offset, body_length_text, body_text_length);
-    http_copy_bytes(output_data, &offset, suffix, sizeof(suffix) - 1);
+    http_copy_bytes(output_data, &offset, suffix, suffix_length);
     http_copy_bytes(output_data, &offset, body_data, body_length);
     return required;
+}
+
+unsigned __int64 http_request_write_header(const char *method_data,
+                                           unsigned __int64 method_length,
+                                           const char *target_data,
+                                           unsigned __int64 target_length,
+                                           const char *host_data,
+                                           unsigned __int64 host_length,
+                                           const char *header_name_data,
+                                           unsigned __int64 header_name_length,
+                                           const char *header_value_data,
+                                           unsigned __int64 header_value_length,
+                                           const unsigned char *body_data,
+                                           unsigned __int64 body_length,
+                                           unsigned char *output_data,
+                                           unsigned __int64 output_length) {
+    return http_request_write_header_ex(method_data, method_length,
+                                        target_data, target_length,
+                                        host_data, host_length,
+                                        header_name_data, header_name_length,
+                                        header_value_data, header_value_length,
+                                        0, body_data, body_length,
+                                        output_data, output_length);
+}
+
+unsigned __int64 http_request_write_cookie(const char *method_data,
+                                           unsigned __int64 method_length,
+                                           const char *target_data,
+                                           unsigned __int64 target_length,
+                                           const char *host_data,
+                                           unsigned __int64 host_length,
+                                           const char *cookie_name_data,
+                                           unsigned __int64 cookie_name_length,
+                                           const char *cookie_value_data,
+                                           unsigned __int64 cookie_value_length,
+                                           const unsigned char *body_data,
+                                           unsigned __int64 body_length,
+                                           unsigned char *output_data,
+                                           unsigned __int64 output_length) {
+    unsigned char cookie_data[4096];
+    unsigned __int64 cookie_length = 0;
+    unsigned __int64 index;
+    if (cookie_name_data == 0 || cookie_name_length == 0 ||
+        (cookie_value_data == 0 && cookie_value_length > 0)) return 0;
+    for (index = 0; index < cookie_name_length; index += 1) {
+        if (!http_cookie_name_is_token((unsigned char)cookie_name_data[index])) return 0;
+    }
+    for (index = 0; index < cookie_value_length; index += 1) {
+        if (!http_cookie_value_is_octet((unsigned char)cookie_value_data[index])) return 0;
+    }
+    if (!http_add_length(&cookie_length, cookie_name_length) ||
+        !http_add_length(&cookie_length, 1) ||
+        !http_add_length(&cookie_length, cookie_value_length) ||
+        cookie_length > sizeof(cookie_data)) return 0;
+    index = 0;
+    http_copy_bytes(cookie_data, &index, (const unsigned char *)cookie_name_data, cookie_name_length);
+    http_copy_bytes(cookie_data, &index, (const unsigned char *)"=", 1);
+    http_copy_bytes(cookie_data, &index, (const unsigned char *)cookie_value_data, cookie_value_length);
+    return http_request_write_header(method_data, method_length,
+                                     target_data, target_length,
+                                     host_data, host_length,
+                                     "Cookie", 6,
+                                     (const char *)cookie_data, cookie_length,
+                                     body_data, body_length,
+                                     output_data, output_length);
+}
+
+unsigned __int64 http_request_write_cookie_block(
+    const char *method_data, unsigned __int64 method_length,
+    const char *target_data, unsigned __int64 target_length,
+    const char *host_data, unsigned __int64 host_length,
+    const char *cookie_block_data, unsigned __int64 cookie_block_length,
+    const unsigned char *body_data, unsigned __int64 body_length,
+    unsigned char *output_data, unsigned __int64 output_length) {
+    unsigned char cookie_data[4096];
+    unsigned __int64 cookie_length = 0;
+    unsigned __int64 index = 0;
+    int has_pair = 0;
+    if (cookie_block_data == 0 || cookie_block_length == 0) return 0;
+    while (index < cookie_block_length) {
+        unsigned __int64 pair_start;
+        unsigned __int64 pair_end;
+        unsigned __int64 equals = (unsigned __int64)-1;
+        unsigned __int64 name_start;
+        unsigned __int64 name_end;
+        unsigned __int64 value_start;
+        unsigned __int64 value_end;
+        unsigned __int64 name_length;
+        unsigned __int64 value_length;
+        unsigned __int64 pair_length;
+        while (index < cookie_block_length &&
+               (cookie_block_data[index] == ' ' || cookie_block_data[index] == '\t')) {
+            index += 1;
+        }
+        if (index >= cookie_block_length) return 0;
+        pair_start = index;
+        while (index < cookie_block_length && cookie_block_data[index] != ';') {
+            index += 1;
+        }
+        pair_end = index;
+        while (pair_end > pair_start &&
+               (cookie_block_data[pair_end - 1] == ' ' || cookie_block_data[pair_end - 1] == '\t')) {
+            pair_end -= 1;
+        }
+        for (unsigned __int64 cursor = pair_start; cursor < pair_end; cursor += 1) {
+            if (cookie_block_data[cursor] == '=' && equals == (unsigned __int64)-1) {
+                equals = cursor;
+            }
+        }
+        if (equals == (unsigned __int64)-1) return 0;
+        name_start = pair_start;
+        while (name_start < equals &&
+               (cookie_block_data[name_start] == ' ' || cookie_block_data[name_start] == '\t')) {
+            name_start += 1;
+        }
+        name_end = equals;
+        while (name_end > name_start &&
+               (cookie_block_data[name_end - 1] == ' ' || cookie_block_data[name_end - 1] == '\t')) {
+            name_end -= 1;
+        }
+        value_start = equals + 1;
+        while (value_start < pair_end &&
+               (cookie_block_data[value_start] == ' ' || cookie_block_data[value_start] == '\t')) {
+            value_start += 1;
+        }
+        value_end = pair_end;
+        if (name_start == name_end || value_start > value_end) return 0;
+        name_length = name_end - name_start;
+        value_length = value_end - value_start;
+        for (unsigned __int64 cursor = name_start; cursor < name_end; cursor += 1) {
+            if (!http_cookie_name_is_token((unsigned char)cookie_block_data[cursor])) return 0;
+        }
+        for (unsigned __int64 cursor = value_start; cursor < value_end; cursor += 1) {
+            if (!http_cookie_value_is_octet((unsigned char)cookie_block_data[cursor])) return 0;
+        }
+        pair_length = name_length;
+        if (!http_add_length(&pair_length, 1) || !http_add_length(&pair_length, value_length)) return 0;
+        if (has_pair && !http_add_length(&cookie_length, 2)) return 0;
+        if (!http_add_length(&cookie_length, pair_length) || cookie_length > sizeof(cookie_data)) return 0;
+        if (has_pair) {
+            unsigned __int64 separator_offset = cookie_length - pair_length - 2;
+            cookie_data[separator_offset] = ';';
+            cookie_data[separator_offset + 1] = ' ';
+        }
+        {
+            unsigned __int64 offset = cookie_length - pair_length;
+            http_copy_bytes(cookie_data, &offset,
+                            (const unsigned char *)cookie_block_data + name_start, name_length);
+            http_copy_bytes(cookie_data, &offset, (const unsigned char *)"=", 1);
+            http_copy_bytes(cookie_data, &offset,
+                            (const unsigned char *)cookie_block_data + value_start, value_length);
+        }
+        has_pair = 1;
+        if (index == cookie_block_length) break;
+        index += 1;
+        if (index == cookie_block_length) return 0;
+    }
+    return http_request_write_header(method_data, method_length,
+                                     target_data, target_length,
+                                     host_data, host_length,
+                                     "Cookie", 6,
+                                     (const char *)cookie_data, cookie_length,
+                                     body_data, body_length,
+                                     output_data, output_length);
 }
 
 static int http_request_is_token(unsigned char value) {
@@ -10546,6 +19495,72 @@ unsigned __int64 http_request_target(const unsigned char *input_data,
                                    output_data, output_length);
 }
 
+static int http_target_hex_value(unsigned char value) {
+    if (value >= '0' && value <= '9') return (int)(value - '0');
+    if (value >= 'a' && value <= 'f') return (int)(value - 'a' + 10);
+    if (value >= 'A' && value <= 'F') return (int)(value - 'A' + 10);
+    return -1;
+}
+
+int http_request_target_decode_exact(const unsigned char *input_data,
+                                     unsigned __int64 input_length,
+                                     unsigned char *output_data,
+                                     unsigned __int64 output_capacity,
+                                     unsigned __int64 *length_data,
+                                     unsigned __int64 length_capacity) {
+    unsigned __int64 method_start;
+    unsigned __int64 method_length;
+    unsigned __int64 target_start;
+    unsigned __int64 target_length;
+    unsigned __int64 headers_start;
+    unsigned __int64 index;
+    unsigned __int64 output_index = 0;
+    unsigned __int64 decoded_length = 0;
+    if (length_data == 0 || length_capacity == 0 ||
+        !http_request_parse_line(input_data, input_length, &method_start,
+                                 &method_length, &target_start, &target_length,
+                                 &headers_start) || target_length == 0) {
+        return 0;
+    }
+    for (index = 0; index < target_length; index += 1) {
+        unsigned char value = input_data[target_start + index];
+        if (value == '%') {
+            int high;
+            int low;
+            unsigned char decoded;
+            if (index + 2 >= target_length ||
+                (high = http_target_hex_value(input_data[target_start + index + 1])) < 0 ||
+                (low = http_target_hex_value(input_data[target_start + index + 2])) < 0) {
+                return 0;
+            }
+            decoded = (unsigned char)(high * 16 + low);
+            if (decoded == 0) return 0;
+            index += 2;
+        }
+        if (decoded_length == (unsigned __int64)-1) return 0;
+        decoded_length += 1;
+    }
+    if (decoded_length > output_capacity ||
+        (decoded_length > 0 && output_data == 0)) {
+        return 0;
+    }
+    for (index = 0; index < target_length;) {
+        unsigned char value = input_data[target_start + index];
+        if (value == '%') {
+            int high = http_target_hex_value(input_data[target_start + index + 1]);
+            int low = http_target_hex_value(input_data[target_start + index + 2]);
+            output_data[output_index] = (unsigned char)(high * 16 + low);
+            index += 3;
+        } else {
+            output_data[output_index] = value;
+            index += 1;
+        }
+        output_index += 1;
+    }
+    length_data[0] = decoded_length;
+    return 1;
+}
+
 unsigned __int64 http_request_header(const unsigned char *input_data,
                                      unsigned __int64 input_length,
                                      const char *name_data,
@@ -10569,6 +19584,40 @@ unsigned __int64 http_request_header(const unsigned char *input_data,
     }
     return http_request_copy_field(input_data, value_start, value_length,
                                    output_data, output_length);
+}
+
+int http_request_header_exact(const unsigned char *input_data,
+                              unsigned __int64 input_length,
+                              const char *name_data,
+                              unsigned __int64 name_length,
+                              unsigned char *output_data,
+                              unsigned __int64 output_capacity,
+                              unsigned __int64 *length_data,
+                              unsigned __int64 length_capacity) {
+    unsigned __int64 method_start;
+    unsigned __int64 method_length;
+    unsigned __int64 target_start;
+    unsigned __int64 target_length;
+    unsigned __int64 headers_start;
+    unsigned __int64 value_start;
+    unsigned __int64 value_length;
+    if (length_data == 0 || length_capacity == 0 ||
+        !http_request_parse_line(input_data, input_length, &method_start,
+                                 &method_length, &target_start, &target_length,
+                                 &headers_start) ||
+        http_request_find_header(input_data, input_length, headers_start,
+                                 name_data, name_length, &value_start,
+                                 &value_length) <= 0 ||
+        value_length > output_capacity ||
+        (value_length > 0 && output_data == 0)) {
+        return 0;
+    }
+    if (value_length > 0) {
+        http_request_copy_field(input_data, value_start, value_length,
+                                output_data, output_capacity);
+    }
+    length_data[0] = value_length;
+    return 1;
 }
 
 unsigned __int64 http_request_body(const unsigned char *input_data,
@@ -10597,6 +19646,79 @@ unsigned __int64 http_request_body(const unsigned char *input_data,
     }
     return http_request_copy_field(input_data, body_start, content_length,
                                    output_data, output_length);
+}
+
+int http_request_body_exact(const unsigned char *input_data,
+                            unsigned __int64 input_length,
+                            unsigned char *output_data,
+                            unsigned __int64 output_capacity,
+                            unsigned __int64 *length_data,
+                            unsigned __int64 length_capacity) {
+    unsigned __int64 method_start;
+    unsigned __int64 method_length;
+    unsigned __int64 target_start;
+    unsigned __int64 target_length;
+    unsigned __int64 headers_start;
+    unsigned __int64 body_start;
+    unsigned __int64 content_length;
+    int has_content_length;
+    int has_transfer_encoding;
+    if (length_data == 0 || length_capacity == 0 ||
+        !http_request_parse_line(input_data, input_length, &method_start,
+                                 &method_length, &target_start, &target_length,
+                                 &headers_start) ||
+        !http_request_headers(input_data, input_length, headers_start,
+                              &body_start, &content_length,
+                              &has_content_length, &has_transfer_encoding) ||
+        !has_content_length || has_transfer_encoding || body_start > input_length ||
+        content_length > input_length - body_start ||
+        content_length > output_capacity ||
+        (content_length > 0 && output_data == 0)) {
+        return 0;
+    }
+    if (content_length > 0) {
+        http_request_copy_field(input_data, body_start, content_length,
+                                output_data, output_capacity);
+    }
+    length_data[0] = content_length;
+    return 1;
+}
+
+int http_request_body_exact_prefix(const unsigned char *input_data,
+                                   unsigned __int64 input_capacity,
+                                   unsigned __int64 input_length,
+                                   unsigned char *output_data,
+                                   unsigned __int64 output_capacity,
+                                   unsigned __int64 *length_data,
+                                   unsigned __int64 length_capacity) {
+    unsigned __int64 method_start;
+    unsigned __int64 method_length;
+    unsigned __int64 target_start;
+    unsigned __int64 target_length;
+    unsigned __int64 headers_start;
+    unsigned __int64 body_start;
+    unsigned __int64 content_length;
+    int has_content_length;
+    int has_transfer_encoding;
+    if (length_data == 0 || length_capacity == 0 || input_length > input_capacity ||
+        !http_request_parse_line(input_data, input_length, &method_start,
+                                 &method_length, &target_start, &target_length,
+                                 &headers_start) ||
+        !http_request_headers(input_data, input_length, headers_start,
+                              &body_start, &content_length,
+                              &has_content_length, &has_transfer_encoding) ||
+        !has_content_length || has_transfer_encoding || body_start > input_length ||
+        content_length > input_length - body_start ||
+        content_length > output_capacity ||
+        (content_length > 0 && output_data == 0)) {
+        return 0;
+    }
+    if (content_length > 0) {
+        http_request_copy_field(input_data, body_start, content_length,
+                                output_data, output_capacity);
+    }
+    length_data[0] = content_length;
+    return 1;
 }
 
 static int http_query_hex_value(unsigned char value) {
@@ -10775,6 +19897,381 @@ int http_query_param_exact(const unsigned char *input_data,
         if (value == '%') cursor += 2;
     }
     *output_size = decoded_length;
+    return 1;
+}
+
+/* Read one application/x-www-form-urlencoded field from a bounded request
+ * body prefix. The body framing is validated before the field is decoded and
+ * caller-owned output is published only after the complete pair list passes. */
+static int http_form_param_exact_range(const unsigned char *input_data,
+                                       unsigned __int64 body_start,
+                                       unsigned __int64 body_length,
+                                       const char *key_data,
+                                       unsigned __int64 key_length,
+                                       unsigned char *output_data,
+                                       unsigned __int64 output_length,
+                                       unsigned __int64 *output_size,
+                                       unsigned __int64 output_size_capacity) {
+    unsigned __int64 body_end;
+    unsigned __int64 cursor;
+    unsigned __int64 value_start = 0;
+    unsigned __int64 value_length = 0;
+    unsigned __int64 decoded_length = 0;
+    unsigned __int64 output_offset = 0;
+    int matched = 0;
+    if (input_data == 0 || key_data == 0 || key_length == 0 || output_data == 0 ||
+        output_size == 0 || output_size_capacity == 0 ||
+        body_length > (unsigned __int64)-1 - body_start) return 0;
+    body_end = body_start + body_length;
+    for (cursor = body_start; cursor < body_end;) {
+        unsigned __int64 pair_end = cursor;
+        unsigned __int64 equals = cursor;
+        unsigned __int64 index;
+        unsigned __int64 decoded = 0;
+        int key_matches = 0;
+        while (pair_end < body_end && input_data[pair_end] != '&') pair_end += 1;
+        if (pair_end == cursor) return 0;
+        while (equals < pair_end && input_data[equals] != '=') equals += 1;
+        if (equals == cursor || equals == pair_end) return 0;
+        if (equals - cursor == key_length) {
+            for (index = 0; index < key_length; index += 1) {
+                if (input_data[cursor + index] != (unsigned char)key_data[index]) break;
+            }
+            key_matches = index == key_length;
+        }
+        if (key_matches) {
+            if (matched) return 0;
+            matched = 1;
+            value_start = equals + 1;
+            value_length = pair_end - value_start;
+            for (index = 0; index < value_length; index += 1) {
+                unsigned char value = input_data[value_start + index];
+                if (value == '%') {
+                    int high;
+                    int low;
+                    if (index + 2 >= value_length ||
+                        (high = http_query_hex_value(input_data[value_start + index + 1])) < 0 ||
+                        (low = http_query_hex_value(input_data[value_start + index + 2])) < 0) return 0;
+                    (void)high;
+                    (void)low;
+                    index += 2;
+                }
+                if (decoded == (unsigned __int64)-1) return 0;
+                decoded += 1;
+            }
+            decoded_length = decoded;
+        }
+        if (pair_end == body_end) break;
+        cursor = pair_end + 1;
+    }
+    if (!matched || output_length < decoded_length) return 0;
+    for (cursor = 0; cursor < value_length; cursor += 1) {
+        unsigned char value = input_data[value_start + cursor];
+        if (value == '+') {
+            output_data[output_offset] = ' ';
+        } else if (value == '%') {
+            int high = http_query_hex_value(input_data[value_start + cursor + 1]);
+            int low = http_query_hex_value(input_data[value_start + cursor + 2]);
+            output_data[output_offset] = (unsigned char)(high * 16 + low);
+        } else {
+            output_data[output_offset] = value;
+        }
+        output_offset += 1;
+        if (value == '%') cursor += 2;
+    }
+    *output_size = decoded_length;
+    return 1;
+}
+
+int http_form_param_exact_prefix(const unsigned char *input_data,
+                                 unsigned __int64 input_capacity,
+                                 unsigned __int64 input_length,
+                                 const char *key_data,
+                                 unsigned __int64 key_length,
+                                 unsigned char *output_data,
+                                 unsigned __int64 output_length,
+                                 unsigned __int64 *output_size,
+                                 unsigned __int64 output_size_capacity) {
+    unsigned __int64 method_start;
+    unsigned __int64 method_length;
+    unsigned __int64 target_start;
+    unsigned __int64 target_length;
+    unsigned __int64 headers_start;
+    unsigned __int64 body_start;
+    unsigned __int64 content_length;
+    unsigned __int64 content_type_start;
+    unsigned __int64 content_type_length;
+    int has_content_length;
+    int has_transfer_encoding;
+    static const char expected_content_type[] = "application/x-www-form-urlencoded";
+    if (input_length > input_capacity ||
+        !http_request_parse_line(input_data, input_length, &method_start,
+                                 &method_length, &target_start, &target_length,
+                                 &headers_start) ||
+        !http_request_headers(input_data, input_length, headers_start,
+                              &body_start, &content_length,
+                              &has_content_length, &has_transfer_encoding) ||
+        !has_content_length || has_transfer_encoding || body_start > input_length ||
+        content_length > input_length - body_start) return 0;
+    if (http_request_find_header(input_data, input_length, headers_start,
+                                 "Content-Type", 12,
+                                 &content_type_start, &content_type_length) != 1 ||
+        content_type_length != sizeof(expected_content_type) - 1) return 0;
+    {
+        unsigned __int64 content_type_index;
+        for (content_type_index = 0;
+             content_type_index < content_type_length;
+             content_type_index += 1) {
+            unsigned char value = input_data[content_type_start + content_type_index];
+            unsigned char expected = (unsigned char)expected_content_type[content_type_index];
+            if (value >= 'A' && value <= 'Z') value = (unsigned char)(value + ('a' - 'A'));
+            if (value != expected) return 0;
+        }
+    }
+    return http_form_param_exact_range(
+        input_data, body_start, content_length, key_data, key_length,
+        output_data, output_length, output_size, output_size_capacity);
+}
+
+static int http_multipart_ci_equal(const unsigned char *data,
+                                   unsigned __int64 start,
+                                   unsigned __int64 length,
+                                   const char *expected,
+                                   unsigned __int64 expected_length) {
+    unsigned __int64 index;
+    if (data == 0 || expected == 0 || length != expected_length) return 0;
+    for (index = 0; index < length; index += 1) {
+        unsigned char value = data[start + index];
+        unsigned char wanted = (unsigned char)expected[index];
+        if (value >= 'A' && value <= 'Z') value = (unsigned char)(value + 32);
+        if (wanted >= 'A' && wanted <= 'Z') wanted = (unsigned char)(wanted + 32);
+        if (value != wanted) return 0;
+    }
+    return 1;
+}
+
+static int http_multipart_bytes_equal(const unsigned char *data,
+                                      unsigned __int64 start,
+                                      unsigned __int64 length,
+                                      const char *expected,
+                                      unsigned __int64 expected_length) {
+    unsigned __int64 index;
+    if (data == 0 || expected == 0 || length != expected_length) return 0;
+    for (index = 0; index < length; index += 1) {
+        if (data[start + index] != (unsigned char)expected[index]) return 0;
+    }
+    return 1;
+}
+
+static int http_multipart_boundary(const unsigned char *data,
+                                   unsigned __int64 start,
+                                   unsigned __int64 length,
+                                   unsigned __int64 *boundary_start,
+                                   unsigned __int64 *boundary_length) {
+    static const char prefix[] = "multipart/form-data; boundary=";
+    unsigned __int64 prefix_length = sizeof(prefix) - 1;
+    unsigned __int64 index;
+    if (data == 0 || boundary_start == 0 || boundary_length == 0 ||
+        length <= prefix_length ||
+        !http_multipart_ci_equal(data, start, prefix_length, prefix, prefix_length)) {
+        return 0;
+    }
+    *boundary_start = start + prefix_length;
+    *boundary_length = length - prefix_length;
+    if (*boundary_length == 0 || *boundary_length > 70) return 0;
+    for (index = 0; index < *boundary_length; index += 1) {
+        unsigned char value = data[*boundary_start + index];
+        if (value <= 32 || value >= 127 || value == '"' || value == ';') return 0;
+    }
+    return 1;
+}
+
+static int http_multipart_disposition_matches(const unsigned char *data,
+                                              unsigned __int64 start,
+                                              unsigned __int64 length,
+                                              const char *key_data,
+                                              unsigned __int64 key_length) {
+    unsigned __int64 cursor = start;
+    unsigned __int64 end = start + length;
+    unsigned __int64 token_start;
+    unsigned __int64 token_length;
+    unsigned __int64 value_start;
+    unsigned __int64 value_length;
+    int name_present = 0;
+    int name_matches = 0;
+    if (data == 0 || key_data == 0 || key_length == 0 || end < start) return 0;
+    while (cursor < end && (data[cursor] == ' ' || data[cursor] == '\t')) cursor += 1;
+    token_start = cursor;
+    while (cursor < end && http_request_is_token(data[cursor])) cursor += 1;
+    if (!http_multipart_ci_equal(data, token_start, cursor - token_start,
+                                 "form-data", 9)) return 0;
+    for (;;) {
+        while (cursor < end && (data[cursor] == ' ' || data[cursor] == '\t')) cursor += 1;
+        if (cursor == end) return name_present ? (name_matches ? 2 : 1) : 0;
+        if (data[cursor] != ';') return 0;
+        cursor += 1;
+        while (cursor < end && (data[cursor] == ' ' || data[cursor] == '\t')) cursor += 1;
+        token_start = cursor;
+        while (cursor < end && http_request_is_token(data[cursor])) cursor += 1;
+        token_length = cursor - token_start;
+        while (cursor < end && (data[cursor] == ' ' || data[cursor] == '\t')) cursor += 1;
+        if (token_length == 0 || cursor == end || data[cursor] != '=') return 0;
+        cursor += 1;
+        while (cursor < end && (data[cursor] == ' ' || data[cursor] == '\t')) cursor += 1;
+        if (cursor == end || data[cursor] != '"') return 0;
+        cursor += 1;
+        value_start = cursor;
+        while (cursor < end && data[cursor] != '"') {
+            if (data[cursor] == '\r' || data[cursor] == '\n') return 0;
+            cursor += 1;
+        }
+        if (cursor == end) return 0;
+        value_length = cursor - value_start;
+        cursor += 1;
+        if (http_multipart_ci_equal(data, token_start, token_length, "name", 4)) {
+            if (name_present) return 0;
+            name_present = 1;
+            name_matches = http_multipart_bytes_equal(data, value_start, value_length,
+                                                      key_data, key_length);
+        }
+    }
+}
+
+int http_multipart_part_exact_prefix(const unsigned char *input_data,
+                                     unsigned __int64 input_capacity,
+                                     unsigned __int64 input_length,
+                                     const char *key_data,
+                                     unsigned __int64 key_length,
+                                     unsigned char *output_data,
+                                     unsigned __int64 output_length,
+                                     unsigned __int64 *output_size,
+                                     unsigned __int64 output_size_capacity) {
+    unsigned __int64 method_start;
+    unsigned __int64 method_length;
+    unsigned __int64 target_start;
+    unsigned __int64 target_length;
+    unsigned __int64 headers_start;
+    unsigned __int64 body_start;
+    unsigned __int64 content_length;
+    unsigned __int64 content_type_start;
+    unsigned __int64 content_type_length;
+    unsigned __int64 boundary_start;
+    unsigned __int64 boundary_length;
+    unsigned __int64 body_end;
+    unsigned __int64 marker_length;
+    unsigned __int64 cursor;
+    unsigned __int64 header_end;
+    unsigned __int64 search;
+    unsigned __int64 delimiter_end;
+    unsigned __int64 part_content_start;
+    unsigned __int64 part_content_length;
+    unsigned __int64 found_start = 0;
+    unsigned __int64 found_length = 0;
+    unsigned __int64 index;
+    int has_content_length;
+    int has_transfer_encoding;
+    int disposition_found;
+    int disposition_header_seen;
+    int disposition_result;
+    int field_found = 0;
+    int final_boundary;
+    static const char marker_prefix[] = "--";
+    if (input_data == 0 || key_data == 0 || key_length == 0 || output_data == 0 ||
+        output_size == 0 || output_size_capacity == 0 || input_length > input_capacity) return 0;
+    if (!http_request_parse_line(input_data, input_length, &method_start, &method_length,
+                                 &target_start, &target_length, &headers_start) ||
+        !http_request_headers(input_data, input_length, headers_start, &body_start,
+                              &content_length, &has_content_length, &has_transfer_encoding) ||
+        !has_content_length || has_transfer_encoding || body_start > input_length ||
+        content_length > input_length - body_start ||
+        http_request_find_header(input_data, input_length, headers_start, "Content-Type", 12,
+                                 &content_type_start, &content_type_length) != 1 ||
+        !http_multipart_boundary(input_data, content_type_start, content_type_length,
+                                 &boundary_start, &boundary_length) ||
+        content_length > (unsigned __int64)-1 - body_start) return 0;
+    body_end = body_start + content_length;
+    marker_length = boundary_length + 2;
+    if (body_start + marker_length + 2 > body_end ||
+        input_data[body_start] != '-' || input_data[body_start + 1] != '-') return 0;
+    for (index = 0; index < boundary_length; index += 1) {
+        if (input_data[body_start + 2 + index] != input_data[boundary_start + index]) return 0;
+    }
+    cursor = body_start + marker_length;
+    if (cursor + 2 > body_end || input_data[cursor] != '\r' || input_data[cursor + 1] != '\n') return 0;
+    cursor += 2;
+    for (;;) {
+        if (cursor >= body_end) return 0;
+        header_end = 0;
+        for (search = cursor; search + 3 < body_end; search += 1) {
+            if (input_data[search] == '\r' && input_data[search + 1] == '\n' &&
+                input_data[search + 2] == '\r' && input_data[search + 3] == '\n') {
+                header_end = search;
+                break;
+            }
+        }
+        if (header_end == 0 || header_end < cursor) return 0;
+        disposition_found = 0;
+        disposition_header_seen = 0;
+        {
+            unsigned __int64 header_cursor = cursor;
+            unsigned __int64 next_header;
+            unsigned __int64 name_start;
+            unsigned __int64 name_length;
+            unsigned __int64 value_start;
+            unsigned __int64 value_length;
+            int header_result;
+            for (;;) {
+                header_result = http_request_next_header(input_data, header_end + 4, header_cursor,
+                                                         &next_header, &name_start, &name_length,
+                                                         &value_start, &value_length);
+                if (header_result < 0) return 0;
+                if (header_result == 0) break;
+                if (http_request_header_name_equals(input_data, name_start, name_length,
+                                                    "Content-Disposition", 19)) {
+                    if (disposition_header_seen) return 0;
+                    disposition_header_seen = 1;
+                    disposition_result = http_multipart_disposition_matches(
+                        input_data, value_start, value_length, key_data, key_length);
+                    if (disposition_result == 0) return 0;
+                    disposition_found = disposition_result == 2;
+                }
+                header_cursor = next_header;
+            }
+        }
+        if (!disposition_header_seen) return 0;
+        part_content_start = header_end + 4;
+        delimiter_end = 0;
+        final_boundary = 0;
+        for (search = part_content_start; search + marker_length + 4 <= body_end; search += 1) {
+            if (input_data[search] != '\r' || input_data[search + 1] != '\n') continue;
+            for (index = 0; index < marker_length; index += 1) {
+                if (input_data[search + 2 + index] != (index < 2 ? (unsigned char)marker_prefix[index] : input_data[boundary_start + index - 2])) break;
+            }
+            if (index != marker_length) continue;
+            delimiter_end = search + 2 + marker_length;
+            if (delimiter_end + 2 <= body_end && input_data[delimiter_end] == '-' && input_data[delimiter_end + 1] == '-') {
+                final_boundary = 1;
+                if (delimiter_end + 2 != body_end &&
+                    (delimiter_end + 4 != body_end || input_data[delimiter_end + 2] != '\r' || input_data[delimiter_end + 3] != '\n')) return 0;
+                break;
+            }
+            if (delimiter_end + 2 <= body_end && input_data[delimiter_end] == '\r' && input_data[delimiter_end + 1] == '\n') break;
+            delimiter_end = 0;
+        }
+        if (delimiter_end == 0) return 0;
+        part_content_length = search - part_content_start;
+        if (disposition_found) {
+            if (field_found) return 0;
+            field_found = 1;
+            found_start = part_content_start;
+            found_length = part_content_length;
+        }
+        if (final_boundary) break;
+        cursor = delimiter_end + 2;
+    }
+    if (!field_found || output_length < found_length) return 0;
+    for (index = 0; index < found_length; index += 1) output_data[index] = input_data[found_start + index];
+    *output_size = found_length;
     return 1;
 }
 
@@ -11206,6 +20703,74 @@ unsigned __int64 http_router_respond_prefix(
                                            output_length, 0);
 }
 
+/* Dispatch a bounded request through the registered routes and serialize a
+ * one-shot HTTP/1.1 chunked response. Chunked responses close the connection;
+ * callers that need keep-alive must continue using the session responder. */
+static unsigned __int64 jadren_http_router_respond_chunked_mode(
+    const unsigned char *input_data, unsigned __int64 input_length,
+    unsigned char *output_data, unsigned __int64 output_length) {
+    unsigned __int64 method_start;
+    unsigned __int64 method_length;
+    unsigned __int64 target_start;
+    unsigned __int64 target_length;
+    unsigned __int64 headers_start;
+    int index;
+    int best_prefix = -1;
+    unsigned __int64 best_prefix_length = 0;
+    if (!http_request_parse_line(input_data, input_length, &method_start,
+                                 &method_length, &target_start, &target_length,
+                                 &headers_start)) {
+        return 0;
+    }
+    for (index = 0; index < JADREN_HTTP_ROUTE_CAPACITY; index += 1) {
+        JadrenHttpRoute *route = &jadren_http_routes[index];
+        if (route->active && route->match_mode == 0 &&
+            jadren_http_route_matches(route, input_data, method_start,
+                                      method_length, target_start, target_length)) {
+            return http_response_write_chunked_prefix_mode(
+                route->status, route->content_type, route->content_type_length,
+                route->body, sizeof(route->body), route->body_length,
+                output_data, output_length);
+        }
+        if (route->active && route->match_mode == 1 &&
+            route->target_length > best_prefix_length &&
+            jadren_http_route_prefix_matches(route, input_data, method_start,
+                                             method_length, target_start,
+                                             target_length)) {
+            best_prefix = index;
+            best_prefix_length = route->target_length;
+        }
+    }
+    if (best_prefix >= 0) {
+        JadrenHttpRoute *route = &jadren_http_routes[best_prefix];
+        return http_response_write_chunked_prefix_mode(
+            route->status, route->content_type, route->content_type_length,
+            route->body, sizeof(route->body), route->body_length, output_data,
+            output_length);
+    }
+    return http_response_write_chunked_prefix_mode(
+        404, "text/plain", 10, (const unsigned char *)"not found", 9, 9,
+        output_data, output_length);
+}
+
+unsigned __int64 http_router_respond_chunked(
+    const unsigned char *input_data, unsigned __int64 input_length,
+    unsigned char *output_data, unsigned __int64 output_length) {
+    return jadren_http_router_respond_chunked_mode(input_data, input_length,
+                                                   output_data, output_length);
+}
+
+/* Dispatch only the explicit valid request prefix from a larger caller-owned
+ * receive buffer and serialize the response with chunked framing. */
+unsigned __int64 http_router_respond_chunked_prefix(
+    const unsigned char *input_data, unsigned __int64 input_capacity,
+    unsigned __int64 input_length, unsigned char *output_data,
+    unsigned __int64 output_length) {
+    if (input_length > input_capacity) return 0;
+    return jadren_http_router_respond_chunked_mode(
+        input_data, input_length, output_data, output_length);
+}
+
 #if JADREN_FILE_RUNTIME_HAS_NETWORK_SUPPORT
 #define JADREN_HTTP_SESSION_CAPACITY 4
 #define JADREN_HTTP_SESSION_CONNECTION_CAPACITY 8
@@ -11248,6 +20813,7 @@ typedef struct JadrenHttpSession {
     unsigned int max_body_bytes;
     unsigned int cursor;
     int tls_enabled;
+    int chunked_mode;
     unsigned __int64 certificate_length;
     unsigned __int64 private_key_length;
     char certificate[JADREN_HTTP_SESSION_TLS_PATH_CAPACITY];
@@ -11327,6 +20893,128 @@ static int jadren_http_session_send_all(JadrenHttpSessionConnection *connection,
     return 1;
 }
 
+/* Reads one complete request frame into the session's bounded connection
+ * buffer. The caller decides when to publish the frame and which response
+ * bytes to send; this helper never routes, writes or closes the connection. */
+static int jadren_http_session_read_frame(
+    JadrenHttpSession *session, JadrenHttpSessionConnection *connection,
+    unsigned int timeout_ms, unsigned __int64 *frame_length_output) {
+    unsigned __int64 method_start;
+    unsigned __int64 method_length;
+    unsigned __int64 target_start;
+    unsigned __int64 target_length;
+    unsigned __int64 headers_start;
+    unsigned __int64 body_start;
+    unsigned __int64 content_length;
+    unsigned __int64 frame_length;
+    unsigned __int64 chunked_body_length;
+    unsigned __int64 chunked_body_end;
+    int has_content_length;
+    int has_transfer_encoding;
+    int receive_result;
+    if (session == 0 || connection == 0 || !connection->active ||
+        frame_length_output == 0) {
+        return -1;
+    }
+#if JADREN_FILE_RUNTIME_HAS_TLS_SUPPORT
+    if (session->tls_enabled) {
+        unsigned int tls_state = net_tls_state(connection->tls_token);
+        unsigned int tls_steps = 0U;
+        while (tls_state == 1U && tls_steps < 8U) {
+            (void)net_tls_step(connection->tls_token, timeout_ms);
+            tls_state = net_tls_state(connection->tls_token);
+            tls_steps += 1U;
+        }
+        if (tls_state == 4U || tls_state == 3U || tls_state == 0U) return -1;
+        if (tls_state != 2U) return 0;
+    }
+#endif
+    (void)net_socket_set_timeout(connection->socket_token,
+                                 timeout_ms == 0 ? 1 : timeout_ms);
+    for (;;) {
+        frame_length = http_request_frame_length_prefix(
+            connection->request, JADREN_HTTP_SESSION_REQUEST_CAPACITY,
+            connection->request_length);
+        if (frame_length != 0) break;
+        if (http_request_parse_line(connection->request, connection->request_length,
+                                    &method_start, &method_length, &target_start,
+                                    &target_length, &headers_start) &&
+            http_request_headers(connection->request, connection->request_length,
+                                 headers_start, &body_start, &content_length,
+                                 &has_content_length, &has_transfer_encoding)) {
+            if (has_transfer_encoding && has_content_length) return -1;
+            if (body_start > session->max_header_bytes ||
+                (!has_transfer_encoding && has_content_length &&
+                 content_length > session->max_body_bytes)) {
+                return -1;
+            }
+            if (has_transfer_encoding) {
+                frame_length = http_request_chunked_frame_length_prefix(
+                    connection->request, JADREN_HTTP_SESSION_REQUEST_CAPACITY,
+                    connection->request_length);
+                if (frame_length != 0) break;
+            } else if (!has_content_length) {
+                frame_length = body_start;
+                break;
+            }
+        } else if (jadren_http_session_headers_terminated(
+                       connection->request, connection->request_length) ||
+                   connection->request_length >= session->max_header_bytes) {
+            return -1;
+        }
+        if (connection->request_length >= JADREN_HTTP_SESSION_REQUEST_CAPACITY) {
+            return -1;
+        }
+        receive_result = jadren_http_session_receive(
+            connection,
+            connection->request + connection->request_length,
+            JADREN_HTTP_SESSION_REQUEST_CAPACITY - connection->request_length);
+        if (receive_result < 0) return 0;
+        if (receive_result == 0) return -1;
+        connection->request_length += (unsigned __int64)receive_result;
+    }
+    if (!http_request_parse_line(connection->request, connection->request_length,
+                                 &method_start, &method_length, &target_start,
+                                 &target_length, &headers_start) ||
+        !http_request_headers(connection->request, connection->request_length,
+                              headers_start, &body_start, &content_length,
+                              &has_content_length, &has_transfer_encoding)) {
+        return -1;
+    }
+    if (has_transfer_encoding && has_content_length) return -1;
+    if (body_start > session->max_header_bytes ||
+        (!has_transfer_encoding && has_content_length &&
+         content_length > session->max_body_bytes)) {
+        return -1;
+    }
+    if (has_transfer_encoding) {
+        frame_length = http_request_chunked_frame_length_prefix(
+            connection->request, JADREN_HTTP_SESSION_REQUEST_CAPACITY,
+            connection->request_length);
+        if (frame_length == 0 ||
+            !http_response_chunked_scan(
+                connection->request, frame_length, body_start, 0, 0,
+                &chunked_body_length, &chunked_body_end) ||
+            chunked_body_end != frame_length ||
+            chunked_body_length > session->max_body_bytes) {
+            return -1;
+        }
+    } else {
+        frame_length = http_request_frame_length_prefix(
+            connection->request, JADREN_HTTP_SESSION_REQUEST_CAPACITY,
+            connection->request_length);
+    }
+    if (frame_length == 0 ||
+        (!has_transfer_encoding &&
+         (body_start > frame_length ||
+          (has_content_length && frame_length - body_start != content_length) ||
+          (!has_content_length && frame_length != body_start)))) {
+        return -1;
+    }
+    *frame_length_output = frame_length;
+    return 1;
+}
+
 static int jadren_http_session_wait_listener(unsigned __int64 listener,
                                              unsigned int timeout_ms) {
     JadrenFdSet read_set;
@@ -11346,6 +21034,44 @@ static JadrenHttpSession *jadren_http_session_find(unsigned __int64 token) {
         return 0;
     }
     return jadren_http_sessions + (token - 1ULL);
+}
+
+static unsigned __int64 jadren_http_session_connection_token(
+    const JadrenHttpSession *session, unsigned int connection_index) {
+    unsigned __int64 session_index;
+    if (session == 0 || connection_index >= JADREN_HTTP_SESSION_CONNECTION_CAPACITY) {
+        return 0;
+    }
+    session_index = (unsigned __int64)(session - jadren_http_sessions);
+    return session_index * JADREN_HTTP_SESSION_CONNECTION_CAPACITY +
+           (unsigned __int64)connection_index + 1ULL;
+}
+
+static JadrenHttpSessionConnection *jadren_http_session_find_connection(
+    unsigned __int64 token, JadrenHttpSession **session_output) {
+    unsigned __int64 raw;
+    unsigned int session_index;
+    unsigned int connection_index;
+    JadrenHttpSession *session;
+    if (token == 0) {
+        return 0;
+    }
+    raw = token - 1ULL;
+    session_index = (unsigned int)(raw / JADREN_HTTP_SESSION_CONNECTION_CAPACITY);
+    connection_index = (unsigned int)(raw % JADREN_HTTP_SESSION_CONNECTION_CAPACITY);
+    if (session_index >= JADREN_HTTP_SESSION_CAPACITY ||
+        connection_index >= JADREN_HTTP_SESSION_CONNECTION_CAPACITY) {
+        return 0;
+    }
+    session = &jadren_http_sessions[session_index];
+    if (!session->active || connection_index >= session->max_connections ||
+        !session->connections[connection_index].active) {
+        return 0;
+    }
+    if (session_output != 0) {
+        *session_output = session;
+    }
+    return &session->connections[connection_index];
 }
 
 static void jadren_http_session_close_connection(
@@ -11392,9 +21118,11 @@ static int jadren_http_session_process_connection(
 #if JADREN_FILE_RUNTIME_HAS_TLS_SUPPORT
     if (session->tls_enabled) {
         unsigned int tls_state = net_tls_state(connection->tls_token);
-        if (tls_state == 1U) {
+        unsigned int tls_steps = 0U;
+        while (tls_state == 1U && tls_steps < 8U) {
             (void)net_tls_step(connection->tls_token, timeout_ms);
             tls_state = net_tls_state(connection->tls_token);
+            tls_steps += 1U;
         }
         if (tls_state == 4U || tls_state == 3U || tls_state == 0U) return -1;
         if (tls_state != 2U) return 0;
@@ -11518,15 +21246,20 @@ static int jadren_http_session_process_connection(
     }
     keep_alive = http_request_keep_alive(connection->request,
                                          frame_length);
-    response_length = jadren_http_router_respond_mode(
-        connection->request, frame_length, response, sizeof(response),
-        keep_alive);
+    if (session->chunked_mode) {
+        response_length = jadren_http_router_respond_chunked_mode(
+            connection->request, frame_length, response, sizeof(response));
+    } else {
+        response_length = jadren_http_router_respond_mode(
+            connection->request, frame_length, response, sizeof(response),
+            keep_alive);
+    }
     if (response_length == 0 ||
         !jadren_http_session_send_all(connection, response,
                                        response_length)) {
         return -1;
     }
-    if (!keep_alive) {
+    if (session->chunked_mode || !keep_alive) {
         connection->request_length = 0;
         return -1;
     }
@@ -11541,7 +21274,7 @@ static unsigned __int64 jadren_http_session_open_impl(
     unsigned int max_header_bytes, unsigned int max_body_bytes,
     int tls_enabled, const char *certificate_data,
     unsigned __int64 certificate_length, const char *private_key_data,
-    unsigned __int64 private_key_length) {
+    unsigned __int64 private_key_length, int chunked_mode) {
     int index;
     int connection_index;
     if (listener == 0 || max_connections == 0 ||
@@ -11579,6 +21312,7 @@ static unsigned __int64 jadren_http_session_open_impl(
         session->max_body_bytes = max_body_bytes;
         session->cursor = 0;
         session->tls_enabled = tls_enabled;
+        session->chunked_mode = chunked_mode;
         session->certificate_length = 0;
         session->private_key_length = 0;
 #if JADREN_FILE_RUNTIME_HAS_TLS_SUPPORT
@@ -11613,7 +21347,16 @@ unsigned __int64 http_session_open(unsigned __int64 listener,
                                     unsigned int max_body_bytes) {
     return jadren_http_session_open_impl(listener, max_connections,
                                           max_header_bytes, max_body_bytes,
-                                          0, 0, 0, 0, 0);
+                                          0, 0, 0, 0, 0, 0);
+}
+
+unsigned __int64 http_session_open_chunked(unsigned __int64 listener,
+                                           unsigned int max_connections,
+                                           unsigned int max_header_bytes,
+                                           unsigned int max_body_bytes) {
+    return jadren_http_session_open_impl(listener, max_connections,
+                                          max_header_bytes, max_body_bytes,
+                                          0, 0, 0, 0, 0, 1);
 }
 
 #if JADREN_FILE_RUNTIME_HAS_TLS_SUPPORT
@@ -11624,9 +21367,122 @@ unsigned __int64 http_session_open_tls(
     const char *private_key_data, unsigned __int64 private_key_length) {
     return jadren_http_session_open_impl(
         listener, max_connections, max_header_bytes, max_body_bytes, 1,
-        certificate_data, certificate_length, private_key_data, private_key_length);
+        certificate_data, certificate_length, private_key_data, private_key_length,
+        0);
+}
+
+unsigned __int64 http_session_open_tls_chunked(
+    unsigned __int64 listener, unsigned int max_connections,
+    unsigned int max_header_bytes, unsigned int max_body_bytes,
+    const char *certificate_data, unsigned __int64 certificate_length,
+    const char *private_key_data, unsigned __int64 private_key_length) {
+    return jadren_http_session_open_impl(
+        listener, max_connections, max_header_bytes, max_body_bytes, 1,
+        certificate_data, certificate_length, private_key_data, private_key_length,
+        1);
 }
 #endif
+
+/* Accepts one caller-owned connection slot without routing or reading it.
+ * The returned opaque token is valid until http_session_close_connection or
+ * http_session_close; callers must not mix it with http_session_step. */
+unsigned __int64 http_session_accept(unsigned __int64 token,
+                                     unsigned int timeout_ms) {
+    JadrenHttpSession *session = jadren_http_session_find(token);
+    unsigned __int64 accepted;
+    int free_index = -1;
+    int index;
+    if (session == 0 || !session->active) return 0;
+    for (index = 0; index < (int)session->max_connections; index += 1) {
+        if (!session->connections[index].active) {
+            free_index = index;
+            break;
+        }
+    }
+    if (free_index < 0 ||
+        !jadren_http_session_wait_listener(session->listener,
+                                           timeout_ms == 0 ? 1 : timeout_ms)) {
+        return 0;
+    }
+    accepted = net_tcp_accept(session->listener);
+    if (accepted == 0) return 0;
+    session->connections[free_index].active = 1;
+    session->connections[free_index].socket_token = accepted;
+    session->connections[free_index].tls_token = 0;
+#if JADREN_FILE_RUNTIME_HAS_TLS_SUPPORT
+    if (session->tls_enabled) {
+        session->connections[free_index].tls_token = net_tls_open_server(
+            accepted, session->certificate, session->certificate_length,
+            session->private_key, session->private_key_length);
+        if (session->connections[free_index].tls_token == 0) {
+            jadren_http_session_close_connection(
+                &session->connections[free_index]);
+            return 0;
+        }
+    }
+#endif
+    session->connections[free_index].request_length = 0;
+    return jadren_http_session_connection_token(session,
+                                                (unsigned int)free_index);
+}
+
+/* Reads one complete request into caller-owned output and consumes only that
+ * frame. A short output, incomplete receive or malformed request returns 0
+ * without publishing output; the caller explicitly closes the connection on
+ * protocol failure. */
+unsigned __int64 http_session_receive_request(
+    unsigned __int64 connection_token, unsigned int timeout_ms,
+    unsigned char *output_data, unsigned __int64 output_length) {
+    JadrenHttpSession *session = 0;
+    JadrenHttpSessionConnection *connection =
+        jadren_http_session_find_connection(connection_token, &session);
+    unsigned __int64 frame_length = 0;
+    unsigned __int64 index;
+    int state;
+    if (connection == 0 || session == 0 || output_data == 0 || output_length == 0) {
+        return 0;
+    }
+    state = jadren_http_session_read_frame(session, connection, timeout_ms,
+                                           &frame_length);
+    if (state != 1 || frame_length == 0 || frame_length > output_length) {
+        return 0;
+    }
+    for (index = 0; index < frame_length; index += 1) {
+        output_data[index] = connection->request[index];
+    }
+    connection->request_length = http_request_consume_prefix(
+        connection->request, JADREN_HTTP_SESSION_REQUEST_CAPACITY,
+        connection->request_length, frame_length);
+    return frame_length;
+}
+
+/* Sends an explicit prefix of caller-owned response bytes. Framing, chunk
+ * order and connection headers remain explicit in the caller. */
+int http_session_send_prefix(unsigned __int64 connection_token,
+                             const unsigned char *input_data,
+                             unsigned __int64 input_capacity,
+                             unsigned __int64 input_length) {
+    JadrenHttpSessionConnection *connection =
+        jadren_http_session_find_connection(connection_token, 0);
+    if (connection == 0 || input_length > input_capacity ||
+        (input_data == 0 && input_length > 0)) return 0;
+    return jadren_http_session_send_all(connection, input_data, input_length);
+}
+
+int http_session_send(unsigned __int64 connection_token,
+                      const unsigned char *input_data,
+                      unsigned __int64 input_length) {
+    return http_session_send_prefix(connection_token, input_data, input_length,
+                                    input_length);
+}
+
+int http_session_close_connection(unsigned __int64 connection_token) {
+    JadrenHttpSessionConnection *connection =
+        jadren_http_session_find_connection(connection_token, 0);
+    if (connection == 0) return 0;
+    jadren_http_session_close_connection(connection);
+    return 1;
+}
 
 unsigned int http_session_step(unsigned __int64 token, unsigned int timeout_ms) {
     JadrenHttpSession *session = jadren_http_session_find(token);
@@ -12817,6 +22673,17 @@ int app_state_remove(const char *key_data, unsigned __int64 key_length) {
     return 1;
 }
 
+/* Remove one state entry only when the caller's equality-only revision is
+ * still current. Stale, missing, invalid, or empty-key calls leave the model
+ * and revision unchanged. This is process-local coordination, not a
+ * cross-thread atomic or persistence primitive. */
+int app_state_remove_if_revision(const char *key_data,
+                                 unsigned __int64 key_length,
+                                 unsigned __int64 expected_revision) {
+    if (app_state_revision() != expected_revision) return 0;
+    return app_state_remove(key_data, key_length);
+}
+
 unsigned __int64 app_state_read_key(int key_index, unsigned char *output_data,
                                     unsigned __int64 output_length) {
     unsigned int entry_index;
@@ -12839,6 +22706,33 @@ unsigned __int64 app_state_read_key(int key_index, unsigned char *output_data,
     return 0;
 }
 
+int app_state_read_key_exact(int key_index, unsigned char *output_data,
+                             unsigned __int64 output_length,
+                             unsigned __int64 *output_key_length,
+                             unsigned __int64 output_key_length_capacity) {
+    unsigned int entry_index;
+    int visible_index = 0;
+    unsigned __int64 byte_index;
+    unsigned __int64 key_length;
+    if (key_index < 0 || output_key_length == 0 || output_key_length_capacity == 0) return 0;
+    for (entry_index = 0; entry_index < JADREN_APP_STATE_MAX_ENTRIES; entry_index += 1) {
+        JadrenAppStateEntry *entry = &jadren_app_state[entry_index];
+        if (!entry->used) continue;
+        if (visible_index != key_index) {
+            visible_index += 1;
+            continue;
+        }
+        key_length = entry->key_length;
+        if ((output_data == 0 && key_length > 0) || output_length < key_length) return 0;
+        for (byte_index = 0; byte_index < key_length; byte_index += 1) {
+            output_data[byte_index] = entry->key[byte_index];
+        }
+        output_key_length[0] = key_length;
+        return 1;
+    }
+    return 0;
+}
+
 int app_state_set_int(const char *key_data, unsigned __int64 key_length,
                       long long value) {
     int slot;
@@ -12851,6 +22745,107 @@ int app_state_set_int(const char *key_data, unsigned __int64 key_length,
     }
     jadren_app_state[slot].kind = JADREN_APP_STATE_INT;
     jadren_app_state[slot].int_value = value;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Replace a signed value only when the caller's equality-only revision is
+ * still current. Stale, invalid, or unrepresentable calls leave the entry
+ * and revision unchanged. This is process-local coordination, not a
+ * cross-thread atomic or persistence primitive. */
+int app_state_set_int_if_revision(const char *key_data,
+                                  unsigned __int64 key_length,
+                                  long long value,
+                                  unsigned __int64 expected_revision) {
+    int slot;
+    if (app_state_revision() != expected_revision) {
+        return 0;
+    }
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length)) {
+        return 0;
+    }
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) {
+        return 0;
+    }
+    jadren_app_state[slot].kind = JADREN_APP_STATE_INT;
+    jadren_app_state[slot].int_value = value;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Apply a bounded signed delta in one native state operation. A missing key
+ * starts at zero; an existing key must already be Int64. Overflow is rejected
+ * before the entry or revision is changed. This is an explicit caller boundary
+ * for counters, not a cross-thread atomic or persistence primitive. */
+int app_state_add_int(const char *key_data, unsigned __int64 key_length,
+                      long long delta) {
+    int slot;
+    long long current;
+    const long long max_value = 9223372036854775807LL;
+    const long long min_value = (-9223372036854775807LL - 1LL);
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length)) {
+        return 0;
+    }
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) {
+        return 0;
+    }
+    if (jadren_app_state[slot].kind == 0) {
+        current = 0;
+    } else if (jadren_app_state[slot].kind == JADREN_APP_STATE_INT) {
+        current = jadren_app_state[slot].int_value;
+    } else {
+        return 0;
+    }
+    if ((delta > 0 && current > max_value - delta) ||
+        (delta < 0 && current < min_value - delta)) {
+        return 0;
+    }
+    jadren_app_state[slot].kind = JADREN_APP_STATE_INT;
+    jadren_app_state[slot].int_value = current + delta;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Apply a signed delta only when the caller's equality-only revision is still
+ * current. A rejected stale, type-mismatched, invalid, or overflowing call
+ * leaves both the entry and revision unchanged. This is process-local caller
+ * coordination, not a cross-thread atomic or persistence primitive. */
+int app_state_add_int_if_revision(const char *key_data,
+                                  unsigned __int64 key_length,
+                                  long long delta,
+                                  unsigned __int64 expected_revision) {
+    int slot;
+    long long current;
+    const long long max_value = 9223372036854775807LL;
+    const long long min_value = (-9223372036854775807LL - 1LL);
+    if (app_state_revision() != expected_revision) {
+        return 0;
+    }
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length)) {
+        return 0;
+    }
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) {
+        return 0;
+    }
+    if (jadren_app_state[slot].kind == 0) {
+        current = 0;
+    } else if (jadren_app_state[slot].kind == JADREN_APP_STATE_INT) {
+        current = jadren_app_state[slot].int_value;
+    } else {
+        return 0;
+    }
+    if ((delta > 0 && current > max_value - delta) ||
+        (delta < 0 && current < min_value - delta)) {
+        return 0;
+    }
+    jadren_app_state[slot].kind = JADREN_APP_STATE_INT;
+    jadren_app_state[slot].int_value = current + delta;
     app_state_bump_revision();
     return 1;
 }
@@ -12882,6 +22877,181 @@ int app_state_set_uint(const char *key_data, unsigned __int64 key_length,
     }
     jadren_app_state[slot].kind = JADREN_APP_STATE_UINT;
     jadren_app_state[slot].uint_value = value;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Replace an unsigned value only when the caller's equality-only revision is
+ * current. Stale or invalid calls leave the entry and revision unchanged. */
+int app_state_set_uint_if_revision(const char *key_data,
+                                   unsigned __int64 key_length,
+                                   unsigned __int64 value,
+                                   unsigned __int64 expected_revision) {
+    int slot;
+    if (app_state_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length)) return 0;
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_UINT;
+    jadren_app_state[slot].uint_value = value;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Apply a bounded unsigned delta in one native state operation. A missing
+ * key starts at zero; an existing key must be UInt64. Overflow is rejected
+ * before the entry or revision is changed. This is a caller-owned counter
+ * boundary, not a cross-thread atomic or persistence primitive. */
+int app_state_add_uint(const char *key_data, unsigned __int64 key_length,
+                       unsigned __int64 delta) {
+    int slot;
+    unsigned __int64 current;
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length)) {
+        return 0;
+    }
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) {
+        return 0;
+    }
+    if (jadren_app_state[slot].kind == 0) {
+        current = 0;
+    } else if (jadren_app_state[slot].kind == JADREN_APP_STATE_UINT) {
+        current = jadren_app_state[slot].uint_value;
+    } else {
+        return 0;
+    }
+    if (current > 0xFFFFFFFFFFFFFFFFULL - delta) {
+        return 0;
+    }
+    jadren_app_state[slot].kind = JADREN_APP_STATE_UINT;
+    jadren_app_state[slot].uint_value = current + delta;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Apply an unsigned delta only when the caller's equality-only revision is
+ * still current. Stale, type-mismatched, invalid, and overflowing calls
+ * leave both the entry and revision unchanged. */
+int app_state_add_uint_if_revision(const char *key_data,
+                                   unsigned __int64 key_length,
+                                   unsigned __int64 delta,
+                                   unsigned __int64 expected_revision) {
+    int slot;
+    unsigned __int64 current;
+    if (app_state_revision() != expected_revision) {
+        return 0;
+    }
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length)) {
+        return 0;
+    }
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) {
+        return 0;
+    }
+    if (jadren_app_state[slot].kind == 0) {
+        current = 0;
+    } else if (jadren_app_state[slot].kind == JADREN_APP_STATE_UINT) {
+        current = jadren_app_state[slot].uint_value;
+    } else {
+        return 0;
+    }
+    if (current > 0xFFFFFFFFFFFFFFFFULL - delta) {
+        return 0;
+    }
+    jadren_app_state[slot].kind = JADREN_APP_STATE_UINT;
+    jadren_app_state[slot].uint_value = current + delta;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Apply a finite floating-point delta in one native state operation. A
+ * missing key starts at zero; an existing key must already be Float64. The
+ * finite input and result are validated before the entry or revision changes.
+ * This is a caller-owned numeric primitive, not a persistence or atomic API. */
+int app_state_add_float(const char *key_data, unsigned __int64 key_length,
+                        double delta) {
+    union {
+        double value;
+        unsigned long long bits;
+    } delta_representation, sum_representation;
+    unsigned char encoded[32];
+    int slot;
+    double current;
+    double sum;
+    delta_representation.value = delta;
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length) ||
+        ((delta_representation.bits >> 52) & 0x7FFULL) == 0x7FFULL) {
+        return 0;
+    }
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) {
+        return 0;
+    }
+    if (jadren_app_state[slot].kind == 0) {
+        current = 0.0;
+    } else if (jadren_app_state[slot].kind == JADREN_APP_STATE_FLOAT) {
+        current = jadren_app_state[slot].float_value;
+    } else {
+        return 0;
+    }
+    sum = current + delta;
+    sum_representation.value = sum;
+    if (((sum_representation.bits >> 52) & 0x7FFULL) == 0x7FFULL ||
+        format_float(sum, encoded, sizeof(encoded)) == 0) {
+        return 0;
+    }
+    jadren_app_state[slot].kind = JADREN_APP_STATE_FLOAT;
+    jadren_app_state[slot].float_value = sum;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Revision-guarded finite floating-point delta. Stale, invalid, mismatched,
+ * non-finite and overflowing calls leave both value and revision unchanged. */
+int app_state_add_float_if_revision(const char *key_data,
+                                    unsigned __int64 key_length,
+                                    double delta,
+                                    unsigned __int64 expected_revision) {
+    union {
+        double value;
+        unsigned long long bits;
+    } delta_representation, sum_representation;
+    unsigned char encoded[32];
+    int slot;
+    double current;
+    double sum;
+    if (app_state_revision() != expected_revision) {
+        return 0;
+    }
+    delta_representation.value = delta;
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length) ||
+        ((delta_representation.bits >> 52) & 0x7FFULL) == 0x7FFULL) {
+        return 0;
+    }
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) {
+        return 0;
+    }
+    if (jadren_app_state[slot].kind == 0) {
+        current = 0.0;
+    } else if (jadren_app_state[slot].kind == JADREN_APP_STATE_FLOAT) {
+        current = jadren_app_state[slot].float_value;
+    } else {
+        return 0;
+    }
+    sum = current + delta;
+    sum_representation.value = sum;
+    if (((sum_representation.bits >> 52) & 0x7FFULL) == 0x7FFULL ||
+        format_float(sum, encoded, sizeof(encoded)) == 0) {
+        return 0;
+    }
+    jadren_app_state[slot].kind = JADREN_APP_STATE_FLOAT;
+    jadren_app_state[slot].float_value = sum;
     app_state_bump_revision();
     return 1;
 }
@@ -12925,6 +23095,34 @@ int app_state_set_float(const char *key_data, unsigned __int64 key_length,
     return 1;
 }
 
+/* Replace a finite Float64 value only when the caller's equality-only
+ * revision is current. Non-finite and stale calls leave state unchanged. */
+int app_state_set_float_if_revision(const char *key_data,
+                                    unsigned __int64 key_length,
+                                    double value,
+                                    unsigned __int64 expected_revision) {
+    union {
+        double value;
+        unsigned long long bits;
+    } representation;
+    unsigned char encoded[32];
+    int slot;
+    if (app_state_revision() != expected_revision) return 0;
+    representation.value = value;
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length) ||
+        ((representation.bits >> 52) & 0x7FFULL) == 0x7FFULL ||
+        format_float(value, encoded, sizeof(encoded)) == 0) {
+        return 0;
+    }
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_FLOAT;
+    jadren_app_state[slot].float_value = value;
+    app_state_bump_revision();
+    return 1;
+}
+
 double app_state_get_float(const char *key_data, unsigned __int64 key_length) {
     int slot = app_state_find_in(jadren_app_state, (const unsigned char *)key_data, key_length);
     if (slot < 0) {
@@ -12952,6 +23150,23 @@ int app_state_set_bool(const char *key_data, unsigned __int64 key_length,
     if (slot < 0) {
         return 0;
     }
+    jadren_app_state[slot].kind = JADREN_APP_STATE_BOOL;
+    jadren_app_state[slot].bool_value = value != 0;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Replace a Bool only when the caller's equality-only revision is current. */
+int app_state_set_bool_if_revision(const char *key_data,
+                                   unsigned __int64 key_length,
+                                   unsigned char value,
+                                   unsigned __int64 expected_revision) {
+    int slot;
+    if (app_state_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length)) return 0;
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) return 0;
     jadren_app_state[slot].kind = JADREN_APP_STATE_BOOL;
     jadren_app_state[slot].bool_value = value != 0;
     app_state_bump_revision();
@@ -12986,6 +23201,31 @@ int app_state_set_text(const char *key_data, unsigned __int64 key_length,
     return 1;
 }
 
+/* Replace bounded UTF-8 text only when the caller's equality-only revision is
+ * current. Validate the full input before allocating a state slot or copying. */
+int app_state_set_text_if_revision(const char *key_data,
+                                   unsigned __int64 key_length,
+                                   const char *value_data,
+                                   unsigned __int64 value_length,
+                                   unsigned __int64 expected_revision) {
+    int slot;
+    unsigned __int64 index;
+    if (app_state_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length) ||
+        (value_data == 0 && value_length > 0) ||
+        value_length > JADREN_APP_STATE_TEXT_MAX) return 0;
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_TEXT;
+    jadren_app_state[slot].text_length = value_length;
+    for (index = 0; index < value_length; index += 1) {
+        jadren_app_state[slot].text[index] = (unsigned char)value_data[index];
+    }
+    app_state_bump_revision();
+    return 1;
+}
+
 int app_state_set_text_bytes(const char *key_data, unsigned __int64 key_length,
                              const unsigned char *value_data,
                              unsigned __int64 value_capacity,
@@ -12994,6 +23234,59 @@ int app_state_set_text_bytes(const char *key_data, unsigned __int64 key_length,
     if (value_length > value_capacity) value_length = value_capacity;
     return app_state_set_text(key_data, key_length, (const char *)value_data,
                               value_length);
+}
+
+/* Revision-guarded caller-owned UTF-8 input. The explicit length must fit the
+ * source slice and the bounded state slot; unlike the legacy bytes setter,
+ * this path rejects an overlong prefix instead of silently truncating it. */
+int app_state_set_text_bytes_if_revision(
+    const char *key_data, unsigned __int64 key_length,
+    const unsigned char *value_data, unsigned __int64 value_capacity,
+    unsigned __int64 value_length, unsigned __int64 expected_revision) {
+    int slot;
+    unsigned __int64 index;
+    if (app_state_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length) ||
+        (value_data == 0 && value_length > 0) ||
+        value_length > value_capacity ||
+        value_length > JADREN_APP_STATE_TEXT_MAX) return 0;
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_TEXT;
+    jadren_app_state[slot].text_length = value_length;
+    for (index = 0; index < value_length; index += 1) {
+        jadren_app_state[slot].text[index] = value_data[index];
+    }
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Model-revision-guarded caller-owned UTF-8 input. The model token covers the
+ * complete app_state + app_list + app_table model, so a list/table edit also
+ * invalidates a pending state write. The existing app_state-only guard above
+ * intentionally keeps its narrower monotonic-generation contract. */
+int app_state_set_text_bytes_if_model_revision(
+    const char *key_data, unsigned __int64 key_length,
+    const unsigned char *value_data, unsigned __int64 value_capacity,
+    unsigned __int64 value_length, unsigned __int64 expected_revision) {
+    int slot;
+    unsigned __int64 index;
+    if (app_data_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe((const unsigned char *)key_data, key_length) ||
+        (value_data == 0 && value_length > 0) ||
+        value_length > value_capacity ||
+        value_length > JADREN_APP_STATE_TEXT_MAX) return 0;
+    slot = app_state_slot_in(jadren_app_state,
+                             (const unsigned char *)key_data, key_length);
+    if (slot < 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_TEXT;
+    jadren_app_state[slot].text_length = value_length;
+    for (index = 0; index < value_length; index += 1) {
+        jadren_app_state[slot].text[index] = value_data[index];
+    }
+    app_state_bump_revision();
+    return 1;
 }
 
 unsigned __int64 app_state_read_text(const char *key_data, unsigned __int64 key_length,
@@ -13291,6 +23584,9 @@ int app_state_load_json_exact(const unsigned char *input_data,
 
 int file_replace_atomic(const char *source_data, unsigned __int64 source_length,
                         const char *target_data, unsigned __int64 target_length);
+int file_flush(const char *path_data, unsigned __int64 path_length);
+int directory_flush(const char *path_data, unsigned __int64 path_length);
+int directory_exists(const char *path_data, unsigned __int64 path_length);
 
 int app_state_save_atomic(const char *temporary_path_data,
                           unsigned __int64 temporary_path_length,
@@ -13315,6 +23611,53 @@ int app_state_save_atomic_if_revision(const char *temporary_path_data,
     }
     return app_state_save_atomic(temporary_path_data, temporary_path_length,
                                  target_path_data, target_path_length);
+}
+
+/* Durable app-state checkpoint with explicit directory metadata flush. The
+ * caller must reload/verify after a post-promotion failure before retrying. */
+int app_state_save_atomic_durable(const char *temporary_path_data,
+                                  unsigned __int64 temporary_path_length,
+                                  const char *target_path_data,
+                                  unsigned __int64 target_path_length,
+                                  const char *directory_path_data,
+                                  unsigned __int64 directory_path_length) {
+    unsigned __int64 path_index;
+    int same_path = temporary_path_length == target_path_length;
+    if (same_path) {
+        for (path_index = 0; path_index < temporary_path_length; path_index += 1) {
+            if (temporary_path_data == 0 || target_path_data == 0 ||
+                temporary_path_data[path_index] != target_path_data[path_index]) {
+                same_path = 0;
+                break;
+            }
+        }
+    }
+    if (same_path || temporary_path_data == 0 || target_path_data == 0 ||
+        directory_path_data == 0 || temporary_path_length == 0 ||
+        target_path_length == 0 || directory_path_length == 0 ||
+        !directory_exists(directory_path_data, directory_path_length) ||
+        !app_state_save(temporary_path_data, temporary_path_length) ||
+        !file_flush(temporary_path_data, temporary_path_length) ||
+        !file_replace_atomic(temporary_path_data, temporary_path_length,
+                             target_path_data, target_path_length)) {
+        return 0;
+    }
+    if (!file_flush(target_path_data, target_path_length)) return 0;
+    return directory_flush(directory_path_data, directory_path_length);
+}
+
+int app_state_save_atomic_durable_if_revision(
+    const char *temporary_path_data,
+    unsigned __int64 temporary_path_length,
+    const char *target_path_data,
+    unsigned __int64 target_path_length,
+    const char *directory_path_data,
+    unsigned __int64 directory_path_length,
+    unsigned __int64 expected_revision) {
+    if (jadren_app_state_revision != expected_revision) return 0;
+    return app_state_save_atomic_durable(
+        temporary_path_data, temporary_path_length, target_path_data,
+        target_path_length, directory_path_data, directory_path_length);
 }
 
 static int app_state_parse_value(const unsigned char *data,
@@ -13600,6 +23943,15 @@ void app_list_clear(int list_id) {
     app_list_clear_store(&jadren_app_lists[list_id]);
 }
 
+/* Clear one list only when the caller's equality-only complete-model
+ * revision is still current. This is process-local coordination, not a
+ * cross-thread atomic or persistence primitive. */
+int app_list_clear_if_revision(int list_id, unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision || !app_list_valid(list_id)) return 0;
+    app_list_clear_store(&jadren_app_lists[list_id]);
+    return 1;
+}
+
 int app_list_count(int list_id) {
     if (!app_list_valid(list_id)) {
         return 0;
@@ -13694,6 +24046,16 @@ int app_list_sort_callback(int list_id, int (*comparator)(int, int, int)) {
     return 1;
 }
 
+/* Sort through a caller-owned comparator only when the equality-only model
+ * revision is still current. The unguarded path keeps its fingerprint checks
+ * around every comparator call and publishes only after the complete scan. */
+int app_list_sort_callback_if_revision(
+    int list_id, int (*comparator)(int, int, int),
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_sort_callback(list_id, comparator);
+}
+
 int app_list_find_text(int list_id, const char *query_data,
                        unsigned __int64 query_length, int start_index) {
     unsigned __int64 item_index;
@@ -13735,6 +24097,112 @@ int app_list_push_text_bytes(int list_id, const unsigned char *value_data,
                              unsigned __int64 value_length) {
     if (value_length > value_capacity) return 0;
     return app_list_push_text(list_id, (const char *)value_data, value_length);
+}
+
+/* Append only when the caller's equality-only model revision is still
+ * current. This is process-local coordination, not a cross-thread atomic or
+ * persistence primitive. */
+int app_list_push_text_if_revision(int list_id, const char *value_data,
+                                   unsigned __int64 value_length,
+                                   unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_push_text(list_id, value_data, value_length);
+}
+
+int app_list_push_text_bytes_if_revision(int list_id, const unsigned char *value_data,
+                                         unsigned __int64 value_capacity,
+                                         unsigned __int64 value_length,
+                                         unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision || value_length > value_capacity) return 0;
+    return app_list_push_text_bytes(list_id, value_data, value_capacity, value_length);
+}
+
+int app_list_insert_text(int list_id, int item_index, const char *value_data,
+                         unsigned __int64 value_length) {
+    unsigned __int64 index;
+    if (!app_list_valid(list_id) || item_index < 0 ||
+        (unsigned __int64)item_index > jadren_app_lists[list_id].count ||
+        (value_data == 0 && value_length > 0) ||
+        value_length > JADREN_APP_LIST_TEXT_MAX ||
+        jadren_app_lists[list_id].count >= JADREN_APP_LIST_MAX_ITEMS) {
+        return 0;
+    }
+    for (index = jadren_app_lists[list_id].count; index > (unsigned __int64)item_index;
+         index -= 1) {
+        jadren_app_lists[list_id].items[index].length =
+            jadren_app_lists[list_id].items[index - 1].length;
+        for (unsigned __int64 byte_index = 0;
+             byte_index < JADREN_APP_LIST_TEXT_MAX; byte_index += 1) {
+            jadren_app_lists[list_id].items[index].text[byte_index] =
+                jadren_app_lists[list_id].items[index - 1].text[byte_index];
+        }
+    }
+    app_list_clear_item(&jadren_app_lists[list_id].items[item_index]);
+    jadren_app_lists[list_id].items[item_index].length = value_length;
+    for (index = 0; index < value_length; index += 1) {
+        jadren_app_lists[list_id].items[item_index].text[index] =
+            (unsigned char)value_data[index];
+    }
+    jadren_app_lists[list_id].count += 1;
+    return 1;
+}
+
+int app_list_insert_text_bytes(int list_id, int item_index,
+                               const unsigned char *value_data,
+                               unsigned __int64 value_capacity,
+                               unsigned __int64 value_length) {
+    if (value_length > value_capacity) return 0;
+    return app_list_insert_text(list_id, item_index, (const char *)value_data,
+                                value_length);
+}
+
+/* Insert only when the caller's equality-only model revision is still
+ * current. This is process-local coordination, not an atomic or persistence
+ * primitive. */
+int app_list_insert_text_if_revision(int list_id, int item_index,
+                                     const char *value_data,
+                                     unsigned __int64 value_length,
+                                     unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_insert_text(list_id, item_index, value_data, value_length);
+}
+
+int app_list_insert_text_bytes_if_revision(int list_id, int item_index,
+                                           const unsigned char *value_data,
+                                           unsigned __int64 value_capacity,
+                                           unsigned __int64 value_length,
+                                           unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision || value_length > value_capacity) return 0;
+    return app_list_insert_text_bytes(list_id, item_index, value_data,
+                                      value_capacity, value_length);
+}
+
+/* Reorder one bounded list item. The complete source is staged first so an
+ * invalid request cannot partially publish a reordered model. The target is
+ * the final zero-based index, not an insertion slot. */
+int app_list_move_text(int list_id, int from_index, int to_index) {
+    JadrenAppList staged;
+    int index;
+    if (!app_list_valid(list_id) || from_index < 0 || to_index < 0 ||
+        (unsigned __int64)from_index >= jadren_app_lists[list_id].count ||
+        (unsigned __int64)to_index >= jadren_app_lists[list_id].count) return 0;
+    if (from_index == to_index) return 1;
+    app_list_copy_store(&staged, &jadren_app_lists[list_id]);
+    if (from_index < to_index) {
+        for (index = from_index; index < to_index; index += 1)
+            app_list_swap_items(&staged.items[index], &staged.items[index + 1]);
+    } else {
+        for (index = from_index; index > to_index; index -= 1)
+            app_list_swap_items(&staged.items[index], &staged.items[index - 1]);
+    }
+    app_list_copy_store(&jadren_app_lists[list_id], &staged);
+    return 1;
+}
+
+int app_list_move_text_if_revision(int list_id, int from_index, int to_index,
+                                   unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_move_text(list_id, from_index, to_index);
 }
 
 static unsigned char app_list_filter_fold_ascii(unsigned char value,
@@ -13791,6 +24259,32 @@ int app_list_filter_text(int source_list_id, int destination_list_id,
     return app_list_filter_text_ex(source_list_id, destination_list_id, query_data, query_length, 0);
 }
 
+/* Filter one text list only when the caller's equality-only model revision is
+ * still current. A stale revision leaves source and destination unchanged;
+ * this is process-local coordination, not a cross-thread atomic or
+ * persistence primitive. */
+int app_list_filter_text_if_revision(int source_list_id, int destination_list_id,
+                                     const char *query_data,
+                                     unsigned __int64 query_length,
+                                     unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_filter_text(source_list_id, destination_list_id,
+                                query_data, query_length);
+}
+
+/* Filter one text list with an explicit mode only when the caller's
+ * equality-only model revision is still current. A stale revision leaves
+ * source and destination unchanged; this is process-local coordination, not
+ * a cross-thread atomic or persistence primitive. */
+int app_list_filter_text_ex_if_revision(int source_list_id, int destination_list_id,
+                                        const char *query_data,
+                                        unsigned __int64 query_length, int mode,
+                                        unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_filter_text_ex(source_list_id, destination_list_id,
+                                   query_data, query_length, mode);
+}
+
 int app_list_filter_text_ex_bytes(int source_list_id, int destination_list_id,
                                   const unsigned char *query_data,
                                   unsigned __int64 query_capacity,
@@ -13831,6 +24325,17 @@ int app_list_filter_callback(int source_list_id, int destination_list_id,
     return 1;
 }
 
+/* Apply a callback filter only when the caller's equality-only model revision
+ * is still current. The unguarded implementation retains its source
+ * fingerprint checks while this entry point rejects a stale token before the
+ * scan starts. */
+int app_list_filter_callback_if_revision(
+    int source_list_id, int destination_list_id,
+    unsigned char (*predicate)(int, int), unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_filter_callback(source_list_id, destination_list_id, predicate);
+}
+
 int app_list_page(int source_list_id, int destination_list_id,
                   int start_index, int page_size) {
     JadrenAppList page;
@@ -13858,6 +24363,18 @@ int app_list_page(int source_list_id, int destination_list_id,
     page.count = requested;
     app_list_copy_store(&jadren_app_lists[destination_list_id], &page);
     return 1;
+}
+
+/* Project one bounded list page only when the caller's equality-only model
+ * revision is still current. A stale revision leaves source and destination
+ * lists unchanged; this is process-local coordination, not a cross-thread
+ * atomic or persistence primitive. */
+int app_list_page_if_revision(int source_list_id, int destination_list_id,
+                              int start_index, int page_size,
+                              unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_page(source_list_id, destination_list_id, start_index,
+                         page_size);
 }
 
 unsigned __int64 app_list_read_text(int list_id, int item_index,
@@ -13922,12 +24439,35 @@ int app_list_set_text(int list_id, int item_index, const char *value_data,
     return 1;
 }
 
+/* Update one list item only when the caller's equality-only model revision is
+ * still current. This is process-local coordination, not an atomic
+ * cross-thread or persistence primitive. */
+int app_list_set_text_if_revision(int list_id, int item_index,
+                                  const char *value_data,
+                                  unsigned __int64 value_length,
+                                  unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_set_text(list_id, item_index, value_data, value_length);
+}
+
 int app_list_set_text_bytes(int list_id, int item_index,
                             const unsigned char *value_data,
                             unsigned __int64 value_capacity,
                             unsigned __int64 value_length) {
     if (value_length > value_capacity) return 0;
     return app_list_set_text(list_id, item_index, (const char *)value_data, value_length);
+}
+
+/* Caller-owned byte-prefix replacement guarded by the equality-only model
+ * revision. Capacity is checked before the bounded setter can mutate state. */
+int app_list_set_text_bytes_if_revision(int list_id, int item_index,
+                                        const unsigned char *value_data,
+                                        unsigned __int64 value_capacity,
+                                        unsigned __int64 value_length,
+                                        unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision || value_length > value_capacity) return 0;
+    return app_list_set_text_bytes(list_id, item_index, value_data,
+                                   value_capacity, value_length);
 }
 
 int app_list_remove(int list_id, int item_index) {
@@ -13949,6 +24489,15 @@ int app_list_remove(int list_id, int item_index) {
     jadren_app_lists[list_id].count -= 1;
     app_list_clear_item(&jadren_app_lists[list_id].items[jadren_app_lists[list_id].count]);
     return 1;
+}
+
+/* Remove one list item only when the caller's equality-only model revision is
+ * still current. This is process-local coordination, not a cross-thread
+ * atomic or persistence primitive. */
+int app_list_remove_if_revision(int list_id, int item_index,
+                                unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_remove(list_id, item_index);
 }
 
 #define JADREN_APP_LIST_DOCUMENT_MAX 65536
@@ -14086,6 +24635,62 @@ int app_list_load(int list_id, const char *path_data, unsigned __int64 path_leng
         }
     }
     return 1;
+}
+
+/* Import one caller-owned JSON list transactionally. The bounded parser fills
+ * a temporary store first, so malformed or truncated input leaves the live
+ * list unchanged. */
+int app_list_import_json_exact(int list_id, const unsigned char *input_data,
+                               unsigned __int64 input_capacity,
+                               unsigned __int64 input_length) {
+    JadrenAppList parsed;
+    if (!app_list_valid(list_id) || input_data == 0 || input_length == 0 ||
+        input_length > input_capacity || input_length > JADREN_APP_LIST_DOCUMENT_MAX) {
+        return 0;
+    }
+    app_list_clear_store(&parsed);
+    if (!app_list_parse_document(input_data, input_length, &parsed)) return 0;
+    app_list_copy_store(&jadren_app_lists[list_id], &parsed);
+    return 1;
+}
+
+/* Import one JSON list only when the caller's equality-only model revision is
+ * still current. The underlying import remains transactional. */
+int app_list_import_json_exact_if_revision(
+    int list_id, const unsigned char *input_data,
+    unsigned __int64 input_capacity, unsigned __int64 input_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_import_json_exact(
+        list_id, input_data, input_capacity, input_length);
+}
+
+/* Import one bounded JSON list file transactionally. The file is read into a
+ * fixed scratch buffer and published only after the complete document parses. */
+int app_list_import_json_file(int list_id, const char *path_data,
+                              unsigned __int64 path_length) {
+    static unsigned char document[JADREN_APP_LIST_DOCUMENT_MAX];
+    JadrenAppList parsed;
+    unsigned __int64 document_length;
+    unsigned __int64 file_length;
+    if (!app_list_valid(list_id) || path_data == 0 || path_length == 0) return 0;
+    file_length = file_size(path_data, path_length);
+    if (file_length == 0 || file_length > sizeof(document)) return 0;
+    document_length = file_read(path_data, path_length, document, sizeof(document));
+    if (document_length != file_length) return 0;
+    app_list_clear_store(&parsed);
+    if (!app_list_parse_document(document, document_length, &parsed)) return 0;
+    app_list_copy_store(&jadren_app_lists[list_id], &parsed);
+    return 1;
+}
+
+/* Import one JSON list file only when the caller's equality-only model
+ * revision is still current. The underlying file parser remains transactional. */
+int app_list_import_json_file_if_revision(
+    int list_id, const char *path_data, unsigned __int64 path_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_import_json_file(list_id, path_data, path_length);
 }
 
 #define JADREN_APP_TABLE_MAX_TABLES 4
@@ -14295,6 +24900,15 @@ void app_table_clear(int table_id) {
     app_table_clear_store(&jadren_app_tables[table_id]);
 }
 
+/* Clear one table only when the caller's equality-only complete-model
+ * revision is still current. This is process-local coordination, not a
+ * cross-thread atomic or persistence primitive. */
+int app_table_clear_if_revision(int table_id, unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision || !app_table_valid(table_id)) return 0;
+    app_table_clear_store(&jadren_app_tables[table_id]);
+    return 1;
+}
+
 int app_table_row_count(int table_id) {
     if (!app_table_valid(table_id)) {
         return 0;
@@ -14451,6 +25065,49 @@ int app_table_append_row(int table_id) {
     return 1;
 }
 
+/* Append one table row only when the caller's equality-only model revision is
+ * still current. This is process-local coordination, not a cross-thread
+ * atomic or persistence primitive. */
+int app_table_append_row_if_revision(int table_id, unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_append_row(table_id);
+}
+
+/* Insert one zero-initialized table row before row_index. The row_count
+ * position is the append boundary; all validation happens before shifting. */
+int app_table_insert_row(int table_id, int row_index) {
+    unsigned __int64 index;
+    unsigned int column_index;
+    if (!app_table_valid(table_id) || row_index < 0 ||
+        (unsigned __int64)row_index > jadren_app_tables[table_id].row_count ||
+        jadren_app_tables[table_id].row_count >= JADREN_APP_TABLE_MAX_ROWS) {
+        return 0;
+    }
+    for (index = jadren_app_tables[table_id].row_count;
+         index > (unsigned __int64)row_index; index -= 1) {
+        for (column_index = 0; column_index < JADREN_APP_TABLE_MAX_COLUMNS; column_index += 1) {
+            unsigned __int64 byte_index;
+            JadrenAppListItem *destination = &jadren_app_tables[table_id].cells[index][column_index];
+            JadrenAppListItem *source = &jadren_app_tables[table_id].cells[index - 1][column_index];
+            destination->length = source->length;
+            for (byte_index = 0; byte_index < JADREN_APP_LIST_TEXT_MAX; byte_index += 1) {
+                destination->text[byte_index] = source->text[byte_index];
+            }
+        }
+    }
+    app_table_clear_row(&jadren_app_tables[table_id], (unsigned int)row_index);
+    jadren_app_tables[table_id].row_count += 1;
+    return 1;
+}
+
+/* Insert one table row only when the caller's equality-only model revision is
+ * still current. This is process-local coordination, not atomicity. */
+int app_table_insert_row_if_revision(int table_id, int row_index,
+                                     unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_insert_row(table_id, row_index);
+}
+
 int app_table_remove_row(int table_id, int row_index) {
     unsigned __int64 index;
     unsigned int column_index;
@@ -14474,6 +25131,15 @@ int app_table_remove_row(int table_id, int row_index) {
     app_table_clear_row(&jadren_app_tables[table_id],
                         (unsigned int)jadren_app_tables[table_id].row_count);
     return 1;
+}
+
+/* Remove one table row only when the caller's equality-only model revision is
+ * still current. This is process-local coordination, not a cross-thread
+ * atomic or persistence primitive. */
+int app_table_remove_row_if_revision(int table_id, int row_index,
+                                     unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_remove_row(table_id, row_index);
 }
 
 int app_table_set_cell(int table_id, int row_index, int column_index,
@@ -14500,6 +25166,16 @@ int app_table_set_cell(int table_id, int row_index, int column_index,
     return 1;
 }
 
+/* Update one table cell only when the caller's equality-only model revision
+ * is still current. */
+int app_table_set_cell_if_revision(int table_id, int row_index, int column_index,
+                                   const char *value_data,
+                                   unsigned __int64 value_length,
+                                   unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_set_cell(table_id, row_index, column_index, value_data, value_length);
+}
+
 int app_table_set_cell_bytes(int table_id, int row_index, int column_index,
                              const unsigned char *value_data,
                              unsigned __int64 value_length) {
@@ -14514,6 +25190,18 @@ int app_table_set_cell_bytes_ex(int table_id, int row_index, int column_index,
     if (value_length > value_capacity) return 0;
     return app_table_set_cell_bytes(table_id, row_index, column_index,
                                     value_data, value_length);
+}
+
+/* Caller-owned byte-prefix replacement guarded by the equality-only model
+ * revision. Typed validation remains in the underlying table setter. */
+int app_table_set_cell_bytes_if_revision(int table_id, int row_index, int column_index,
+                                         const unsigned char *value_data,
+                                         unsigned __int64 value_capacity,
+                                         unsigned __int64 value_length,
+                                         unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision || value_length > value_capacity) return 0;
+    return app_table_set_cell_bytes_ex(table_id, row_index, column_index,
+                                       value_data, value_capacity, value_length);
 }
 
 int app_table_set_int(int table_id, int row_index, int column_index, long long value) {
@@ -14998,6 +25686,17 @@ int app_table_index_find_pair_text(int table_id, int first_column_index,
     }
 }
 
+int app_table_index_find_pair_text_if_revision(
+    int table_id, int first_column_index, int second_column_index,
+    const char *first_data, unsigned __int64 first_length,
+    const char *second_data, unsigned __int64 second_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return -1;
+    return app_table_index_find_pair_text(
+        table_id, first_column_index, second_column_index,
+        first_data, first_length, second_data, second_length);
+}
+
 static int app_table_compare_typed_cells(int table_id, int column_index,
                                          unsigned int left_row, unsigned int right_row,
                                          int kind) {
@@ -15154,6 +25853,32 @@ static void app_table_copy_store(JadrenAppTable *destination,
     }
 }
 
+/* Reorder one bounded table row while preserving every column as one row. */
+int app_table_move_row(int table_id, int from_index, int to_index) {
+    JadrenAppTable staged;
+    int index;
+    if (!app_table_valid(table_id) || from_index < 0 || to_index < 0 ||
+        (unsigned int)from_index >= jadren_app_tables[table_id].row_count ||
+        (unsigned int)to_index >= jadren_app_tables[table_id].row_count) return 0;
+    if (from_index == to_index) return 1;
+    app_table_copy_store(&staged, &jadren_app_tables[table_id]);
+    if (from_index < to_index) {
+        for (index = from_index; index < to_index; index += 1)
+            app_table_swap_rows(&staged, (unsigned int)index, (unsigned int)(index + 1));
+    } else {
+        for (index = from_index; index > to_index; index -= 1)
+            app_table_swap_rows(&staged, (unsigned int)index, (unsigned int)(index - 1));
+    }
+    app_table_copy_store(&jadren_app_tables[table_id], &staged);
+    return 1;
+}
+
+int app_table_move_row_if_revision(int table_id, int from_index, int to_index,
+                                   unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_move_row(table_id, from_index, to_index);
+}
+
 static unsigned __int64 app_data_hash_bytes(unsigned __int64 hash,
                                              const unsigned char *data,
                                              unsigned __int64 length) {
@@ -15272,6 +25997,7 @@ int app_data_validate(void) {
 
 int file_delete(const char *path_data, unsigned __int64 path_length);
 int file_flush(const char *path_data, unsigned __int64 path_length);
+int directory_flush(const char *path_data, unsigned __int64 path_length);
 unsigned __int64 file_lock(const char *path_data, unsigned __int64 path_length);
 int file_unlock(unsigned __int64 token);
 int file_replace_atomic(const char *source_data, unsigned __int64 source_length,
@@ -15494,7 +26220,7 @@ int app_table_migration_rollback(void) {
     return result;
 }
 
-int app_table_sort_text(int table_id, int column_index, int descending) {
+int app_table_sort_text(int table_id, int column_index, unsigned char descending) {
     int row_index;
     if (!app_table_valid(table_id) || column_index < 0 ||
         column_index >= JADREN_APP_TABLE_MAX_COLUMNS) {
@@ -15517,7 +26243,7 @@ int app_table_sort_text(int table_id, int column_index, int descending) {
     return 1;
 }
 
-int app_table_sort_int(int table_id, int column_index, int descending) {
+int app_table_sort_int(int table_id, int column_index, unsigned char descending) {
     int row_index;
     if (!app_table_valid(table_id) || column_index < 0 ||
         column_index >= JADREN_APP_TABLE_MAX_COLUMNS ||
@@ -15544,7 +26270,7 @@ int app_table_sort_int(int table_id, int column_index, int descending) {
     return 1;
 }
 
-int app_table_sort_uint(int table_id, int column_index, int descending) {
+int app_table_sort_uint(int table_id, int column_index, unsigned char descending) {
     int row_index;
     if (!app_table_valid(table_id) || column_index < 0 ||
         column_index >= JADREN_APP_TABLE_MAX_COLUMNS ||
@@ -15571,7 +26297,7 @@ int app_table_sort_uint(int table_id, int column_index, int descending) {
     return 1;
 }
 
-int app_table_sort_float(int table_id, int column_index, int descending) {
+int app_table_sort_float(int table_id, int column_index, unsigned char descending) {
     int row_index;
     if (!app_table_valid(table_id) || column_index < 0 ||
         column_index >= JADREN_APP_TABLE_MAX_COLUMNS ||
@@ -15598,7 +26324,7 @@ int app_table_sort_float(int table_id, int column_index, int descending) {
     return 1;
 }
 
-int app_table_sort_bool(int table_id, int column_index, int descending) {
+int app_table_sort_bool(int table_id, int column_index, unsigned char descending) {
     int row_index;
     if (!app_table_valid(table_id) || column_index < 0 ||
         column_index >= JADREN_APP_TABLE_MAX_COLUMNS ||
@@ -15624,6 +26350,42 @@ int app_table_sort_bool(int table_id, int column_index, int descending) {
     }
     return 1;
 }
+
+int app_table_sort_text_if_revision(int table_id, int column_index,
+                                      unsigned char descending,
+                                      unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_sort_text(table_id, column_index, descending);
+}
+
+int app_table_sort_int_if_revision(int table_id, int column_index,
+                                   unsigned char descending,
+                                   unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_sort_int(table_id, column_index, descending);
+}
+
+int app_table_sort_uint_if_revision(int table_id, int column_index,
+                                    unsigned char descending,
+                                    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_sort_uint(table_id, column_index, descending);
+}
+
+int app_table_sort_float_if_revision(int table_id, int column_index,
+                                     unsigned char descending,
+                                     unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_sort_float(table_id, column_index, descending);
+}
+
+int app_table_sort_bool_if_revision(int table_id, int column_index,
+                                    unsigned char descending,
+                                    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_sort_bool(table_id, column_index, descending);
+}
+
 
 int app_table_sort_callback(int table_id, int (*comparator)(int, int, int)) {
     JadrenAppTable sorted;
@@ -15660,6 +26422,16 @@ int app_table_sort_callback(int table_id, int (*comparator)(int, int, int)) {
     if (app_table_index_fingerprint(&jadren_app_tables[table_id]) != source_fingerprint) return 0;
     app_table_copy_store(&jadren_app_tables[table_id], &sorted);
     return 1;
+}
+
+/* Sort through a caller-owned comparator only when the equality-only model
+ * revision is still current. The unguarded path keeps its fingerprint checks
+ * around every comparator call and publishes only after the complete scan. */
+int app_table_sort_callback_if_revision(
+    int table_id, int (*comparator)(int, int, int),
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_sort_callback(table_id, comparator);
 }
 
 int app_table_find_text(int table_id, int column_index, const char *query_data,
@@ -15889,6 +26661,13 @@ int app_table_index_find_text(int table_id, int column_index,
     return (int)index->rows[low];
 }
 
+int app_table_index_find_text_if_revision(
+    int table_id, int column_index, const char *query_data,
+    unsigned __int64 query_length, unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return -1;
+    return app_table_index_find_text(table_id, column_index, query_data, query_length);
+}
+
 static int app_table_index_compare_query(int table_id, int column_index,
                                          unsigned int row_index, int kind,
                                          long long int_query,
@@ -15995,6 +26774,15 @@ unsigned __int64 app_table_index_collect_int_range(int table_id, int column_inde
     return (unsigned __int64)count;
 }
 
+unsigned __int64 app_table_index_collect_int_range_if_revision(
+    int table_id, int column_index, long long lower, long long upper,
+    int *output_data, unsigned __int64 output_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_index_collect_int_range(
+        table_id, column_index, lower, upper, output_data, output_length);
+}
+
 static unsigned __int64 app_table_index_collect_typed_range(
     int table_id, int column_index, int kind,
     unsigned __int64 lower_uint, unsigned __int64 upper_uint,
@@ -16066,6 +26854,24 @@ unsigned __int64 app_table_index_collect_float_range(int table_id, int column_in
         0, 0, lower, upper, output_data, output_length);
 }
 
+unsigned __int64 app_table_index_collect_uint_range_if_revision(
+    int table_id, int column_index, unsigned __int64 lower,
+    unsigned __int64 upper, int *output_data, unsigned __int64 output_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_index_collect_uint_range(
+        table_id, column_index, lower, upper, output_data, output_length);
+}
+
+unsigned __int64 app_table_index_collect_float_range_if_revision(
+    int table_id, int column_index, double lower, double upper,
+    int *output_data, unsigned __int64 output_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_index_collect_float_range(
+        table_id, column_index, lower, upper, output_data, output_length);
+}
+
 int app_table_index_find_uint(int table_id, int column_index, unsigned __int64 query) {
     return app_table_index_find_typed(table_id, column_index, JADREN_APP_TABLE_UINT,
                                       0, query, 0.0, 0);
@@ -16079,6 +26885,34 @@ int app_table_index_find_float(int table_id, int column_index, double query) {
 int app_table_index_find_bool(int table_id, int column_index, unsigned char query) {
     return app_table_index_find_typed(table_id, column_index, JADREN_APP_TABLE_BOOL,
                                       0, 0, 0.0, query);
+}
+
+int app_table_index_find_int_if_revision(
+    int table_id, int column_index, long long query,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return -1;
+    return app_table_index_find_int(table_id, column_index, query);
+}
+
+int app_table_index_find_uint_if_revision(
+    int table_id, int column_index, unsigned __int64 query,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return -1;
+    return app_table_index_find_uint(table_id, column_index, query);
+}
+
+int app_table_index_find_float_if_revision(
+    int table_id, int column_index, double query,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return -1;
+    return app_table_index_find_float(table_id, column_index, query);
+}
+
+int app_table_index_find_bool_if_revision(
+    int table_id, int column_index, unsigned char query,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return -1;
+    return app_table_index_find_bool(table_id, column_index, query);
 }
 
 static unsigned char app_table_filter_fold_ascii(unsigned char value,
@@ -16134,6 +26968,7 @@ int app_table_filter_text_ex(int source_table_id, int destination_table_id,
     if (!app_table_valid(source_table_id) || !app_table_valid(destination_table_id) ||
         source_table_id == destination_table_id || column_index < 0 ||
         column_index >= JADREN_APP_TABLE_MAX_COLUMNS ||
+        jadren_app_tables[source_table_id].column_names[column_index].length == 0 ||
         query_length > JADREN_APP_LIST_TEXT_MAX ||
         (query_data == 0 && query_length > 0) || mode < 0 || mode > 7) {
         return 0;
@@ -16176,6 +27011,30 @@ int app_table_filter_text(int source_table_id, int destination_table_id,
                                     column_index, query_data, query_length, 0);
 }
 
+/* Filter one text column only when the caller's equality-only model revision
+ * is still current. A stale revision leaves both tables unchanged; this is
+ * process-local coordination, not a cross-thread atomic or persistence
+ * primitive. */
+int app_table_filter_text_if_revision(int source_table_id, int destination_table_id,
+                                      int column_index, const char *query_data,
+                                      unsigned __int64 query_length,
+                                      unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_text(source_table_id, destination_table_id,
+                                 column_index, query_data, query_length);
+}
+
+/* Filter one text column with an explicit match mode only when the caller's
+ * equality-only model revision is still current. */
+int app_table_filter_text_ex_if_revision(int source_table_id, int destination_table_id,
+                                         int column_index, const char *query_data,
+                                         unsigned __int64 query_length, int mode,
+                                         unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_text_ex(source_table_id, destination_table_id,
+                                    column_index, query_data, query_length, mode);
+}
+
 int app_table_filter_callback(int source_table_id, int destination_table_id,
                               unsigned char (*predicate)(int, int)) {
     JadrenAppTable filtered;
@@ -16201,6 +27060,17 @@ int app_table_filter_callback(int source_table_id, int destination_table_id,
         source_fingerprint) return 0;
     app_table_copy_store(&jadren_app_tables[destination_table_id], &filtered);
     return 1;
+}
+
+/* Apply a callback filter only when the caller's equality-only model revision
+ * is still current. The unguarded implementation retains its source
+ * fingerprint checks while this entry point rejects a stale token before the
+ * scan starts. */
+int app_table_filter_callback_if_revision(
+    int source_table_id, int destination_table_id,
+    unsigned char (*predicate)(int, int), unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_callback(source_table_id, destination_table_id, predicate);
 }
 
 int app_table_page(int source_table_id, int destination_table_id,
@@ -16229,6 +27099,18 @@ int app_table_page(int source_table_id, int destination_table_id,
     return 1;
 }
 
+/* Project one bounded table page only when the caller's equality-only model
+ * revision is still current. A stale revision leaves both source and
+ * destination tables unchanged; this is process-local coordination, not a
+ * cross-thread atomic or persistence primitive. */
+int app_table_page_if_revision(int source_table_id, int destination_table_id,
+                               int start_row, int page_size,
+                               unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_page(source_table_id, destination_table_id, start_row,
+                          page_size);
+}
+
 int app_table_filter_int(int source_table_id, int destination_table_id,
                          int column_index, long long query) {
     unsigned int source_row;
@@ -16249,6 +27131,14 @@ int app_table_filter_int(int source_table_id, int destination_table_id,
         jadren_app_tables[destination_table_id].row_count += 1;
     }
     return 1;
+}
+
+int app_table_filter_int_if_revision(int source_table_id, int destination_table_id,
+                                     int column_index, long long query,
+                                     unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_int(source_table_id, destination_table_id,
+                                column_index, query);
 }
 
 int app_table_filter_uint(int source_table_id, int destination_table_id,
@@ -16273,6 +27163,14 @@ int app_table_filter_uint(int source_table_id, int destination_table_id,
     return 1;
 }
 
+int app_table_filter_uint_if_revision(int source_table_id, int destination_table_id,
+                                      int column_index, unsigned __int64 query,
+                                      unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_uint(source_table_id, destination_table_id,
+                                 column_index, query);
+}
+
 int app_table_filter_float(int source_table_id, int destination_table_id,
                            int column_index, double query) {
     unsigned int source_row;
@@ -16295,6 +27193,14 @@ int app_table_filter_float(int source_table_id, int destination_table_id,
     return 1;
 }
 
+int app_table_filter_float_if_revision(int source_table_id, int destination_table_id,
+                                       int column_index, double query,
+                                       unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_float(source_table_id, destination_table_id,
+                                  column_index, query);
+}
+
 int app_table_filter_bool(int source_table_id, int destination_table_id,
                           int column_index, unsigned char query) {
     unsigned int source_row;
@@ -16315,6 +27221,14 @@ int app_table_filter_bool(int source_table_id, int destination_table_id,
         jadren_app_tables[destination_table_id].row_count += 1;
     }
     return 1;
+}
+
+int app_table_filter_bool_if_revision(int source_table_id, int destination_table_id,
+                                      int column_index, unsigned char query,
+                                      unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_bool(source_table_id, destination_table_id,
+                                 column_index, query);
 }
 
 #define JADREN_APP_TABLE_DOCUMENT_MAX 524288
@@ -16426,6 +27340,65 @@ unsigned __int64 app_list_export_csv(int list_id, unsigned char *output_data,
     return written == required ? written : 0;
 }
 
+int app_list_export_csv_exact(int list_id, unsigned char *output_data,
+                              unsigned __int64 output_capacity,
+                              unsigned __int64 *output_text_length,
+                              unsigned __int64 output_text_length_capacity) {
+    const JadrenAppList *list;
+    unsigned __int64 written;
+    if (!app_list_valid(list_id) || output_text_length == 0 ||
+        output_text_length_capacity == 0) return 0;
+    list = &jadren_app_lists[list_id];
+    if (list->count == 0) {
+        output_text_length[0] = 0;
+        return 1;
+    }
+    if (output_data == 0) return 0;
+    written = app_list_export_csv(list_id, output_data, output_capacity);
+    if (written == 0) return 0;
+    output_text_length[0] = written;
+    return 1;
+}
+
+static int app_json_add_size(unsigned __int64 *total,
+                             unsigned __int64 addition) {
+    if (total == 0 || *total > ((unsigned __int64)-1) - addition) return 0;
+    *total += addition;
+    return 1;
+}
+
+int app_list_export_json_exact(int list_id, unsigned char *output_data,
+                               unsigned __int64 output_capacity,
+                               unsigned __int64 *output_text_length,
+                               unsigned __int64 output_text_length_capacity) {
+    const JadrenAppList *list;
+    unsigned __int64 required = 2ULL;
+    unsigned __int64 written = 0;
+    unsigned __int64 field_length;
+    unsigned int item_index;
+    if (!app_list_valid(list_id) || output_text_length == 0 ||
+        output_text_length_capacity == 0) return 0;
+    list = &jadren_app_lists[list_id];
+    for (item_index = 0; item_index < list->count; item_index += 1) {
+        field_length = json_escaped_length(list->items[item_index].text,
+                                            list->items[item_index].length);
+        if (field_length == 0 || (item_index > 0 && !app_json_add_size(&required, 1)) ||
+            !app_json_add_size(&required, field_length)) return 0;
+    }
+    if (output_data == 0 || output_capacity < required) return 0;
+    output_data[written++] = (unsigned char)'[';
+    for (item_index = 0; item_index < list->count; item_index += 1) {
+        if (item_index > 0) output_data[written++] = (unsigned char)',';
+        written = json_write_escaped(list->items[item_index].text,
+                                     list->items[item_index].length,
+                                     output_data, written);
+    }
+    output_data[written++] = (unsigned char)']';
+    if (written != required) return 0;
+    output_text_length[0] = written;
+    return 1;
+}
+
 static unsigned int app_table_csv_column_count(const JadrenAppTable *table) {
     int last_column = -1;
     unsigned int column_index;
@@ -16494,6 +27467,96 @@ unsigned __int64 app_table_export_csv(int table_id, unsigned char *output_data,
         output_data[written++] = (unsigned char)'\n';
     }
     return written == required ? written : 0;
+}
+
+int app_table_export_csv_exact(int table_id, unsigned char *output_data,
+                               unsigned __int64 output_capacity,
+                               unsigned __int64 *output_text_length,
+                               unsigned __int64 output_text_length_capacity) {
+    unsigned __int64 written;
+    if (output_text_length == 0 || output_text_length_capacity == 0 ||
+        output_data == 0) return 0;
+    written = app_table_export_csv(table_id, output_data, output_capacity);
+    if (written == 0) return 0;
+    output_text_length[0] = written;
+    return 1;
+}
+
+int app_table_export_json_exact(int table_id, unsigned char *output_data,
+                                unsigned __int64 output_capacity,
+                                unsigned __int64 *output_text_length,
+                                unsigned __int64 output_text_length_capacity) {
+    const JadrenAppTable *table;
+    unsigned int column_count;
+    unsigned int row_index;
+    unsigned int column_index;
+    unsigned __int64 required = sizeof("{\"columns\":[") - 1ULL;
+    unsigned __int64 written = 0;
+    unsigned __int64 field_length;
+    unsigned int literal_index;
+    if (!app_table_valid(table_id) || output_text_length == 0 ||
+        output_text_length_capacity == 0) return 0;
+    table = &jadren_app_tables[table_id];
+    if (!app_table_store_valid(table)) return 0;
+    column_count = app_table_csv_column_count(table);
+    for (column_index = 0; column_index < column_count; column_index += 1) {
+        field_length = json_escaped_length(
+            table->column_names[column_index].text,
+            table->column_names[column_index].length);
+        if (field_length == 0 ||
+            (column_index > 0 && !app_json_add_size(&required, 1)) ||
+            !app_json_add_size(&required, field_length)) return 0;
+    }
+    if (!app_json_add_size(&required, sizeof("],\"rows\":[") - 1ULL)) return 0;
+    for (row_index = 0; row_index < table->row_count; row_index += 1) {
+        if (row_index > 0 && !app_json_add_size(&required, 1)) return 0;
+        if (!app_json_add_size(&required, 1)) return 0;
+        for (column_index = 0; column_index < column_count; column_index += 1) {
+            field_length = json_escaped_length(
+                table->cells[row_index][column_index].text,
+                table->cells[row_index][column_index].length);
+            if (field_length == 0 ||
+                (column_index > 0 && !app_json_add_size(&required, 1)) ||
+                !app_json_add_size(&required, field_length)) return 0;
+        }
+        if (!app_json_add_size(&required, 1)) return 0;
+    }
+    if (!app_json_add_size(&required, sizeof("]}") - 1ULL) ||
+        output_data == 0 || output_capacity < required) return 0;
+    for (literal_index = 0; literal_index < sizeof("{\"columns\":[") - 1U;
+         literal_index += 1U) {
+        output_data[written + literal_index] =
+            (unsigned char)"{\"columns\":["[literal_index];
+    }
+    written += sizeof("{\"columns\":[") - 1ULL;
+    for (column_index = 0; column_index < column_count; column_index += 1) {
+        if (column_index > 0) output_data[written++] = (unsigned char)',';
+        written = json_write_escaped(table->column_names[column_index].text,
+                                     table->column_names[column_index].length,
+                                     output_data, written);
+    }
+    for (literal_index = 0; literal_index < sizeof("],\"rows\":[") - 1U;
+        literal_index += 1U) {
+        output_data[written + literal_index] =
+            (unsigned char)"],\"rows\":["[literal_index];
+    }
+    written += sizeof("],\"rows\":[") - 1ULL;
+    for (row_index = 0; row_index < table->row_count; row_index += 1) {
+        if (row_index > 0) output_data[written++] = (unsigned char)',';
+        output_data[written++] = (unsigned char)'[';
+        for (column_index = 0; column_index < column_count; column_index += 1) {
+            if (column_index > 0) output_data[written++] = (unsigned char)',';
+            written = json_write_escaped(table->cells[row_index][column_index].text,
+                                         table->cells[row_index][column_index].length,
+                                         output_data, written);
+        }
+        output_data[written++] = (unsigned char)']';
+    }
+    output_data[written++] = (unsigned char)']';
+    output_data[written++] = (unsigned char)'}';
+    if (written != required) return 0;
+    output_text_length[0] = written;
+    return 1;
 }
 
 enum {
@@ -16625,6 +27688,93 @@ int app_table_import_csv(int table_id, const unsigned char *input_data,
     if (!app_table_store_valid(&parsed)) return 0;
     app_table_copy_store(&jadren_app_tables[table_id], &parsed);
     return 1;
+}
+
+int app_table_import_csv_if_revision(int table_id, const unsigned char *input_data,
+                                     unsigned __int64 input_capacity,
+                                     unsigned __int64 input_length,
+                                     unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_import_csv(table_id, input_data, input_capacity, input_length);
+}
+
+/* Import one bounded CSV table file transactionally. The file is copied into
+ * fixed scratch storage, then parsed by the same no-partial-update routine as
+ * caller-owned CSV input. */
+int app_table_import_csv_file(int table_id, const char *path_data,
+                              unsigned __int64 path_length) {
+    static unsigned char document[JADREN_APP_TABLE_CSV_INPUT_MAX];
+    unsigned __int64 file_length;
+    if (!app_table_valid(table_id) || path_data == 0 || path_length == 0) return 0;
+    file_length = file_size(path_data, path_length);
+    if (file_length == 0 || file_length > sizeof(document)) return 0;
+    if (file_read(path_data, path_length, document, sizeof(document)) != file_length) return 0;
+    return app_table_import_csv(table_id, document, sizeof(document), file_length);
+}
+
+/* Import one CSV table file only when the caller's equality-only model
+ * revision is still current. */
+int app_table_import_csv_file_if_revision(
+    int table_id, const char *path_data, unsigned __int64 path_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_import_csv_file(table_id, path_data, path_length);
+}
+
+/* Import one caller-owned CSV list. Each CSV record contains exactly one
+ * escaped field and becomes one list item; the temporary list is published
+ * only after the complete bounded prefix is valid. */
+int app_list_import_csv(int list_id, const unsigned char *input_data,
+                        unsigned __int64 input_capacity,
+                        unsigned __int64 input_length) {
+    JadrenAppList parsed;
+    JadrenAppListItem field;
+    unsigned __int64 offset = 0;
+    int delimiter;
+    if (!app_list_valid(list_id) || (input_data == 0 && input_length > 0) ||
+        input_length > input_capacity || input_length > JADREN_APP_LIST_DOCUMENT_MAX) return 0;
+    app_list_clear_store(&parsed);
+    while (offset < input_length) {
+        if (parsed.count >= JADREN_APP_LIST_MAX_ITEMS) return 0;
+        delimiter = app_table_csv_read_field(input_data, input_length, &offset, &field);
+        if (delimiter != JADREN_APP_TABLE_CSV_FIELD_ROW) return 0;
+        app_table_csv_copy_item(&parsed.items[parsed.count], &field);
+        parsed.count += 1;
+    }
+    app_list_copy_store(&jadren_app_lists[list_id], &parsed);
+    return 1;
+}
+
+int app_list_import_csv_if_revision(
+    int list_id, const unsigned char *input_data,
+    unsigned __int64 input_capacity, unsigned __int64 input_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_import_csv(list_id, input_data, input_capacity, input_length);
+}
+
+/* Import one bounded CSV list file transactionally. */
+int app_list_import_csv_file(int list_id, const char *path_data,
+                             unsigned __int64 path_length) {
+    static unsigned char document[JADREN_APP_LIST_DOCUMENT_MAX];
+    unsigned __int64 file_length;
+    if (!app_list_valid(list_id) || path_data == 0 || path_length == 0) return 0;
+    file_length = file_size(path_data, path_length);
+    if (file_length > sizeof(document)) return 0;
+    if (file_length == 0) {
+        if (!file_exists(path_data, path_length)) return 0;
+        app_list_clear_store(&jadren_app_lists[list_id]);
+        return 1;
+    }
+    if (file_read(path_data, path_length, document, sizeof(document)) != file_length) return 0;
+    return app_list_import_csv(list_id, document, sizeof(document), file_length);
+}
+
+int app_list_import_csv_file_if_revision(
+    int list_id, const char *path_data, unsigned __int64 path_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_import_csv_file(list_id, path_data, path_length);
 }
 
 #define JADREN_APP_TABLE_SCHEMA_DOCUMENT_MAX 128
@@ -16983,6 +28133,162 @@ static int app_table_parse_schema_full_document(const unsigned char *data,
     while (index < length && (data[index] == ' ' || data[index] == '\t' ||
                               data[index] == '\r' || data[index] == '\n')) index += 1;
     return index == length;
+}
+
+/* Parse the deterministic columns/rows JSON projection used by
+ * app_table_export_json_exact. Column kinds remain the live table schema;
+ * incoming names and bounded text-form values are validated before publish. */
+static int app_table_parse_json_exact_document(const unsigned char *data,
+                                               unsigned __int64 length,
+                                               JadrenAppTable *table) {
+    unsigned __int64 index = 0;
+    unsigned __int64 end;
+    unsigned __int64 value_length;
+    unsigned int column_count = 0;
+    unsigned int row_index;
+    unsigned int column_index;
+    if (data == 0 || table == 0 || length == 0 ||
+        !app_table_schema_full_expect_byte(data, length, &index, (unsigned char)'{') ||
+        !app_table_schema_full_expect_key(data, length, &index,
+                                          "columns", 7) ||
+        !app_table_schema_full_expect_byte(data, length, &index, (unsigned char)'[')) {
+        return 0;
+    }
+    for (column_index = 0; column_index < JADREN_APP_TABLE_MAX_COLUMNS; column_index += 1)
+        app_list_clear_item(&table->column_names[column_index]);
+    for (;;) {
+        if (!json_read_skip_ws(data, length, &index) || index >= length) return 0;
+        if (data[index] == (unsigned char)']') {
+            index += 1;
+            break;
+        }
+        if (column_count >= JADREN_APP_TABLE_MAX_COLUMNS ||
+            !json_read_string_end(data, length, index, &end)) return 0;
+        value_length = json_read_string_length(data, index, end);
+        if (value_length > JADREN_APP_TABLE_COLUMN_NAME_MAX ||
+            !app_table_column_name_valid(data + index + 1, value_length)) return 0;
+        table->column_names[column_count].length = value_length;
+        (void)json_read_string_copy(data, index, end,
+                                    table->column_names[column_count].text);
+        column_count += 1;
+        index = end;
+        if (!json_read_skip_ws(data, length, &index) || index >= length) return 0;
+        if (data[index] == (unsigned char)',') {
+            index += 1;
+            continue;
+        }
+        if (data[index] == (unsigned char)']') {
+            index += 1;
+            break;
+        }
+        return 0;
+    }
+    if (!app_table_schema_full_expect_byte(data, length, &index, (unsigned char)',') ||
+        !app_table_schema_full_expect_key(data, length, &index, "rows", 4) ||
+        !app_table_schema_full_expect_byte(data, length, &index, (unsigned char)'[')) {
+        return 0;
+    }
+    app_table_clear_store(table);
+    for (;;) {
+        if (!json_read_skip_ws(data, length, &index) || index >= length) return 0;
+        if (data[index] == (unsigned char)']') {
+            index += 1;
+            break;
+        }
+        if (column_count == 0 || table->row_count >= JADREN_APP_TABLE_MAX_ROWS ||
+            data[index] != (unsigned char)'[') return 0;
+        index += 1;
+        row_index = (unsigned int)table->row_count;
+        for (column_index = 0; column_index < column_count; column_index += 1) {
+            if (!json_read_skip_ws(data, length, &index) ||
+                !json_read_string_end(data, length, index, &end)) return 0;
+            value_length = json_read_string_length(data, index, end);
+            if (value_length > JADREN_APP_LIST_TEXT_MAX) return 0;
+            table->cells[row_index][column_index].length = value_length;
+            (void)json_read_string_copy(data, index, end,
+                                        table->cells[row_index][column_index].text);
+            index = end;
+            if (!json_read_skip_ws(data, length, &index) || index >= length) return 0;
+            if (column_index + 1 < column_count) {
+                if (data[index] != (unsigned char)',') return 0;
+                index += 1;
+            } else {
+                if (data[index] != (unsigned char)']') return 0;
+                index += 1;
+            }
+        }
+        table->row_count += 1;
+        if (!json_read_skip_ws(data, length, &index) || index >= length) return 0;
+        if (data[index] == (unsigned char)',') {
+            index += 1;
+            continue;
+        }
+        if (data[index] == (unsigned char)']') {
+            index += 1;
+            break;
+        }
+        return 0;
+    }
+    if (!app_table_schema_full_expect_byte(data, length, &index, (unsigned char)'}')) return 0;
+    while (index < length && (data[index] == ' ' || data[index] == '\t' ||
+                              data[index] == '\r' || data[index] == '\n')) index += 1;
+    return index == length;
+}
+
+/* Import one caller-owned table JSON projection transactionally. */
+int app_table_import_json_exact(int table_id, const unsigned char *input_data,
+                                unsigned __int64 input_capacity,
+                                unsigned __int64 input_length) {
+    JadrenAppTable parsed;
+    if (!app_table_valid(table_id) || input_data == 0 || input_length == 0 ||
+        input_length > input_capacity || input_length > JADREN_APP_TABLE_DOCUMENT_MAX) {
+        return 0;
+    }
+    app_table_copy_schema(&parsed, &jadren_app_tables[table_id]);
+    if (!app_table_parse_json_exact_document(input_data, input_length, &parsed) ||
+        !app_table_store_valid(&parsed)) return 0;
+    app_table_copy_store(&jadren_app_tables[table_id], &parsed);
+    return 1;
+}
+
+/* Import one JSON table projection only when the caller's equality-only model
+ * revision is still current. The typed import remains transactional. */
+int app_table_import_json_exact_if_revision(
+    int table_id, const unsigned char *input_data,
+    unsigned __int64 input_capacity, unsigned __int64 input_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_import_json_exact(
+        table_id, input_data, input_capacity, input_length);
+}
+
+/* Import one deterministic columns/rows JSON file transactionally while
+ * retaining the live table's typed column schema. */
+int app_table_import_json_file(int table_id, const char *path_data,
+                               unsigned __int64 path_length) {
+    static unsigned char document[JADREN_APP_TABLE_DOCUMENT_MAX];
+    JadrenAppTable parsed;
+    unsigned __int64 document_length;
+    unsigned __int64 file_length;
+    if (!app_table_valid(table_id) || path_data == 0 || path_length == 0) return 0;
+    file_length = file_size(path_data, path_length);
+    if (file_length == 0 || file_length > sizeof(document)) return 0;
+    document_length = file_read(path_data, path_length, document, sizeof(document));
+    if (document_length != file_length) return 0;
+    app_table_copy_schema(&parsed, &jadren_app_tables[table_id]);
+    if (!app_table_parse_json_exact_document(document, document_length, &parsed) ||
+        !app_table_store_valid(&parsed)) return 0;
+    app_table_copy_store(&jadren_app_tables[table_id], &parsed);
+    return 1;
+}
+
+/* Import one JSON table file only when the caller's equality-only model
+ * revision is still current. The typed file parser remains transactional. */
+int app_table_import_json_file_if_revision(
+    int table_id, const char *path_data, unsigned __int64 path_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_import_json_file(table_id, path_data, path_length);
 }
 
 int app_table_load(int table_id, const char *path_data, unsigned __int64 path_length) {
@@ -17354,6 +28660,25 @@ int app_data_write_exact(unsigned char *output_data,
     return 1;
 }
 
+/* Return the exact serialized size without exposing or mutating caller
+ * storage. The fixed scratch buffer keeps the query bounded and mirrors the
+ * same serializer used by app_data_write_exact. */
+unsigned __int64 app_data_snapshot_length(void) {
+    static unsigned char document[JADREN_APP_DATA_DOCUMENT_MAX];
+    unsigned __int64 length = 0;
+    if (!app_data_write_exact(document, sizeof(document), &length, 1)) return 0;
+    return length;
+}
+
+/* Return the exact serialized size only when the model revision is stable. */
+unsigned __int64 app_data_snapshot_length_if_revision(unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    unsigned __int64 length = app_data_snapshot_length();
+    if (length == 0) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    return length;
+}
+
 /* Export only when the caller's equality-only snapshot is still current.
  * The stale path returns before serialization, so caller-owned output and
  * length remain unchanged. */
@@ -17400,6 +28725,12 @@ int app_data_tx_save_atomic(const char *temporary_path_data,
     return app_data_tx_commit();
 }
 
+unsigned __int64 file_lock_path_retry(const unsigned char *path_data,
+                                      unsigned __int64 path_capacity,
+                                      unsigned __int64 path_length,
+                                      unsigned __int64 max_attempts,
+                                      unsigned __int64 retry_delay_ms);
+
 /* Durable model commit: serialize the active transaction into a caller-owned
  * cross-process lock, serialize into the caller-owned temporary file, flush its
  * contents, atomically replace the target, flush the promoted file, then commit
@@ -17444,6 +28775,166 @@ int app_data_tx_commit_durable(const char *temporary_path_data,
     committed = app_data_tx_commit();
     if (!file_unlock(lock_token)) return 0;
     return committed;
+}
+
+static int app_data_path_equal(const char *left_data, unsigned __int64 left_length,
+                               const char *right_data, unsigned __int64 right_length) {
+    unsigned __int64 index;
+    if (left_data == 0 || right_data == 0 || left_length != right_length) return 0;
+    for (index = 0; index < left_length; index += 1)
+        if (left_data[index] != right_data[index]) return 0;
+    return 1;
+}
+
+/* Durable model commit with an explicit directory metadata flush. The lock
+ * remains caller-owned and the new directory path must already exist. */
+int app_data_tx_commit_durable_directory(
+    const char *temporary_path_data,
+    unsigned __int64 temporary_path_length,
+    const char *target_path_data,
+    unsigned __int64 target_path_length,
+    const char *directory_path_data,
+    unsigned __int64 directory_path_length,
+    const char *lock_path_data,
+    unsigned __int64 lock_path_length) {
+    unsigned __int64 lock_token;
+    int committed;
+    if (!jadren_app_data_transaction_active || temporary_path_data == 0 ||
+        target_path_data == 0 || directory_path_data == 0 || lock_path_data == 0 ||
+        temporary_path_length == 0 || target_path_length == 0 ||
+        directory_path_length == 0 || lock_path_length == 0 ||
+        !directory_exists(directory_path_data, directory_path_length) ||
+        app_data_path_equal(temporary_path_data, temporary_path_length,
+                            target_path_data, target_path_length) ||
+        app_data_path_equal(temporary_path_data, temporary_path_length,
+                            lock_path_data, lock_path_length) ||
+        app_data_path_equal(target_path_data, target_path_length,
+                            lock_path_data, lock_path_length)) return 0;
+    lock_token = file_lock(lock_path_data, lock_path_length);
+    if (lock_token == 0) {
+        (void)app_data_tx_rollback();
+        return 0;
+    }
+    if (!app_data_save(temporary_path_data, temporary_path_length) ||
+        !file_flush(temporary_path_data, temporary_path_length) ||
+        !file_replace_atomic(temporary_path_data, temporary_path_length,
+                             target_path_data, target_path_length)) {
+        (void)file_unlock(lock_token);
+        (void)file_delete(temporary_path_data, temporary_path_length);
+        (void)app_data_tx_rollback();
+        return 0;
+    }
+    if (!file_flush(target_path_data, target_path_length) ||
+        !directory_flush(directory_path_data, directory_path_length)) {
+        (void)file_unlock(lock_token);
+        (void)app_data_tx_commit();
+        return 0;
+    }
+    committed = app_data_tx_commit();
+    if (!file_unlock(lock_token)) return 0;
+    return committed;
+}
+
+int app_data_tx_commit_durable_directory_if_revision(
+    const char *temporary_path_data,
+    unsigned __int64 temporary_path_length,
+    const char *target_path_data,
+    unsigned __int64 target_path_length,
+    const char *directory_path_data,
+    unsigned __int64 directory_path_length,
+    const char *lock_path_data,
+    unsigned __int64 lock_path_length,
+    unsigned __int64 expected_revision) {
+    if (!jadren_app_data_transaction_active ||
+        app_data_revision() != expected_revision) return 0;
+    return app_data_tx_commit_durable_directory(
+        temporary_path_data, temporary_path_length, target_path_data,
+        target_path_length, directory_path_data, directory_path_length,
+        lock_path_data, lock_path_length);
+}
+
+/* Durable model commit with a bounded caller-selected retry for the sidecar
+ * lock. The retry delay blocks only the caller thread; it is not a worker,
+ * scheduler, callback, or real-time synchronization primitive. A retry
+ * exhaustion uses the same rollback policy as the nonblocking durable commit. */
+int app_data_tx_commit_durable_retry(const char *temporary_path_data,
+                                     unsigned __int64 temporary_path_length,
+                                     const char *target_path_data,
+                                     unsigned __int64 target_path_length,
+                                     const char *lock_path_data,
+                                     unsigned __int64 lock_path_length,
+                                     unsigned __int64 max_attempts,
+                                     unsigned __int64 retry_delay_ms) {
+    unsigned __int64 lock_token;
+    int committed;
+    if (!jadren_app_data_transaction_active || temporary_path_data == 0 ||
+        target_path_data == 0 || lock_path_data == 0 || temporary_path_length == 0 ||
+        target_path_length == 0 || lock_path_length == 0) return 0;
+    lock_token = file_lock_path_retry((const unsigned char *)lock_path_data,
+                                      lock_path_length, lock_path_length,
+                                      max_attempts, retry_delay_ms);
+    if (lock_token == 0) {
+        (void)app_data_tx_rollback();
+        return 0;
+    }
+    if (!app_data_save(temporary_path_data, temporary_path_length) ||
+        !file_flush(temporary_path_data, temporary_path_length)) {
+        (void)file_unlock(lock_token);
+        (void)file_delete(temporary_path_data, temporary_path_length);
+        (void)app_data_tx_rollback();
+        return 0;
+    }
+    if (!file_replace_atomic(temporary_path_data, temporary_path_length,
+                             target_path_data, target_path_length)) {
+        (void)file_unlock(lock_token);
+        (void)file_delete(temporary_path_data, temporary_path_length);
+        (void)app_data_tx_rollback();
+        return 0;
+    }
+    if (!file_flush(target_path_data, target_path_length)) {
+        (void)file_unlock(lock_token);
+        (void)app_data_tx_commit();
+        return 0;
+    }
+    committed = app_data_tx_commit();
+    if (!file_unlock(lock_token)) return 0;
+    return committed;
+}
+
+/* Retry the durable commit only when the caller's equality-only revision is
+ * still current. A stale call returns before lock acquisition, sleep, file
+ * mutation, or transaction rollback so the caller retains the active snapshot. */
+int app_data_tx_commit_durable_retry_if_revision(const char *temporary_path_data,
+                                                 unsigned __int64 temporary_path_length,
+                                                 const char *target_path_data,
+                                                 unsigned __int64 target_path_length,
+                                                 const char *lock_path_data,
+                                                 unsigned __int64 lock_path_length,
+                                                 unsigned __int64 expected_revision,
+                                                 unsigned __int64 max_attempts,
+                                                 unsigned __int64 retry_delay_ms) {
+    if (!jadren_app_data_transaction_active || app_data_revision() != expected_revision) return 0;
+    return app_data_tx_commit_durable_retry(temporary_path_data, temporary_path_length,
+                                            target_path_data, target_path_length,
+                                            lock_path_data, lock_path_length,
+                                            max_attempts, retry_delay_ms);
+}
+
+/* Commit the active model transaction durably only when the caller's
+ * equality-only revision is still current. A stale call does not acquire the
+ * lock or mutate the transaction; callers may explicitly roll it back or
+ * retry with a fresh revision. */
+int app_data_tx_commit_durable_if_revision(const char *temporary_path_data,
+                                           unsigned __int64 temporary_path_length,
+                                           const char *target_path_data,
+                                           unsigned __int64 target_path_length,
+                                           const char *lock_path_data,
+                                           unsigned __int64 lock_path_length,
+                                           unsigned __int64 expected_revision) {
+    if (!jadren_app_data_transaction_active || app_data_revision() != expected_revision) return 0;
+    return app_data_tx_commit_durable(temporary_path_data, temporary_path_length,
+                                      target_path_data, target_path_length,
+                                      lock_path_data, lock_path_length);
 }
 
 static int app_data_expect_bytes(const unsigned char *data, unsigned __int64 length,
@@ -18482,6 +29973,190 @@ index_file_export_done:
     return success;
 }
 
+/* Export a bounded list to a flushed temporary CSV and atomically promote it. */
+int app_list_export_csv_file_durable(
+    int list_id,
+    const char *output_path_data, unsigned __int64 output_path_length,
+    const char *temporary_path_data, unsigned __int64 temporary_path_length) {
+    static unsigned char document[JADREN_APP_LIST_DOCUMENT_MAX];
+    static const unsigned char empty_document[1] = {0};
+    unsigned __int64 csv_length;
+    int success = 0;
+    if (!app_list_valid(list_id) || output_path_data == 0 || temporary_path_data == 0 ||
+        output_path_length == 0 || temporary_path_length == 0 ||
+        app_data_journal_export_path_same(output_path_data, output_path_length,
+                                          temporary_path_data, temporary_path_length))
+        return 0;
+    if (file_exists(temporary_path_data, temporary_path_length) &&
+        !file_delete(temporary_path_data, temporary_path_length))
+        goto list_csv_file_done;
+    if (jadren_app_lists[list_id].count == 0) {
+        if (file_write(temporary_path_data, temporary_path_length,
+                       empty_document, 0) != 0 ||
+            !file_exists(temporary_path_data, temporary_path_length) ||
+            directory_exists(temporary_path_data, temporary_path_length))
+            goto list_csv_file_done;
+    } else {
+        csv_length = app_list_export_csv(list_id, document, sizeof(document));
+        if (csv_length == 0 ||
+            file_write(temporary_path_data, temporary_path_length,
+                       document, csv_length) != csv_length)
+            goto list_csv_file_done;
+    }
+    if (!file_flush(temporary_path_data, temporary_path_length) ||
+        !file_replace_atomic(temporary_path_data, temporary_path_length,
+                             output_path_data, output_path_length) ||
+        !file_flush(output_path_data, output_path_length))
+        goto list_csv_file_done;
+    success = 1;
+list_csv_file_done:
+    if (!success) (void)file_delete(temporary_path_data, temporary_path_length);
+    return success;
+}
+
+/* Export a bounded table to a flushed temporary CSV and atomically promote it. */
+int app_table_export_csv_file_durable(
+    int table_id,
+    const char *output_path_data, unsigned __int64 output_path_length,
+    const char *temporary_path_data, unsigned __int64 temporary_path_length) {
+    static unsigned char document[JADREN_APP_TABLE_DOCUMENT_MAX];
+    unsigned __int64 csv_length;
+    int success = 0;
+    if (!app_table_valid(table_id) || output_path_data == 0 || temporary_path_data == 0 ||
+        output_path_length == 0 || temporary_path_length == 0 ||
+        app_data_journal_export_path_same(output_path_data, output_path_length,
+                                          temporary_path_data, temporary_path_length))
+        return 0;
+    if (file_exists(temporary_path_data, temporary_path_length) &&
+        !file_delete(temporary_path_data, temporary_path_length))
+        goto table_csv_file_done;
+    csv_length = app_table_export_csv(table_id, document, sizeof(document));
+    if (csv_length == 0 ||
+        file_write(temporary_path_data, temporary_path_length,
+                   document, csv_length) != csv_length)
+        goto table_csv_file_done;
+    if (!file_flush(temporary_path_data, temporary_path_length) ||
+        !file_replace_atomic(temporary_path_data, temporary_path_length,
+                             output_path_data, output_path_length) ||
+        !file_flush(output_path_data, output_path_length))
+        goto table_csv_file_done;
+    success = 1;
+table_csv_file_done:
+    if (!success) (void)file_delete(temporary_path_data, temporary_path_length);
+    return success;
+}
+
+/* Export a bounded list to flushed temporary JSON and atomically promote it. */
+int app_list_export_json_file_durable(int list_id,
+    const char *output_path_data, unsigned __int64 output_path_length,
+    const char *temporary_path_data, unsigned __int64 temporary_path_length) {
+    static unsigned char document[JADREN_APP_LIST_DOCUMENT_MAX];
+    unsigned __int64 json_length_slot = 0;
+    int success = 0;
+    if (!app_list_valid(list_id) || output_path_data == 0 || temporary_path_data == 0 ||
+        output_path_length == 0 || temporary_path_length == 0 ||
+        app_data_journal_export_path_same(output_path_data, output_path_length,
+                                          temporary_path_data, temporary_path_length))
+        return 0;
+    if (file_exists(temporary_path_data, temporary_path_length) &&
+        !file_delete(temporary_path_data, temporary_path_length))
+        goto list_json_file_done;
+    if (!app_list_export_json_exact(list_id, document, sizeof(document),
+                                    &json_length_slot, 1))
+        goto list_json_file_done;
+    if (file_write(temporary_path_data, temporary_path_length,
+                   document, json_length_slot) != json_length_slot)
+        goto list_json_file_done;
+    if (!file_flush(temporary_path_data, temporary_path_length) ||
+        !file_replace_atomic(temporary_path_data, temporary_path_length,
+                             output_path_data, output_path_length) ||
+        !file_flush(output_path_data, output_path_length))
+        goto list_json_file_done;
+    success = 1;
+list_json_file_done:
+    if (!success) (void)file_delete(temporary_path_data, temporary_path_length);
+    return success;
+}
+
+/* Export a bounded table to flushed temporary JSON and atomically promote it. */
+int app_table_export_json_file_durable(int table_id,
+    const char *output_path_data, unsigned __int64 output_path_length,
+    const char *temporary_path_data, unsigned __int64 temporary_path_length) {
+    static unsigned char document[JADREN_APP_TABLE_DOCUMENT_MAX];
+    unsigned __int64 json_length_slot = 0;
+    int success = 0;
+    if (!app_table_valid(table_id) || output_path_data == 0 || temporary_path_data == 0 ||
+        output_path_length == 0 || temporary_path_length == 0 ||
+        app_data_journal_export_path_same(output_path_data, output_path_length,
+                                          temporary_path_data, temporary_path_length))
+        return 0;
+    if (file_exists(temporary_path_data, temporary_path_length) &&
+        !file_delete(temporary_path_data, temporary_path_length))
+        goto table_json_file_done;
+    if (!app_table_export_json_exact(table_id, document, sizeof(document),
+                                     &json_length_slot, 1))
+        goto table_json_file_done;
+    if (file_write(temporary_path_data, temporary_path_length,
+                   document, json_length_slot) != json_length_slot)
+        goto table_json_file_done;
+    if (!file_flush(temporary_path_data, temporary_path_length) ||
+        !file_replace_atomic(temporary_path_data, temporary_path_length,
+                             output_path_data, output_path_length) ||
+        !file_flush(output_path_data, output_path_length))
+        goto table_json_file_done;
+    success = 1;
+table_json_file_done:
+    if (!success) (void)file_delete(temporary_path_data, temporary_path_length);
+    return success;
+}
+
+/* Revision-guarded durable exports reject a stale caller snapshot before any
+ * temporary or target file is touched. Cross-thread serialization remains
+ * caller-owned, matching the other process-local guarded file APIs. */
+int app_list_export_csv_file_durable_if_revision(
+    int list_id,
+    const char *output_path_data, unsigned __int64 output_path_length,
+    const char *temporary_path_data, unsigned __int64 temporary_path_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_export_csv_file_durable(
+        list_id, output_path_data, output_path_length,
+        temporary_path_data, temporary_path_length);
+}
+
+int app_list_export_json_file_durable_if_revision(
+    int list_id,
+    const char *output_path_data, unsigned __int64 output_path_length,
+    const char *temporary_path_data, unsigned __int64 temporary_path_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_export_json_file_durable(
+        list_id, output_path_data, output_path_length,
+        temporary_path_data, temporary_path_length);
+}
+
+int app_table_export_csv_file_durable_if_revision(
+    int table_id,
+    const char *output_path_data, unsigned __int64 output_path_length,
+    const char *temporary_path_data, unsigned __int64 temporary_path_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_export_csv_file_durable(
+        table_id, output_path_data, output_path_length,
+        temporary_path_data, temporary_path_length);
+}
+
+int app_table_export_json_file_durable_if_revision(
+    int table_id,
+    const char *output_path_data, unsigned __int64 output_path_length,
+    const char *temporary_path_data, unsigned __int64 temporary_path_length,
+    unsigned __int64 expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_export_json_file_durable(
+        table_id, output_path_data, output_path_length,
+        temporary_path_data, temporary_path_length);
+}
+
 /* Return one bounded page of indexed spans without copying journal payloads. */
 unsigned __int64 app_data_journal_index_range_durable(
     const char *journal_path, unsigned __int64 journal_path_length,
@@ -19399,6 +31074,13 @@ int file_delete(const char *path_data, unsigned __int64 path_length) {
            DeleteFileW(wide_path);
 }
 
+/* Deletes a file through an explicit valid caller-owned UTF-8 path. */
+int file_delete_path(const unsigned char *path_data, unsigned __int64 path_capacity,
+                     unsigned __int64 path_length) {
+    if (path_length > path_capacity) return 0;
+    return file_delete((const char *)path_data, path_length);
+}
+
 /* Non-blocking cross-process lock represented by the live OS handle. The
  * caller must keep the token and release it with file_unlock. */
 unsigned __int64 file_lock(const char *path_data, unsigned __int64 path_length) {
@@ -19413,6 +31095,36 @@ unsigned __int64 file_lock(const char *path_data, unsigned __int64 path_length) 
         return 0;
     }
     return (unsigned __int64)handle;
+}
+
+/* Acquires a non-blocking lock through an explicit valid caller-owned path. */
+unsigned __int64 file_lock_path(const unsigned char *path_data,
+                                unsigned __int64 path_capacity,
+                                unsigned __int64 path_length) {
+    if (path_length > path_capacity) return 0;
+    return file_lock((const char *)path_data, path_length);
+}
+
+/* Retries a caller-owned sidecar lock a finite caller-selected number of
+ * times. Each failed attempt except the last sleeps for retry_delay_ms on the
+ * calling thread; this is deliberately not an event-loop or real-time API. */
+unsigned __int64 file_lock_path_retry(const unsigned char *path_data,
+                                      unsigned __int64 path_capacity,
+                                      unsigned __int64 path_length,
+                                      unsigned __int64 max_attempts,
+                                      unsigned __int64 retry_delay_ms) {
+    unsigned __int64 attempt = 0;
+    if (path_length > path_capacity || max_attempts == 0) return 0;
+    while (attempt < max_attempts) {
+        unsigned __int64 token = file_lock((const char *)path_data, path_length);
+        if (token != 0) return token;
+        attempt += 1;
+        if (attempt < max_attempts && retry_delay_ms != 0) {
+            Sleep(retry_delay_ms > 0xFFFFFFFFULL ? 0xFFFFFFFFUL :
+                  (unsigned long)retry_delay_ms);
+        }
+    }
+    return 0;
 }
 
 int file_unlock(unsigned __int64 token) {
@@ -19433,8 +31145,73 @@ int file_replace_atomic(const char *source_data, unsigned __int64 source_length,
     return MoveFileExW(source_path, target_path,
                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
 }
+
+/* Atomically promotes an explicit valid caller-owned source path over target. */
+int file_replace_atomic_paths(const unsigned char *source_data,
+                              unsigned __int64 source_capacity,
+                              unsigned __int64 source_length,
+                              const unsigned char *target_data,
+                              unsigned __int64 target_capacity,
+                              unsigned __int64 target_length) {
+    if (source_length > source_capacity || target_length > target_capacity) return 0;
+    return file_replace_atomic((const char *)source_data, source_length,
+                               (const char *)target_data, target_length);
+}
+
+/* Writes a valid caller-owned prefix, flushes it, then atomically promotes it. */
+int file_write_atomic(const char *temporary_path_data,
+                      unsigned __int64 temporary_path_length,
+                      const char *target_path_data,
+                      unsigned __int64 target_path_length,
+                      const unsigned char *input_data,
+                      unsigned __int64 input_length,
+                      unsigned __int64 write_length) {
+    unsigned __int64 path_index;
+    int same_path;
+    if (temporary_path_data == 0 || target_path_data == 0 ||
+        temporary_path_length == 0 || target_path_length == 0) return 0;
+    same_path = temporary_path_length == target_path_length;
+    if (same_path) {
+        for (path_index = 0; path_index < temporary_path_length; path_index += 1) {
+            if (temporary_path_data[path_index] != target_path_data[path_index]) {
+                same_path = 0;
+                break;
+            }
+        }
+    }
+    if (same_path ||
+        write_length > input_length ||
+        write_file_bytes(temporary_path_data, temporary_path_length,
+                         input_data, write_length) != write_length) {
+        return 0;
+    }
+    if (!file_flush(temporary_path_data, temporary_path_length)) return 0;
+    return file_replace_atomic(temporary_path_data, temporary_path_length,
+                               target_path_data, target_path_length);
+}
+
+/* Durable caller-thread commit including promoted-file and directory flush. */
+int file_write_atomic_durable(const char *temporary_path_data,
+                              unsigned __int64 temporary_path_length,
+                              const char *target_path_data,
+                              unsigned __int64 target_path_length,
+                              const char *directory_path_data,
+                              unsigned __int64 directory_path_length,
+                              const unsigned char *input_data,
+                              unsigned __int64 input_length,
+                              unsigned __int64 write_length) {
+    if (directory_path_data == 0 || directory_path_length == 0 ||
+        !directory_exists(directory_path_data, directory_path_length) ||
+        !file_write_atomic(temporary_path_data, temporary_path_length,
+                           target_path_data, target_path_length, input_data,
+                           input_length, write_length)) {
+        return 0;
+    }
+    if (!file_flush(target_path_data, target_path_length)) return 0;
+    return directory_flush(directory_path_data, directory_path_length);
+}
 "#;
-    const KERNEL32_DEF: &str = "LIBRARY kernel32.dll\nEXPORTS\nCancelIoEx\nCloseHandle\nCopyFileW\nCreateDirectoryW\nCreateFileW\nCreateIoCompletionPort\nDeleteFileW\nExitProcess\nFindClose\nFindFirstFileW\nFindNextFileW\nFlushFileBuffers\nGetCommandLineW\nGetFileAttributesW\nGetFileSizeEx\nGetLastError\nGetProcessHeap\nGetQueuedCompletionStatus\nGetSystemTimeAsFileTime\nGetTickCount64\nHeapAlloc\nHeapFree\nHeapReAlloc\nMoveFileExW\nMultiByteToWideChar\nQueryPerformanceCounter\nQueryPerformanceFrequency\nReadFile\nRemoveDirectoryW\nSetFilePointerEx\nSleep\nWideCharToMultiByte\nWriteFile\n";
+    const KERNEL32_DEF: &str = "LIBRARY kernel32.dll\nEXPORTS\nCancelIoEx\nCloseHandle\nCopyFileW\nCreateDirectoryW\nCreateFileW\nCreateIoCompletionPort\nCreateProcessW\nDeleteFileW\nExitProcess\nFindClose\nFindFirstFileW\nFindNextFileW\nFlushFileBuffers\nGetCommandLineW\nGetExitCodeProcess\nGetFileAttributesW\nGetFileSizeEx\nGetFullPathNameW\nGetLastError\nGetModuleFileNameW\nGetProcessHeap\nGetQueuedCompletionStatus\nGetSystemTimeAsFileTime\nGetTickCount64\nHeapAlloc\nHeapFree\nHeapReAlloc\nMoveFileExW\nMultiByteToWideChar\nQueryPerformanceCounter\nQueryPerformanceFrequency\nReadFile\nRemoveDirectoryW\nSetFilePointerEx\nSleep\nTerminateProcess\nWaitForSingleObject\nWideCharToMultiByte\nWriteFile\n";
     const WS2_32_DEF: &str = "LIBRARY ws2_32.dll\nEXPORTS\nWSAConnect\nWSACleanup\nWSAGetLastError\nWSAIoctl\nWSARecv\nWSASend\nWSAStartup\naccept\nbind\nclosesocket\nconnect\nfreeaddrinfo\ngetaddrinfo\ngetsockopt\nioctlsocket\nlisten\nrecv\nselect\nsend\nsetsockopt\nsocket\n";
     let stem = output.with_extension("");
     let source_path = stem.with_extension("file.c");
@@ -19623,12 +31400,20 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "time_now_monotonic_ms"
                 | "process_arg_count"
                 | "process_arg_read"
+                | "site_server_start"
+                | "site_server_start_with_webroot"
+                | "site_server_is_running"
+                | "site_server_stop"
                 | "time_utc_parts"
                 | "time_utc_offset_parts"
                 | "app_scheduler_clear"
                 | "app_scheduler_set"
                 | "app_scheduler_cancel"
                 | "app_scheduler_poll"
+                | "app_scheduler_poll_exact"
+                | "app_scheduler_next_due_exact"
+                | "app_scheduler_write_exact"
+                | "app_scheduler_load_exact"
                 | "app_scheduler_count"
                 | "string_length"
                 | "string_equals"
@@ -19643,23 +31428,39 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "jadren_rt_owned_string_destroy"
                 | "jadren_rt_buffer_destroy_owned_string"
                 | "file_delete"
+                | "file_delete_path"
                 | "file_flush"
+                | "file_flush_path"
+                | "directory_flush"
                 | "file_lock"
+                | "file_lock_path"
+                | "file_lock_path_retry"
                 | "file_unlock"
                 | "file_exists"
+                | "file_exists_path"
+                | "file_path_valid"
                 | "file_copy"
                 | "directory_create"
                 | "directory_exists"
                 | "directory_delete"
                 | "directory_list"
                 | "directory_list_ex"
+                | "directory_list_ex_exact"
                 | "file_read"
                 | "file_read_at"
+                | "file_size_path"
+                | "file_mtime_unix_nanos_path"
+                | "file_read_at_path"
                 | "file_read_text"
                 | "file_read_exact"
                 | "file_read_text_exact"
                 | "file_write_at"
+                | "file_write_prefix"
+                | "file_write_prefix_path"
                 | "file_replace_atomic"
+                | "file_replace_atomic_paths"
+                | "file_write_atomic"
+                | "file_write_atomic_durable"
                 | "file_size"
                 | "file_write"
                 | "file_write_text"
@@ -19699,18 +31500,34 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_state_revision"
                 | "app_data_revision"
                 | "app_data_validate"
+                | "app_data_snapshot_length"
+                | "app_data_snapshot_length_if_revision"
                 | "app_state_exists"
                 | "app_state_remove"
+                | "app_state_remove_if_revision"
                 | "app_state_set_int"
+                | "app_state_set_int_if_revision"
+                | "app_state_add_int"
+                | "app_state_add_int_if_revision"
                 | "app_state_get_int"
                 | "app_state_set_uint"
+                | "app_state_set_uint_if_revision"
+                | "app_state_add_uint"
+                | "app_state_add_uint_if_revision"
+                | "app_state_add_float"
+                | "app_state_add_float_if_revision"
                 | "app_state_get_uint"
                 | "app_state_set_float"
+                | "app_state_set_float_if_revision"
                 | "app_state_get_float"
                 | "app_state_set_bool"
+                | "app_state_set_bool_if_revision"
                 | "app_state_get_bool"
                 | "app_state_set_text"
+                | "app_state_set_text_if_revision"
                 | "app_state_set_text_bytes"
+                | "app_state_set_text_bytes_if_revision"
+                | "app_state_set_text_bytes_if_model_revision"
                 | "app_state_read_text"
                 | "app_state_read_text_exact"
                 | "app_state_write_json_exact"
@@ -19720,9 +31537,12 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_state_read_float"
                 | "app_state_read_bool"
                 | "app_state_read_key"
+                | "app_state_read_key_exact"
                 | "app_state_type_at"
                 | "app_state_save"
                 | "app_state_save_atomic"
+                | "app_state_save_atomic_durable"
+                | "app_state_save_atomic_durable_if_revision"
                 | "app_state_save_atomic_if_revision"
                 | "app_state_load"
                 | "app_state_tx_begin"
@@ -19739,6 +31559,11 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_data_save_atomic_if_revision"
                 | "app_data_tx_save_atomic"
                 | "app_data_tx_commit_durable"
+                | "app_data_tx_commit_durable_retry"
+                | "app_data_tx_commit_durable_retry_if_revision"
+                | "app_data_tx_commit_durable_if_revision"
+                | "app_data_tx_commit_durable_directory"
+                | "app_data_tx_commit_durable_directory_if_revision"
                 | "app_data_journal_append"
                 | "app_data_journal_append_durable"
                 | "app_data_journal_recover"
@@ -19767,29 +31592,71 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_data_load_exact"
                 | "app_data_load_exact_if_revision"
                 | "app_list_clear"
+                | "app_list_clear_if_revision"
                 | "app_list_count"
                 | "app_list_push_text"
+                | "app_list_push_text_if_revision"
                 | "app_list_push_text_bytes"
+                | "app_list_push_text_bytes_if_revision"
+                | "app_list_insert_text"
+                | "app_list_insert_text_if_revision"
+                | "app_list_insert_text_bytes"
+                | "app_list_insert_text_bytes_if_revision"
+                | "app_list_move_text"
+                | "app_list_move_text_if_revision"
                 | "app_list_export_csv"
+                | "app_list_export_csv_file_durable"
+                | "app_list_export_csv_file_durable_if_revision"
+                | "app_list_export_json_file_durable"
+                | "app_list_export_json_file_durable_if_revision"
+                | "app_list_export_csv_exact"
+                | "app_list_export_json_exact"
                 | "app_list_sort_text"
                 | "app_list_sort_callback"
+                | "app_list_sort_callback_if_revision"
                 | "app_list_find_text"
                 | "app_list_filter_text"
+                | "app_list_filter_text_if_revision"
                 | "app_list_filter_text_ex"
+                | "app_list_filter_text_ex_if_revision"
                 | "app_list_filter_text_ex_bytes"
                 | "app_list_filter_callback"
+                | "app_list_filter_callback_if_revision"
                 | "app_list_page"
+                | "app_list_page_if_revision"
                 | "app_list_read_text"
                 | "app_list_read_text_exact"
                 | "app_list_set_text"
+                | "app_list_set_text_if_revision"
                 | "app_list_set_text_bytes"
+                | "app_list_set_text_bytes_if_revision"
                 | "app_list_remove"
+                | "app_list_remove_if_revision"
                 | "app_list_save"
                 | "app_list_save_atomic"
                 | "app_list_load"
+                | "app_list_import_json_exact"
+                | "app_list_import_json_exact_if_revision"
+                | "app_list_import_json_file"
+                | "app_list_import_json_file_if_revision"
+                | "app_list_import_csv"
+                | "app_list_import_csv_if_revision"
+                | "app_list_import_csv_file"
+                | "app_list_import_csv_file_if_revision"
                 | "ui_app_list_bind_app"
+                | "ui_app_list_filter_text"
+                | "ui_app_list_filter_text_if_revision"
+                | "ui_app_list_filter_text_ex"
+                | "ui_app_list_filter_text_ex_if_revision"
+                | "ui_app_list_filter_callback"
+                | "ui_app_list_filter_callback_if_revision"
+                | "ui_app_list_page"
+                | "ui_app_list_page_if_revision"
+                | "ui_app_list_sort_text"
+                | "ui_app_list_sort_text_if_revision"
                 | "ui_app_list_refresh"
                 | "app_table_clear"
+                | "app_table_clear_if_revision"
                 | "app_table_row_count"
                 | "app_table_tx_begin"
                 | "app_table_tx_commit"
@@ -19827,15 +31694,23 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_table_column_type"
                 | "app_table_validate"
                 | "app_table_append_row"
+                | "app_table_append_row_if_revision"
+                | "app_table_insert_row"
+                | "app_table_insert_row_if_revision"
+                | "app_table_move_row"
+                | "app_table_move_row_if_revision"
                 | "app_table_remove_row"
+                | "app_table_remove_row_if_revision"
                 | "app_table_remove_text"
                 | "app_table_remove_int"
                 | "app_table_remove_uint"
                 | "app_table_remove_float"
                 | "app_table_remove_bool"
                 | "app_table_set_cell"
+                | "app_table_set_cell_if_revision"
                 | "app_table_set_cell_bytes"
                 | "app_table_set_cell_bytes_ex"
+                | "app_table_set_cell_bytes_if_revision"
                 | "app_table_set_int"
                 | "app_table_set_uint"
                 | "app_table_set_float"
@@ -19855,8 +31730,15 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_table_sort_uint"
                 | "app_table_sort_float"
                 | "app_table_sort_bool"
+                | "app_table_sort_text_if_revision"
+                | "app_table_sort_int_if_revision"
+                | "app_table_sort_uint_if_revision"
+                | "app_table_sort_float_if_revision"
+                | "app_table_sort_bool_if_revision"
                 | "app_table_sort_callback"
+                | "app_table_sort_callback_if_revision"
                 | "app_table_page"
+                | "app_table_page_if_revision"
                 | "app_table_find_text"
                 | "app_table_find_int"
                 | "app_table_find_uint"
@@ -19875,25 +31757,53 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_table_index_build_pair"
                 | "app_table_index_clear"
                 | "app_table_index_find_text"
+                | "app_table_index_find_text_if_revision"
                 | "app_table_index_find_pair_text"
+                | "app_table_index_find_pair_text_if_revision"
                 | "app_table_index_find_int"
+                | "app_table_index_find_int_if_revision"
                 | "app_table_index_collect_int_range"
+                | "app_table_index_collect_int_range_if_revision"
                 | "app_table_index_collect_uint_range"
+                | "app_table_index_collect_uint_range_if_revision"
                 | "app_table_index_collect_float_range"
+                | "app_table_index_collect_float_range_if_revision"
                 | "app_table_index_find_uint"
+                | "app_table_index_find_uint_if_revision"
                 | "app_table_index_find_float"
+                | "app_table_index_find_float_if_revision"
                 | "app_table_index_find_bool"
+                | "app_table_index_find_bool_if_revision"
                 | "app_table_index_is_valid"
                 | "app_table_filter_text"
+                | "app_table_filter_text_if_revision"
                 | "app_table_filter_text_ex"
                 | "app_table_filter_text_ex_bytes"
                 | "app_table_filter_int"
+                | "app_table_filter_int_if_revision"
                 | "app_table_filter_uint"
+                | "app_table_filter_uint_if_revision"
                 | "app_table_filter_float"
+                | "app_table_filter_float_if_revision"
                 | "app_table_filter_bool"
+                | "app_table_filter_bool_if_revision"
                 | "app_table_filter_callback"
+                | "app_table_filter_callback_if_revision"
                 | "app_table_export_csv"
+                | "app_table_export_csv_file_durable"
+                | "app_table_export_csv_file_durable_if_revision"
+                | "app_table_export_json_file_durable"
+                | "app_table_export_json_file_durable_if_revision"
+                | "app_table_export_csv_exact"
+                | "app_table_export_json_exact"
                 | "app_table_import_csv"
+                | "app_table_import_csv_if_revision"
+                | "app_table_import_csv_file"
+                | "app_table_import_csv_file_if_revision"
+                | "app_table_import_json_exact"
+                | "app_table_import_json_exact_if_revision"
+                | "app_table_import_json_file"
+                | "app_table_import_json_file_if_revision"
                 | "app_table_save"
                 | "app_table_save_schema"
                 | "app_table_save_schema_atomic"
@@ -19906,30 +31816,58 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "app_table_load_schema_full_if_version"
                 | "ui_app_table_bind_app"
                 | "ui_app_table_refresh"
+                | "ui_app_table_page"
+                | "ui_app_table_page_if_revision"
                 | "ui_app_table_sort_text"
                 | "ui_app_table_sort_int"
                 | "ui_app_table_sort_uint"
                 | "ui_app_table_sort_float"
                 | "ui_app_table_sort_bool"
+                | "ui_app_table_sort_text_if_revision"
+                | "ui_app_table_sort_int_if_revision"
+                | "ui_app_table_sort_uint_if_revision"
+                | "ui_app_table_sort_float_if_revision"
+                | "ui_app_table_sort_bool_if_revision"
                 | "ui_app_table_filter_text"
+                | "ui_app_table_filter_text_if_revision"
                 | "ui_app_table_filter_text_ex"
+                | "ui_app_table_filter_text_ex_if_revision"
                 | "ui_app_table_filter_int"
+                | "ui_app_table_filter_int_if_revision"
                 | "ui_app_table_filter_uint"
+                | "ui_app_table_filter_uint_if_revision"
                 | "ui_app_table_filter_float"
+                | "ui_app_table_filter_float_if_revision"
                 | "ui_app_table_filter_bool"
+                | "ui_app_table_filter_bool_if_revision"
+                | "ui_app_table_filter_callback"
+                | "ui_app_table_filter_callback_if_revision"
                 | "ui_table_sort_text"
                 | "ui_table_sort_int"
                 | "ui_table_sort_uint"
                 | "ui_table_sort_float"
                 | "ui_table_sort_bool"
+                | "ui_table_sort_text_if_revision"
+                | "ui_table_sort_int_if_revision"
+                | "ui_table_sort_uint_if_revision"
+                | "ui_table_sort_float_if_revision"
+                | "ui_table_sort_bool_if_revision"
                 | "ui_table_filter_text"
                 | "ui_table_filter_text_ex"
                 | "http_response_write"
+                | "http_response_write_chunked"
+                | "http_response_write_chunked_prefix"
+                | "http_response_write_chunked_header"
+                | "http_response_write_chunk"
+                | "http_response_write_chunk_prefix"
                 | "http_response_write_ex"
+                | "http_response_write_prefix_ex"
                 | "http_response_write_header"
+                | "http_response_write_header_prefix"
                 | "http_response_write_header_ex"
                 | "http_response_write_cookie"
                 | "http_response_write_cookie_ex"
+                | "http_response_write_cookie_policy"
                 | "http_response_write_header_block"
                 | "http_response_write_header_block_ex"
                 | "http_response_status"
@@ -19937,6 +31875,7 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "http_response_header"
                 | "http_response_header_prefix"
                 | "http_response_header_exact"
+                | "http_request_header_exact"
                 | "http_response_body"
                 | "http_response_body_prefix"
                 | "http_response_body_exact"
@@ -19944,8 +31883,13 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "http_request_body_chunked_exact"
                 | "http_request_write"
                 | "http_request_write_prefix"
+                | "http_request_write_prefix_ex"
                 | "http_request_write_header"
+                | "http_request_write_header_ex"
+                | "http_request_write_cookie"
+                | "http_request_write_cookie_block"
                 | "http_request_write_header_block"
+                | "http_request_write_header_block_ex"
                 | "http_request_append"
                 | "http_request_is_complete"
                 | "http_request_is_complete_prefix"
@@ -19955,10 +31899,15 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "http_request_keep_alive"
                 | "http_request_method"
                 | "http_request_target"
+                | "http_request_target_decode_exact"
                 | "http_request_header"
                 | "http_request_body"
+                | "http_request_body_exact"
+                | "http_request_body_exact_prefix"
                 | "http_query_param"
                 | "http_query_param_exact"
+                | "http_form_param_exact_prefix"
+                | "http_multipart_part_exact_prefix"
                 | "http_route_match"
                 | "http_route_match_prefix"
                 | "http_router_clear"
@@ -19969,25 +31918,35 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "http_router_remove_prefix"
                 | "http_router_respond"
                 | "http_router_respond_prefix"
+                | "http_router_respond_chunked"
+                | "http_router_respond_chunked_prefix"
                 | "http_router_count"
                 | "http_session_open"
+                | "http_session_open_chunked"
                 | "http_session_open_tls"
+                | "http_session_open_tls_chunked"
                 | "http_session_step"
                 | "http_session_close"
                 | "net_tls_open_client"
                 | "net_tls_open_server"
+                | "net_tls_open_server_paths"
                 | "net_tls_step"
                 | "net_tls_state"
                 | "net_tls_error"
                 | "net_tls_send"
+                | "net_tls_send_prefix"
+                | "net_tls_send_all_prefix"
                 | "net_tls_receive"
                 | "net_tls_close"
                 | "net_tcp_connect"
                 | "net_tcp_connect_dns"
                 | "net_tcp_listen"
+                | "net_tcp_listen_on"
                 | "net_tcp_accept"
                 | "net_tcp_send"
                 | "net_tcp_send_prefix"
+                | "net_tcp_send_all"
+                | "net_tcp_send_all_prefix"
                 | "net_tcp_receive"
                 | "net_socket_set_timeout"
                 | "net_socket_close"
@@ -20023,6 +31982,7 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                         | jadren_jir::InstructionKind::BufferResizeMoveNestedOwnedString { .. }
                         | jadren_jir::InstructionKind::RecursiveOwnedStringBufferDrop { .. }
                         | jadren_jir::InstructionKind::BufferRemoveDropOwnedString { .. }
+                        | jadren_jir::InstructionKind::BufferRemoveDropNestedOwnedString { .. }
                 )
             })
         })
@@ -20033,6 +31993,12 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
         matches!(
             function.name.as_str(),
             "ui_app_begin"
+                | "ui_file_open_exact"
+                | "ui_directory_open_exact"
+                | "ui_file_open_extension_exact"
+                | "ui_file_save_exact"
+                | "ui_file_save_suggested_exact"
+                | "ui_file_save_extension_exact"
                 | "ui_app_on_resize"
                 | "ui_app_on_close"
                 | "ui_app_window_width"
@@ -20049,68 +32015,164 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "ui_app_menu_item"
                 | "ui_app_tooltip"
                 | "ui_app_label"
+                | "ui_app_label_set_text"
                 | "ui_app_status"
                 | "ui_app_button"
                 | "ui_app_checkbox"
+                | "ui_app_switch"
                 | "ui_app_text_input"
+                | "ui_app_input_length"
+                | "ui_app_input_read"
+                | "ui_app_input_read_exact"
+                | "ui_app_input_read_exact_if_revision"
                 | "ui_app_select"
                 | "ui_app_select_option"
                 | "ui_app_select_index"
+                | "ui_app_select_index_if_revision"
                 | "ui_app_select_set_index"
                 | "ui_app_list"
                 | "ui_app_list_clear"
                 | "ui_app_list_count"
+                | "ui_app_list_count_if_revision"
                 | "ui_app_list_index"
+                | "ui_app_list_index_if_revision"
                 | "ui_app_list_item"
+                | "ui_app_list_set_item"
+                | "ui_app_list_set_item_if_revision"
+                | "ui_app_list_insert_item"
+                | "ui_app_list_insert_item_if_revision"
+                | "ui_app_list_move_item"
+                | "ui_app_list_move_item_if_revision"
+                | "ui_app_list_remove_item"
+                | "ui_app_list_remove_item_if_revision"
                 | "ui_app_list_set_index"
+                | "ui_app_list_set_index_if_revision"
                 | "ui_app_list_bind_app"
+                | "ui_app_list_filter_text"
+                | "ui_app_list_filter_text_if_revision"
+                | "ui_app_list_filter_text_ex"
+                | "ui_app_list_filter_text_ex_if_revision"
+                | "ui_app_list_filter_callback"
+                | "ui_app_list_filter_callback_if_revision"
+                | "ui_app_list_page"
+                | "ui_app_list_page_if_revision"
+                | "ui_app_list_sort_text"
+                | "ui_app_list_sort_text_if_revision"
                 | "ui_app_list_refresh"
                 | "ui_app_list_read_item"
+                | "ui_app_list_read_item_exact"
+                | "ui_app_list_read_item_exact_if_revision"
                 | "ui_app_table"
                 | "ui_app_table_bind_app"
                 | "ui_app_table_cell"
+                | "ui_app_table_cell_if_revision"
+                | "ui_app_table_insert_row"
+                | "ui_app_table_insert_row_if_revision"
+                | "ui_app_table_move_row"
+                | "ui_app_table_move_row_if_revision"
+                | "ui_app_table_remove_row"
+                | "ui_app_table_remove_row_if_revision"
                 | "ui_app_table_clear"
                 | "ui_app_table_column"
                 | "ui_app_table_read_cell"
+                | "ui_app_table_read_cell_exact"
+                | "ui_app_table_read_cell_exact_if_revision"
                 | "ui_app_table_refresh"
+                | "ui_app_table_page"
+                | "ui_app_table_page_if_revision"
                 | "ui_app_table_sort_text"
                 | "ui_app_table_sort_int"
                 | "ui_app_table_sort_uint"
                 | "ui_app_table_sort_float"
                 | "ui_app_table_sort_bool"
+                | "ui_app_table_sort_text_if_revision"
+                | "ui_app_table_sort_int_if_revision"
+                | "ui_app_table_sort_uint_if_revision"
+                | "ui_app_table_sort_float_if_revision"
+                | "ui_app_table_sort_bool_if_revision"
                 | "ui_app_table_filter_text"
+                | "ui_app_table_filter_text_if_revision"
                 | "ui_app_table_filter_text_ex"
+                | "ui_app_table_filter_text_ex_if_revision"
                 | "ui_app_table_filter_int"
+                | "ui_app_table_filter_int_if_revision"
                 | "ui_app_table_filter_uint"
+                | "ui_app_table_filter_uint_if_revision"
                 | "ui_app_table_filter_float"
+                | "ui_app_table_filter_float_if_revision"
                 | "ui_app_table_filter_bool"
+                | "ui_app_table_filter_bool_if_revision"
+                | "ui_app_table_filter_callback"
+                | "ui_app_table_filter_callback_if_revision"
                 | "ui_app_table_row_count"
+                | "ui_app_table_row_count_if_revision"
                 | "ui_app_table_selected_row"
+                | "ui_app_table_selected_row_if_revision"
                 | "ui_app_table_set_selected_row"
+                | "ui_app_table_set_selected_row_if_revision"
                 | "ui_app_end"
                 | "ui_app_run"
+                | "ui_event_queue_clear"
+                | "ui_event_queue_count"
+                | "ui_event_queue_capacity"
+                | "ui_event_queue_dropped"
+                | "ui_event_queue_peek_exact"
+                | "ui_event_queue_poll_exact"
+                | "ui_event_queue_poll_batch_exact"
                 | "ui_set_status"
                 | "ui_set_button_text"
                 | "ui_set_input_text"
+                | "ui_set_input_text_exact"
+                | "ui_list_count_if_revision"
+                | "ui_list_index_if_revision"
+                | "ui_list_set_index_if_revision"
+                | "ui_list_read_item_exact_if_revision"
+                | "ui_table_row_count_if_revision"
+                | "ui_table_selected_row_if_revision"
+                | "ui_table_set_selected_row_if_revision"
+                | "ui_table_read_cell_exact_if_revision"
                 | "ui_input_length"
                 | "ui_input_read"
                 | "ui_input_read_exact"
+                | "ui_input_read_exact_if_revision"
                 | "ui_input_bind_app_state"
+                | "ui_input_bind_app_state_exact"
                 | "ui_input_refresh_app_state"
+                | "ui_input_refresh_app_state_exact"
+                | "ui_input_refresh_app_state_if_revision"
+                | "ui_input_commit_app_state_if_revision"
                 | "ui_checkbox_bind_app_state"
                 | "ui_checkbox_refresh_app_state"
+                | "ui_checkbox_refresh_app_state_exact"
+                | "ui_checkbox_refresh_app_state_if_revision"
+                | "ui_checkbox_commit_app_state_if_revision"
                 | "ui_select_bind_app_state"
                 | "ui_select_refresh_app_state"
+                | "ui_select_refresh_app_state_exact"
+                | "ui_select_refresh_app_state_if_revision"
+                | "ui_select_commit_app_state_if_revision"
                 | "ui_list_bind_app_state"
                 | "ui_list_refresh_app_state"
+                | "ui_list_refresh_app_state_exact"
+                | "ui_list_refresh_app_state_if_revision"
+                | "ui_list_commit_app_state_if_revision"
                 | "ui_table_bind_app_state"
                 | "ui_table_refresh_app_state"
+                | "ui_table_refresh_app_state_exact"
+                | "ui_table_refresh_app_state_if_revision"
+                | "ui_table_commit_app_state_if_revision"
                 | "ui_app_bind_app_state"
+                | "ui_app_bind_app_state_exact"
                 | "ui_app_refresh_app_state"
+                | "ui_app_refresh_app_state_exact"
+                | "ui_app_refresh_app_state_if_revision"
+                | "ui_app_commit_app_state_if_revision"
                 | "ui_checked"
+                | "ui_checked_if_revision"
                 | "ui_set_checked"
                 | "ui_select_option"
                 | "ui_select_index"
+                | "ui_select_index_if_revision"
                 | "ui_select_set_index"
                 | "ui_state_get"
                 | "ui_state_bind"
@@ -20120,6 +32182,7 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "ui_state_text_read"
                 | "ui_state_text_set"
                 | "ui_refresh_bindings"
+                | "ui_refresh_bindings_if_revision"
         ) && function.linkage == jadren_jir::Linkage::Import
     });
     let uses_linux_desktop_events =
@@ -20229,11 +32292,14 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
             function.name.as_str(),
             "net_tls_open_client"
                 | "http_session_open_tls"
+                | "http_session_open_tls_chunked"
                 | "net_tls_open_server"
+                | "net_tls_open_server_paths"
                 | "net_tls_step"
                 | "net_tls_state"
                 | "net_tls_error"
                 | "net_tls_send"
+                | "net_tls_send_prefix"
                 | "net_tls_receive"
                 | "net_tls_close"
         ) && function.linkage == jadren_jir::Linkage::Import
@@ -20589,6 +32655,11 @@ typedef struct JadrenBufferDescriptor {
     uint64_t capacity;
 } JadrenBufferDescriptor;
 
+typedef struct JadrenSliceDescriptor {
+    void *data;
+    uint64_t length;
+} JadrenSliceDescriptor;
+
 typedef struct JadrenCarrierDropBranch {
     uint64_t payload_variant;
     uint64_t depth;
@@ -20605,11 +32676,20 @@ typedef struct JadrenCarrierDropField {
 } JadrenCarrierDropField;
 
 #define JADREN_RECORD_FIELD_OWNED_STRING UINT64_C(4294967295)
+#define JADREN_ENUM_FIELD_MULTI_TAG_MARKER (UINT64_C(3) << 62)
+#define JADREN_ENUM_FIELD_MULTI_TAG_MASK ((UINT64_C(1) << 20) - 1U)
+#define JADREN_RECORD_FIELD_NAMED_ENUM_TAG_MARKER (UINT64_C(1) << 62)
+#define JADREN_RECORD_FIELD_NAMED_ENUM_TAG_DISTANCE_MASK ((UINT64_C(1) << 30) - 1U)
+#define JADREN_ENUM_FIELD_PATH_MARKER_BASE (UINT64_C(0xe0) << 56)
+#define JADREN_ENUM_FIELD_PATH_MAX_TAGS 7U
 extern int32_t jadren_rt_buffer_destroy(
     void *descriptor, uint64_t element_size, uint64_t alignment);
 extern int32_t jadren_rt_buffer_destroy_nested_buffer_recursive(
     void *descriptor, uint64_t element_size, uint64_t alignment,
     uint64_t depth, uint64_t leaf_element_size, uint64_t leaf_alignment);
+int32_t jadren_rt_carrier_destroy_record_fields(
+    void *record, uint64_t element_size,
+    const JadrenCarrierDropField *fields, uint64_t field_count);
 static int32_t jadren_destroy_record_field(
     unsigned char *record, const JadrenCarrierDropField *field) {
     if (field->depth == JADREN_RECORD_FIELD_OWNED_STRING) {
@@ -20656,6 +32736,40 @@ uint64_t buffer_length(const void *descriptor) {
 uint64_t buffer_capacity(const void *descriptor) {
     const JadrenBufferDescriptor *buffer = (const JadrenBufferDescriptor *)descriptor;
     return buffer == 0 ? 0U : buffer->capacity;
+}
+
+JadrenSliceDescriptor buffer_slice(const void *descriptor, uint64_t start,
+                                   uint64_t count, uint64_t element_size,
+                                   uint64_t alignment) {
+    const JadrenBufferDescriptor *buffer = (const JadrenBufferDescriptor *)descriptor;
+    JadrenSliceDescriptor result;
+    uintptr_t offset;
+    uintptr_t pointer;
+    result.data = 0;
+    result.length = 0U;
+    if (buffer == 0 || element_size == 0U || alignment == 0U ||
+        (alignment & (alignment - 1U)) != 0U ||
+        (buffer->data == 0 && buffer->capacity != 0U) ||
+        buffer->length > buffer->capacity || start > buffer->length ||
+        count > buffer->length - start || count == 0U ||
+        start > UINT64_MAX / element_size) {
+        return result;
+    }
+    offset = (uintptr_t)(start * element_size);
+    pointer = (uintptr_t)buffer->data;
+    if (pointer > UINTPTR_MAX - offset ||
+        ((pointer + offset) & (uintptr_t)(alignment - 1U)) != 0U) {
+        return result;
+    }
+    result.data = (void *)(pointer + offset);
+    result.length = count;
+    return result;
+}
+
+JadrenSliceDescriptor buffer_slice_write(const void *descriptor, uint64_t start,
+                                         uint64_t count, uint64_t element_size,
+                                         uint64_t alignment) {
+    return buffer_slice(descriptor, start, count, element_size, alignment);
 }
 
 int32_t buffer_resize_status(void *descriptor, uint64_t new_length) {
@@ -21625,6 +33739,60 @@ int32_t jadren_rt_buffer_destroy_nested_owned_string(
     return jadren_rt_buffer_destroy(buffer, element_size, alignment);
 }
 
+int32_t jadren_rt_buffer_remove_drop_nested_owned_string_status(
+    void *descriptor, uint64_t index, uint64_t element_size,
+    uint64_t alignment, uint64_t depth, uint64_t string_element_size,
+    uint64_t string_alignment) {
+    JadrenBufferDescriptor *buffer = (JadrenBufferDescriptor *)descriptor;
+    JadrenBufferDescriptor *base;
+    uint64_t current;
+    int32_t status;
+    if (buffer == 0 || depth == 0U ||
+        element_size != (uint64_t)sizeof(JadrenBufferDescriptor) ||
+        alignment != 8U ||
+        string_element_size != (uint64_t)sizeof(JadrenBufferDescriptor) ||
+        string_alignment != 8U) {
+        return -15;
+    }
+    if ((buffer->data == 0 && buffer->capacity != 0U) ||
+        buffer->length > buffer->capacity ||
+        buffer->capacity > UINT64_MAX / element_size) {
+        return -21;
+    }
+    if (index >= buffer->length) {
+        return -20;
+    }
+    base = (JadrenBufferDescriptor *)buffer->data;
+    if (depth == 1U) {
+        status = jadren_rt_buffer_destroy_owned_string(
+            &base[index], string_element_size, string_alignment);
+    } else {
+        status = jadren_rt_buffer_destroy_nested_owned_string(
+            &base[index], element_size, alignment, depth - 1U,
+            string_element_size, string_alignment);
+    }
+    if (status != 0) {
+        return status;
+    }
+    for (current = index; current + 1U < buffer->length; current += 1U) {
+        base[current] = base[current + 1U];
+        base[current + 1U].data = 0;
+        base[current + 1U].length = 0U;
+        base[current + 1U].capacity = 0U;
+    }
+    buffer->length -= 1U;
+    return 0;
+}
+
+int32_t jadren_rt_buffer_remove_drop_nested_owned_string(
+    void *descriptor, uint64_t index, uint64_t element_size,
+    uint64_t alignment, uint64_t depth, uint64_t string_element_size,
+    uint64_t string_alignment) {
+    return jadren_rt_buffer_remove_drop_nested_owned_string_status(
+        descriptor, index, element_size, alignment, depth,
+        string_element_size, string_alignment) == 0;
+}
+
 int32_t jadren_rt_buffer_resize_move_nested_owned_string_status(
     void *descriptor, uint64_t new_length, uint64_t element_size,
     uint64_t alignment, uint64_t depth, uint64_t string_element_size,
@@ -21802,7 +33970,22 @@ int32_t jadren_rt_carrier_destroy_buffer(
     if ((uint64_t)tag == payload_variant) {
         JadrenBufferDescriptor *nested = (JadrenBufferDescriptor *)
             (bytes + payload_offset);
-        if (depth == 1U) {
+        if (depth == JADREN_RECORD_FIELD_OWNED_STRING) {
+            JadrenBufferDescriptor *string = (JadrenBufferDescriptor *)nested;
+            status = 0;
+            if (string->data == 0 && string->capacity != 0U) {
+                status = -41;
+            } else if (string->length > string->capacity) {
+                status = -41;
+            } else {
+                if (string->data != 0) {
+                    free(string->data);
+                }
+                string->data = 0;
+                string->length = 0U;
+                string->capacity = 0U;
+            }
+        } else if (depth == 1U) {
             status = jadren_rt_buffer_destroy(nested, leaf_element_size,
                                               leaf_alignment);
         } else {
@@ -22043,9 +34226,101 @@ int32_t jadren_rt_buffer_destroy_enum_carrier_fields(
         uint64_t field_index;
         for (field_index = 0U; field_index < field_count; field_index += 1U) {
             const JadrenCarrierDropField *field = &fields[field_index];
-            if (field->payload_variant != (uint64_t)tag) {
+            {
+                uint64_t path_byte = field->payload_variant >> 56;
+                if ((path_byte & UINT64_C(0xf0)) ==
+                    (JADREN_ENUM_FIELD_PATH_MARKER_BASE >> 56)) {
+                    uint64_t tag_count = path_byte & UINT64_C(0x0f);
+                    uint64_t path_index;
+                    int path_active = 1;
+                    if (tag_count < 2U || tag_count > JADREN_ENUM_FIELD_PATH_MAX_TAGS ||
+                        field->payload_offset < tag_count * 8U) {
+                        return -15;
+                    }
+                    for (path_index = 0U; path_index < tag_count; path_index += 1U) {
+                        uint64_t shift = 8U * (tag_count - path_index - 1U);
+                        uint64_t expected = (field->payload_variant >> shift) & UINT64_C(255);
+                        uint64_t offset = field->payload_offset - 8U * (tag_count - path_index);
+                        uint32_t actual = (uint32_t)carrier[offset] |
+                            ((uint32_t)carrier[offset + 1U] << 8) |
+                            ((uint32_t)carrier[offset + 2U] << 16) |
+                            ((uint32_t)carrier[offset + 3U] << 24);
+                        if ((uint64_t)actual != expected) {
+                            path_active = 0;
+                            break;
+                        }
+                    }
+                    if (!path_active) {
+                        continue;
+                    }
+                    goto jadren_destroy_enum_carrier_field;
+                }
+            }
+            if ((field->payload_variant & JADREN_ENUM_FIELD_MULTI_TAG_MARKER) ==
+                    JADREN_ENUM_FIELD_MULTI_TAG_MARKER) {
+                uint32_t outer_tag;
+                uint32_t first_tag;
+                uint32_t second_tag;
+                uint64_t outer_variant;
+                uint64_t first_variant;
+                uint64_t second_variant;
+                if (field->payload_offset < 24U ||
+                    (field->payload_variant & UINT64_C(1)) != 0U) {
+                    return -15;
+                }
+                outer_tag = (uint32_t)carrier[0] |
+                    ((uint32_t)carrier[1] << 8) |
+                    ((uint32_t)carrier[2] << 16) |
+                    ((uint32_t)carrier[3] << 24);
+                first_tag = (uint32_t)carrier[field->payload_offset - 16U] |
+                    ((uint32_t)carrier[field->payload_offset - 15U] << 8) |
+                    ((uint32_t)carrier[field->payload_offset - 14U] << 16) |
+                    ((uint32_t)carrier[field->payload_offset - 13U] << 24);
+                second_tag = (uint32_t)carrier[field->payload_offset - 8U] |
+                    ((uint32_t)carrier[field->payload_offset - 7U] << 8) |
+                    ((uint32_t)carrier[field->payload_offset - 6U] << 16) |
+                    ((uint32_t)carrier[field->payload_offset - 5U] << 24);
+                outer_variant = (field->payload_variant >> 41) &
+                    JADREN_ENUM_FIELD_MULTI_TAG_MASK;
+                first_variant = (field->payload_variant >> 21) &
+                    JADREN_ENUM_FIELD_MULTI_TAG_MASK;
+                second_variant = (field->payload_variant >> 1) &
+                    JADREN_ENUM_FIELD_MULTI_TAG_MASK;
+                if ((uint64_t)outer_tag != outer_variant ||
+                    (uint64_t)first_tag != first_variant ||
+                    (uint64_t)second_tag != second_variant) {
+                    continue;
+                }
+            } else if ((field->payload_variant & (UINT64_C(1) << 63)) != 0U) {
+                uint64_t outer_variant;
+                uint64_t inner_variant;
+                uint32_t outer_tag;
+                uint32_t inner_tag;
+                if (field->payload_offset < 8U) {
+                    return -15;
+                }
+                outer_tag = (uint32_t)carrier[0] |
+                    ((uint32_t)carrier[1] << 8) |
+                    ((uint32_t)carrier[2] << 16) |
+                    ((uint32_t)carrier[3] << 24);
+                outer_variant = (field->payload_variant >> 32) & UINT64_C(0x7fffffff);
+                inner_variant = field->payload_variant & UINT64_C(0xffffffff);
+                if ((uint64_t)outer_tag != outer_variant) {
+                    continue;
+                }
+                if (inner_variant != UINT64_C(0xffffffff)) {
+                    inner_tag = (uint32_t)carrier[field->payload_offset - 8U] |
+                        ((uint32_t)carrier[field->payload_offset - 7U] << 8) |
+                        ((uint32_t)carrier[field->payload_offset - 6U] << 16) |
+                        ((uint32_t)carrier[field->payload_offset - 5U] << 24);
+                    if ((uint64_t)inner_tag != inner_variant) {
+                        continue;
+                    }
+                }
+            } else if (field->payload_variant != (uint64_t)tag) {
                 continue;
             }
+jadren_destroy_enum_carrier_field:
             {
                 JadrenBufferDescriptor *nested = (JadrenBufferDescriptor *)
                     (carrier + field->payload_offset);
@@ -22090,26 +34365,10 @@ int32_t jadren_rt_buffer_destroy_record_fields(
     for (index = 0U; index < buffer->length; index += 1U) {
         unsigned char *record = (unsigned char *)buffer->data +
             index * element_size;
-        uint64_t field_index;
-        for (field_index = 0U; field_index < field_count; field_index += 1U) {
-            const JadrenCarrierDropField *field = &fields[field_index];
-            if (field->payload_variant != UINT64_MAX) {
-                uint32_t tag;
-                if (field->payload_offset < 8U) {
-                    return -15;
-                }
-                tag = (uint32_t)record[field->payload_offset - 8U] |
-                    ((uint32_t)record[field->payload_offset - 7U] << 8) |
-                    ((uint32_t)record[field->payload_offset - 6U] << 16) |
-                    ((uint32_t)record[field->payload_offset - 5U] << 24);
-                if ((uint64_t)tag != field->payload_variant) {
-                    continue;
-                }
-            }
-        status = jadren_destroy_record_field(record, field);
-            if (status != 0) {
-                return status;
-            }
+        status = jadren_rt_carrier_destroy_record_fields(
+            record, element_size, fields, field_count);
+        if (status != 0) {
+            return status;
         }
     }
     free(buffer->data);
@@ -22252,18 +34511,68 @@ int32_t jadren_rt_carrier_destroy_record_fields(
     }
     for (field_index = 0U; field_index < field_count; field_index += 1U) {
         const JadrenCarrierDropField *field = &fields[field_index];
-        if (field->payload_variant != UINT64_MAX) {
-            uint32_t tag;
-            if (field->payload_offset < 8U) {
-                return -15;
+        int active = 0;
+        if (field->payload_variant == UINT64_MAX) {
+            active = 1;
+        } else {
+            uint64_t path_byte = field->payload_variant >> 56;
+            if ((field->payload_variant & JADREN_RECORD_FIELD_NAMED_ENUM_TAG_MARKER) != 0U &&
+                (field->payload_variant & JADREN_ENUM_FIELD_MULTI_TAG_MARKER) !=
+                    JADREN_ENUM_FIELD_MULTI_TAG_MARKER) {
+                uint64_t distance_words =
+                    (field->payload_variant >> 32) &
+                    JADREN_RECORD_FIELD_NAMED_ENUM_TAG_DISTANCE_MASK;
+                uint64_t distance_bytes;
+                uint32_t tag;
+                if (distance_words == 0U || distance_words > UINT64_MAX / 8U) {
+                    return -15;
+                }
+                distance_bytes = distance_words * 8U;
+                if (distance_bytes > field->payload_offset) {
+                    return -15;
+                }
+                tag = (uint32_t)bytes[field->payload_offset - distance_bytes] |
+                    ((uint32_t)bytes[field->payload_offset - distance_bytes + 1U] << 8) |
+                    ((uint32_t)bytes[field->payload_offset - distance_bytes + 2U] << 16) |
+                    ((uint32_t)bytes[field->payload_offset - distance_bytes + 3U] << 24);
+                active = (uint64_t)tag ==
+                    (field->payload_variant & UINT64_C(0xffffffff));
+            } else if ((path_byte & UINT64_C(0xf0)) ==
+                (JADREN_ENUM_FIELD_PATH_MARKER_BASE >> 56)) {
+                uint64_t tag_count = path_byte & UINT64_C(0x0f);
+                uint64_t path_index;
+                if (tag_count < 2U || tag_count > JADREN_ENUM_FIELD_PATH_MAX_TAGS ||
+                    field->payload_offset < tag_count * 8U) {
+                    return -15;
+                }
+                active = 1;
+                for (path_index = 0U; path_index < tag_count; path_index += 1U) {
+                    uint64_t shift = 8U * (tag_count - path_index - 1U);
+                    uint64_t expected = (field->payload_variant >> shift) & UINT64_C(255);
+                    uint64_t offset = field->payload_offset - 8U * (tag_count - path_index);
+                    uint32_t actual = (uint32_t)bytes[offset] |
+                        ((uint32_t)bytes[offset + 1U] << 8) |
+                        ((uint32_t)bytes[offset + 2U] << 16) |
+                        ((uint32_t)bytes[offset + 3U] << 24);
+                    if ((uint64_t)actual != expected) {
+                        active = 0;
+                        break;
+                    }
+                }
+            } else {
+                uint32_t tag;
+                if (field->payload_offset < 8U) {
+                    return -15;
+                }
+                tag = (uint32_t)bytes[field->payload_offset - 8U] |
+                    ((uint32_t)bytes[field->payload_offset - 7U] << 8) |
+                    ((uint32_t)bytes[field->payload_offset - 6U] << 16) |
+                    ((uint32_t)bytes[field->payload_offset - 5U] << 24);
+                active = (uint64_t)tag == field->payload_variant;
             }
-            tag = (uint32_t)bytes[field->payload_offset - 8U] |
-                ((uint32_t)bytes[field->payload_offset - 7U] << 8) |
-                ((uint32_t)bytes[field->payload_offset - 6U] << 16) |
-                ((uint32_t)bytes[field->payload_offset - 5U] << 24);
-            if ((uint64_t)tag != field->payload_variant) {
-                continue;
-            }
+        }
+        if (!active) {
+            continue;
         }
         status = jadren_destroy_record_field(bytes, field);
         if (status != 0) {
@@ -22446,6 +34755,60 @@ int32_t jadren_rt_buffer_remove_drop_nested_record_fields(
         record_element_size, record_alignment, fields, field_count) == 0;
 }
 
+int32_t jadren_rt_buffer_remove_drop_nested_buffer_status(
+    void *descriptor, uint64_t index, uint64_t element_size,
+    uint64_t alignment, uint64_t depth, uint64_t leaf_element_size,
+    uint64_t leaf_alignment) {
+    JadrenBufferDescriptor *buffer = (JadrenBufferDescriptor *)descriptor;
+    JadrenBufferDescriptor *base;
+    uint64_t current;
+    int32_t status;
+    if (buffer == 0 || depth == 0U ||
+        element_size != (uint64_t)sizeof(JadrenBufferDescriptor) ||
+        alignment != 8U || leaf_element_size == 0U ||
+        leaf_alignment == 0U ||
+        (leaf_alignment & (leaf_alignment - 1U)) != 0U) {
+        return -15;
+    }
+    if ((buffer->data == 0 && buffer->capacity != 0U) ||
+        buffer->length > buffer->capacity ||
+        buffer->capacity > UINT64_MAX / element_size) {
+        return -21;
+    }
+    if (index >= buffer->length) {
+        return -20;
+    }
+    base = (JadrenBufferDescriptor *)buffer->data;
+    if (depth == 1U) {
+        status = jadren_rt_buffer_destroy(
+            &base[index], leaf_element_size, leaf_alignment);
+    } else {
+        status = jadren_rt_buffer_destroy_nested_buffer_recursive(
+            &base[index], element_size, alignment, depth - 1U,
+            leaf_element_size, leaf_alignment);
+    }
+    if (status != 0) {
+        return status;
+    }
+    for (current = index; current + 1U < buffer->length; current += 1U) {
+        base[current] = base[current + 1U];
+        base[current + 1U].data = 0;
+        base[current + 1U].length = 0U;
+        base[current + 1U].capacity = 0U;
+    }
+    buffer->length -= 1U;
+    return 0;
+}
+
+int32_t jadren_rt_buffer_remove_drop_nested_buffer(
+    void *descriptor, uint64_t index, uint64_t element_size,
+    uint64_t alignment, uint64_t depth, uint64_t leaf_element_size,
+    uint64_t leaf_alignment) {
+    return jadren_rt_buffer_remove_drop_nested_buffer_status(
+        descriptor, index, element_size, alignment, depth,
+        leaf_element_size, leaf_alignment) == 0;
+}
+
 int32_t jadren_rt_carrier_destroy_enum_fields(
     void *carrier, uint64_t element_size,
     const JadrenCarrierDropField *fields, uint64_t field_count) {
@@ -22464,11 +34827,103 @@ int32_t jadren_rt_carrier_destroy_enum_fields(
             ((uint32_t)bytes[3] << 24);
         for (field_index = 0U; field_index < field_count; field_index += 1U) {
             const JadrenCarrierDropField *field = &fields[field_index];
-            if (field->payload_variant != (uint64_t)tag) {
+            {
+                uint64_t path_byte = field->payload_variant >> 56;
+                if ((path_byte & UINT64_C(0xf0)) ==
+                    (JADREN_ENUM_FIELD_PATH_MARKER_BASE >> 56)) {
+                    uint64_t tag_count = path_byte & UINT64_C(0x0f);
+                    uint64_t path_index;
+                    int path_active = 1;
+                    if (tag_count < 3U || tag_count > JADREN_ENUM_FIELD_PATH_MAX_TAGS ||
+                        field->payload_offset < tag_count * 8U) {
+                        return -15;
+                    }
+                    for (path_index = 0U; path_index < tag_count; path_index += 1U) {
+                        uint64_t shift = 8U * (tag_count - path_index - 1U);
+                        uint64_t expected = (field->payload_variant >> shift) & UINT64_C(255);
+                        uint64_t offset = field->payload_offset - 8U * (tag_count - path_index);
+                        uint32_t actual = (uint32_t)bytes[offset] |
+                            ((uint32_t)bytes[offset + 1U] << 8) |
+                            ((uint32_t)bytes[offset + 2U] << 16) |
+                            ((uint32_t)bytes[offset + 3U] << 24);
+                        if ((uint64_t)actual != expected) {
+                            path_active = 0;
+                            break;
+                        }
+                    }
+                    if (!path_active) {
+                        continue;
+                    }
+                    goto jadren_destroy_enum_carrier_record_field;
+                }
+            }
+            if ((field->payload_variant & JADREN_ENUM_FIELD_MULTI_TAG_MARKER) ==
+                    JADREN_ENUM_FIELD_MULTI_TAG_MARKER) {
+                uint32_t outer_tag;
+                uint32_t first_tag;
+                uint32_t second_tag;
+                uint64_t outer_variant;
+                uint64_t first_variant;
+                uint64_t second_variant;
+                if (field->payload_offset < 24U ||
+                    (field->payload_variant & UINT64_C(1)) != 0U) {
+                    return -15;
+                }
+                outer_tag = (uint32_t)bytes[0] |
+                    ((uint32_t)bytes[1] << 8) |
+                    ((uint32_t)bytes[2] << 16) |
+                    ((uint32_t)bytes[3] << 24);
+                first_tag = (uint32_t)bytes[field->payload_offset - 16U] |
+                    ((uint32_t)bytes[field->payload_offset - 15U] << 8) |
+                    ((uint32_t)bytes[field->payload_offset - 14U] << 16) |
+                    ((uint32_t)bytes[field->payload_offset - 13U] << 24);
+                second_tag = (uint32_t)bytes[field->payload_offset - 8U] |
+                    ((uint32_t)bytes[field->payload_offset - 7U] << 8) |
+                    ((uint32_t)bytes[field->payload_offset - 6U] << 16) |
+                    ((uint32_t)bytes[field->payload_offset - 5U] << 24);
+                outer_variant = (field->payload_variant >> 41) &
+                    JADREN_ENUM_FIELD_MULTI_TAG_MASK;
+                first_variant = (field->payload_variant >> 21) &
+                    JADREN_ENUM_FIELD_MULTI_TAG_MASK;
+                second_variant = (field->payload_variant >> 1) &
+                    JADREN_ENUM_FIELD_MULTI_TAG_MASK;
+                if ((uint64_t)outer_tag != outer_variant ||
+                    (uint64_t)first_tag != first_variant ||
+                    (uint64_t)second_tag != second_variant) {
+                    continue;
+                }
+            } else if ((field->payload_variant & (UINT64_C(1) << 63)) != 0U) {
+                uint64_t outer_variant;
+                uint64_t inner_variant;
+                uint32_t outer_tag;
+                uint32_t inner_tag;
+                if (field->payload_offset < 8U) {
+                    return -15;
+                }
+                outer_tag = (uint32_t)bytes[0] |
+                    ((uint32_t)bytes[1] << 8) |
+                    ((uint32_t)bytes[2] << 16) |
+                    ((uint32_t)bytes[3] << 24);
+                outer_variant = (field->payload_variant >> 32) & UINT64_C(0x7fffffff);
+                inner_variant = field->payload_variant & UINT64_C(0xffffffff);
+                if ((uint64_t)outer_tag != outer_variant) {
+                    continue;
+                }
+                if (inner_variant != UINT64_C(0xffffffff)) {
+                    inner_tag = (uint32_t)bytes[field->payload_offset - 8U] |
+                        ((uint32_t)bytes[field->payload_offset - 7U] << 8) |
+                        ((uint32_t)bytes[field->payload_offset - 6U] << 16) |
+                        ((uint32_t)bytes[field->payload_offset - 5U] << 24);
+                    if ((uint64_t)inner_tag != inner_variant) {
+                        continue;
+                    }
+                }
+            } else if (field->payload_variant != (uint64_t)tag) {
                 continue;
             }
+jadren_destroy_enum_carrier_record_field:
             {
-        status = jadren_destroy_record_field(bytes, field);
+                status = jadren_destroy_record_field(bytes, field);
                 if (status != 0) {
                     return status;
                 }
@@ -22665,6 +35120,9 @@ fn build_linux_file_runtime(
 #include <sys/epoll.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+uint64_t app_data_revision(void);
+uint64_t app_data_snapshot_length(void);
+uint64_t app_data_snapshot_length_if_revision(uint64_t expected_revision);
 #include <time.h>
 #include <string.h>
 #include <unistd.h>
@@ -22781,6 +35239,34 @@ uint64_t process_arg_read(uint64_t index, unsigned char *output_data,
         output_data[cursor] = (unsigned char)value[cursor];
     }
     return (uint64_t)length;
+}
+
+/* Process control is intentionally Windows-only until a reviewed POSIX
+ * process-group contract exists. These stubs keep cross-target checking
+ * honest instead of silently emulating a process with a shell or a thread. */
+uint64_t site_server_start(uint16_t port) {
+    (void)port;
+    return 0;
+}
+
+uint64_t site_server_start_with_webroot(uint16_t port,
+                                        const unsigned char *webroot_data,
+                                        uint64_t webroot_length) {
+    (void)port;
+    (void)webroot_data;
+    (void)webroot_length;
+    return 0;
+}
+
+int32_t site_server_is_running(uint64_t token) {
+    (void)token;
+    return 0;
+}
+
+int32_t site_server_stop(uint64_t token, uint32_t timeout_ms) {
+    (void)token;
+    (void)timeout_ms;
+    return 0;
 }
 
 uint64_t time_now_unix_seconds(void) {
@@ -22974,6 +35460,183 @@ uint64_t app_scheduler_poll(int64_t now_unix_seconds, int32_t *output_data,
     return (uint64_t)due_count;
 }
 
+int32_t app_scheduler_poll_exact(int64_t now_unix_seconds, int32_t *output_data,
+                                 uint64_t output_length, uint64_t *due_count_output) {
+    uint64_t due_count = 0;
+    int32_t index;
+    if (due_count_output == 0 || (output_data == 0 && output_length > 0)) {
+        return 0;
+    }
+    for (index = 0; index < JADREN_SCHEDULER_CAPACITY; index += 1) {
+        if (jadren_scheduler_entries[index].active &&
+            jadren_scheduler_entries[index].due_unix_seconds <= now_unix_seconds) {
+            due_count += 1;
+        }
+    }
+    if (due_count > output_length) {
+        return 0;
+    }
+    if (app_scheduler_poll(now_unix_seconds, output_data, output_length) != due_count) {
+        return 0;
+    }
+    *due_count_output = due_count;
+    return 1;
+}
+
+int32_t app_scheduler_next_due_exact(int64_t *next_due_output,
+                                     uint64_t next_due_length,
+                                     uint8_t *has_due_output,
+                                     uint64_t has_due_length) {
+    int32_t index;
+    int32_t selected = -1;
+    if (next_due_output == 0 || next_due_length == 0 ||
+        has_due_output == 0 || has_due_length == 0) return 0;
+    for (index = 0; index < JADREN_SCHEDULER_CAPACITY; index += 1) {
+        JadrenSchedulerEntry *entry = &jadren_scheduler_entries[index];
+        if (!entry->active) continue;
+        if (selected < 0 ||
+            entry->due_unix_seconds < jadren_scheduler_entries[selected].due_unix_seconds ||
+            (entry->due_unix_seconds == jadren_scheduler_entries[selected].due_unix_seconds &&
+             entry->task_id < jadren_scheduler_entries[selected].task_id)) {
+            selected = index;
+        }
+    }
+    if (selected < 0) {
+        *has_due_output = 0;
+        return 1;
+    }
+    *next_due_output = jadren_scheduler_entries[selected].due_unix_seconds;
+    *has_due_output = 1;
+    return 1;
+}
+
+/* Deterministic caller-owned scheduler snapshot. The format is JDS1, a
+ * little-endian u32 active-count, then count records of
+ * {task_id:i32,due:i64,repeat:u64}; records are sorted by due then task ID. */
+static void app_scheduler_snapshot_write_u32(unsigned char *output,
+                                             uint64_t offset,
+                                             uint32_t value) {
+    output[offset + 0] = (unsigned char)(value & 0xFFU);
+    output[offset + 1] = (unsigned char)((value >> 8) & 0xFFU);
+    output[offset + 2] = (unsigned char)((value >> 16) & 0xFFU);
+    output[offset + 3] = (unsigned char)((value >> 24) & 0xFFU);
+}
+
+static void app_scheduler_snapshot_write_u64(unsigned char *output,
+                                             uint64_t offset,
+                                             uint64_t value) {
+    unsigned int index;
+    for (index = 0; index < 8; index += 1) {
+        output[offset + index] = (unsigned char)((value >> (index * 8)) & 0xFFULL);
+    }
+}
+
+static uint32_t app_scheduler_snapshot_read_u32(const unsigned char *input,
+                                                uint64_t offset) {
+    return (uint32_t)input[offset + 0] |
+           ((uint32_t)input[offset + 1] << 8) |
+           ((uint32_t)input[offset + 2] << 16) |
+           ((uint32_t)input[offset + 3] << 24);
+}
+
+static uint64_t app_scheduler_snapshot_read_u64(const unsigned char *input,
+                                                uint64_t offset) {
+    uint64_t value = 0;
+    unsigned int index;
+    for (index = 0; index < 8; index += 1) {
+        value |= ((uint64_t)input[offset + index]) << (index * 8);
+    }
+    return value;
+}
+
+int32_t app_scheduler_write_exact(unsigned char *output_data,
+                                  uint64_t output_length,
+                                  uint64_t *snapshot_length_output,
+                                  uint64_t snapshot_length_capacity) {
+    int32_t selected[JADREN_SCHEDULER_CAPACITY];
+    int32_t count = 0;
+    int32_t index;
+    int32_t position;
+    uint64_t required;
+    if (snapshot_length_output == 0 || snapshot_length_capacity == 0) return 0;
+    for (index = 0; index < JADREN_SCHEDULER_CAPACITY; index += 1) {
+        JadrenSchedulerEntry *entry = &jadren_scheduler_entries[index];
+        if (!entry->active) continue;
+        position = count;
+        while (position > 0) {
+            JadrenSchedulerEntry *left = &jadren_scheduler_entries[selected[position - 1]];
+            if (left->due_unix_seconds < entry->due_unix_seconds ||
+                (left->due_unix_seconds == entry->due_unix_seconds &&
+                 left->task_id <= entry->task_id)) break;
+            selected[position] = selected[position - 1];
+            position -= 1;
+        }
+        selected[position] = index;
+        count += 1;
+    }
+    required = 8ULL + (uint64_t)count * 20ULL;
+    if ((output_data == 0 && required > 0) || output_length < required) return 0;
+    output_data[0] = (unsigned char)'J';
+    output_data[1] = (unsigned char)'D';
+    output_data[2] = (unsigned char)'S';
+    output_data[3] = (unsigned char)'1';
+    app_scheduler_snapshot_write_u32(output_data, 4, (uint32_t)count);
+    for (index = 0; index < count; index += 1) {
+        JadrenSchedulerEntry *entry = &jadren_scheduler_entries[selected[index]];
+        uint64_t offset = 8ULL + (uint64_t)index * 20ULL;
+        app_scheduler_snapshot_write_u32(output_data, offset,
+                                         (uint32_t)entry->task_id);
+        app_scheduler_snapshot_write_u64(output_data, offset + 4,
+                                         (uint64_t)entry->due_unix_seconds);
+        app_scheduler_snapshot_write_u64(output_data, offset + 12,
+                                         entry->repeat_seconds);
+    }
+    snapshot_length_output[0] = required;
+    return 1;
+}
+
+int32_t app_scheduler_load_exact(const unsigned char *input_data,
+                                 uint64_t input_capacity,
+                                 uint64_t input_length) {
+    JadrenSchedulerEntry parsed[JADREN_SCHEDULER_CAPACITY];
+    uint32_t count;
+    uint32_t index;
+    uint32_t other;
+    uint64_t required;
+    if ((input_data == 0 && input_length > 0) || input_length > input_capacity ||
+        input_length < 8ULL || input_data[0] != (unsigned char)'J' ||
+        input_data[1] != (unsigned char)'D' || input_data[2] != (unsigned char)'S' ||
+        input_data[3] != (unsigned char)'1') return 0;
+    count = app_scheduler_snapshot_read_u32(input_data, 4);
+    if (count > JADREN_SCHEDULER_CAPACITY) return 0;
+    required = 8ULL + (uint64_t)count * 20ULL;
+    if (input_length != required) return 0;
+    for (index = 0; index < JADREN_SCHEDULER_CAPACITY; index += 1) {
+        parsed[index].active = 0;
+        parsed[index].task_id = 0;
+        parsed[index].due_unix_seconds = 0;
+        parsed[index].repeat_seconds = 0;
+    }
+    for (index = 0; index < count; index += 1) {
+        uint64_t offset = 8ULL + (uint64_t)index * 20ULL;
+        uint32_t encoded_task = app_scheduler_snapshot_read_u32(input_data, offset);
+        uint64_t encoded_due = app_scheduler_snapshot_read_u64(input_data, offset + 4);
+        uint64_t repeat = app_scheduler_snapshot_read_u64(input_data, offset + 12);
+        parsed[index].active = 1;
+        parsed[index].task_id = (int32_t)encoded_task;
+        parsed[index].due_unix_seconds = (int64_t)encoded_due;
+        parsed[index].repeat_seconds = repeat;
+        if (repeat > INT64_MAX) return 0;
+        for (other = 0; other < index; other += 1) {
+            if (parsed[other].task_id == parsed[index].task_id) return 0;
+        }
+    }
+    for (index = 0; index < JADREN_SCHEDULER_CAPACITY; index += 1) {
+        jadren_scheduler_entries[index] = parsed[index];
+    }
+    return 1;
+}
+
 uint64_t string_length(const unsigned char *data, uint64_t length) {
     return data == 0 && length > 0 ? 0 : length;
 }
@@ -23012,6 +35675,15 @@ uint64_t string_builder_append_bytes(const unsigned char *data, uint64_t length,
                                      unsigned char *output_data,
                                      uint64_t output_length, uint64_t offset) {
     return string_builder_append(data, length, output_data, output_length, offset);
+}
+
+uint64_t string_builder_append_bytes_prefix(const unsigned char *data,
+                                            uint64_t data_length,
+                                            uint64_t prefix_length,
+                                            unsigned char *output_data,
+                                            uint64_t output_length, uint64_t offset) {
+    if (prefix_length > data_length) return 0;
+    return string_builder_append(data, prefix_length, output_data, output_length, offset);
 }
 
 typedef struct JadrenOwnedString {
@@ -23304,11 +35976,44 @@ uint64_t net_tcp_listen(uint16_t port) {
     address.sin_port = htons(port);
     address.sin_addr.s_addr = htonl(0x7F000001U);
     if (bind(descriptor, (const struct sockaddr *)&address, sizeof(address)) != 0 ||
-        listen(descriptor, 8) != 0) {
+        listen(descriptor, 128) != 0) {
         close(descriptor);
         return 0;
     }
     return net_socket_token(descriptor);
+}
+
+uint64_t net_tcp_listen_on(const unsigned char *address_data,
+                           uint64_t address_length, uint16_t port) {
+    struct sockaddr_in address;
+    int descriptor;
+    int reuse = 1;
+    if (!net_parse_host(address_data, address_length, &address)) {
+        return 0;
+    }
+    descriptor = socket(AF_INET, SOCK_STREAM, 0);
+    if (descriptor < 0) {
+        return 0;
+    }
+    (void)setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    if (bind(descriptor, (const struct sockaddr *)&address, sizeof(address)) != 0 ||
+        listen(descriptor, 128) != 0) {
+        close(descriptor);
+        return 0;
+    }
+    return net_socket_token(descriptor);
+}
+
+uint64_t net_tcp_listen_on_prefix(const unsigned char *address_data,
+                                  uint64_t address_capacity,
+                                  uint64_t address_length,
+                                  uint16_t port) {
+    if (address_length > address_capacity) {
+        return 0;
+    }
+    return net_tcp_listen_on(address_data, address_length, port);
 }
 
 uint64_t net_tcp_accept(uint64_t listener) {
@@ -23348,6 +36053,25 @@ uint64_t net_tcp_send_prefix(uint64_t socket_token, const unsigned char *input_d
         : (size_t)send_length;
     sent = send(descriptor, input_data, requested, 0);
     return sent > 0 ? (uint64_t)sent : 0;
+}
+
+uint64_t net_tcp_send_all(uint64_t socket_token, const unsigned char *input_data,
+                          uint64_t input_length) {
+    uint64_t total = 0;
+    while (total < input_length) {
+        uint64_t sent = net_tcp_send_prefix(socket_token, input_data + total,
+                                            input_length - total,
+                                            input_length - total);
+        if (sent == 0) return total;
+        total += sent;
+    }
+    return total;
+}
+
+uint64_t net_tcp_send_all_prefix(uint64_t socket_token, const unsigned char *input_data,
+                                 uint64_t input_length, uint64_t send_length) {
+    if (send_length > input_length) return 0;
+    return net_tcp_send_all(socket_token, input_data, send_length);
 }
 
 uint64_t net_tcp_receive(uint64_t socket_token, unsigned char *output_data,
@@ -24126,6 +36850,28 @@ int file_flush(const unsigned char *path_data, uint64_t path_length) {
     return flushed && closed;
 }
 
+/* Flushes an existing file through an explicit valid caller-owned UTF-8 path. */
+int file_flush_path(const unsigned char *path_data, uint64_t path_capacity,
+                    uint64_t path_length) {
+    if (path_length > path_capacity) return 0;
+    return file_flush(path_data, path_length);
+}
+
+/* Flushes directory metadata through the OS. This is the durability boundary
+ * required after rename/delete; filesystems may still decline the request. */
+int directory_flush(const unsigned char *path_data, uint64_t path_length) {
+    char native_path[1024];
+    int descriptor;
+    int flushed;
+    int closed;
+    if (!path_copy(path_data, path_length, native_path, sizeof(native_path))) return 0;
+    descriptor = open(native_path, O_RDONLY | O_DIRECTORY);
+    if (descriptor < 0) return 0;
+    flushed = fsync(descriptor) == 0;
+    closed = close(descriptor) == 0;
+    return flushed && closed;
+}
+
 int directory_exists(const unsigned char *path_data, uint64_t path_length) {
     char native_path[1024];
     struct stat metadata;
@@ -24373,6 +37119,92 @@ uint64_t directory_list_ex(const unsigned char *path_data, uint64_t path_length,
     return entry_count;
 }
 
+int directory_list_ex_exact(const unsigned char *path_data, uint64_t path_length,
+                            unsigned char *names_data, uint64_t names_capacity,
+                            uint64_t *names_length_data, uint64_t names_length_capacity,
+                            unsigned char *kinds_data, uint64_t kinds_capacity,
+                            uint64_t *item_count_data, uint64_t item_count_capacity) {
+    char native_path[1024];
+    JadrenDirectoryEntryEx entries[128];
+    DIR *directory;
+    unsigned int entry_count = 0;
+    unsigned int index;
+    uint64_t total = 0;
+    if (!path_copy(path_data, path_length, native_path, sizeof(native_path)) ||
+        names_length_data == 0 || names_length_capacity < 1 ||
+        item_count_data == 0 || item_count_capacity < 1) return 0;
+    directory = opendir(native_path);
+    if (directory == 0) return 0;
+    for (;;) {
+        struct dirent *entry;
+        size_t length = 0;
+        errno = 0;
+        entry = readdir(directory);
+        if (entry == 0) {
+            if (errno != 0) {
+                (void)closedir(directory);
+                return 0;
+            }
+            break;
+        }
+        if ((entry->d_name[0] == '.' && entry->d_name[1] == 0) ||
+            (entry->d_name[0] == '.' && entry->d_name[1] == '.' &&
+             entry->d_name[2] == 0)) continue;
+        if (entry_count >= 128) {
+            (void)closedir(directory);
+            return 0;
+        }
+        while (length < sizeof(entries[entry_count].name) &&
+               entry->d_name[length] != 0) length += 1;
+        if (length == 0 || length >= sizeof(entries[entry_count].name)) {
+            (void)closedir(directory);
+            return 0;
+        }
+        {
+            size_t byte;
+            for (byte = 0; byte < length; byte += 1) {
+                entries[entry_count].name[byte] = entry->d_name[byte];
+            }
+        }
+        entries[entry_count].name[length] = 0;
+        entries[entry_count].length = (uint64_t)length;
+        entries[entry_count].kind = entry->d_type == DT_DIR
+            ? 2
+            : (entry->d_type == DT_REG ? 1 : 3);
+        entry_count += 1;
+    }
+    (void)closedir(directory);
+    for (index = 0; index < entry_count; index += 1) {
+        unsigned int next;
+        for (next = index + 1; next < entry_count; next += 1) {
+            if (jadren_directory_entry_ex_less(&entries[next], &entries[index])) {
+                jadren_directory_entry_ex_swap(&entries[index], &entries[next]);
+            }
+        }
+        if (total > UINT64_MAX - entries[index].length) return 0;
+        total += entries[index].length;
+        if (index + 1 < entry_count) {
+            if (total == UINT64_MAX) return 0;
+            total += 1;
+        }
+    }
+    if (names_capacity < total || kinds_capacity < entry_count ||
+        (total != 0 && names_data == 0) ||
+        (entry_count != 0 && kinds_data == 0)) return 0;
+    total = 0;
+    for (index = 0; index < entry_count; index += 1) {
+        uint64_t byte;
+        for (byte = 0; byte < entries[index].length; byte += 1) {
+            names_data[total++] = (unsigned char)entries[index].name[byte];
+        }
+        kinds_data[index] = entries[index].kind;
+        if (index + 1 < entry_count) names_data[total++] = 0x0AU;
+    }
+    *names_length_data = total;
+    *item_count_data = entry_count;
+    return 1;
+}
+
 int file_copy(const unsigned char *source_data, uint64_t source_length,
               const unsigned char *target_data, uint64_t target_length) {
     char source_path[1024];
@@ -24515,6 +37347,54 @@ uint64_t file_read_at(const unsigned char *path_data, uint64_t path_length,
     return total;
 }
 
+uint64_t file_size_path(const unsigned char *path_data, uint64_t path_capacity,
+                        uint64_t path_length) {
+    if (path_data == 0 || path_length > path_capacity) return 0;
+    return file_size(path_data, path_length);
+}
+
+int file_exists_path(const unsigned char *path_data,
+                     uint64_t path_capacity,
+                     uint64_t path_length) {
+    if (path_data == 0 || path_length > path_capacity) return 0;
+    return file_exists(path_data, path_length);
+}
+
+int file_path_valid(const unsigned char *path_data,
+                    uint64_t path_capacity,
+                    uint64_t path_length) {
+    char native_path[1024];
+    if (path_data == 0 || path_length > path_capacity) return 0;
+    return path_copy(path_data, path_length, native_path,
+                     sizeof(native_path));
+}
+
+uint64_t file_mtime_unix_nanos_path(const unsigned char *path_data,
+                                    uint64_t path_capacity,
+                                    uint64_t path_length) {
+    char native_path[1024];
+    struct stat metadata;
+    uint64_t seconds;
+    uint64_t nanoseconds;
+    if (path_data == 0 || path_length > path_capacity ||
+        !path_copy(path_data, path_length, native_path, sizeof(native_path)) ||
+        stat(native_path, &metadata) != 0 || metadata.st_mtim.tv_sec < 0 ||
+        metadata.st_mtim.tv_nsec < 0) {
+        return 0;
+    }
+    seconds = (uint64_t)metadata.st_mtim.tv_sec;
+    nanoseconds = (uint64_t)metadata.st_mtim.tv_nsec;
+    if (seconds > (UINT64_MAX - nanoseconds) / 1000000000ULL) return 0;
+    return seconds * 1000000000ULL + nanoseconds;
+}
+
+uint64_t file_read_at_path(const unsigned char *path_data, uint64_t path_capacity,
+                           uint64_t path_length, uint64_t offset,
+                           unsigned char *output_data, uint64_t output_length) {
+    if (path_data == 0 || path_length > path_capacity) return 0;
+    return file_read_at(path_data, path_length, offset, output_data, output_length);
+}
+
 uint64_t file_read_text(const unsigned char *path_data, uint64_t path_length,
                         unsigned char *output_data, uint64_t output_length) {
     uint64_t size;
@@ -24610,6 +37490,22 @@ static uint64_t write_file_bytes(const unsigned char *path_data,
 uint64_t file_write(const unsigned char *path_data, uint64_t path_length,
                     const unsigned char *input_data, uint64_t input_length) {
     return write_file_bytes(path_data, path_length, input_data, input_length);
+}
+
+/* Truncating write from an explicit valid prefix of a larger caller-owned buffer. */
+uint64_t file_write_prefix(const unsigned char *path_data, uint64_t path_length,
+                           const unsigned char *input_data, uint64_t input_length,
+                           uint64_t write_length) {
+    if (write_length > input_length) return 0;
+    return write_file_bytes(path_data, path_length, input_data, write_length);
+}
+
+/* Truncating write through an explicit valid prefix of a caller-owned UTF-8 path. */
+uint64_t file_write_prefix_path(const unsigned char *path_data, uint64_t path_capacity,
+                                uint64_t path_length, const unsigned char *input_data,
+                                uint64_t input_capacity, uint64_t write_length) {
+    if (path_length > path_capacity || write_length > input_capacity) return 0;
+    return write_file_bytes(path_data, path_length, input_data, write_length);
 }
 
 uint64_t file_write_at(const unsigned char *path_data, uint64_t path_length,
@@ -24715,6 +37611,29 @@ uint64_t format_uint(uint64_t value, unsigned char *output_data,
         reversed[digits] = (unsigned char)('0' + (value % 10));
         digits += 1;
         value /= 10;
+    } while (value != 0);
+    if (digits > output_length) {
+        return 0;
+    }
+    for (index = 0; index < digits; index += 1) {
+        output_data[index] = reversed[digits - index - 1];
+    }
+    return digits;
+}
+
+uint64_t format_hex_uint(uint64_t value, unsigned char *output_data,
+                         uint64_t output_length) {
+    unsigned char reversed[16];
+    uint64_t digits = 0;
+    uint64_t index;
+    if (output_data == 0 || output_length == 0) {
+        return 0;
+    }
+    do {
+        unsigned char digit = (unsigned char)(value & 0xFULL);
+        reversed[digits] = (unsigned char)(digit < 10 ? ('0' + digit) : ('a' + digit - 10));
+        digits += 1;
+        value >>= 4;
     } while (value != 0);
     if (digits > output_length) {
         return 0;
@@ -24920,8 +37839,10 @@ static int http_copy_bytes(unsigned char *output_data, uint64_t *offset,
 static int http_request_is_token(unsigned char value);
 static int http_request_header_name_is_reserved(const unsigned char *name_data,
                                                 uint64_t name_length);
+static int http_cookie_name_is_token(unsigned char value);
+static int http_cookie_value_is_octet(unsigned char value);
 
-uint64_t http_request_write_prefix(const unsigned char *method_data,
+uint64_t http_request_write_prefix_ex(const unsigned char *method_data,
                                     uint64_t method_length,
                                     const unsigned char *target_data,
                                     uint64_t target_length,
@@ -24930,11 +37851,15 @@ uint64_t http_request_write_prefix(const unsigned char *method_data,
                                     const unsigned char *body_data,
                                     uint64_t body_capacity,
                                     uint64_t body_length,
+                                    int keep_alive,
                                     unsigned char *output_data,
                                     uint64_t output_length) {
     static const unsigned char target_prefix[] = " HTTP/1.1\r\nHost: ";
     static const unsigned char length_prefix[] = "\r\nContent-Length: ";
-    static const unsigned char suffix[] = "\r\nConnection: close\r\n\r\n";
+    static const unsigned char close_suffix[] = "\r\nConnection: close\r\n\r\n";
+    static const unsigned char keep_alive_suffix[] = "\r\nConnection: keep-alive\r\n\r\n";
+    const unsigned char *suffix = keep_alive == 1 ? keep_alive_suffix : close_suffix;
+    uint64_t suffix_length = keep_alive == 1 ? sizeof(keep_alive_suffix) - 1 : sizeof(close_suffix) - 1;
     unsigned char body_length_text[20];
     uint64_t body_text_length;
     uint64_t required = 0;
@@ -24961,7 +37886,7 @@ uint64_t http_request_write_prefix(const unsigned char *method_data,
         !http_add_length(&required, host_length) ||
         !http_add_length(&required, sizeof(length_prefix) - 1) ||
         !http_add_length(&required, body_text_length) ||
-        !http_add_length(&required, sizeof(suffix) - 1) ||
+        !http_add_length(&required, suffix_length) ||
         !http_add_length(&required, body_length) || output_data == 0 ||
         output_length < required) return 0;
     http_copy_bytes(output_data, &offset, method_data, method_length);
@@ -24971,9 +37896,25 @@ uint64_t http_request_write_prefix(const unsigned char *method_data,
     http_copy_bytes(output_data, &offset, host_data, host_length);
     http_copy_bytes(output_data, &offset, length_prefix, sizeof(length_prefix) - 1);
     http_copy_bytes(output_data, &offset, body_length_text, body_text_length);
-    http_copy_bytes(output_data, &offset, suffix, sizeof(suffix) - 1);
+    http_copy_bytes(output_data, &offset, suffix, suffix_length);
     http_copy_bytes(output_data, &offset, body_data, body_length);
     return required;
+}
+uint64_t http_request_write_prefix(const unsigned char *method_data,
+                                    uint64_t method_length,
+                                    const unsigned char *target_data,
+                                    uint64_t target_length,
+                                    const unsigned char *host_data,
+                                    uint64_t host_length,
+                                    const unsigned char *body_data,
+                                    uint64_t body_capacity,
+                                    uint64_t body_length,
+                                    unsigned char *output_data,
+                                    uint64_t output_length) {
+    return http_request_write_prefix_ex(method_data, method_length, target_data,
+                                        target_length, host_data, host_length,
+                                        body_data, body_capacity, body_length, 0,
+                                        output_data, output_length);
 }
 uint64_t http_request_write(const unsigned char *method_data,
                                      uint64_t method_length,
@@ -25083,7 +38024,70 @@ uint64_t http_request_write_header_block(
     return required;
 }
 
-uint64_t http_request_write_header(const unsigned char *method_data,
+uint64_t http_request_write_header_block_ex(
+    const unsigned char *method_data, uint64_t method_length,
+    const unsigned char *target_data, uint64_t target_length,
+    const unsigned char *host_data, uint64_t host_length,
+    const unsigned char *header_data, uint64_t header_length,
+    int keep_alive,
+    const unsigned char *body_data, uint64_t body_length,
+    unsigned char *output_data, uint64_t output_length) {
+    static const unsigned char target_prefix[] = " HTTP/1.1\r\nHost: ";
+    static const unsigned char header_prefix[] = "\r\n";
+    static const unsigned char length_prefix[] = "\r\nContent-Length: ";
+    static const unsigned char close_suffix[] = "\r\nConnection: close\r\n\r\n";
+    static const unsigned char keep_alive_suffix[] = "\r\nConnection: keep-alive\r\n\r\n";
+    const unsigned char *suffix = keep_alive == 1 ? keep_alive_suffix : close_suffix;
+    uint64_t suffix_length = keep_alive == 1 ? sizeof(keep_alive_suffix) - 1 : sizeof(close_suffix) - 1;
+    unsigned char body_length_text[20];
+    uint64_t body_text_length;
+    uint64_t required = 0;
+    uint64_t offset = 0;
+    uint64_t index;
+    if (method_data == 0 || method_length == 0 || target_data == 0 || target_length == 0 ||
+        host_data == 0 || host_length == 0 || (header_data == 0 && header_length > 0) ||
+        (body_data == 0 && body_length > 0) ||
+        !http_request_header_block_is_valid(header_data, header_length)) return 0;
+    for (index = 0; index < method_length; index += 1) {
+        if (!http_request_is_token(method_data[index])) return 0;
+    }
+    for (index = 0; index < target_length; index += 1) {
+        unsigned char value = target_data[index];
+        if (value < 0x21U || value > 0x7EU || value == '\r' || value == '\n') return 0;
+    }
+    for (index = 0; index < host_length; index += 1) {
+        unsigned char value = host_data[index];
+        if (value < 0x21U || value > 0x7EU || value == '\r' || value == '\n') return 0;
+    }
+    body_text_length = format_uint(body_length, body_length_text, sizeof(body_length_text));
+    if (body_text_length == 0 || !http_add_length(&required, method_length) ||
+        !http_add_length(&required, 1) || !http_add_length(&required, target_length) ||
+        !http_add_length(&required, sizeof(target_prefix) - 1) ||
+        !http_add_length(&required, host_length) ||
+        (header_length > 0 && (!http_add_length(&required, sizeof(header_prefix) - 1) ||
+                               !http_add_length(&required, header_length))) ||
+        !http_add_length(&required, sizeof(length_prefix) - 1) ||
+        !http_add_length(&required, body_text_length) ||
+        !http_add_length(&required, suffix_length) ||
+        !http_add_length(&required, body_length) || output_data == 0 ||
+        output_length < required) return 0;
+    http_copy_bytes(output_data, &offset, method_data, method_length);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)" ", 1);
+    http_copy_bytes(output_data, &offset, target_data, target_length);
+    http_copy_bytes(output_data, &offset, target_prefix, sizeof(target_prefix) - 1);
+    http_copy_bytes(output_data, &offset, host_data, host_length);
+    if (header_length > 0) {
+        http_copy_bytes(output_data, &offset, header_prefix, sizeof(header_prefix) - 1);
+        http_copy_bytes(output_data, &offset, header_data, header_length);
+    }
+    http_copy_bytes(output_data, &offset, length_prefix, sizeof(length_prefix) - 1);
+    http_copy_bytes(output_data, &offset, body_length_text, body_text_length);
+    http_copy_bytes(output_data, &offset, suffix, suffix_length);
+    http_copy_bytes(output_data, &offset, body_data, body_length);
+    return required;
+}
+
+uint64_t http_request_write_header_ex(const unsigned char *method_data,
                                    uint64_t method_length,
                                    const unsigned char *target_data,
                                    uint64_t target_length,
@@ -25093,6 +38097,7 @@ uint64_t http_request_write_header(const unsigned char *method_data,
                                    uint64_t header_name_length,
                                    const unsigned char *header_value_data,
                                    uint64_t header_value_length,
+                                   int keep_alive,
                                    const unsigned char *body_data,
                                    uint64_t body_length,
                                    unsigned char *output_data,
@@ -25101,7 +38106,10 @@ uint64_t http_request_write_header(const unsigned char *method_data,
     static const unsigned char header_prefix[] = "\r\n";
     static const unsigned char header_separator[] = ": ";
     static const unsigned char length_prefix[] = "\r\nContent-Length: ";
-    static const unsigned char suffix[] = "\r\nConnection: close\r\n\r\n";
+    static const unsigned char close_suffix[] = "\r\nConnection: close\r\n\r\n";
+    static const unsigned char keep_alive_suffix[] = "\r\nConnection: keep-alive\r\n\r\n";
+    const unsigned char *suffix = keep_alive == 1 ? keep_alive_suffix : close_suffix;
+    uint64_t suffix_length = keep_alive == 1 ? sizeof(keep_alive_suffix) - 1 : sizeof(close_suffix) - 1;
     unsigned char body_length_text[20];
     uint64_t body_text_length;
     uint64_t required = 0;
@@ -25141,7 +38149,7 @@ uint64_t http_request_write_header(const unsigned char *method_data,
         !http_add_length(&required, header_value_length) ||
         !http_add_length(&required, sizeof(length_prefix) - 1) ||
         !http_add_length(&required, body_text_length) ||
-        !http_add_length(&required, sizeof(suffix) - 1) ||
+        !http_add_length(&required, suffix_length) ||
         !http_add_length(&required, body_length) || output_data == 0 ||
         output_length < required) return 0;
     http_copy_bytes(output_data, &offset, method_data, method_length);
@@ -25155,9 +38163,169 @@ uint64_t http_request_write_header(const unsigned char *method_data,
     http_copy_bytes(output_data, &offset, header_value_data, header_value_length);
     http_copy_bytes(output_data, &offset, length_prefix, sizeof(length_prefix) - 1);
     http_copy_bytes(output_data, &offset, body_length_text, body_text_length);
-    http_copy_bytes(output_data, &offset, suffix, sizeof(suffix) - 1);
+    http_copy_bytes(output_data, &offset, suffix, suffix_length);
     http_copy_bytes(output_data, &offset, body_data, body_length);
     return required;
+}
+uint64_t http_request_write_header(const unsigned char *method_data,
+                                   uint64_t method_length,
+                                   const unsigned char *target_data,
+                                   uint64_t target_length,
+                                   const unsigned char *host_data,
+                                   uint64_t host_length,
+                                   const unsigned char *header_name_data,
+                                   uint64_t header_name_length,
+                                   const unsigned char *header_value_data,
+                                   uint64_t header_value_length,
+                                   const unsigned char *body_data,
+                                   uint64_t body_length,
+                                   unsigned char *output_data,
+                                   uint64_t output_length) {
+    return http_request_write_header_ex(method_data, method_length,
+                                        target_data, target_length,
+                                        host_data, host_length,
+                                        header_name_data, header_name_length,
+                                        header_value_data, header_value_length,
+                                        0, body_data, body_length,
+                                        output_data, output_length);
+}
+uint64_t http_request_write_cookie(const unsigned char *method_data,
+                                   uint64_t method_length,
+                                   const unsigned char *target_data,
+                                   uint64_t target_length,
+                                   const unsigned char *host_data,
+                                   uint64_t host_length,
+                                   const unsigned char *cookie_name_data,
+                                   uint64_t cookie_name_length,
+                                   const unsigned char *cookie_value_data,
+                                   uint64_t cookie_value_length,
+                                   const unsigned char *body_data,
+                                   uint64_t body_length,
+                                   unsigned char *output_data,
+                                   uint64_t output_length) {
+    unsigned char cookie_data[4096];
+    uint64_t cookie_length = 0;
+    uint64_t index;
+    if (cookie_name_data == 0 || cookie_name_length == 0 ||
+        (cookie_value_data == 0 && cookie_value_length > 0)) return 0;
+    for (index = 0; index < cookie_name_length; index += 1) {
+        if (!http_cookie_name_is_token(cookie_name_data[index])) return 0;
+    }
+    for (index = 0; index < cookie_value_length; index += 1) {
+        if (!http_cookie_value_is_octet(cookie_value_data[index])) return 0;
+    }
+    if (!http_add_length(&cookie_length, cookie_name_length) ||
+        !http_add_length(&cookie_length, 1) ||
+        !http_add_length(&cookie_length, cookie_value_length) ||
+        cookie_length > sizeof(cookie_data)) return 0;
+    index = 0;
+    http_copy_bytes(cookie_data, &index, cookie_name_data, cookie_name_length);
+    http_copy_bytes(cookie_data, &index, (const unsigned char *)"=", 1);
+    http_copy_bytes(cookie_data, &index, cookie_value_data, cookie_value_length);
+    return http_request_write_header(method_data, method_length,
+                                     target_data, target_length,
+                                     host_data, host_length,
+                                     (const unsigned char *)"Cookie", 6,
+                                     cookie_data, cookie_length,
+                                     body_data, body_length,
+                                     output_data, output_length);
+}
+
+uint64_t http_request_write_cookie_block(
+    const unsigned char *method_data, uint64_t method_length,
+    const unsigned char *target_data, uint64_t target_length,
+    const unsigned char *host_data, uint64_t host_length,
+    const unsigned char *cookie_block_data, uint64_t cookie_block_length,
+    const unsigned char *body_data, uint64_t body_length,
+    unsigned char *output_data, uint64_t output_length) {
+    unsigned char cookie_data[4096];
+    uint64_t cookie_length = 0;
+    uint64_t index = 0;
+    int has_pair = 0;
+    if (cookie_block_data == 0 || cookie_block_length == 0) return 0;
+    while (index < cookie_block_length) {
+        uint64_t pair_start;
+        uint64_t pair_end;
+        uint64_t equals = (uint64_t)-1;
+        uint64_t name_start;
+        uint64_t name_end;
+        uint64_t value_start;
+        uint64_t value_end;
+        uint64_t name_length;
+        uint64_t value_length;
+        uint64_t pair_length;
+        while (index < cookie_block_length &&
+               (cookie_block_data[index] == ' ' || cookie_block_data[index] == '\t')) {
+            index += 1;
+        }
+        if (index >= cookie_block_length) return 0;
+        pair_start = index;
+        while (index < cookie_block_length && cookie_block_data[index] != ';') {
+            index += 1;
+        }
+        pair_end = index;
+        while (pair_end > pair_start &&
+               (cookie_block_data[pair_end - 1] == ' ' || cookie_block_data[pair_end - 1] == '\t')) {
+            pair_end -= 1;
+        }
+        for (uint64_t cursor = pair_start; cursor < pair_end; cursor += 1) {
+            if (cookie_block_data[cursor] == '=' && equals == (uint64_t)-1) {
+                equals = cursor;
+            }
+        }
+        if (equals == (uint64_t)-1) return 0;
+        name_start = pair_start;
+        while (name_start < equals &&
+               (cookie_block_data[name_start] == ' ' || cookie_block_data[name_start] == '\t')) {
+            name_start += 1;
+        }
+        name_end = equals;
+        while (name_end > name_start &&
+               (cookie_block_data[name_end - 1] == ' ' || cookie_block_data[name_end - 1] == '\t')) {
+            name_end -= 1;
+        }
+        value_start = equals + 1;
+        while (value_start < pair_end &&
+               (cookie_block_data[value_start] == ' ' || cookie_block_data[value_start] == '\t')) {
+            value_start += 1;
+        }
+        value_end = pair_end;
+        if (name_start == name_end || value_start > value_end) return 0;
+        name_length = name_end - name_start;
+        value_length = value_end - value_start;
+        for (uint64_t cursor = name_start; cursor < name_end; cursor += 1) {
+            if (!http_cookie_name_is_token(cookie_block_data[cursor])) return 0;
+        }
+        for (uint64_t cursor = value_start; cursor < value_end; cursor += 1) {
+            if (!http_cookie_value_is_octet(cookie_block_data[cursor])) return 0;
+        }
+        pair_length = name_length;
+        if (!http_add_length(&pair_length, 1) || !http_add_length(&pair_length, value_length)) return 0;
+        if (has_pair && !http_add_length(&cookie_length, 2)) return 0;
+        if (!http_add_length(&cookie_length, pair_length) || cookie_length > sizeof(cookie_data)) return 0;
+        if (has_pair) {
+            uint64_t separator_offset = cookie_length - pair_length - 2;
+            cookie_data[separator_offset] = ';';
+            cookie_data[separator_offset + 1] = ' ';
+        }
+        {
+            uint64_t offset = cookie_length - pair_length;
+            http_copy_bytes(cookie_data, &offset, cookie_block_data + name_start, name_length);
+            http_copy_bytes(cookie_data, &offset, (const unsigned char *)"=", 1);
+            http_copy_bytes(cookie_data, &offset, cookie_block_data + value_start, value_length);
+        }
+        has_pair = 1;
+        if (index == cookie_block_length) break;
+        index += 1;
+        if (index == cookie_block_length) return 0;
+    }
+    return http_request_write_header(method_data, method_length,
+                                     target_data, target_length,
+                                     host_data, host_length,
+                                     (const unsigned char *)"Cookie", 6,
+                                     cookie_data, cookie_length,
+                                     body_data, body_length,
+                                     output_data, output_length);
 }
 static uint64_t http_response_write_mode(uint16_t status,
                                          const char *content_type_data,
@@ -25247,6 +38415,257 @@ uint64_t http_response_write_ex(uint16_t status,
                                 uint64_t output_length) {
     return http_response_write_mode(status, content_type_data, content_type_length,
                                     body_data, body_length, keep_alive, output_data, output_length);
+}
+
+uint64_t http_response_write_prefix_ex(uint16_t status,
+                                       const char *content_type_data,
+                                       uint64_t content_type_length,
+                                       const unsigned char *body_data,
+                                       uint64_t body_capacity,
+                                       uint64_t body_length,
+                                       int keep_alive,
+                                       unsigned char *output_data,
+                                       uint64_t output_length) {
+    if (body_length > body_capacity) return 0;
+    return http_response_write_mode(status, content_type_data, content_type_length,
+                                    body_data, body_length, keep_alive, output_data, output_length);
+}
+
+static uint64_t http_response_write_chunked_prefix_mode(
+    uint16_t status,
+    const char *content_type_data,
+    uint64_t content_type_length,
+    const unsigned char *body_data,
+    uint64_t body_capacity,
+    uint64_t body_length,
+    unsigned char *output_data,
+    uint64_t output_length) {
+    const char *reason;
+    uint64_t reason_length;
+    unsigned char status_text[20];
+    unsigned char chunk_length_text[16];
+    uint64_t status_length;
+    uint64_t chunk_text_length;
+    uint64_t required = 0;
+    uint64_t offset = 0;
+    uint64_t index;
+    static const unsigned char prefix[] = "HTTP/1.1 ";
+    static const unsigned char type_prefix[] = "\r\nContent-Type: ";
+    static const unsigned char transfer_prefix[] = "\r\nTransfer-Encoding: chunked";
+    static const unsigned char suffix[] = "\r\nConnection: close\r\n\r\n";
+    static const unsigned char chunk_separator[] = "\r\n";
+    static const unsigned char final_chunk[] = "\r\n0\r\n\r\n";
+    static const unsigned char empty_final_chunk[] = "0\r\n\r\n";
+    if (status < 100 || status > 999 || content_type_data == 0 ||
+        content_type_length == 0 || body_length > body_capacity ||
+        (body_data == 0 && body_length > 0)) {
+        return 0;
+    }
+    for (index = 0; index < content_type_length; index += 1) {
+        unsigned char value = content_type_data[index];
+        if (value < 0x20 || value > 0x7E) {
+            return 0;
+        }
+    }
+    reason = http_reason_text(status, &reason_length);
+    status_length = format_uint(status, status_text, sizeof(status_text));
+    chunk_text_length = format_hex_uint(body_length, chunk_length_text,
+                                        sizeof(chunk_length_text));
+    if (status_length == 0 || chunk_text_length == 0 ||
+        !http_add_length(&required, sizeof(prefix) - 1) ||
+        !http_add_length(&required, status_length) ||
+        !http_add_length(&required, 1) ||
+        !http_add_length(&required, reason_length) ||
+        !http_add_length(&required, sizeof(type_prefix) - 1) ||
+        !http_add_length(&required, content_type_length) ||
+        !http_add_length(&required, sizeof(transfer_prefix) - 1) ||
+        !http_add_length(&required, sizeof(suffix) - 1)) {
+        return 0;
+    }
+    if (body_length == 0) {
+        if (!http_add_length(&required, sizeof(empty_final_chunk) - 1)) {
+            return 0;
+        }
+    } else if (!http_add_length(&required, chunk_text_length) ||
+               !http_add_length(&required, sizeof(chunk_separator) - 1) ||
+               !http_add_length(&required, body_length) ||
+               !http_add_length(&required, sizeof(final_chunk) - 1)) {
+        return 0;
+    }
+    if (output_data == 0 || output_length < required) {
+        return 0;
+    }
+    http_copy_bytes(output_data, &offset, prefix, sizeof(prefix) - 1);
+    http_copy_bytes(output_data, &offset, status_text, status_length);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)" ", 1);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)reason, reason_length);
+    http_copy_bytes(output_data, &offset, type_prefix, sizeof(type_prefix) - 1);
+    http_copy_bytes(output_data, &offset,
+                    (const unsigned char *)content_type_data,
+                    content_type_length);
+    http_copy_bytes(output_data, &offset, transfer_prefix, sizeof(transfer_prefix) - 1);
+    http_copy_bytes(output_data, &offset, suffix, sizeof(suffix) - 1);
+    if (body_length == 0) {
+        http_copy_bytes(output_data, &offset, empty_final_chunk,
+                        sizeof(empty_final_chunk) - 1);
+    } else {
+        http_copy_bytes(output_data, &offset, chunk_length_text, chunk_text_length);
+        http_copy_bytes(output_data, &offset, chunk_separator,
+                        sizeof(chunk_separator) - 1);
+        http_copy_bytes(output_data, &offset, body_data, body_length);
+        http_copy_bytes(output_data, &offset, final_chunk, sizeof(final_chunk) - 1);
+    }
+    return required;
+}
+
+uint64_t http_response_write_chunked(uint16_t status,
+                                     const char *content_type_data,
+                                     uint64_t content_type_length,
+                                     const unsigned char *body_data,
+                                     uint64_t body_length,
+                                     unsigned char *output_data,
+                                     uint64_t output_length) {
+    return http_response_write_chunked_prefix_mode(status, content_type_data,
+                                                   content_type_length, body_data,
+                                                   body_length, body_length,
+                                                   output_data, output_length);
+}
+
+uint64_t http_response_write_chunked_prefix(
+    uint16_t status,
+    const char *content_type_data,
+    uint64_t content_type_length,
+    const unsigned char *body_data,
+    uint64_t body_capacity,
+    uint64_t body_length,
+    unsigned char *output_data,
+    uint64_t output_length) {
+    return http_response_write_chunked_prefix_mode(status, content_type_data,
+                                                   content_type_length, body_data,
+                                                   body_capacity, body_length,
+                                                   output_data, output_length);
+}
+
+/* Writes only the bounded response header for a caller-driven chunk stream.
+ * The caller owns connection policy and must send the returned header before
+ * one or more http_response_write_chunk calls. */
+uint64_t http_response_write_chunked_header(
+    uint16_t status,
+    const char *content_type_data,
+    uint64_t content_type_length,
+    unsigned char *output_data,
+    uint64_t output_length) {
+    const char *reason;
+    uint64_t reason_length;
+    unsigned char status_text[20];
+    uint64_t status_length;
+    uint64_t required = 0;
+    uint64_t offset = 0;
+    uint64_t index;
+    static const unsigned char prefix[] = "HTTP/1.1 ";
+    static const unsigned char type_prefix[] = "\r\nContent-Type: ";
+    static const unsigned char transfer_prefix[] = "\r\nTransfer-Encoding: chunked";
+    static const unsigned char suffix[] = "\r\n\r\n";
+    if (status < 100 || status > 999 || content_type_data == 0 ||
+        content_type_length == 0) {
+        return 0;
+    }
+    for (index = 0; index < content_type_length; index += 1) {
+        unsigned char value = (unsigned char)content_type_data[index];
+        if (value < 0x20 || value > 0x7E) {
+            return 0;
+        }
+    }
+    reason = http_reason_text(status, &reason_length);
+    status_length = format_uint(status, status_text, sizeof(status_text));
+    if (status_length == 0 ||
+        !http_add_length(&required, sizeof(prefix) - 1) ||
+        !http_add_length(&required, status_length) ||
+        !http_add_length(&required, 1) ||
+        !http_add_length(&required, reason_length) ||
+        !http_add_length(&required, sizeof(type_prefix) - 1) ||
+        !http_add_length(&required, content_type_length) ||
+        !http_add_length(&required, sizeof(transfer_prefix) - 1) ||
+        !http_add_length(&required, sizeof(suffix) - 1) ||
+        output_data == 0 || output_length < required) {
+        return 0;
+    }
+    http_copy_bytes(output_data, &offset, prefix, sizeof(prefix) - 1);
+    http_copy_bytes(output_data, &offset, status_text, status_length);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)" ", 1);
+    http_copy_bytes(output_data, &offset, (const unsigned char *)reason, reason_length);
+    http_copy_bytes(output_data, &offset, type_prefix, sizeof(type_prefix) - 1);
+    http_copy_bytes(output_data, &offset,
+                    (const unsigned char *)content_type_data,
+                    content_type_length);
+    http_copy_bytes(output_data, &offset, transfer_prefix,
+                    sizeof(transfer_prefix) - 1);
+    http_copy_bytes(output_data, &offset, suffix, sizeof(suffix) - 1);
+    return required;
+}
+
+/* Writes one caller-driven HTTP/1.1 chunk. A non-final chunk must contain at
+ * least one byte. The final call appends the mandatory zero-length chunk, so
+ * callers can send each returned frame immediately without a hidden buffer or
+ * runtime-owned stream state. */
+uint64_t http_response_write_chunk(
+    const unsigned char *body_data,
+    uint64_t body_length,
+    int final_chunk,
+    unsigned char *output_data,
+    uint64_t output_length) {
+    unsigned char chunk_length_text[16];
+    uint64_t chunk_text_length;
+    uint64_t required = 0;
+    uint64_t offset = 0;
+    static const unsigned char separator[] = "\r\n";
+    static const unsigned char final_suffix[] = "0\r\n\r\n";
+    if ((body_data == NULL && body_length > 0U) ||
+        (final_chunk == 0 && body_length == 0U)) {
+        return 0U;
+    }
+    if (final_chunk && body_length == 0U) {
+        if (output_data == NULL || output_length < sizeof(final_suffix) - 1U) {
+            return 0U;
+        }
+        http_copy_bytes(output_data, &offset, final_suffix,
+                        sizeof(final_suffix) - 1U);
+        return sizeof(final_suffix) - 1U;
+    }
+    chunk_text_length = format_hex_uint(body_length, chunk_length_text,
+                                        sizeof(chunk_length_text));
+    if (chunk_text_length == 0U ||
+        !http_add_length(&required, chunk_text_length) ||
+        !http_add_length(&required, sizeof(separator) - 1U) ||
+        !http_add_length(&required, body_length) ||
+        !http_add_length(&required, sizeof(separator) - 1U) ||
+        (final_chunk && !http_add_length(&required, sizeof(final_suffix) - 1U)) ||
+        output_data == NULL || output_length < required) {
+        return 0U;
+    }
+    http_copy_bytes(output_data, &offset, chunk_length_text, chunk_text_length);
+    http_copy_bytes(output_data, &offset, separator, sizeof(separator) - 1U);
+    http_copy_bytes(output_data, &offset, body_data, body_length);
+    http_copy_bytes(output_data, &offset, separator, sizeof(separator) - 1U);
+    if (final_chunk) {
+        http_copy_bytes(output_data, &offset, final_suffix,
+                        sizeof(final_suffix) - 1U);
+    }
+    return required;
+}
+
+uint64_t http_response_write_chunk_prefix(
+    const unsigned char *body_data,
+    uint64_t body_capacity,
+    uint64_t body_length,
+    int final_chunk,
+    unsigned char *output_data,
+    uint64_t output_length) {
+    if (body_length > body_capacity) {
+        return 0U;
+    }
+    return http_response_write_chunk(body_data, body_length, final_chunk,
+                                     output_data, output_length);
 }
 
 static int http_response_header_name_is_token(unsigned char value) {
@@ -25354,6 +38773,25 @@ uint64_t http_response_write_header(uint16_t status,
                                     uint64_t body_length,
                                     unsigned char *output_data,
                                     uint64_t output_length) {
+    return http_response_write_header_mode(status, content_type_data, content_type_length,
+                                           header_name_data, header_name_length,
+                                           header_value_data, header_value_length,
+                                           body_data, body_length, 0, output_data, output_length);
+}
+
+uint64_t http_response_write_header_prefix(uint16_t status,
+                                           const char *content_type_data,
+                                           uint64_t content_type_length,
+                                           const char *header_name_data,
+                                           uint64_t header_name_length,
+                                           const char *header_value_data,
+                                           uint64_t header_value_length,
+                                           const unsigned char *body_data,
+                                           uint64_t body_capacity,
+                                           uint64_t body_length,
+                                           unsigned char *output_data,
+                                           uint64_t output_length) {
+    if (body_length > body_capacity) return 0;
     return http_response_write_header_mode(status, content_type_data, content_type_length,
                                            header_name_data, header_name_length,
                                            header_value_data, header_value_length,
@@ -25490,6 +38928,211 @@ uint64_t http_response_write_cookie_ex(uint16_t status,
                                            cookie_attributes_data, cookie_attributes_length,
                                            body_data, body_length, keep_alive,
                                            output_data, output_length);
+}
+
+static int http_cookie_policy_value_is_valid(const char *data,
+                                             uint64_t length) {
+    uint64_t index;
+    if (data == 0 && length > 0) return 0;
+    for (index = 0; index < length; index += 1) {
+        unsigned char value = (unsigned char)data[index];
+        if (value < 0x21 || value > 0x7E || value == ';' || value == ',') return 0;
+    }
+    return 1;
+}
+
+static int http_cookie_policy_append(unsigned char *output_data,
+                                     uint64_t *output_length,
+                                     uint64_t output_capacity,
+                                     const unsigned char *input_data,
+                                     uint64_t input_length) {
+    uint64_t previous_length;
+    if (output_data == 0 || output_length == 0 ||
+        (input_data == 0 && input_length > 0) ||
+        *output_length > output_capacity) {
+        return 0;
+    }
+    previous_length = *output_length;
+    if (!http_add_length(output_length, input_length) || *output_length > output_capacity) return 0;
+    *output_length = previous_length;
+    return http_copy_bytes(output_data, output_length, input_data, input_length);
+}
+
+static uint64_t http_response_write_cookie_policy_mode(
+    uint16_t status,
+    const char *content_type_data,
+    uint64_t content_type_length,
+    const char *cookie_name_data,
+    uint64_t cookie_name_length,
+    const char *cookie_value_data,
+    uint64_t cookie_value_length,
+    const char *path_data,
+    uint64_t path_length,
+    const char *domain_data,
+    uint64_t domain_length,
+    long long max_age_seconds,
+    unsigned int same_site,
+    unsigned int flags,
+    const unsigned char *body_data,
+    uint64_t body_length,
+    int keep_alive,
+    unsigned char *output_data,
+    uint64_t output_length) {
+    unsigned char attributes[4096];
+    unsigned char max_age_text[32];
+    unsigned char cookie_data[4096];
+    uint64_t attributes_length = 0;
+    uint64_t max_age_length = 0;
+    uint64_t cookie_length = 0;
+    uint64_t index;
+    const char *same_site_text = 0;
+    uint64_t same_site_length = 0;
+    if (cookie_name_data == 0 || cookie_name_length == 0 ||
+        (cookie_value_data == 0 && cookie_value_length > 0) ||
+        max_age_seconds < -1 || same_site > 3 || (flags & ~3U) != 0 ||
+        (same_site == 3 && (flags & 1U) == 0) ||
+        !http_cookie_policy_value_is_valid(path_data, path_length) ||
+        !http_cookie_policy_value_is_valid(domain_data, domain_length)) {
+        return 0;
+    }
+    for (index = 0; index < cookie_name_length; index += 1) {
+        if (!http_cookie_name_is_token((unsigned char)cookie_name_data[index])) return 0;
+    }
+    for (index = 0; index < cookie_value_length; index += 1) {
+        if (!http_cookie_value_is_octet((unsigned char)cookie_value_data[index])) return 0;
+    }
+    if (path_length > 0) {
+        if (!http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"Path=", 5) ||
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)path_data, path_length)) {
+            return 0;
+        }
+    }
+    if (domain_length > 0) {
+        if (attributes_length > 0 &&
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"; ", 2)) {
+            return 0;
+        }
+        if (!http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"Domain=", 7) ||
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)domain_data, domain_length)) {
+            return 0;
+        }
+    }
+    if (max_age_seconds != -1) {
+        max_age_length = format_int(max_age_seconds, max_age_text, sizeof(max_age_text));
+        if (max_age_length == 0) return 0;
+        if (attributes_length > 0 &&
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"; ", 2)) {
+            return 0;
+        }
+        if (!http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"Max-Age=", 8) ||
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       max_age_text, max_age_length)) {
+            return 0;
+        }
+    }
+    if (same_site != 0) {
+        if (same_site == 1) {
+            same_site_text = "Lax";
+            same_site_length = 3;
+        } else if (same_site == 2) {
+            same_site_text = "Strict";
+            same_site_length = 6;
+        } else {
+            same_site_text = "None";
+            same_site_length = 4;
+        }
+        if (attributes_length > 0 &&
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"; ", 2)) {
+            return 0;
+        }
+        if (!http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"SameSite=", 9) ||
+            !http_cookie_policy_append(attributes, &attributes_length,
+                                       sizeof(attributes),
+                                       (const unsigned char *)same_site_text,
+                                       same_site_length)) {
+            return 0;
+        }
+    }
+    if ((flags & 1U) != 0) {
+        if (attributes_length > 0 &&
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"; ", 2)) {
+            return 0;
+        }
+        if (!http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"Secure", 6)) {
+            return 0;
+        }
+    }
+    if ((flags & 2U) != 0) {
+        if (attributes_length > 0 &&
+            !http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"; ", 2)) {
+            return 0;
+        }
+        if (!http_cookie_policy_append(attributes, &attributes_length, sizeof(attributes),
+                                       (const unsigned char *)"HttpOnly", 8)) {
+            return 0;
+        }
+    }
+    if (!http_add_length(&cookie_length, cookie_name_length) ||
+        !http_add_length(&cookie_length, 1) ||
+        !http_add_length(&cookie_length, cookie_value_length) ||
+        (attributes_length > 0 &&
+         (!http_add_length(&cookie_length, 2) ||
+          !http_add_length(&cookie_length, attributes_length))) ||
+        cookie_length > sizeof(cookie_data)) {
+        return 0;
+    }
+    index = 0;
+    http_copy_bytes(cookie_data, &index, (const unsigned char *)cookie_name_data, cookie_name_length);
+    http_copy_bytes(cookie_data, &index, (const unsigned char *)"=", 1);
+    http_copy_bytes(cookie_data, &index, (const unsigned char *)cookie_value_data, cookie_value_length);
+    if (attributes_length > 0) {
+        http_copy_bytes(cookie_data, &index, (const unsigned char *)"; ", 2);
+        http_copy_bytes(cookie_data, &index, attributes, attributes_length);
+    }
+    return http_response_write_header_mode(status, content_type_data, content_type_length,
+                                           "Set-Cookie", 10, (const char *)cookie_data,
+                                           cookie_length, body_data, body_length, keep_alive,
+                                           output_data, output_length);
+}
+
+uint64_t http_response_write_cookie_policy(uint16_t status,
+                                           const char *content_type_data,
+                                           uint64_t content_type_length,
+                                           const char *cookie_name_data,
+                                           uint64_t cookie_name_length,
+                                           const char *cookie_value_data,
+                                           uint64_t cookie_value_length,
+                                           const char *path_data,
+                                           uint64_t path_length,
+                                           const char *domain_data,
+                                           uint64_t domain_length,
+                                           long long max_age_seconds,
+                                           unsigned int same_site,
+                                           unsigned int flags,
+                                           const unsigned char *body_data,
+                                           uint64_t body_length,
+                                           int keep_alive,
+                                           unsigned char *output_data,
+                                           uint64_t output_length) {
+    return http_response_write_cookie_policy_mode(status, content_type_data, content_type_length,
+                                                  cookie_name_data, cookie_name_length,
+                                                  cookie_value_data, cookie_value_length,
+                                                  path_data, path_length, domain_data, domain_length,
+                                                  max_age_seconds, same_site, flags,
+                                                  body_data, body_length, keep_alive,
+                                                  output_data, output_length);
 }
 
 static int http_response_header_name_is_reserved(const unsigned char *name_data,
@@ -26546,6 +40189,72 @@ uint64_t http_request_target(const unsigned char *input_data,
                                    output_data, output_length);
 }
 
+static int http_target_hex_value(unsigned char value) {
+    if (value >= '0' && value <= '9') return (int)(value - '0');
+    if (value >= 'a' && value <= 'f') return (int)(value - 'a' + 10);
+    if (value >= 'A' && value <= 'F') return (int)(value - 'A' + 10);
+    return -1;
+}
+
+int http_request_target_decode_exact(const unsigned char *input_data,
+                                     uint64_t input_length,
+                                     unsigned char *output_data,
+                                     uint64_t output_capacity,
+                                     uint64_t *length_data,
+                                     uint64_t length_capacity) {
+    uint64_t method_start;
+    uint64_t method_length;
+    uint64_t target_start;
+    uint64_t target_length;
+    uint64_t headers_start;
+    uint64_t index;
+    uint64_t output_index = 0;
+    uint64_t decoded_length = 0;
+    if (length_data == 0 || length_capacity == 0 ||
+        !http_request_parse_line(input_data, input_length, &method_start,
+                                 &method_length, &target_start, &target_length,
+                                 &headers_start) || target_length == 0) {
+        return 0;
+    }
+    for (index = 0; index < target_length; index += 1) {
+        unsigned char value = input_data[target_start + index];
+        if (value == '%') {
+            int high;
+            int low;
+            unsigned char decoded;
+            if (index + 2 >= target_length ||
+                (high = http_target_hex_value(input_data[target_start + index + 1])) < 0 ||
+                (low = http_target_hex_value(input_data[target_start + index + 2])) < 0) {
+                return 0;
+            }
+            decoded = (unsigned char)(high * 16 + low);
+            if (decoded == 0) return 0;
+            index += 2;
+        }
+        if (decoded_length == (uint64_t)-1) return 0;
+        decoded_length += 1;
+    }
+    if (decoded_length > output_capacity ||
+        (decoded_length > 0 && output_data == 0)) {
+        return 0;
+    }
+    for (index = 0; index < target_length;) {
+        unsigned char value = input_data[target_start + index];
+        if (value == '%') {
+            int high = http_target_hex_value(input_data[target_start + index + 1]);
+            int low = http_target_hex_value(input_data[target_start + index + 2]);
+            output_data[output_index] = (unsigned char)(high * 16 + low);
+            index += 3;
+        } else {
+            output_data[output_index] = value;
+            index += 1;
+        }
+        output_index += 1;
+    }
+    length_data[0] = decoded_length;
+    return 1;
+}
+
 uint64_t http_request_header(const unsigned char *input_data,
                              uint64_t input_length,
                              const char *name_data,
@@ -26569,6 +40278,40 @@ uint64_t http_request_header(const unsigned char *input_data,
     }
     return http_request_copy_field(input_data, value_start, value_length,
                                    output_data, output_length);
+}
+
+int http_request_header_exact(const unsigned char *input_data,
+                              uint64_t input_length,
+                              const char *name_data,
+                              uint64_t name_length,
+                              unsigned char *output_data,
+                              uint64_t output_capacity,
+                              uint64_t *length_data,
+                              uint64_t length_capacity) {
+    uint64_t method_start;
+    uint64_t method_length;
+    uint64_t target_start;
+    uint64_t target_length;
+    uint64_t headers_start;
+    uint64_t value_start;
+    uint64_t value_length;
+    if (length_data == 0 || length_capacity == 0 ||
+        !http_request_parse_line(input_data, input_length, &method_start,
+                                 &method_length, &target_start, &target_length,
+                                 &headers_start) ||
+        http_request_find_header(input_data, input_length, headers_start,
+                                 name_data, name_length, &value_start,
+                                 &value_length) <= 0 ||
+        value_length > output_capacity ||
+        (value_length > 0 && output_data == 0)) {
+        return 0;
+    }
+    if (value_length > 0) {
+        http_request_copy_field(input_data, value_start, value_length,
+                                output_data, output_capacity);
+    }
+    length_data[0] = value_length;
+    return 1;
 }
 
 uint64_t http_request_body(const unsigned char *input_data,
@@ -26597,6 +40340,79 @@ uint64_t http_request_body(const unsigned char *input_data,
     }
     return http_request_copy_field(input_data, body_start, content_length,
                                    output_data, output_length);
+}
+
+int http_request_body_exact(const unsigned char *input_data,
+                            uint64_t input_length,
+                            unsigned char *output_data,
+                            uint64_t output_capacity,
+                            uint64_t *length_data,
+                            uint64_t length_capacity) {
+    uint64_t method_start;
+    uint64_t method_length;
+    uint64_t target_start;
+    uint64_t target_length;
+    uint64_t headers_start;
+    uint64_t body_start;
+    uint64_t content_length;
+    int has_content_length;
+    int has_transfer_encoding;
+    if (length_data == 0 || length_capacity == 0 ||
+        !http_request_parse_line(input_data, input_length, &method_start,
+                                 &method_length, &target_start, &target_length,
+                                 &headers_start) ||
+        !http_request_headers(input_data, input_length, headers_start,
+                              &body_start, &content_length,
+                              &has_content_length, &has_transfer_encoding) ||
+        !has_content_length || has_transfer_encoding || body_start > input_length ||
+        content_length > input_length - body_start ||
+        content_length > output_capacity ||
+        (content_length > 0 && output_data == 0)) {
+        return 0;
+    }
+    if (content_length > 0) {
+        http_request_copy_field(input_data, body_start, content_length,
+                                output_data, output_capacity);
+    }
+    length_data[0] = content_length;
+    return 1;
+}
+
+int http_request_body_exact_prefix(const unsigned char *input_data,
+                                   uint64_t input_capacity,
+                                   uint64_t input_length,
+                                   unsigned char *output_data,
+                                   uint64_t output_capacity,
+                                   uint64_t *length_data,
+                                   uint64_t length_capacity) {
+    uint64_t method_start;
+    uint64_t method_length;
+    uint64_t target_start;
+    uint64_t target_length;
+    uint64_t headers_start;
+    uint64_t body_start;
+    uint64_t content_length;
+    int has_content_length;
+    int has_transfer_encoding;
+    if (length_data == 0 || length_capacity == 0 || input_length > input_capacity ||
+        !http_request_parse_line(input_data, input_length, &method_start,
+                                 &method_length, &target_start, &target_length,
+                                 &headers_start) ||
+        !http_request_headers(input_data, input_length, headers_start,
+                              &body_start, &content_length,
+                              &has_content_length, &has_transfer_encoding) ||
+        !has_content_length || has_transfer_encoding || body_start > input_length ||
+        content_length > input_length - body_start ||
+        content_length > output_capacity ||
+        (content_length > 0 && output_data == 0)) {
+        return 0;
+    }
+    if (content_length > 0) {
+        http_request_copy_field(input_data, body_start, content_length,
+                                output_data, output_capacity);
+    }
+    length_data[0] = content_length;
+    return 1;
 }
 
 static int http_query_hex_value(unsigned char value) {
@@ -26774,6 +40590,381 @@ int http_query_param_exact(const unsigned char *input_data,
         if (value == '%') cursor += 2;
     }
     *output_size = decoded_length;
+    return 1;
+}
+
+/* Read one application/x-www-form-urlencoded field from a bounded request
+ * body prefix. The body framing is validated before the field is decoded and
+ * caller-owned output is published only after the complete pair list passes. */
+static int http_form_param_exact_range(const unsigned char *input_data,
+                                       uint64_t body_start,
+                                       uint64_t body_length,
+                                       const char *key_data,
+                                       uint64_t key_length,
+                                       unsigned char *output_data,
+                                       uint64_t output_length,
+                                       uint64_t *output_size,
+                                       uint64_t output_size_capacity) {
+    uint64_t body_end;
+    uint64_t cursor;
+    uint64_t value_start = 0;
+    uint64_t value_length = 0;
+    uint64_t decoded_length = 0;
+    uint64_t output_offset = 0;
+    int matched = 0;
+    if (input_data == 0 || key_data == 0 || key_length == 0 || output_data == 0 ||
+        output_size == 0 || output_size_capacity == 0 ||
+        body_length > (uint64_t)-1 - body_start) return 0;
+    body_end = body_start + body_length;
+    for (cursor = body_start; cursor < body_end;) {
+        uint64_t pair_end = cursor;
+        uint64_t equals = cursor;
+        uint64_t index;
+        uint64_t decoded = 0;
+        int key_matches = 0;
+        while (pair_end < body_end && input_data[pair_end] != '&') pair_end += 1;
+        if (pair_end == cursor) return 0;
+        while (equals < pair_end && input_data[equals] != '=') equals += 1;
+        if (equals == cursor || equals == pair_end) return 0;
+        if (equals - cursor == key_length) {
+            for (index = 0; index < key_length; index += 1) {
+                if (input_data[cursor + index] != (unsigned char)key_data[index]) break;
+            }
+            key_matches = index == key_length;
+        }
+        if (key_matches) {
+            if (matched) return 0;
+            matched = 1;
+            value_start = equals + 1;
+            value_length = pair_end - value_start;
+            for (index = 0; index < value_length; index += 1) {
+                unsigned char value = input_data[value_start + index];
+                if (value == '%') {
+                    int high;
+                    int low;
+                    if (index + 2 >= value_length ||
+                        (high = http_query_hex_value(input_data[value_start + index + 1])) < 0 ||
+                        (low = http_query_hex_value(input_data[value_start + index + 2])) < 0) return 0;
+                    (void)high;
+                    (void)low;
+                    index += 2;
+                }
+                if (decoded == (uint64_t)-1) return 0;
+                decoded += 1;
+            }
+            decoded_length = decoded;
+        }
+        if (pair_end == body_end) break;
+        cursor = pair_end + 1;
+    }
+    if (!matched || output_length < decoded_length) return 0;
+    for (cursor = 0; cursor < value_length; cursor += 1) {
+        unsigned char value = input_data[value_start + cursor];
+        if (value == '+') {
+            output_data[output_offset] = ' ';
+        } else if (value == '%') {
+            int high = http_query_hex_value(input_data[value_start + cursor + 1]);
+            int low = http_query_hex_value(input_data[value_start + cursor + 2]);
+            output_data[output_offset] = (unsigned char)(high * 16 + low);
+        } else {
+            output_data[output_offset] = value;
+        }
+        output_offset += 1;
+        if (value == '%') cursor += 2;
+    }
+    *output_size = decoded_length;
+    return 1;
+}
+
+int http_form_param_exact_prefix(const unsigned char *input_data,
+                                 uint64_t input_capacity,
+                                 uint64_t input_length,
+                                 const char *key_data,
+                                 uint64_t key_length,
+                                 unsigned char *output_data,
+                                 uint64_t output_length,
+                                 uint64_t *output_size,
+                                 uint64_t output_size_capacity) {
+    uint64_t method_start;
+    uint64_t method_length;
+    uint64_t target_start;
+    uint64_t target_length;
+    uint64_t headers_start;
+    uint64_t body_start;
+    uint64_t content_length;
+    uint64_t content_type_start;
+    uint64_t content_type_length;
+    int has_content_length;
+    int has_transfer_encoding;
+    static const char expected_content_type[] = "application/x-www-form-urlencoded";
+    if (input_length > input_capacity ||
+        !http_request_parse_line(input_data, input_length, &method_start,
+                                 &method_length, &target_start, &target_length,
+                                 &headers_start) ||
+        !http_request_headers(input_data, input_length, headers_start,
+                              &body_start, &content_length,
+                              &has_content_length, &has_transfer_encoding) ||
+        !has_content_length || has_transfer_encoding || body_start > input_length ||
+        content_length > input_length - body_start) return 0;
+    if (http_request_find_header(input_data, input_length, headers_start,
+                                 "Content-Type", 12,
+                                 &content_type_start, &content_type_length) != 1 ||
+        content_type_length != sizeof(expected_content_type) - 1) return 0;
+    {
+        uint64_t content_type_index;
+        for (content_type_index = 0;
+             content_type_index < content_type_length;
+             content_type_index += 1) {
+            unsigned char value = input_data[content_type_start + content_type_index];
+            unsigned char expected = (unsigned char)expected_content_type[content_type_index];
+            if (value >= 'A' && value <= 'Z') value = (unsigned char)(value + ('a' - 'A'));
+            if (value != expected) return 0;
+        }
+    }
+    return http_form_param_exact_range(
+        input_data, body_start, content_length, key_data, key_length,
+        output_data, output_length, output_size, output_size_capacity);
+}
+
+static int http_multipart_ci_equal(const unsigned char *data,
+                                   uint64_t start,
+                                   uint64_t length,
+                                   const char *expected,
+                                   uint64_t expected_length) {
+    uint64_t index;
+    if (data == 0 || expected == 0 || length != expected_length) return 0;
+    for (index = 0; index < length; index += 1) {
+        unsigned char value = data[start + index];
+        unsigned char wanted = (unsigned char)expected[index];
+        if (value >= 'A' && value <= 'Z') value = (unsigned char)(value + 32);
+        if (wanted >= 'A' && wanted <= 'Z') wanted = (unsigned char)(wanted + 32);
+        if (value != wanted) return 0;
+    }
+    return 1;
+}
+
+static int http_multipart_bytes_equal(const unsigned char *data,
+                                      uint64_t start,
+                                      uint64_t length,
+                                      const char *expected,
+                                      uint64_t expected_length) {
+    uint64_t index;
+    if (data == 0 || expected == 0 || length != expected_length) return 0;
+    for (index = 0; index < length; index += 1) {
+        if (data[start + index] != (unsigned char)expected[index]) return 0;
+    }
+    return 1;
+}
+
+static int http_multipart_boundary(const unsigned char *data,
+                                   uint64_t start,
+                                   uint64_t length,
+                                   uint64_t *boundary_start,
+                                   uint64_t *boundary_length) {
+    static const char prefix[] = "multipart/form-data; boundary=";
+    uint64_t prefix_length = sizeof(prefix) - 1;
+    uint64_t index;
+    if (data == 0 || boundary_start == 0 || boundary_length == 0 ||
+        length <= prefix_length ||
+        !http_multipart_ci_equal(data, start, prefix_length, prefix, prefix_length)) {
+        return 0;
+    }
+    *boundary_start = start + prefix_length;
+    *boundary_length = length - prefix_length;
+    if (*boundary_length == 0 || *boundary_length > 70) return 0;
+    for (index = 0; index < *boundary_length; index += 1) {
+        unsigned char value = data[*boundary_start + index];
+        if (value <= 32 || value >= 127 || value == '"' || value == ';') return 0;
+    }
+    return 1;
+}
+
+static int http_multipart_disposition_matches(const unsigned char *data,
+                                              uint64_t start,
+                                              uint64_t length,
+                                              const char *key_data,
+                                              uint64_t key_length) {
+    uint64_t cursor = start;
+    uint64_t end = start + length;
+    uint64_t token_start;
+    uint64_t token_length;
+    uint64_t value_start;
+    uint64_t value_length;
+    int name_present = 0;
+    int name_matches = 0;
+    if (data == 0 || key_data == 0 || key_length == 0 || end < start) return 0;
+    while (cursor < end && (data[cursor] == ' ' || data[cursor] == '\t')) cursor += 1;
+    token_start = cursor;
+    while (cursor < end && http_request_is_token(data[cursor])) cursor += 1;
+    if (!http_multipart_ci_equal(data, token_start, cursor - token_start,
+                                 "form-data", 9)) return 0;
+    for (;;) {
+        while (cursor < end && (data[cursor] == ' ' || data[cursor] == '\t')) cursor += 1;
+        if (cursor == end) return name_present ? (name_matches ? 2 : 1) : 0;
+        if (data[cursor] != ';') return 0;
+        cursor += 1;
+        while (cursor < end && (data[cursor] == ' ' || data[cursor] == '\t')) cursor += 1;
+        token_start = cursor;
+        while (cursor < end && http_request_is_token(data[cursor])) cursor += 1;
+        token_length = cursor - token_start;
+        while (cursor < end && (data[cursor] == ' ' || data[cursor] == '\t')) cursor += 1;
+        if (token_length == 0 || cursor == end || data[cursor] != '=') return 0;
+        cursor += 1;
+        while (cursor < end && (data[cursor] == ' ' || data[cursor] == '\t')) cursor += 1;
+        if (cursor == end || data[cursor] != '"') return 0;
+        cursor += 1;
+        value_start = cursor;
+        while (cursor < end && data[cursor] != '"') {
+            if (data[cursor] == '\r' || data[cursor] == '\n') return 0;
+            cursor += 1;
+        }
+        if (cursor == end) return 0;
+        value_length = cursor - value_start;
+        cursor += 1;
+        if (http_multipart_ci_equal(data, token_start, token_length, "name", 4)) {
+            if (name_present) return 0;
+            name_present = 1;
+            name_matches = http_multipart_bytes_equal(data, value_start, value_length,
+                                                      key_data, key_length);
+        }
+    }
+}
+
+int http_multipart_part_exact_prefix(const unsigned char *input_data,
+                                     uint64_t input_capacity,
+                                     uint64_t input_length,
+                                     const char *key_data,
+                                     uint64_t key_length,
+                                     unsigned char *output_data,
+                                     uint64_t output_length,
+                                     uint64_t *output_size,
+                                     uint64_t output_size_capacity) {
+    uint64_t method_start;
+    uint64_t method_length;
+    uint64_t target_start;
+    uint64_t target_length;
+    uint64_t headers_start;
+    uint64_t body_start;
+    uint64_t content_length;
+    uint64_t content_type_start;
+    uint64_t content_type_length;
+    uint64_t boundary_start;
+    uint64_t boundary_length;
+    uint64_t body_end;
+    uint64_t marker_length;
+    uint64_t cursor;
+    uint64_t header_end;
+    uint64_t search;
+    uint64_t delimiter_end;
+    uint64_t part_content_start;
+    uint64_t part_content_length;
+    uint64_t found_start = 0;
+    uint64_t found_length = 0;
+    uint64_t index;
+    int has_content_length;
+    int has_transfer_encoding;
+    int disposition_found;
+    int disposition_header_seen;
+    int disposition_result;
+    int field_found = 0;
+    int final_boundary;
+    static const char marker_prefix[] = "--";
+    if (input_data == 0 || key_data == 0 || key_length == 0 || output_data == 0 ||
+        output_size == 0 || output_size_capacity == 0 || input_length > input_capacity) return 0;
+    if (!http_request_parse_line(input_data, input_length, &method_start, &method_length,
+                                 &target_start, &target_length, &headers_start) ||
+        !http_request_headers(input_data, input_length, headers_start, &body_start,
+                              &content_length, &has_content_length, &has_transfer_encoding) ||
+        !has_content_length || has_transfer_encoding || body_start > input_length ||
+        content_length > input_length - body_start ||
+        http_request_find_header(input_data, input_length, headers_start, "Content-Type", 12,
+                                 &content_type_start, &content_type_length) != 1 ||
+        !http_multipart_boundary(input_data, content_type_start, content_type_length,
+                                 &boundary_start, &boundary_length) ||
+        content_length > (uint64_t)-1 - body_start) return 0;
+    body_end = body_start + content_length;
+    marker_length = boundary_length + 2;
+    if (body_start + marker_length + 2 > body_end ||
+        input_data[body_start] != '-' || input_data[body_start + 1] != '-') return 0;
+    for (index = 0; index < boundary_length; index += 1) {
+        if (input_data[body_start + 2 + index] != input_data[boundary_start + index]) return 0;
+    }
+    cursor = body_start + marker_length;
+    if (cursor + 2 > body_end || input_data[cursor] != '\r' || input_data[cursor + 1] != '\n') return 0;
+    cursor += 2;
+    for (;;) {
+        if (cursor >= body_end) return 0;
+        header_end = 0;
+        for (search = cursor; search + 3 < body_end; search += 1) {
+            if (input_data[search] == '\r' && input_data[search + 1] == '\n' &&
+                input_data[search + 2] == '\r' && input_data[search + 3] == '\n') {
+                header_end = search;
+                break;
+            }
+        }
+        if (header_end == 0 || header_end < cursor) return 0;
+        disposition_found = 0;
+        disposition_header_seen = 0;
+        {
+            uint64_t header_cursor = cursor;
+            uint64_t next_header;
+            uint64_t name_start;
+            uint64_t name_length;
+            uint64_t value_start;
+            uint64_t value_length;
+            int header_result;
+            for (;;) {
+                header_result = http_request_next_header(input_data, header_end + 4, header_cursor,
+                                                         &next_header, &name_start, &name_length,
+                                                         &value_start, &value_length);
+                if (header_result < 0) return 0;
+                if (header_result == 0) break;
+                if (http_request_header_name_equals(input_data, name_start, name_length,
+                                                    "Content-Disposition", 19)) {
+                    if (disposition_header_seen) return 0;
+                    disposition_header_seen = 1;
+                    disposition_result = http_multipart_disposition_matches(
+                        input_data, value_start, value_length, key_data, key_length);
+                    if (disposition_result == 0) return 0;
+                    disposition_found = disposition_result == 2;
+                }
+                header_cursor = next_header;
+            }
+        }
+        if (!disposition_header_seen) return 0;
+        part_content_start = header_end + 4;
+        delimiter_end = 0;
+        final_boundary = 0;
+        for (search = part_content_start; search + marker_length + 4 <= body_end; search += 1) {
+            if (input_data[search] != '\r' || input_data[search + 1] != '\n') continue;
+            for (index = 0; index < marker_length; index += 1) {
+                if (input_data[search + 2 + index] != (index < 2 ? (unsigned char)marker_prefix[index] : input_data[boundary_start + index - 2])) break;
+            }
+            if (index != marker_length) continue;
+            delimiter_end = search + 2 + marker_length;
+            if (delimiter_end + 2 <= body_end && input_data[delimiter_end] == '-' && input_data[delimiter_end + 1] == '-') {
+                final_boundary = 1;
+                if (delimiter_end + 2 != body_end &&
+                    (delimiter_end + 4 != body_end || input_data[delimiter_end + 2] != '\r' || input_data[delimiter_end + 3] != '\n')) return 0;
+                break;
+            }
+            if (delimiter_end + 2 <= body_end && input_data[delimiter_end] == '\r' && input_data[delimiter_end + 1] == '\n') break;
+            delimiter_end = 0;
+        }
+        if (delimiter_end == 0) return 0;
+        part_content_length = search - part_content_start;
+        if (disposition_found) {
+            if (field_found) return 0;
+            field_found = 1;
+            found_start = part_content_start;
+            found_length = part_content_length;
+        }
+        if (final_boundary) break;
+        cursor = delimiter_end + 2;
+    }
+    if (!field_found || output_length < found_length) return 0;
+    for (index = 0; index < found_length; index += 1) output_data[index] = input_data[found_start + index];
+    *output_size = found_length;
     return 1;
 }
 
@@ -27196,6 +41387,76 @@ uint64_t http_router_respond_prefix(const unsigned char *input_data,
     return jadren_http_router_respond_mode(input_data, input_length, output_data,
                                            output_length, 0);
 }
+
+/* Dispatch a bounded request through the registered routes and serialize a
+ * one-shot HTTP/1.1 chunked response. Chunked responses close the connection;
+ * callers that need keep-alive must continue using the session responder. */
+static uint64_t jadren_http_router_respond_chunked_mode(
+    const unsigned char *input_data, uint64_t input_length,
+    unsigned char *output_data, uint64_t output_length) {
+    uint64_t method_start;
+    uint64_t method_length;
+    uint64_t target_start;
+    uint64_t target_length;
+    uint64_t headers_start;
+    int32_t index;
+    int32_t best_prefix = -1;
+    uint64_t best_prefix_length = 0;
+    if (!http_request_parse_line(input_data, input_length, &method_start,
+                                 &method_length, &target_start, &target_length,
+                                 &headers_start)) {
+        return 0;
+    }
+    for (index = 0; index < JADREN_HTTP_ROUTE_CAPACITY; index += 1) {
+        JadrenHttpRoute *route = &jadren_http_routes[index];
+        if (route->active && route->match_mode == 0 &&
+            jadren_http_route_matches(route, input_data, method_start,
+                                      method_length, target_start, target_length)) {
+            return http_response_write_chunked_prefix_mode(
+                route->status, route->content_type, route->content_type_length,
+                route->body, sizeof(route->body), route->body_length,
+                output_data, output_length);
+        }
+        if (route->active && route->match_mode == 1 &&
+            route->target_length > best_prefix_length &&
+            jadren_http_route_prefix_matches(route, input_data, method_start,
+                                             method_length, target_start,
+                                             target_length)) {
+            best_prefix = index;
+            best_prefix_length = route->target_length;
+        }
+    }
+    if (best_prefix >= 0) {
+        JadrenHttpRoute *route = &jadren_http_routes[best_prefix];
+        return http_response_write_chunked_prefix_mode(
+            route->status, route->content_type, route->content_type_length,
+            route->body, sizeof(route->body), route->body_length, output_data,
+            output_length);
+    }
+    return http_response_write_chunked_prefix_mode(
+        404, "text/plain", 10, (const unsigned char *)"not found", 9, 9,
+        output_data, output_length);
+}
+
+uint64_t http_router_respond_chunked(const unsigned char *input_data,
+                                     uint64_t input_length,
+                                     unsigned char *output_data,
+                                     uint64_t output_length) {
+    return jadren_http_router_respond_chunked_mode(input_data, input_length,
+                                                   output_data, output_length);
+}
+
+/* Dispatch only the explicit valid request prefix from a larger caller-owned
+ * receive buffer and serialize the response with chunked framing. */
+uint64_t http_router_respond_chunked_prefix(const unsigned char *input_data,
+                                            uint64_t input_capacity,
+                                            uint64_t input_length,
+                                            unsigned char *output_data,
+                                            uint64_t output_length) {
+    if (input_length > input_capacity) return 0;
+    return jadren_http_router_respond_chunked_mode(
+        input_data, input_length, output_data, output_length);
+}
 #if JADREN_FILE_RUNTIME_HAS_NETWORK_SUPPORT
 #define JADREN_HTTP_SESSION_CAPACITY 4
 #define JADREN_HTTP_SESSION_CONNECTION_CAPACITY 8
@@ -27236,6 +41497,7 @@ typedef struct JadrenHttpSession {
     uint32_t max_body_bytes;
     uint32_t cursor;
     int32_t tls_enabled;
+    int32_t chunked_mode;
     uint64_t certificate_length;
     uint64_t private_key_length;
     unsigned char certificate[JADREN_HTTP_SESSION_TLS_PATH_CAPACITY];
@@ -27315,6 +41577,126 @@ static int jadren_http_session_send_all(JadrenHttpSessionConnection *connection,
     return 1;
 }
 
+/* Reads one complete request frame into the session's bounded connection
+ * buffer. The caller decides when to publish the frame and which response
+ * bytes to send; this helper never routes, writes or closes the connection. */
+static int jadren_http_session_read_frame(
+    JadrenHttpSession *session, JadrenHttpSessionConnection *connection,
+    unsigned int timeout_ms, uint64_t *frame_length_output) {
+    uint64_t method_start;
+    uint64_t method_length;
+    uint64_t target_start;
+    uint64_t target_length;
+    uint64_t headers_start;
+    uint64_t body_start;
+    uint64_t content_length;
+    uint64_t frame_length;
+    uint64_t chunked_body_length;
+    uint64_t chunked_body_end;
+    int has_content_length;
+    int has_transfer_encoding;
+    int receive_result;
+    if (session == 0 || connection == 0 || !connection->active ||
+        frame_length_output == 0) {
+        return -1;
+    }
+#if JADREN_FILE_RUNTIME_HAS_TLS_SUPPORT
+    if (session->tls_enabled) {
+        unsigned int tls_state = net_tls_state(connection->tls_token);
+        if (tls_state == 1U) {
+            (void)net_tls_step(connection->tls_token, timeout_ms);
+            tls_state = net_tls_state(connection->tls_token);
+        }
+        if (tls_state == 4U || tls_state == 3U || tls_state == 0U) return -1;
+        if (tls_state != 2U) return 0;
+    }
+#endif
+    (void)net_socket_set_timeout(connection->socket_token,
+                                 timeout_ms == 0 ? 1 : timeout_ms);
+    for (;;) {
+        frame_length = http_request_frame_length_prefix(
+            connection->request, JADREN_HTTP_SESSION_REQUEST_CAPACITY,
+            connection->request_length);
+        if (frame_length != 0) break;
+        if (http_request_parse_line(connection->request, connection->request_length,
+                                    &method_start, &method_length, &target_start,
+                                    &target_length, &headers_start) &&
+            http_request_headers(connection->request, connection->request_length,
+                                 headers_start, &body_start, &content_length,
+                                 &has_content_length, &has_transfer_encoding)) {
+            if (has_transfer_encoding && has_content_length) return -1;
+            if (body_start > session->max_header_bytes ||
+                (!has_transfer_encoding && has_content_length &&
+                 content_length > session->max_body_bytes)) {
+                return -1;
+            }
+            if (has_transfer_encoding) {
+                frame_length = http_request_chunked_frame_length_prefix(
+                    connection->request, JADREN_HTTP_SESSION_REQUEST_CAPACITY,
+                    connection->request_length);
+                if (frame_length != 0) break;
+            } else if (!has_content_length) {
+                frame_length = body_start;
+                break;
+            }
+        } else if (jadren_http_session_headers_terminated(
+                       connection->request, connection->request_length) ||
+                   connection->request_length >= session->max_header_bytes) {
+            return -1;
+        }
+        if (connection->request_length >= JADREN_HTTP_SESSION_REQUEST_CAPACITY) {
+            return -1;
+        }
+        receive_result = jadren_http_session_receive(
+            connection,
+            connection->request + connection->request_length,
+            JADREN_HTTP_SESSION_REQUEST_CAPACITY - connection->request_length);
+        if (receive_result < 0) return 0;
+        if (receive_result == 0) return -1;
+        connection->request_length += (uint64_t)receive_result;
+    }
+    if (!http_request_parse_line(connection->request, connection->request_length,
+                                 &method_start, &method_length, &target_start,
+                                 &target_length, &headers_start) ||
+        !http_request_headers(connection->request, connection->request_length,
+                              headers_start, &body_start, &content_length,
+                              &has_content_length, &has_transfer_encoding)) {
+        return -1;
+    }
+    if (has_transfer_encoding && has_content_length) return -1;
+    if (body_start > session->max_header_bytes ||
+        (!has_transfer_encoding && has_content_length &&
+         content_length > session->max_body_bytes)) {
+        return -1;
+    }
+    if (has_transfer_encoding) {
+        frame_length = http_request_chunked_frame_length_prefix(
+            connection->request, JADREN_HTTP_SESSION_REQUEST_CAPACITY,
+            connection->request_length);
+        if (frame_length == 0 ||
+            !http_response_chunked_scan(
+                connection->request, frame_length, body_start, 0, 0,
+                &chunked_body_length, &chunked_body_end) ||
+            chunked_body_end != frame_length ||
+            chunked_body_length > session->max_body_bytes) {
+            return -1;
+        }
+    } else {
+        frame_length = http_request_frame_length_prefix(
+            connection->request, JADREN_HTTP_SESSION_REQUEST_CAPACITY,
+            connection->request_length);
+    }
+    if (frame_length == 0 ||
+        (!has_transfer_encoding &&
+         (body_start > frame_length ||
+          (has_content_length && frame_length - body_start != content_length) ||
+          (!has_content_length && frame_length != body_start)))) {
+        return -1;
+    }
+    *frame_length_output = frame_length;
+    return 1;
+}
+
 static int jadren_http_session_wait_listener(uint64_t listener,
                                              uint32_t timeout_ms) {
     fd_set read_set;
@@ -27335,6 +41717,44 @@ static JadrenHttpSession *jadren_http_session_find(uint64_t token) {
         return 0;
     }
     return jadren_http_sessions + (token - 1ULL);
+}
+
+static uint64_t jadren_http_session_connection_token(
+    const JadrenHttpSession *session, unsigned int connection_index) {
+    uint64_t session_index;
+    if (session == 0 || connection_index >= JADREN_HTTP_SESSION_CONNECTION_CAPACITY) {
+        return 0;
+    }
+    session_index = (uint64_t)(session - jadren_http_sessions);
+    return session_index * JADREN_HTTP_SESSION_CONNECTION_CAPACITY +
+           (uint64_t)connection_index + 1ULL;
+}
+
+static JadrenHttpSessionConnection *jadren_http_session_find_connection(
+    uint64_t token, JadrenHttpSession **session_output) {
+    uint64_t raw;
+    unsigned int session_index;
+    unsigned int connection_index;
+    JadrenHttpSession *session;
+    if (token == 0) {
+        return 0;
+    }
+    raw = token - 1ULL;
+    session_index = (unsigned int)(raw / JADREN_HTTP_SESSION_CONNECTION_CAPACITY);
+    connection_index = (unsigned int)(raw % JADREN_HTTP_SESSION_CONNECTION_CAPACITY);
+    if (session_index >= JADREN_HTTP_SESSION_CAPACITY ||
+        connection_index >= JADREN_HTTP_SESSION_CONNECTION_CAPACITY) {
+        return 0;
+    }
+    session = &jadren_http_sessions[session_index];
+    if (!session->active || connection_index >= session->max_connections ||
+        !session->connections[connection_index].active) {
+        return 0;
+    }
+    if (session_output != 0) {
+        *session_output = session;
+    }
+    return &session->connections[connection_index];
 }
 
 static void jadren_http_session_close_connection(
@@ -27507,15 +41927,20 @@ static int jadren_http_session_process_connection(
     }
     keep_alive = http_request_keep_alive(connection->request,
                                          frame_length);
-    response_length = jadren_http_router_respond_mode(
-        connection->request, frame_length, response, sizeof(response),
-        keep_alive);
+    if (session->chunked_mode) {
+        response_length = jadren_http_router_respond_chunked_mode(
+            connection->request, frame_length, response, sizeof(response));
+    } else {
+        response_length = jadren_http_router_respond_mode(
+            connection->request, frame_length, response, sizeof(response),
+            keep_alive);
+    }
     if (response_length == 0 ||
         !jadren_http_session_send_all(connection, response,
                                        response_length)) {
         return -1;
     }
-    if (!keep_alive) {
+    if (session->chunked_mode || !keep_alive) {
         connection->request_length = 0;
         return -1;
     }
@@ -27529,7 +41954,8 @@ static uint64_t jadren_http_session_open_impl(
     uint64_t listener, uint32_t max_connections, uint32_t max_header_bytes,
     uint32_t max_body_bytes, int32_t tls_enabled,
     const unsigned char *certificate_data, uint64_t certificate_length,
-    const unsigned char *private_key_data, uint64_t private_key_length) {
+    const unsigned char *private_key_data, uint64_t private_key_length,
+    int32_t chunked_mode) {
     int index;
     int connection_index;
     if (listener == 0 || max_connections == 0 ||
@@ -27567,6 +41993,7 @@ static uint64_t jadren_http_session_open_impl(
         session->max_body_bytes = max_body_bytes;
         session->cursor = 0;
         session->tls_enabled = tls_enabled;
+        session->chunked_mode = chunked_mode;
         session->certificate_length = 0;
         session->private_key_length = 0;
 #if JADREN_FILE_RUNTIME_HAS_TLS_SUPPORT
@@ -27599,7 +42026,15 @@ uint64_t http_session_open(uint64_t listener, uint32_t max_connections,
                            uint32_t max_header_bytes, uint32_t max_body_bytes) {
     return jadren_http_session_open_impl(listener, max_connections,
                                           max_header_bytes, max_body_bytes,
-                                          0, 0, 0, 0, 0);
+                                          0, 0, 0, 0, 0, 0);
+}
+
+uint64_t http_session_open_chunked(uint64_t listener, uint32_t max_connections,
+                                   uint32_t max_header_bytes,
+                                   uint32_t max_body_bytes) {
+    return jadren_http_session_open_impl(listener, max_connections,
+                                          max_header_bytes, max_body_bytes,
+                                          0, 0, 0, 0, 0, 1);
 }
 
 #if JADREN_FILE_RUNTIME_HAS_TLS_SUPPORT
@@ -27612,9 +42047,121 @@ uint64_t http_session_open_tls(uint64_t listener, uint32_t max_connections,
                                uint64_t private_key_length) {
     return jadren_http_session_open_impl(
         listener, max_connections, max_header_bytes, max_body_bytes, 1,
-        certificate_data, certificate_length, private_key_data, private_key_length);
+        certificate_data, certificate_length, private_key_data, private_key_length,
+        0);
+}
+
+uint64_t http_session_open_tls_chunked(
+    uint64_t listener, uint32_t max_connections, uint32_t max_header_bytes,
+    uint32_t max_body_bytes, const unsigned char *certificate_data,
+    uint64_t certificate_length, const unsigned char *private_key_data,
+    uint64_t private_key_length) {
+    return jadren_http_session_open_impl(
+        listener, max_connections, max_header_bytes, max_body_bytes, 1,
+        certificate_data, certificate_length, private_key_data, private_key_length,
+        1);
 }
 #endif
+
+/* Accepts one caller-owned connection slot without routing or reading it.
+ * The returned opaque token is valid until http_session_close_connection or
+ * http_session_close; callers must not mix it with http_session_step. */
+uint64_t http_session_accept(uint64_t token, unsigned int timeout_ms) {
+    JadrenHttpSession *session = jadren_http_session_find(token);
+    uint64_t accepted;
+    int free_index = -1;
+    int index;
+    if (session == 0 || !session->active) return 0;
+    for (index = 0; index < (int)session->max_connections; index += 1) {
+        if (!session->connections[index].active) {
+            free_index = index;
+            break;
+        }
+    }
+    if (free_index < 0 ||
+        !jadren_http_session_wait_listener(session->listener,
+                                           timeout_ms == 0 ? 1 : timeout_ms)) {
+        return 0;
+    }
+    accepted = net_tcp_accept(session->listener);
+    if (accepted == 0) return 0;
+    session->connections[free_index].active = 1;
+    session->connections[free_index].socket_token = accepted;
+    session->connections[free_index].tls_token = 0;
+#if JADREN_FILE_RUNTIME_HAS_TLS_SUPPORT
+    if (session->tls_enabled) {
+        session->connections[free_index].tls_token = net_tls_open_server(
+            accepted, session->certificate, session->certificate_length,
+            session->private_key, session->private_key_length);
+        if (session->connections[free_index].tls_token == 0) {
+            jadren_http_session_close_connection(
+                &session->connections[free_index]);
+            return 0;
+        }
+    }
+#endif
+    session->connections[free_index].request_length = 0;
+    return jadren_http_session_connection_token(session,
+                                                (unsigned int)free_index);
+}
+
+/* Reads one complete request into caller-owned output and consumes only that
+ * frame. A short output, incomplete receive or malformed request returns 0
+ * without publishing output; the caller explicitly closes the connection on
+ * protocol failure. */
+uint64_t http_session_receive_request(
+    uint64_t connection_token, unsigned int timeout_ms,
+    unsigned char *output_data, uint64_t output_length) {
+    JadrenHttpSession *session = 0;
+    JadrenHttpSessionConnection *connection =
+        jadren_http_session_find_connection(connection_token, &session);
+    uint64_t frame_length = 0;
+    uint64_t index;
+    int state;
+    if (connection == 0 || session == 0 || output_data == 0 || output_length == 0) {
+        return 0;
+    }
+    state = jadren_http_session_read_frame(session, connection, timeout_ms,
+                                           &frame_length);
+    if (state != 1 || frame_length == 0 || frame_length > output_length) {
+        return 0;
+    }
+    for (index = 0; index < frame_length; index += 1) {
+        output_data[index] = connection->request[index];
+    }
+    connection->request_length = http_request_consume_prefix(
+        connection->request, JADREN_HTTP_SESSION_REQUEST_CAPACITY,
+        connection->request_length, frame_length);
+    return frame_length;
+}
+
+/* Sends an explicit prefix of caller-owned response bytes. Framing, chunk
+ * order and connection headers remain explicit in the caller. */
+int http_session_send_prefix(uint64_t connection_token,
+                             const unsigned char *input_data,
+                             uint64_t input_capacity,
+                             uint64_t input_length) {
+    JadrenHttpSessionConnection *connection =
+        jadren_http_session_find_connection(connection_token, 0);
+    if (connection == 0 || input_length > input_capacity ||
+        (input_data == 0 && input_length > 0)) return 0;
+    return jadren_http_session_send_all(connection, input_data, input_length);
+}
+
+int http_session_send(uint64_t connection_token,
+                      const unsigned char *input_data,
+                      uint64_t input_length) {
+    return http_session_send_prefix(connection_token, input_data, input_length,
+                                    input_length);
+}
+
+int http_session_close_connection(uint64_t connection_token) {
+    JadrenHttpSessionConnection *connection =
+        jadren_http_session_find_connection(connection_token, 0);
+    if (connection == 0) return 0;
+    jadren_http_session_close_connection(connection);
+    return 1;
+}
 
 uint32_t http_session_step(uint64_t token, uint32_t timeout_ms) {
     JadrenHttpSession *session = jadren_http_session_find(token);
@@ -27834,6 +42381,28 @@ uint64_t net_tls_open_server(uint64_t socket_token,
     return JADREN_TLS_SERVER_TOKEN_BASE + (uint64_t)index + 1ULL;
 }
 
+/* Open a TLS server from caller-owned byte views after validating the hidden
+ * slice capacities. POSIX treats both views as PEM file paths. */
+uint64_t net_tls_open_server_paths(uint64_t socket_token,
+                                    const unsigned char *certificate_data,
+                                    uint64_t certificate_capacity,
+                                    uint64_t certificate_length,
+                                    const unsigned char *private_key_data,
+                                    uint64_t private_key_capacity,
+                                    uint64_t private_key_length) {
+    if (certificate_length > certificate_capacity ||
+        private_key_length > private_key_capacity ||
+        (certificate_data == 0 && certificate_length > 0) ||
+        (private_key_data == 0 && private_key_length > 0)) {
+        return 0;
+    }
+    return net_tls_open_server(socket_token,
+                               certificate_data,
+                               certificate_length,
+                               private_key_data,
+                               private_key_length);
+}
+
 uint32_t net_tls_step(uint64_t token, uint32_t timeout_ms) {
     JadrenTlsClient *client = jadren_tls_find(token);
     JadrenTlsServer *server = jadren_tls_find_server(token);
@@ -27925,6 +42494,31 @@ uint64_t net_tls_send(uint64_t token, const unsigned char *input_data,
     if (SSL_get_error(client->ssl, result) == 6) client->state = JADREN_TLS_STATE_PEER_CLOSED;
     else client->state = JADREN_TLS_STATE_ERROR;
     return 0;
+}
+
+/* Send only the explicit prefix of a caller-owned slice. The hidden slice
+ * capacity is checked before delegating to the regular TLS record sender. */
+uint64_t net_tls_send_prefix(uint64_t token, const unsigned char *input_data,
+                             uint64_t input_capacity, uint64_t send_length) {
+    if (send_length > input_capacity) return 0;
+    return net_tls_send(token, input_data, send_length);
+}
+
+/* Send the complete explicit prefix, splitting it into native TLS records
+ * when the caller-owned payload exceeds the platform maximum message size. */
+uint64_t net_tls_send_all_prefix(uint64_t token, const unsigned char *input_data,
+                                 uint64_t input_capacity, uint64_t send_length) {
+    uint64_t offset = 0;
+    if (send_length > input_capacity ||
+        (input_data == 0 && send_length > 0)) return 0;
+    while (offset < send_length) {
+        uint64_t chunk = send_length - offset;
+        if (chunk > 16384ULL) chunk = 16384ULL;
+        uint64_t sent = net_tls_send(token, input_data + offset, chunk);
+        if (sent == 0 || sent > chunk) return offset;
+        offset += sent;
+    }
+    return offset;
 }
 
 uint64_t net_tls_receive(uint64_t token, unsigned char *output_data,
@@ -28882,6 +43476,17 @@ int app_state_remove(const unsigned char *key_data, uint64_t key_length) {
     app_state_bump_revision();
     return 1;
 }
+
+/* Remove one state entry only when the caller's equality-only revision is
+ * still current. Stale, missing, invalid, or empty-key calls leave the model
+ * and revision unchanged. This is process-local coordination, not a
+ * cross-thread atomic or persistence primitive. */
+int app_state_remove_if_revision(const unsigned char *key_data,
+                                 uint64_t key_length,
+                                 uint64_t expected_revision) {
+    if (app_state_revision() != expected_revision) return 0;
+    return app_state_remove(key_data, key_length);
+}
 uint64_t app_state_read_key(int key_index, unsigned char *output_data, uint64_t output_length) {
     unsigned int entry_index;
     int visible_index = 0;
@@ -28898,6 +43503,27 @@ uint64_t app_state_read_key(int key_index, unsigned char *output_data, uint64_t 
     return 0;
 }
 
+int app_state_read_key_exact(int key_index, unsigned char *output_data,
+                             uint64_t output_length, uint64_t *output_key_length,
+                             uint64_t output_key_length_capacity) {
+    unsigned int entry_index;
+    int visible_index = 0;
+    uint64_t byte_index;
+    uint64_t key_length;
+    if (key_index < 0 || output_key_length == 0 || output_key_length_capacity == 0) return 0;
+    for (entry_index = 0; entry_index < JADREN_APP_STATE_MAX_ENTRIES; entry_index += 1) {
+        JadrenAppStateEntry *entry = &jadren_app_state[entry_index];
+        if (!entry->used) continue;
+        if (visible_index != key_index) { visible_index += 1; continue; }
+        key_length = entry->key_length;
+        if ((output_data == 0 && key_length > 0) || output_length < key_length) return 0;
+        for (byte_index = 0; byte_index < key_length; byte_index += 1) output_data[byte_index] = entry->key[byte_index];
+        output_key_length[0] = key_length;
+        return 1;
+    }
+    return 0;
+}
+
 int app_state_set_int(const unsigned char *key_data, uint64_t key_length, int64_t value) {
     int slot;
     if (!app_state_key_is_safe(key_data, key_length)) return 0;
@@ -28905,6 +43531,88 @@ int app_state_set_int(const unsigned char *key_data, uint64_t key_length, int64_
     if (slot < 0) return 0;
     jadren_app_state[slot].kind = JADREN_APP_STATE_INT;
     jadren_app_state[slot].int_value = value;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Replace a signed value only when the caller's equality-only revision is
+ * still current. Stale, invalid, or unrepresentable calls leave the entry
+ * and revision unchanged. This is process-local coordination, not a
+ * cross-thread atomic or persistence primitive. */
+int app_state_set_int_if_revision(const unsigned char *key_data,
+                                  uint64_t key_length,
+                                  int64_t value,
+                                  uint64_t expected_revision) {
+    int slot;
+    if (app_state_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe(key_data, key_length)) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_INT;
+    jadren_app_state[slot].int_value = value;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Apply a bounded signed delta in one native state operation. A missing key
+ * starts at zero; an existing key must already be Int64. Overflow is rejected
+ * before the entry or revision is changed. This is an explicit caller boundary
+ * for counters, not a cross-thread atomic or persistence primitive. */
+int app_state_add_int(const unsigned char *key_data, uint64_t key_length,
+                      int64_t delta) {
+    int slot;
+    int64_t current;
+    const int64_t max_value = INT64_MAX;
+    const int64_t min_value = INT64_MIN;
+    if (!app_state_key_is_safe(key_data, key_length)) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    if (jadren_app_state[slot].kind == 0) {
+        current = 0;
+    } else if (jadren_app_state[slot].kind == JADREN_APP_STATE_INT) {
+        current = jadren_app_state[slot].int_value;
+    } else {
+        return 0;
+    }
+    if ((delta > 0 && current > max_value - delta) ||
+        (delta < 0 && current < min_value - delta)) {
+        return 0;
+    }
+    jadren_app_state[slot].kind = JADREN_APP_STATE_INT;
+    jadren_app_state[slot].int_value = current + delta;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Apply a signed delta only when the caller's equality-only revision is still
+ * current. A rejected stale, type-mismatched, invalid, or overflowing call
+ * leaves both the entry and revision unchanged. This is process-local caller
+ * coordination, not a cross-thread atomic or persistence primitive. */
+int app_state_add_int_if_revision(const unsigned char *key_data,
+                                  uint64_t key_length,
+                                  int64_t delta,
+                                  uint64_t expected_revision) {
+    int slot;
+    int64_t current;
+    const int64_t max_value = INT64_MAX;
+    const int64_t min_value = INT64_MIN;
+    if (app_state_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe(key_data, key_length)) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    if (jadren_app_state[slot].kind == 0) {
+        current = 0;
+    } else if (jadren_app_state[slot].kind == JADREN_APP_STATE_INT) {
+        current = jadren_app_state[slot].int_value;
+    } else {
+        return 0;
+    }
+    if ((delta > 0 && current > max_value - delta) ||
+        (delta < 0 && current < min_value - delta)) {
+        return 0;
+    }
+    jadren_app_state[slot].kind = JADREN_APP_STATE_INT;
+    jadren_app_state[slot].int_value = current + delta;
     app_state_bump_revision();
     return 1;
 }
@@ -28929,6 +43637,142 @@ int app_state_set_uint(const unsigned char *key_data, uint64_t key_length, uint6
     return 1;
 }
 
+/* Replace an unsigned value only when the caller's equality-only revision is
+ * current. Stale or invalid calls leave the entry and revision unchanged. */
+int app_state_set_uint_if_revision(const unsigned char *key_data,
+                                   uint64_t key_length,
+                                   uint64_t value,
+                                   uint64_t expected_revision) {
+    int slot;
+    if (app_state_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe(key_data, key_length)) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_UINT;
+    jadren_app_state[slot].uint_value = value;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Apply a bounded unsigned delta in one native state operation. A missing
+ * key starts at zero; an existing key must be UInt64. Overflow is rejected
+ * before the entry or revision is changed. This is a caller-owned counter
+ * boundary, not a cross-thread atomic or persistence primitive. */
+int app_state_add_uint(const unsigned char *key_data, uint64_t key_length,
+                       uint64_t delta) {
+    int slot;
+    uint64_t current;
+    if (!app_state_key_is_safe(key_data, key_length)) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    if (jadren_app_state[slot].kind == 0) {
+        current = 0;
+    } else if (jadren_app_state[slot].kind == JADREN_APP_STATE_UINT) {
+        current = jadren_app_state[slot].uint_value;
+    } else {
+        return 0;
+    }
+    if (current > UINT64_MAX - delta) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_UINT;
+    jadren_app_state[slot].uint_value = current + delta;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Apply an unsigned delta only when the caller's equality-only revision is
+ * still current. Stale, type-mismatched, invalid, and overflowing calls
+ * leave both the entry and revision unchanged. */
+int app_state_add_uint_if_revision(const unsigned char *key_data,
+                                   uint64_t key_length,
+                                   uint64_t delta,
+                                   uint64_t expected_revision) {
+    int slot;
+    uint64_t current;
+    if (app_state_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe(key_data, key_length)) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    if (jadren_app_state[slot].kind == 0) {
+        current = 0;
+    } else if (jadren_app_state[slot].kind == JADREN_APP_STATE_UINT) {
+        current = jadren_app_state[slot].uint_value;
+    } else {
+        return 0;
+    }
+    if (current > UINT64_MAX - delta) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_UINT;
+    jadren_app_state[slot].uint_value = current + delta;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Apply a finite floating-point delta in one native state operation. A
+ * missing key starts at zero; an existing key must already be Float64. The
+ * finite input and result are validated before the entry or revision changes.
+ * This is a caller-owned numeric primitive, not a persistence or atomic API. */
+int app_state_add_float(const unsigned char *key_data, uint64_t key_length,
+                        double delta) {
+    union { double value; unsigned long long bits; } delta_representation, sum_representation;
+    unsigned char encoded[32];
+    int slot;
+    double current;
+    double sum;
+    delta_representation.value = delta;
+    if (!app_state_key_is_safe(key_data, key_length) ||
+        ((delta_representation.bits >> 52) & 0x7FFULL) == 0x7FFULL) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    if (jadren_app_state[slot].kind == 0) {
+        current = 0.0;
+    } else if (jadren_app_state[slot].kind == JADREN_APP_STATE_FLOAT) {
+        current = jadren_app_state[slot].float_value;
+    } else {
+        return 0;
+    }
+    sum = current + delta;
+    sum_representation.value = sum;
+    if (((sum_representation.bits >> 52) & 0x7FFULL) == 0x7FFULL ||
+        format_float(sum, encoded, sizeof(encoded)) == 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_FLOAT;
+    jadren_app_state[slot].float_value = sum;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Revision-guarded finite floating-point delta. Stale, invalid, mismatched,
+ * non-finite and overflowing calls leave both value and revision unchanged. */
+int app_state_add_float_if_revision(const unsigned char *key_data,
+                                    uint64_t key_length,
+                                    double delta,
+                                    uint64_t expected_revision) {
+    union { double value; unsigned long long bits; } delta_representation, sum_representation;
+    unsigned char encoded[32];
+    int slot;
+    double current;
+    double sum;
+    if (app_state_revision() != expected_revision) return 0;
+    delta_representation.value = delta;
+    if (!app_state_key_is_safe(key_data, key_length) ||
+        ((delta_representation.bits >> 52) & 0x7FFULL) == 0x7FFULL) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    if (jadren_app_state[slot].kind == 0) {
+        current = 0.0;
+    } else if (jadren_app_state[slot].kind == JADREN_APP_STATE_FLOAT) {
+        current = jadren_app_state[slot].float_value;
+    } else {
+        return 0;
+    }
+    sum = current + delta;
+    sum_representation.value = sum;
+    if (((sum_representation.bits >> 52) & 0x7FFULL) == 0x7FFULL ||
+        format_float(sum, encoded, sizeof(encoded)) == 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_FLOAT;
+    jadren_app_state[slot].float_value = sum;
+    app_state_bump_revision();
+    return 1;
+}
+
 uint64_t app_state_get_uint(const unsigned char *key_data, uint64_t key_length) {
     int slot = app_state_find_in(jadren_app_state, key_data, key_length);
     if (slot < 0) return 0;
@@ -28942,6 +43786,28 @@ int app_state_set_float(const unsigned char *key_data, uint64_t key_length, doub
     union { double value; unsigned long long bits; } representation;
     unsigned char encoded[32];
     int slot;
+    representation.value = value;
+    if (!app_state_key_is_safe(key_data, key_length) ||
+        ((representation.bits >> 52) & 0x7FFULL) == 0x7FFULL ||
+        format_float(value, encoded, sizeof(encoded)) == 0) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_FLOAT;
+    jadren_app_state[slot].float_value = value;
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Replace a finite Float64 value only when the caller's equality-only
+ * revision is current. Non-finite and stale calls leave state unchanged. */
+int app_state_set_float_if_revision(const unsigned char *key_data,
+                                    uint64_t key_length,
+                                    double value,
+                                    uint64_t expected_revision) {
+    union { double value; unsigned long long bits; } representation;
+    unsigned char encoded[32];
+    int slot;
+    if (app_state_revision() != expected_revision) return 0;
     representation.value = value;
     if (!app_state_key_is_safe(key_data, key_length) ||
         ((representation.bits >> 52) & 0x7FFULL) == 0x7FFULL ||
@@ -28977,6 +43843,22 @@ int app_state_set_bool(const unsigned char *key_data, uint64_t key_length, unsig
     return 1;
 }
 
+/* Replace a Bool only when the caller's equality-only revision is current. */
+int app_state_set_bool_if_revision(const unsigned char *key_data,
+                                   uint64_t key_length,
+                                   unsigned char value,
+                                   uint64_t expected_revision) {
+    int slot;
+    if (app_state_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe(key_data, key_length)) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_BOOL;
+    jadren_app_state[slot].bool_value = value != 0;
+    app_state_bump_revision();
+    return 1;
+}
+
 int app_state_get_bool(const unsigned char *key_data, uint64_t key_length) {
     int slot = app_state_find_in(jadren_app_state, key_data, key_length);
     return slot >= 0 && jadren_app_state[slot].kind == JADREN_APP_STATE_BOOL && jadren_app_state[slot].bool_value != 0;
@@ -28997,12 +43879,85 @@ int app_state_set_text(const unsigned char *key_data, uint64_t key_length,
     return 1;
 }
 
+/* Replace bounded UTF-8 text only when the caller's equality-only revision is
+ * current. Validate the full input before allocating a state slot or copying. */
+int app_state_set_text_if_revision(const unsigned char *key_data,
+                                   uint64_t key_length,
+                                   const unsigned char *value_data,
+                                   uint64_t value_length,
+                                   uint64_t expected_revision) {
+    int slot;
+    uint64_t index;
+    if (app_state_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe(key_data, key_length) ||
+        (value_data == 0 && value_length > 0) ||
+        value_length > JADREN_APP_STATE_TEXT_MAX) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_TEXT;
+    jadren_app_state[slot].text_length = value_length;
+    for (index = 0; index < value_length; index += 1) {
+        jadren_app_state[slot].text[index] = value_data[index];
+    }
+    app_state_bump_revision();
+    return 1;
+}
+
 int app_state_set_text_bytes(const unsigned char *key_data, uint64_t key_length,
                              const unsigned char *value_data,
                              uint64_t value_capacity, uint64_t value_length) {
     if (value_data == 0 && value_length > 0) return 0;
     if (value_length > value_capacity) value_length = value_capacity;
     return app_state_set_text(key_data, key_length, value_data, value_length);
+}
+
+/* Revision-guarded caller-owned UTF-8 input. The explicit length must fit the
+ * source slice and the bounded state slot; overlong prefixes are rejected. */
+int app_state_set_text_bytes_if_revision(
+    const unsigned char *key_data, uint64_t key_length,
+    const unsigned char *value_data, uint64_t value_capacity,
+    uint64_t value_length, uint64_t expected_revision) {
+    int slot;
+    uint64_t index;
+    if (app_state_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe(key_data, key_length) ||
+        (value_data == 0 && value_length > 0) ||
+        value_length > value_capacity ||
+        value_length > JADREN_APP_STATE_TEXT_MAX) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_TEXT;
+    jadren_app_state[slot].text_length = value_length;
+    for (index = 0; index < value_length; index += 1) {
+        jadren_app_state[slot].text[index] = value_data[index];
+    }
+    app_state_bump_revision();
+    return 1;
+}
+
+/* Model-revision-guarded caller-owned UTF-8 input. The model token covers the
+ * complete app_state + app_list + app_table model, while the existing guard
+ * above intentionally remains scoped to app_state_revision(). */
+int app_state_set_text_bytes_if_model_revision(
+    const unsigned char *key_data, uint64_t key_length,
+    const unsigned char *value_data, uint64_t value_capacity,
+    uint64_t value_length, uint64_t expected_revision) {
+    int slot;
+    uint64_t index;
+    if (app_data_revision() != expected_revision) return 0;
+    if (!app_state_key_is_safe(key_data, key_length) ||
+        (value_data == 0 && value_length > 0) ||
+        value_length > value_capacity ||
+        value_length > JADREN_APP_STATE_TEXT_MAX) return 0;
+    slot = app_state_slot_in(jadren_app_state, key_data, key_length);
+    if (slot < 0) return 0;
+    jadren_app_state[slot].kind = JADREN_APP_STATE_TEXT;
+    jadren_app_state[slot].text_length = value_length;
+    for (index = 0; index < value_length; index += 1) {
+        jadren_app_state[slot].text[index] = value_data[index];
+    }
+    app_state_bump_revision();
+    return 1;
 }
 
 uint64_t app_state_read_text(const unsigned char *key_data, uint64_t key_length,
@@ -29215,6 +44170,9 @@ int app_state_load_json_exact(const unsigned char *input_data,
 
 int file_replace_atomic(const unsigned char *source_data, uint64_t source_length,
                         const unsigned char *target_data, uint64_t target_length);
+int file_flush(const unsigned char *path_data, uint64_t path_length);
+int directory_flush(const unsigned char *path_data, uint64_t path_length);
+int directory_exists(const unsigned char *path_data, uint64_t path_length);
 int app_state_save_atomic(const unsigned char *temporary_path_data, uint64_t temporary_path_length,
                           const unsigned char *target_path_data, uint64_t target_path_length) {
     if (temporary_path_data == 0 || target_path_data == 0 || temporary_path_length == 0 || target_path_length == 0 ||
@@ -29230,6 +44188,53 @@ int app_state_save_atomic_if_revision(const unsigned char *temporary_path_data,
     if (jadren_app_state_revision != expected_revision) return 0;
     return app_state_save_atomic(temporary_path_data, temporary_path_length,
                                  target_path_data, target_path_length);
+}
+
+/* Durable app-state checkpoint with explicit directory metadata flush. The
+ * caller must reload/verify after a post-promotion failure before retrying. */
+int32_t app_state_save_atomic_durable(const unsigned char *temporary_path_data,
+                                      uint64_t temporary_path_length,
+                                      const unsigned char *target_path_data,
+                                      uint64_t target_path_length,
+                                      const unsigned char *directory_path_data,
+                                      uint64_t directory_path_length) {
+    uint64_t path_index;
+    int32_t same_path = temporary_path_length == target_path_length;
+    if (same_path) {
+        for (path_index = 0; path_index < temporary_path_length; path_index += 1) {
+            if (temporary_path_data == 0 || target_path_data == 0 ||
+                temporary_path_data[path_index] != target_path_data[path_index]) {
+                same_path = 0;
+                break;
+            }
+        }
+    }
+    if (same_path || temporary_path_data == 0 || target_path_data == 0 ||
+        directory_path_data == 0 || temporary_path_length == 0 ||
+        target_path_length == 0 || directory_path_length == 0 ||
+        !directory_exists(directory_path_data, directory_path_length) ||
+        !app_state_save(temporary_path_data, temporary_path_length) ||
+        !file_flush(temporary_path_data, temporary_path_length) ||
+        !file_replace_atomic(temporary_path_data, temporary_path_length,
+                             target_path_data, target_path_length)) {
+        return 0;
+    }
+    if (!file_flush(target_path_data, target_path_length)) return 0;
+    return directory_flush(directory_path_data, directory_path_length);
+}
+
+int32_t app_state_save_atomic_durable_if_revision(
+    const unsigned char *temporary_path_data,
+    uint64_t temporary_path_length,
+    const unsigned char *target_path_data,
+    uint64_t target_path_length,
+    const unsigned char *directory_path_data,
+    uint64_t directory_path_length,
+    uint64_t expected_revision) {
+    if (jadren_app_state_revision != expected_revision) return 0;
+    return app_state_save_atomic_durable(
+        temporary_path_data, temporary_path_length, target_path_data,
+        target_path_length, directory_path_data, directory_path_length);
 }
 
 static int app_state_parse_value(const unsigned char *data, uint64_t start, uint64_t end,
@@ -29410,6 +44415,14 @@ void app_list_clear(int list_id) {
     if (!app_list_valid(list_id)) return;
     app_list_clear_store(&jadren_app_lists[list_id]);
 }
+/* Clear one list only when the caller's equality-only complete-model
+ * revision is still current. This is process-local coordination, not a
+ * cross-thread atomic or persistence primitive. */
+int app_list_clear_if_revision(int list_id, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision || !app_list_valid(list_id)) return 0;
+    app_list_clear_store(&jadren_app_lists[list_id]);
+    return 1;
+}
 int app_list_count(int list_id) {
     return app_list_valid(list_id) ? (int)jadren_app_lists[list_id].count : 0;
 }
@@ -29495,6 +44508,15 @@ int app_list_sort_callback(int list_id, int (*comparator)(int, int, int)) {
     app_list_copy_store(&jadren_app_lists[list_id], &sorted);
     return 1;
 }
+
+/* Sort through a caller-owned comparator only when the equality-only model
+ * revision is still current. The unguarded path keeps its fingerprint checks
+ * around every comparator call and publishes only after the complete scan. */
+int app_list_sort_callback_if_revision(
+    int list_id, int (*comparator)(int, int, int), uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_sort_callback(list_id, comparator);
+}
 int app_list_find_text(int list_id, const unsigned char *query_data,
                        uint64_t query_length, int start_index) {
     uint64_t item_index;
@@ -29529,6 +44551,99 @@ int app_list_push_text_bytes(int list_id, const unsigned char *value_data,
                              uint64_t value_capacity, uint64_t value_length) {
     if (value_length > value_capacity) return 0;
     return app_list_push_text(list_id, value_data, value_length);
+}
+
+/* Append only when the caller's equality-only model revision is still
+ * current. This is process-local coordination, not a cross-thread atomic or
+ * persistence primitive. */
+int app_list_push_text_if_revision(int list_id, const unsigned char *value_data,
+                                   uint64_t value_length, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_push_text(list_id, value_data, value_length);
+}
+
+int app_list_push_text_bytes_if_revision(int list_id, const unsigned char *value_data,
+                                         uint64_t value_capacity, uint64_t value_length,
+                                         uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision || value_length > value_capacity) return 0;
+    return app_list_push_text_bytes(list_id, value_data, value_capacity, value_length);
+}
+
+int app_list_insert_text(int list_id, int item_index, const unsigned char *value_data,
+                         uint64_t value_length) {
+    uint64_t index;
+    if (!app_list_valid(list_id) || item_index < 0 ||
+        (uint64_t)item_index > jadren_app_lists[list_id].count ||
+        (value_data == 0 && value_length > 0) ||
+        value_length > JADREN_APP_LIST_TEXT_MAX ||
+        jadren_app_lists[list_id].count >= JADREN_APP_LIST_MAX_ITEMS) return 0;
+    for (index = jadren_app_lists[list_id].count; index > (uint64_t)item_index;
+         index -= 1) {
+        jadren_app_lists[list_id].items[index].length =
+            jadren_app_lists[list_id].items[index - 1].length;
+        for (uint64_t byte_index = 0; byte_index < JADREN_APP_LIST_TEXT_MAX; byte_index += 1)
+            jadren_app_lists[list_id].items[index].text[byte_index] =
+                jadren_app_lists[list_id].items[index - 1].text[byte_index];
+    }
+    app_list_clear_item(&jadren_app_lists[list_id].items[item_index]);
+    jadren_app_lists[list_id].items[item_index].length = value_length;
+    for (index = 0; index < value_length; index += 1)
+        jadren_app_lists[list_id].items[item_index].text[index] = value_data[index];
+    jadren_app_lists[list_id].count += 1;
+    return 1;
+}
+
+int app_list_insert_text_bytes(int list_id, int item_index,
+                               const unsigned char *value_data,
+                               uint64_t value_capacity, uint64_t value_length) {
+    if (value_length > value_capacity) return 0;
+    return app_list_insert_text(list_id, item_index, value_data, value_length);
+}
+
+/* Insert only when the caller's equality-only model revision is still
+ * current. This is process-local coordination, not an atomic or persistence
+ * primitive. */
+int app_list_insert_text_if_revision(int list_id, int item_index,
+                                     const unsigned char *value_data,
+                                     uint64_t value_length,
+                                     uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_insert_text(list_id, item_index, value_data, value_length);
+}
+
+int app_list_insert_text_bytes_if_revision(int list_id, int item_index,
+                                           const unsigned char *value_data,
+                                           uint64_t value_capacity,
+                                           uint64_t value_length,
+                                           uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision || value_length > value_capacity) return 0;
+    return app_list_insert_text_bytes(list_id, item_index, value_data,
+                                      value_capacity, value_length);
+}
+
+/* Reorder one bounded list item using its final zero-based index. */
+int app_list_move_text(int list_id, int from_index, int to_index) {
+    JadrenAppList staged;
+    int index;
+    if (!app_list_valid(list_id) || from_index < 0 || to_index < 0 ||
+        (uint64_t)from_index >= jadren_app_lists[list_id].count ||
+        (uint64_t)to_index >= jadren_app_lists[list_id].count) return 0;
+    if (from_index == to_index) return 1;
+    app_list_copy_store(&staged, &jadren_app_lists[list_id]);
+    if (from_index < to_index) {
+        for (index = from_index; index < to_index; index += 1)
+            app_list_swap_items(&staged.items[index], &staged.items[index + 1]);
+    } else {
+        for (index = from_index; index > to_index; index -= 1)
+            app_list_swap_items(&staged.items[index], &staged.items[index - 1]);
+    }
+    app_list_copy_store(&jadren_app_lists[list_id], &staged);
+    return 1;
+}
+int app_list_move_text_if_revision(int list_id, int from_index, int to_index,
+                                   uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_move_text(list_id, from_index, to_index);
 }
 static unsigned char app_list_filter_fold_ascii(unsigned char value, int case_insensitive) {
     if (case_insensitive && value >= (unsigned char)'A' && value <= (unsigned char)'Z')
@@ -29579,6 +44694,32 @@ int app_list_filter_text(int source_list_id, int destination_list_id,
     return app_list_filter_text_ex(source_list_id, destination_list_id, query_data, query_length, 0);
 }
 
+/* Filter one text list only when the caller's equality-only model revision is
+ * still current. A stale revision leaves source and destination unchanged;
+ * this is process-local coordination, not a cross-thread atomic or
+ * persistence primitive. */
+int app_list_filter_text_if_revision(int source_list_id, int destination_list_id,
+                                     const unsigned char *query_data,
+                                     uint64_t query_length,
+                                     uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_filter_text(source_list_id, destination_list_id,
+                                query_data, query_length);
+}
+
+/* Filter one text list with an explicit mode only when the caller's
+ * equality-only model revision is still current. A stale revision leaves
+ * source and destination unchanged; this is process-local coordination, not
+ * a cross-thread atomic or persistence primitive. */
+int app_list_filter_text_ex_if_revision(int source_list_id, int destination_list_id,
+                                        const unsigned char *query_data,
+                                        uint64_t query_length, int mode,
+                                        uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_filter_text_ex(source_list_id, destination_list_id,
+                                   query_data, query_length, mode);
+}
+
 int app_list_filter_text_ex_bytes(int source_list_id, int destination_list_id,
                                   const unsigned char *query_data,
                                   uint64_t query_capacity,
@@ -29619,6 +44760,17 @@ int app_list_filter_callback(int source_list_id, int destination_list_id,
     return 1;
 }
 
+/* Apply a callback filter only when the caller's equality-only model revision
+ * is still current. The unguarded implementation retains its source
+ * fingerprint checks while this entry point rejects a stale token before the
+ * scan starts. */
+int app_list_filter_callback_if_revision(
+    int source_list_id, int destination_list_id,
+    unsigned char (*predicate)(int, int), uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_filter_callback(source_list_id, destination_list_id, predicate);
+}
+
 int app_list_page(int source_list_id, int destination_list_id,
                   int start_index, int page_size) {
     JadrenAppList page;
@@ -29646,6 +44798,18 @@ int app_list_page(int source_list_id, int destination_list_id,
     page.count = requested;
     app_list_copy_store(&jadren_app_lists[destination_list_id], &page);
     return 1;
+}
+
+/* Project one bounded list page only when the caller's equality-only model
+ * revision is still current. A stale revision leaves source and destination
+ * lists unchanged; this is process-local coordination, not a cross-thread
+ * atomic or persistence primitive. */
+int app_list_page_if_revision(int source_list_id, int destination_list_id,
+                              int start_index, int page_size,
+                              uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_page(source_list_id, destination_list_id, start_index,
+                         page_size);
 }
 
 uint64_t app_list_read_text(int list_id, int item_index, unsigned char *output_data,
@@ -29689,11 +44853,34 @@ int app_list_set_text(int list_id, int item_index, const unsigned char *value_da
     return 1;
 }
 
+/* Update one list item only when the caller's equality-only model revision is
+ * still current. This is process-local coordination, not an atomic
+ * cross-thread or persistence primitive. */
+int app_list_set_text_if_revision(int list_id, int item_index,
+                                  const unsigned char *value_data,
+                                  uint64_t value_length,
+                                  uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_set_text(list_id, item_index, value_data, value_length);
+}
+
 int app_list_set_text_bytes(int list_id, int item_index,
                             const unsigned char *value_data,
                             uint64_t value_capacity, uint64_t value_length) {
     if (value_length > value_capacity) return 0;
     return app_list_set_text(list_id, item_index, value_data, value_length);
+}
+
+/* Caller-owned byte-prefix replacement guarded by the equality-only model
+ * revision. */
+int app_list_set_text_bytes_if_revision(int list_id, int item_index,
+                                        const unsigned char *value_data,
+                                        uint64_t value_capacity,
+                                        uint64_t value_length,
+                                        uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision || value_length > value_capacity) return 0;
+    return app_list_set_text_bytes(list_id, item_index, value_data,
+                                   value_capacity, value_length);
 }
 int app_list_remove(int list_id, int item_index) {
     uint64_t index;
@@ -29707,6 +44894,14 @@ int app_list_remove(int list_id, int item_index) {
     jadren_app_lists[list_id].count -= 1;
     app_list_clear_item(&jadren_app_lists[list_id].items[jadren_app_lists[list_id].count]);
     return 1;
+}
+
+/* Remove one list item only when the caller's equality-only model revision is
+ * still current. This is process-local coordination, not a cross-thread
+ * atomic or persistence primitive. */
+int app_list_remove_if_revision(int list_id, int item_index, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_remove(list_id, item_index);
 }
 
 #define JADREN_APP_LIST_DOCUMENT_MAX 65536
@@ -29795,6 +44990,63 @@ int app_list_load(int list_id, const unsigned char *path_data, uint64_t path_len
             jadren_app_lists[list_id].items[index].text[byte_index] = parsed.items[index].text[byte_index];
     }
     return 1;
+}
+
+/* Import one caller-owned JSON list transactionally. The bounded parser fills
+ * a temporary store first, so malformed or truncated input leaves the live
+ * list unchanged. */
+int app_list_import_json_exact(int list_id, const unsigned char *input_data,
+                               uint64_t input_capacity, uint64_t input_length) {
+    JadrenAppList parsed;
+    if (!app_list_valid(list_id) || (input_data == 0 && input_length > 0) ||
+        input_length > input_capacity || input_length > JADREN_APP_LIST_DOCUMENT_MAX) return 0;
+    app_list_clear_store(&parsed);
+    if (!app_list_parse_document(input_data, input_length, &parsed)) return 0;
+    app_list_copy_store(&jadren_app_lists[list_id], &parsed);
+    return 1;
+}
+
+/* Import one JSON list only when the caller's equality-only model revision is
+ * still current. The underlying import remains transactional. */
+int app_list_import_json_exact_if_revision(
+    int list_id, const unsigned char *input_data,
+    uint64_t input_capacity, uint64_t input_length,
+    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_import_json_exact(
+        list_id, input_data, input_capacity, input_length);
+}
+
+/* Import one bounded JSON list file transactionally. */
+int app_list_import_json_file(int list_id, const unsigned char *path_data,
+                              uint64_t path_length) {
+    static unsigned char document[JADREN_APP_LIST_DOCUMENT_MAX];
+    JadrenAppList parsed;
+    uint64_t document_length;
+    uint64_t file_length;
+    if (!app_list_valid(list_id) || path_data == 0 || path_length == 0) return 0;
+    file_length = file_size(path_data, path_length);
+    if (file_length > sizeof(document)) return 0;
+    if (file_length == 0) {
+        if (!file_exists(path_data, path_length)) return 0;
+        app_list_clear_store(&jadren_app_lists[list_id]);
+        return 1;
+    }
+    document_length = file_read(path_data, path_length, document, sizeof(document));
+    if (document_length != file_length) return 0;
+    app_list_clear_store(&parsed);
+    if (!app_list_parse_document(document, document_length, &parsed)) return 0;
+    app_list_copy_store(&jadren_app_lists[list_id], &parsed);
+    return 1;
+}
+
+/* Import one JSON list file only when the caller's equality-only model
+ * revision is still current. The underlying file parser remains transactional. */
+int app_list_import_json_file_if_revision(
+    int list_id, const unsigned char *path_data, uint64_t path_length,
+    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_import_json_file(list_id, path_data, path_length);
 }
 
 #define JADREN_APP_TABLE_MAX_TABLES 4
@@ -29970,6 +45222,14 @@ void app_table_clear(int table_id) {
     if (!app_table_valid(table_id)) return;
     app_table_clear_store(&jadren_app_tables[table_id]);
 }
+/* Clear one table only when the caller's equality-only complete-model
+ * revision is still current. This is process-local coordination, not a
+ * cross-thread atomic or persistence primitive. */
+int app_table_clear_if_revision(int table_id, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision || !app_table_valid(table_id)) return 0;
+    app_table_clear_store(&jadren_app_tables[table_id]);
+    return 1;
+}
 int app_table_row_count(int table_id) {
     return app_table_valid(table_id) ? (int)jadren_app_tables[table_id].row_count : 0;
 }
@@ -30090,6 +45350,46 @@ int app_table_append_row(int table_id) {
     jadren_app_tables[table_id].row_count += 1;
     return 1;
 }
+
+/* Append one table row only when the caller's equality-only model revision is
+ * still current. This is process-local coordination, not a cross-thread
+ * atomic or persistence primitive. */
+int app_table_append_row_if_revision(int table_id, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_append_row(table_id);
+}
+
+/* Insert one zero-initialized table row before row_index. The row_count
+ * position is the append boundary; all validation happens before shifting. */
+int app_table_insert_row(int table_id, int row_index) {
+    uint64_t index;
+    unsigned int column_index;
+    if (!app_table_valid(table_id) || row_index < 0 ||
+        (uint64_t)row_index > jadren_app_tables[table_id].row_count ||
+        jadren_app_tables[table_id].row_count >= JADREN_APP_TABLE_MAX_ROWS) return 0;
+    for (index = jadren_app_tables[table_id].row_count;
+         index > (uint64_t)row_index; index -= 1) {
+        for (column_index = 0; column_index < JADREN_APP_TABLE_MAX_COLUMNS; column_index += 1) {
+            uint64_t byte_index;
+            JadrenAppListItem *destination = &jadren_app_tables[table_id].cells[index][column_index];
+            JadrenAppListItem *source = &jadren_app_tables[table_id].cells[index - 1][column_index];
+            destination->length = source->length;
+            for (byte_index = 0; byte_index < JADREN_APP_LIST_TEXT_MAX; byte_index += 1)
+                destination->text[byte_index] = source->text[byte_index];
+        }
+    }
+    app_table_clear_row(&jadren_app_tables[table_id], (unsigned int)row_index);
+    jadren_app_tables[table_id].row_count += 1;
+    return 1;
+}
+
+/* Insert one table row only when the caller's equality-only model revision is
+ * still current. This is process-local coordination, not atomicity. */
+int app_table_insert_row_if_revision(int table_id, int row_index,
+                                     uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_insert_row(table_id, row_index);
+}
 int app_table_remove_row(int table_id, int row_index) {
     uint64_t index;
     unsigned int column_index;
@@ -30107,6 +45407,14 @@ int app_table_remove_row(int table_id, int row_index) {
     jadren_app_tables[table_id].row_count -= 1;
     app_table_clear_row(&jadren_app_tables[table_id], (unsigned int)jadren_app_tables[table_id].row_count);
     return 1;
+}
+
+/* Remove one table row only when the caller's equality-only model revision is
+ * still current. This is process-local coordination, not a cross-thread
+ * atomic or persistence primitive. */
+int app_table_remove_row_if_revision(int table_id, int row_index, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_remove_row(table_id, row_index);
 }
 int app_table_set_cell(int table_id, int row_index, int column_index,
                        const unsigned char *value_data, uint64_t value_length) {
@@ -30126,6 +45434,16 @@ int app_table_set_cell(int table_id, int row_index, int column_index,
     return 1;
 }
 
+/* Update one table cell only when the caller's equality-only model revision
+ * is still current. */
+int app_table_set_cell_if_revision(int table_id, int row_index, int column_index,
+                                   const unsigned char *value_data,
+                                   uint64_t value_length,
+                                   uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_set_cell(table_id, row_index, column_index, value_data, value_length);
+}
+
 int app_table_set_cell_bytes(int table_id, int row_index, int column_index,
                              const unsigned char *value_data,
                              uint64_t value_length) {
@@ -30138,6 +45456,18 @@ int app_table_set_cell_bytes_ex(int table_id, int row_index, int column_index,
     if (value_length > value_capacity) return 0;
     return app_table_set_cell_bytes(table_id, row_index, column_index,
                                     value_data, value_length);
+}
+
+/* Caller-owned byte-prefix replacement guarded by the equality-only model
+ * revision. */
+int app_table_set_cell_bytes_if_revision(int table_id, int row_index, int column_index,
+                                         const unsigned char *value_data,
+                                         uint64_t value_capacity,
+                                         uint64_t value_length,
+                                         uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision || value_length > value_capacity) return 0;
+    return app_table_set_cell_bytes_ex(table_id, row_index, column_index,
+                                       value_data, value_capacity, value_length);
 }
 
 int app_table_set_int(int table_id, int row_index, int column_index, int64_t value) {
@@ -30591,6 +45921,17 @@ int app_table_index_find_pair_text(int table_id, int first_column_index,
     }
 }
 
+int app_table_index_find_pair_text_if_revision(
+    int table_id, int first_column_index, int second_column_index,
+    const unsigned char *first_data, uint64_t first_length,
+    const unsigned char *second_data, uint64_t second_length,
+    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return -1;
+    return app_table_index_find_pair_text(
+        table_id, first_column_index, second_column_index,
+        first_data, first_length, second_data, second_length);
+}
+
 static int app_table_compare_typed_cells(int table_id, int column_index,
                                          unsigned int left_row, unsigned int right_row,
                                          int kind) {
@@ -30739,6 +46080,30 @@ static void app_table_copy_store(JadrenAppTable *destination, const JadrenAppTab
         app_table_copy_row(destination, row_index, source, row_index);
 }
 
+int app_table_move_row(int table_id, int from_index, int to_index) {
+    JadrenAppTable staged;
+    int index;
+    if (!app_table_valid(table_id) || from_index < 0 || to_index < 0 ||
+        (unsigned int)from_index >= jadren_app_tables[table_id].row_count ||
+        (unsigned int)to_index >= jadren_app_tables[table_id].row_count) return 0;
+    if (from_index == to_index) return 1;
+    app_table_copy_store(&staged, &jadren_app_tables[table_id]);
+    if (from_index < to_index) {
+        for (index = from_index; index < to_index; index += 1)
+            app_table_swap_rows(&staged, (unsigned int)index, (unsigned int)(index + 1));
+    } else {
+        for (index = from_index; index > to_index; index -= 1)
+            app_table_swap_rows(&staged, (unsigned int)index, (unsigned int)(index - 1));
+    }
+    app_table_copy_store(&jadren_app_tables[table_id], &staged);
+    return 1;
+}
+int app_table_move_row_if_revision(int table_id, int from_index, int to_index,
+                                   uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_move_row(table_id, from_index, to_index);
+}
+
 static uint64_t app_data_hash_bytes(uint64_t hash, const unsigned char *data, uint64_t length) {
     uint64_t index;
     if (data == 0) return hash;
@@ -30855,6 +46220,7 @@ int app_data_validate(void) {
 
 int file_delete(const unsigned char *path_data, uint64_t path_length);
 int file_flush(const unsigned char *path_data, uint64_t path_length);
+int directory_flush(const unsigned char *path_data, uint64_t path_length);
 uint64_t file_lock(const unsigned char *path_data, uint64_t path_length);
 int file_unlock(uint64_t token);
 int file_replace_atomic(const unsigned char *source_data, uint64_t source_length,
@@ -31064,7 +46430,7 @@ int app_table_migration_rollback(void) {
     return result;
 }
 
-int app_table_sort_text(int table_id, int column_index, int descending) {
+int app_table_sort_text(int table_id, int column_index, unsigned char descending) {
     int row_index;
     if (!app_table_valid(table_id) || column_index < 0 || column_index >= JADREN_APP_TABLE_MAX_COLUMNS) return 0;
     for (row_index = 1; row_index < (int)jadren_app_tables[table_id].row_count; row_index += 1) {
@@ -31080,7 +46446,7 @@ int app_table_sort_text(int table_id, int column_index, int descending) {
     return 1;
 }
 
-int app_table_sort_int(int table_id, int column_index, int descending) {
+int app_table_sort_int(int table_id, int column_index, unsigned char descending) {
     int row_index;
     if (!app_table_valid(table_id) || column_index < 0 ||
         column_index >= JADREN_APP_TABLE_MAX_COLUMNS ||
@@ -31107,7 +46473,7 @@ int app_table_sort_int(int table_id, int column_index, int descending) {
     return 1;
 }
 
-int app_table_sort_uint(int table_id, int column_index, int descending) {
+int app_table_sort_uint(int table_id, int column_index, unsigned char descending) {
     int row_index;
     if (!app_table_valid(table_id) || column_index < 0 ||
         column_index >= JADREN_APP_TABLE_MAX_COLUMNS ||
@@ -31134,7 +46500,7 @@ int app_table_sort_uint(int table_id, int column_index, int descending) {
     return 1;
 }
 
-int app_table_sort_float(int table_id, int column_index, int descending) {
+int app_table_sort_float(int table_id, int column_index, unsigned char descending) {
     int row_index;
     if (!app_table_valid(table_id) || column_index < 0 ||
         column_index >= JADREN_APP_TABLE_MAX_COLUMNS ||
@@ -31161,7 +46527,7 @@ int app_table_sort_float(int table_id, int column_index, int descending) {
     return 1;
 }
 
-int app_table_sort_bool(int table_id, int column_index, int descending) {
+int app_table_sort_bool(int table_id, int column_index, unsigned char descending) {
     int row_index;
     if (!app_table_valid(table_id) || column_index < 0 ||
         column_index >= JADREN_APP_TABLE_MAX_COLUMNS ||
@@ -31187,6 +46553,41 @@ int app_table_sort_bool(int table_id, int column_index, int descending) {
     }
     return 1;
 }
+int app_table_sort_text_if_revision(int table_id, int column_index,
+                                      unsigned char descending,
+                                      uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_sort_text(table_id, column_index, descending);
+}
+
+int app_table_sort_int_if_revision(int table_id, int column_index,
+                                   unsigned char descending,
+                                   uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_sort_int(table_id, column_index, descending);
+}
+
+int app_table_sort_uint_if_revision(int table_id, int column_index,
+                                    unsigned char descending,
+                                    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_sort_uint(table_id, column_index, descending);
+}
+
+int app_table_sort_float_if_revision(int table_id, int column_index,
+                                     unsigned char descending,
+                                     uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_sort_float(table_id, column_index, descending);
+}
+
+int app_table_sort_bool_if_revision(int table_id, int column_index,
+                                    unsigned char descending,
+                                    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_sort_bool(table_id, column_index, descending);
+}
+
 int app_table_sort_callback(int table_id, int (*comparator)(int, int, int)) {
     JadrenAppTable sorted;
     unsigned char rows[JADREN_APP_TABLE_MAX_ROWS];
@@ -31222,6 +46623,15 @@ int app_table_sort_callback(int table_id, int (*comparator)(int, int, int)) {
     if (app_table_index_fingerprint(&jadren_app_tables[table_id]) != source_fingerprint) return 0;
     app_table_copy_store(&jadren_app_tables[table_id], &sorted);
     return 1;
+}
+
+/* Sort through a caller-owned comparator only when the equality-only model
+ * revision is still current. The unguarded path keeps its fingerprint checks
+ * around every comparator call and publishes only after the complete scan. */
+int app_table_sort_callback_if_revision(
+    int table_id, int (*comparator)(int, int, int), uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_sort_callback(table_id, comparator);
 }
 int app_table_find_text(int table_id, int column_index, const unsigned char *query_data,
                         uint64_t query_length, int start_row) {
@@ -31445,6 +46855,13 @@ int app_table_index_find_text(int table_id, int column_index,
     return (int)candidate;
 }
 
+int app_table_index_find_text_if_revision(
+    int table_id, int column_index, const unsigned char *query_data,
+    uint64_t query_length, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return -1;
+    return app_table_index_find_text(table_id, column_index, query_data, query_length);
+}
+
 static int app_table_index_compare_query(int table_id, int column_index,
                                          unsigned int row_index, int kind,
                                          int64_t int_query, uint64_t uint_query,
@@ -31546,6 +46963,14 @@ uint64_t app_table_index_collect_int_range(int table_id, int column_index,
     return (uint64_t)count;
 }
 
+uint64_t app_table_index_collect_int_range_if_revision(
+    int table_id, int column_index, int64_t lower, int64_t upper,
+    int32_t *output_data, uint64_t output_length, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_index_collect_int_range(
+        table_id, column_index, lower, upper, output_data, output_length);
+}
+
 static uint64_t app_table_index_collect_typed_range(
     int table_id, int column_index, int kind,
     uint64_t lower_uint, uint64_t upper_uint,
@@ -31616,6 +47041,22 @@ uint64_t app_table_index_collect_float_range(int table_id, int column_index,
         0, 0, lower, upper, output_data, output_length);
 }
 
+uint64_t app_table_index_collect_uint_range_if_revision(
+    int table_id, int column_index, uint64_t lower, uint64_t upper,
+    int32_t *output_data, uint64_t output_length, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_index_collect_uint_range(
+        table_id, column_index, lower, upper, output_data, output_length);
+}
+
+uint64_t app_table_index_collect_float_range_if_revision(
+    int table_id, int column_index, double lower, double upper,
+    int32_t *output_data, uint64_t output_length, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_index_collect_float_range(
+        table_id, column_index, lower, upper, output_data, output_length);
+}
+
 int app_table_index_find_uint(int table_id, int column_index, uint64_t query) {
     return app_table_index_find_typed(table_id, column_index, JADREN_APP_TABLE_UINT,
                                       0, query, 0.0, 0);
@@ -31627,6 +47068,30 @@ int app_table_index_find_float(int table_id, int column_index, double query) {
 int app_table_index_find_bool(int table_id, int column_index, unsigned char query) {
     return app_table_index_find_typed(table_id, column_index, JADREN_APP_TABLE_BOOL,
                                       0, 0, 0.0, query);
+}
+
+int app_table_index_find_int_if_revision(
+    int table_id, int column_index, int64_t query, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return -1;
+    return app_table_index_find_int(table_id, column_index, query);
+}
+
+int app_table_index_find_uint_if_revision(
+    int table_id, int column_index, uint64_t query, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return -1;
+    return app_table_index_find_uint(table_id, column_index, query);
+}
+
+int app_table_index_find_float_if_revision(
+    int table_id, int column_index, double query, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return -1;
+    return app_table_index_find_float(table_id, column_index, query);
+}
+
+int app_table_index_find_bool_if_revision(
+    int table_id, int column_index, unsigned char query, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return -1;
+    return app_table_index_find_bool(table_id, column_index, query);
 }
 static unsigned char app_table_filter_fold_ascii(unsigned char value,
                                                   int case_insensitive) {
@@ -31667,6 +47132,7 @@ int app_table_filter_text_ex(int source_table_id, int destination_table_id, int 
     unsigned int source_row;
     if (!app_table_valid(source_table_id) || !app_table_valid(destination_table_id) ||
         source_table_id == destination_table_id || column_index < 0 || column_index >= JADREN_APP_TABLE_MAX_COLUMNS ||
+        jadren_app_tables[source_table_id].column_names[column_index].length == 0 ||
         query_length > JADREN_APP_LIST_TEXT_MAX || (query_data == 0 && query_length > 0) || mode < 0 || mode > 7) return 0;
     if (!app_table_store_valid(&jadren_app_tables[source_table_id])) return 0;
     app_table_copy_schema(&jadren_app_tables[destination_table_id],
@@ -31696,6 +47162,29 @@ int app_table_filter_text(int source_table_id, int destination_table_id, int col
                                     column_index, query_data, query_length, 0);
 }
 
+/* Filter one text column only when the caller's equality-only model revision
+ * is still current. A stale revision leaves both tables unchanged; this is
+ * process-local coordination, not a cross-thread atomic or persistence
+ * primitive. */
+int app_table_filter_text_if_revision(int source_table_id, int destination_table_id,
+                                      int column_index, const unsigned char *query_data,
+                                      uint64_t query_length, uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_text(source_table_id, destination_table_id,
+                                 column_index, query_data, query_length);
+}
+
+/* Filter one text column with an explicit match mode only when the caller's
+ * equality-only model revision is still current. */
+int app_table_filter_text_ex_if_revision(int source_table_id, int destination_table_id,
+                                         int column_index, const unsigned char *query_data,
+                                         uint64_t query_length, int mode,
+                                         uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_text_ex(source_table_id, destination_table_id,
+                                    column_index, query_data, query_length, mode);
+}
+
 int app_table_filter_callback(int source_table_id, int destination_table_id,
                               unsigned char (*predicate)(int, int)) {
     JadrenAppTable filtered;
@@ -31721,6 +47210,17 @@ int app_table_filter_callback(int source_table_id, int destination_table_id,
         source_fingerprint) return 0;
     app_table_copy_store(&jadren_app_tables[destination_table_id], &filtered);
     return 1;
+}
+
+/* Apply a callback filter only when the caller's equality-only model revision
+ * is still current. The unguarded implementation retains its source
+ * fingerprint checks while this entry point rejects a stale token before the
+ * scan starts. */
+int app_table_filter_callback_if_revision(
+    int source_table_id, int destination_table_id,
+    unsigned char (*predicate)(int, int), uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_callback(source_table_id, destination_table_id, predicate);
 }
 
 int app_table_page(int source_table_id, int destination_table_id,
@@ -31749,6 +47249,18 @@ int app_table_page(int source_table_id, int destination_table_id,
     return 1;
 }
 
+/* Project one bounded table page only when the caller's equality-only model
+ * revision is still current. A stale revision leaves both source and
+ * destination tables unchanged; this is process-local coordination, not a
+ * cross-thread atomic or persistence primitive. */
+int app_table_page_if_revision(int source_table_id, int destination_table_id,
+                               int start_row, int page_size,
+                               uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_page(source_table_id, destination_table_id, start_row,
+                          page_size);
+}
+
 int app_table_filter_int(int source_table_id, int destination_table_id, int column_index,
                          int64_t query) {
     unsigned int source_row;
@@ -31767,6 +47279,12 @@ int app_table_filter_int(int source_table_id, int destination_table_id, int colu
         jadren_app_tables[destination_table_id].row_count += 1;
     }
     return 1;
+}
+int app_table_filter_int_if_revision(int source_table_id, int destination_table_id,
+                                     int column_index, int64_t query,
+                                     uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_int(source_table_id, destination_table_id, column_index, query);
 }
 int app_table_filter_uint(int source_table_id, int destination_table_id, int column_index,
                           uint64_t query) {
@@ -31787,6 +47305,12 @@ int app_table_filter_uint(int source_table_id, int destination_table_id, int col
     }
     return 1;
 }
+int app_table_filter_uint_if_revision(int source_table_id, int destination_table_id,
+                                      int column_index, uint64_t query,
+                                      uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_uint(source_table_id, destination_table_id, column_index, query);
+}
 int app_table_filter_float(int source_table_id, int destination_table_id, int column_index,
                            double query) {
     unsigned int source_row;
@@ -31806,6 +47330,12 @@ int app_table_filter_float(int source_table_id, int destination_table_id, int co
     }
     return 1;
 }
+int app_table_filter_float_if_revision(int source_table_id, int destination_table_id,
+                                       int column_index, double query,
+                                       uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_float(source_table_id, destination_table_id, column_index, query);
+}
 int app_table_filter_bool(int source_table_id, int destination_table_id, int column_index,
                           unsigned char query) {
     unsigned int source_row;
@@ -31824,6 +47354,12 @@ int app_table_filter_bool(int source_table_id, int destination_table_id, int col
         jadren_app_tables[destination_table_id].row_count += 1;
     }
     return 1;
+}
+int app_table_filter_bool_if_revision(int source_table_id, int destination_table_id,
+                                      int column_index, unsigned char query,
+                                      uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_filter_bool(source_table_id, destination_table_id, column_index, query);
 }
 
 #define JADREN_APP_TABLE_DOCUMENT_MAX 524288
@@ -31916,6 +47452,64 @@ uint64_t app_list_export_csv(int list_id, unsigned char *output_data,
     return written == required ? written : 0;
 }
 
+int app_list_export_csv_exact(int list_id, unsigned char *output_data,
+                              uint64_t output_capacity,
+                              uint64_t *output_text_length,
+                              uint64_t output_text_length_capacity) {
+    const JadrenAppList *list;
+    uint64_t written;
+    if (!app_list_valid(list_id) || output_text_length == 0 ||
+        output_text_length_capacity == 0) return 0;
+    list = &jadren_app_lists[list_id];
+    if (list->count == 0) {
+        output_text_length[0] = 0;
+        return 1;
+    }
+    if (output_data == 0) return 0;
+    written = app_list_export_csv(list_id, output_data, output_capacity);
+    if (written == 0) return 0;
+    output_text_length[0] = written;
+    return 1;
+}
+
+static int app_json_add_size(uint64_t *total, uint64_t addition) {
+    if (total == 0 || *total > UINT64_MAX - addition) return 0;
+    *total += addition;
+    return 1;
+}
+
+int app_list_export_json_exact(int list_id, unsigned char *output_data,
+                               uint64_t output_capacity,
+                               uint64_t *output_text_length,
+                               uint64_t output_text_length_capacity) {
+    const JadrenAppList *list;
+    uint64_t required = 2ULL;
+    uint64_t written = 0;
+    uint64_t field_length;
+    unsigned int item_index;
+    if (!app_list_valid(list_id) || output_text_length == 0 ||
+        output_text_length_capacity == 0) return 0;
+    list = &jadren_app_lists[list_id];
+    for (item_index = 0; item_index < list->count; item_index += 1) {
+        field_length = json_escaped_length(list->items[item_index].text,
+                                            list->items[item_index].length);
+        if (field_length == 0 || (item_index > 0 && !app_json_add_size(&required, 1)) ||
+            !app_json_add_size(&required, field_length)) return 0;
+    }
+    if (output_data == 0 || output_capacity < required) return 0;
+    output_data[written++] = (unsigned char)'[';
+    for (item_index = 0; item_index < list->count; item_index += 1) {
+        if (item_index > 0) output_data[written++] = (unsigned char)',';
+        written = json_write_escaped(list->items[item_index].text,
+                                     list->items[item_index].length,
+                                     output_data, written);
+    }
+    output_data[written++] = (unsigned char)']';
+    if (written != required) return 0;
+    output_text_length[0] = written;
+    return 1;
+}
+
 static unsigned int app_table_csv_column_count(const JadrenAppTable *table) {
     int last_column = -1;
     unsigned int column_index;
@@ -31984,6 +47578,96 @@ uint64_t app_table_export_csv(int table_id, unsigned char *output_data,
         output_data[written++] = (unsigned char)'\n';
     }
     return written == required ? written : 0;
+}
+
+int app_table_export_csv_exact(int table_id, unsigned char *output_data,
+                               uint64_t output_capacity,
+                               uint64_t *output_text_length,
+                               uint64_t output_text_length_capacity) {
+    uint64_t written;
+    if (output_text_length == 0 || output_text_length_capacity == 0 ||
+        output_data == 0) return 0;
+    written = app_table_export_csv(table_id, output_data, output_capacity);
+    if (written == 0) return 0;
+    output_text_length[0] = written;
+    return 1;
+}
+
+int app_table_export_json_exact(int table_id, unsigned char *output_data,
+                                uint64_t output_capacity,
+                                uint64_t *output_text_length,
+                                uint64_t output_text_length_capacity) {
+    const JadrenAppTable *table;
+    unsigned int column_count;
+    unsigned int row_index;
+    unsigned int column_index;
+    uint64_t required = sizeof("{\"columns\":[") - 1ULL;
+    uint64_t written = 0;
+    uint64_t field_length;
+    unsigned int literal_index;
+    if (!app_table_valid(table_id) || output_text_length == 0 ||
+        output_text_length_capacity == 0) return 0;
+    table = &jadren_app_tables[table_id];
+    if (!app_table_store_valid(table)) return 0;
+    column_count = app_table_csv_column_count(table);
+    for (column_index = 0; column_index < column_count; column_index += 1) {
+        field_length = json_escaped_length(
+            table->column_names[column_index].text,
+            table->column_names[column_index].length);
+        if (field_length == 0 ||
+            (column_index > 0 && !app_json_add_size(&required, 1)) ||
+            !app_json_add_size(&required, field_length)) return 0;
+    }
+    if (!app_json_add_size(&required, sizeof("],\"rows\":[") - 1ULL)) return 0;
+    for (row_index = 0; row_index < table->row_count; row_index += 1) {
+        if (row_index > 0 && !app_json_add_size(&required, 1)) return 0;
+        if (!app_json_add_size(&required, 1)) return 0;
+        for (column_index = 0; column_index < column_count; column_index += 1) {
+            field_length = json_escaped_length(
+                table->cells[row_index][column_index].text,
+                table->cells[row_index][column_index].length);
+            if (field_length == 0 ||
+                (column_index > 0 && !app_json_add_size(&required, 1)) ||
+                !app_json_add_size(&required, field_length)) return 0;
+        }
+        if (!app_json_add_size(&required, 1)) return 0;
+    }
+    if (!app_json_add_size(&required, sizeof("]}") - 1ULL) ||
+        output_data == 0 || output_capacity < required) return 0;
+    for (literal_index = 0; literal_index < sizeof("{\"columns\":[") - 1U;
+         literal_index += 1U) {
+        output_data[written + literal_index] =
+            (unsigned char)"{\"columns\":["[literal_index];
+    }
+    written += sizeof("{\"columns\":[") - 1ULL;
+    for (column_index = 0; column_index < column_count; column_index += 1) {
+        if (column_index > 0) output_data[written++] = (unsigned char)',';
+        written = json_write_escaped(table->column_names[column_index].text,
+                                     table->column_names[column_index].length,
+                                     output_data, written);
+    }
+    for (literal_index = 0; literal_index < sizeof("],\"rows\":[") - 1U;
+        literal_index += 1U) {
+        output_data[written + literal_index] =
+            (unsigned char)"],\"rows\":["[literal_index];
+    }
+    written += sizeof("],\"rows\":[") - 1ULL;
+    for (row_index = 0; row_index < table->row_count; row_index += 1) {
+        if (row_index > 0) output_data[written++] = (unsigned char)',';
+        output_data[written++] = (unsigned char)'[';
+        for (column_index = 0; column_index < column_count; column_index += 1) {
+            if (column_index > 0) output_data[written++] = (unsigned char)',';
+            written = json_write_escaped(table->cells[row_index][column_index].text,
+                                         table->cells[row_index][column_index].length,
+                                         output_data, written);
+        }
+        output_data[written++] = (unsigned char)']';
+    }
+    output_data[written++] = (unsigned char)']';
+    output_data[written++] = (unsigned char)'}';
+    if (written != required) return 0;
+    output_text_length[0] = written;
+    return 1;
 }
 
 enum {
@@ -32115,6 +47799,83 @@ int app_table_import_csv(int table_id, const unsigned char *input_data,
     if (!app_table_store_valid(&parsed)) return 0;
     app_table_copy_store(&jadren_app_tables[table_id], &parsed);
     return 1;
+}
+
+int app_table_import_csv_if_revision(int table_id, const unsigned char *input_data,
+                                     uint64_t input_capacity,
+                                     uint64_t input_length,
+                                     uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_import_csv(table_id, input_data, input_capacity, input_length);
+}
+
+/* Import one bounded CSV table file transactionally. */
+int app_table_import_csv_file(int table_id, const unsigned char *path_data,
+                              uint64_t path_length) {
+    static unsigned char document[JADREN_APP_TABLE_CSV_INPUT_MAX];
+    uint64_t file_length;
+    if (!app_table_valid(table_id) || path_data == 0 || path_length == 0) return 0;
+    file_length = file_size(path_data, path_length);
+    if (file_length == 0 || file_length > sizeof(document)) return 0;
+    if (file_read(path_data, path_length, document, sizeof(document)) != file_length) return 0;
+    return app_table_import_csv(table_id, document, sizeof(document), file_length);
+}
+
+/* Import one CSV table file only when the caller's equality-only model
+ * revision is still current. */
+int app_table_import_csv_file_if_revision(
+    int table_id, const unsigned char *path_data, uint64_t path_length,
+    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_import_csv_file(table_id, path_data, path_length);
+}
+
+/* Import one caller-owned CSV list transactionally. */
+int app_list_import_csv(int list_id, const unsigned char *input_data,
+                        uint64_t input_capacity, uint64_t input_length) {
+    JadrenAppList parsed;
+    JadrenAppListItem field;
+    uint64_t offset = 0;
+    int delimiter;
+    if (!app_list_valid(list_id) || input_data == 0 || input_length == 0 ||
+        input_length > input_capacity || input_length > JADREN_APP_LIST_DOCUMENT_MAX) return 0;
+    app_list_clear_store(&parsed);
+    while (offset < input_length) {
+        if (parsed.count >= JADREN_APP_LIST_MAX_ITEMS) return 0;
+        delimiter = app_table_csv_read_field(input_data, input_length, &offset, &field);
+        if (delimiter != JADREN_APP_TABLE_CSV_FIELD_ROW) return 0;
+        app_table_csv_copy_item(&parsed.items[parsed.count], &field);
+        parsed.count += 1;
+    }
+    app_list_copy_store(&jadren_app_lists[list_id], &parsed);
+    return 1;
+}
+
+int app_list_import_csv_if_revision(
+    int list_id, const unsigned char *input_data,
+    uint64_t input_capacity, uint64_t input_length,
+    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_import_csv(list_id, input_data, input_capacity, input_length);
+}
+
+/* Import one bounded CSV list file transactionally. */
+int app_list_import_csv_file(int list_id, const unsigned char *path_data,
+                             uint64_t path_length) {
+    static unsigned char document[JADREN_APP_LIST_DOCUMENT_MAX];
+    uint64_t file_length;
+    if (!app_list_valid(list_id) || path_data == 0 || path_length == 0) return 0;
+    file_length = file_size(path_data, path_length);
+    if (file_length == 0 || file_length > sizeof(document)) return 0;
+    if (file_read(path_data, path_length, document, sizeof(document)) != file_length) return 0;
+    return app_list_import_csv(list_id, document, sizeof(document), file_length);
+}
+
+int app_list_import_csv_file_if_revision(
+    int list_id, const unsigned char *path_data, uint64_t path_length,
+    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_import_csv_file(list_id, path_data, path_length);
 }
 
 #define JADREN_APP_TABLE_SCHEMA_DOCUMENT_MAX 128
@@ -32381,6 +48142,154 @@ static int app_table_parse_schema_full_document(const unsigned char *data, uint6
     if (!app_table_schema_full_expect_byte(data, length, &index, (unsigned char)'}')) return 0;
     while (index < length && (data[index] == ' ' || data[index] == '\t' || data[index] == '\r' || data[index] == '\n')) index += 1;
     return index == length;
+}
+
+/* Parse the deterministic columns/rows JSON projection used by
+ * app_table_export_json_exact. Column kinds remain the live table schema;
+ * incoming names and bounded text-form values are validated before publish. */
+static int app_table_parse_json_exact_document(const unsigned char *data, uint64_t length,
+                                               JadrenAppTable *table) {
+    uint64_t index = 0;
+    uint64_t end;
+    uint64_t value_length;
+    unsigned int column_count = 0;
+    unsigned int row_index;
+    unsigned int column_index;
+    if (data == 0 || table == 0 || length == 0 ||
+        !app_table_schema_full_expect_byte(data, length, &index, (unsigned char)'{') ||
+        !app_table_schema_full_expect_key(data, length, &index,
+                                          (const unsigned char *)"columns", 7) ||
+        !app_table_schema_full_expect_byte(data, length, &index, (unsigned char)'[')) return 0;
+    for (column_index = 0; column_index < JADREN_APP_TABLE_MAX_COLUMNS; column_index += 1)
+        app_list_clear_item(&table->column_names[column_index]);
+    for (;;) {
+        if (!json_read_skip_ws(data, length, &index) || index >= length) return 0;
+        if (data[index] == (unsigned char)']') {
+            index += 1;
+            break;
+        }
+        if (column_count >= JADREN_APP_TABLE_MAX_COLUMNS ||
+            !json_read_string_end(data, length, index, &end)) return 0;
+        value_length = json_read_string_length(data, index, end);
+        if (value_length > JADREN_APP_TABLE_COLUMN_NAME_MAX ||
+            !app_table_column_name_valid(data + index + 1, value_length)) return 0;
+        table->column_names[column_count].length = value_length;
+        (void)json_read_string_copy(data, index, end,
+                                    table->column_names[column_count].text);
+        column_count += 1;
+        index = end;
+        if (!json_read_skip_ws(data, length, &index) || index >= length) return 0;
+        if (data[index] == (unsigned char)',') {
+            index += 1;
+            continue;
+        }
+        if (data[index] == (unsigned char)']') {
+            index += 1;
+            break;
+        }
+        return 0;
+    }
+    if (!app_table_schema_full_expect_byte(data, length, &index, (unsigned char)',') ||
+        !app_table_schema_full_expect_key(data, length, &index,
+                                          (const unsigned char *)"rows", 4) ||
+        !app_table_schema_full_expect_byte(data, length, &index, (unsigned char)'[')) return 0;
+    app_table_clear_store(table);
+    for (;;) {
+        if (!json_read_skip_ws(data, length, &index) || index >= length) return 0;
+        if (data[index] == (unsigned char)']') {
+            index += 1;
+            break;
+        }
+        if (column_count == 0 || table->row_count >= JADREN_APP_TABLE_MAX_ROWS ||
+            data[index] != (unsigned char)'[') return 0;
+        index += 1;
+        row_index = (unsigned int)table->row_count;
+        for (column_index = 0; column_index < column_count; column_index += 1) {
+            if (!json_read_skip_ws(data, length, &index) ||
+                !json_read_string_end(data, length, index, &end)) return 0;
+            value_length = json_read_string_length(data, index, end);
+            if (value_length > JADREN_APP_LIST_TEXT_MAX) return 0;
+            table->cells[row_index][column_index].length = value_length;
+            (void)json_read_string_copy(data, index, end,
+                                        table->cells[row_index][column_index].text);
+            index = end;
+            if (!json_read_skip_ws(data, length, &index) || index >= length) return 0;
+            if (column_index + 1 < column_count) {
+                if (data[index] != (unsigned char)',') return 0;
+                index += 1;
+            } else {
+                if (data[index] != (unsigned char)']') return 0;
+                index += 1;
+            }
+        }
+        table->row_count += 1;
+        if (!json_read_skip_ws(data, length, &index) || index >= length) return 0;
+        if (data[index] == (unsigned char)',') {
+            index += 1;
+            continue;
+        }
+        if (data[index] == (unsigned char)']') {
+            index += 1;
+            break;
+        }
+        return 0;
+    }
+    if (!app_table_schema_full_expect_byte(data, length, &index, (unsigned char)'}')) return 0;
+    while (index < length && (data[index] == ' ' || data[index] == '\t' ||
+                              data[index] == '\r' || data[index] == '\n')) index += 1;
+    return index == length;
+}
+
+/* Import one caller-owned table JSON projection transactionally. */
+int app_table_import_json_exact(int table_id, const unsigned char *input_data,
+                                uint64_t input_capacity, uint64_t input_length) {
+    JadrenAppTable parsed;
+    if (!app_table_valid(table_id) || input_data == 0 || input_length == 0 ||
+        input_length > input_capacity || input_length > JADREN_APP_TABLE_DOCUMENT_MAX) return 0;
+    app_table_copy_schema(&parsed, &jadren_app_tables[table_id]);
+    if (!app_table_parse_json_exact_document(input_data, input_length, &parsed) ||
+        !app_table_store_valid(&parsed)) return 0;
+    app_table_copy_store(&jadren_app_tables[table_id], &parsed);
+    return 1;
+}
+
+/* Import one JSON table projection only when the caller's equality-only model
+ * revision is still current. The typed import remains transactional. */
+int app_table_import_json_exact_if_revision(
+    int table_id, const unsigned char *input_data,
+    uint64_t input_capacity, uint64_t input_length,
+    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_import_json_exact(
+        table_id, input_data, input_capacity, input_length);
+}
+
+/* Import one deterministic columns/rows JSON file transactionally. */
+int app_table_import_json_file(int table_id, const unsigned char *path_data,
+                               uint64_t path_length) {
+    static unsigned char document[JADREN_APP_TABLE_DOCUMENT_MAX];
+    JadrenAppTable parsed;
+    uint64_t document_length;
+    uint64_t file_length;
+    if (!app_table_valid(table_id) || path_data == 0 || path_length == 0) return 0;
+    file_length = file_size(path_data, path_length);
+    if (file_length == 0 || file_length > sizeof(document)) return 0;
+    document_length = file_read(path_data, path_length, document, sizeof(document));
+    if (document_length != file_length) return 0;
+    app_table_copy_schema(&parsed, &jadren_app_tables[table_id]);
+    if (!app_table_parse_json_exact_document(document, document_length, &parsed) ||
+        !app_table_store_valid(&parsed)) return 0;
+    app_table_copy_store(&jadren_app_tables[table_id], &parsed);
+    return 1;
+}
+
+/* Import one JSON table file only when the caller's equality-only model
+ * revision is still current. The typed file parser remains transactional. */
+int app_table_import_json_file_if_revision(
+    int table_id, const unsigned char *path_data, uint64_t path_length,
+    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_import_json_file(table_id, path_data, path_length);
 }
 
 int app_table_load(int table_id, const unsigned char *path_data, uint64_t path_length) {
@@ -32737,6 +48646,25 @@ int app_data_write_exact(unsigned char *output_data,
     return 1;
 }
 
+/* Return the exact serialized size without exposing or mutating caller
+ * storage. The fixed scratch buffer keeps the query bounded and mirrors the
+ * same serializer used by app_data_write_exact. */
+uint64_t app_data_snapshot_length(void) {
+    static unsigned char document[JADREN_APP_DATA_DOCUMENT_MAX];
+    uint64_t length = 0;
+    if (!app_data_write_exact(document, sizeof(document), &length, 1)) return 0;
+    return length;
+}
+
+/* Return the exact serialized size only when the model revision is stable. */
+uint64_t app_data_snapshot_length_if_revision(uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    uint64_t length = app_data_snapshot_length();
+    if (length == 0) return 0;
+    if (app_data_revision() != expected_revision) return 0;
+    return length;
+}
+
 /* Export only when the caller's equality-only snapshot is still current.
  * The stale path returns before serialization, so caller-owned output and
  * length remain unchanged. */
@@ -32783,6 +48711,10 @@ int app_data_tx_save_atomic(const unsigned char *temporary_path_data,
     return app_data_tx_commit();
 }
 
+uint64_t file_lock_path_retry(const unsigned char *path_data, uint64_t path_capacity,
+                              uint64_t path_length, uint64_t max_attempts,
+                              uint64_t retry_delay_ms);
+
 /* Durable model commit. See the Windows implementation above for the
  * ordering and failure semantics; the ABI is intentionally identical. */
 int app_data_tx_commit_durable(const unsigned char *temporary_path_data,
@@ -32823,6 +48755,165 @@ int app_data_tx_commit_durable(const unsigned char *temporary_path_data,
     committed = app_data_tx_commit();
     if (!file_unlock(lock_token)) return 0;
     return committed;
+}
+
+static int app_data_path_equal(const unsigned char *left_data, uint64_t left_length,
+                               const unsigned char *right_data, uint64_t right_length) {
+    uint64_t index;
+    if (left_data == 0 || right_data == 0 || left_length != right_length) return 0;
+    for (index = 0; index < left_length; index += 1)
+        if (left_data[index] != right_data[index]) return 0;
+    return 1;
+}
+
+/* Durable model commit with an explicit directory metadata flush. The lock
+ * remains caller-owned and the new directory path must already exist. */
+int app_data_tx_commit_durable_directory(
+    const unsigned char *temporary_path_data,
+    uint64_t temporary_path_length,
+    const unsigned char *target_path_data,
+    uint64_t target_path_length,
+    const unsigned char *directory_path_data,
+    uint64_t directory_path_length,
+    const unsigned char *lock_path_data,
+    uint64_t lock_path_length) {
+    uint64_t lock_token;
+    int committed;
+    if (!jadren_app_data_transaction_active || temporary_path_data == 0 ||
+        target_path_data == 0 || directory_path_data == 0 || lock_path_data == 0 ||
+        temporary_path_length == 0 || target_path_length == 0 ||
+        directory_path_length == 0 || lock_path_length == 0 ||
+        !directory_exists(directory_path_data, directory_path_length) ||
+        app_data_path_equal(temporary_path_data, temporary_path_length,
+                            target_path_data, target_path_length) ||
+        app_data_path_equal(temporary_path_data, temporary_path_length,
+                            lock_path_data, lock_path_length) ||
+        app_data_path_equal(target_path_data, target_path_length,
+                            lock_path_data, lock_path_length)) return 0;
+    lock_token = file_lock(lock_path_data, lock_path_length);
+    if (lock_token == 0) {
+        (void)app_data_tx_rollback();
+        return 0;
+    }
+    if (!app_data_save(temporary_path_data, temporary_path_length) ||
+        !file_flush(temporary_path_data, temporary_path_length) ||
+        !file_replace_atomic(temporary_path_data, temporary_path_length,
+                             target_path_data, target_path_length)) {
+        (void)file_unlock(lock_token);
+        (void)file_delete(temporary_path_data, temporary_path_length);
+        (void)app_data_tx_rollback();
+        return 0;
+    }
+    if (!file_flush(target_path_data, target_path_length) ||
+        !directory_flush(directory_path_data, directory_path_length)) {
+        (void)file_unlock(lock_token);
+        (void)app_data_tx_commit();
+        return 0;
+    }
+    committed = app_data_tx_commit();
+    if (!file_unlock(lock_token)) return 0;
+    return committed;
+}
+
+int app_data_tx_commit_durable_directory_if_revision(
+    const unsigned char *temporary_path_data,
+    uint64_t temporary_path_length,
+    const unsigned char *target_path_data,
+    uint64_t target_path_length,
+    const unsigned char *directory_path_data,
+    uint64_t directory_path_length,
+    const unsigned char *lock_path_data,
+    uint64_t lock_path_length,
+    uint64_t expected_revision) {
+    if (!jadren_app_data_transaction_active ||
+        app_data_revision() != expected_revision) return 0;
+    return app_data_tx_commit_durable_directory(
+        temporary_path_data, temporary_path_length, target_path_data,
+        target_path_length, directory_path_data, directory_path_length,
+        lock_path_data, lock_path_length);
+}
+
+/* Durable model commit with a bounded caller-selected retry for the sidecar
+ * lock. The retry delay blocks only the caller thread; it is not a worker,
+ * scheduler, callback, or real-time synchronization primitive. A retry
+ * exhaustion uses the same rollback policy as the nonblocking durable commit. */
+int app_data_tx_commit_durable_retry(const unsigned char *temporary_path_data,
+                                     uint64_t temporary_path_length,
+                                     const unsigned char *target_path_data,
+                                     uint64_t target_path_length,
+                                     const unsigned char *lock_path_data,
+                                     uint64_t lock_path_length,
+                                     uint64_t max_attempts,
+                                     uint64_t retry_delay_ms) {
+    uint64_t lock_token;
+    int committed;
+    if (!jadren_app_data_transaction_active || temporary_path_data == 0 ||
+        target_path_data == 0 || lock_path_data == 0 || temporary_path_length == 0 ||
+        target_path_length == 0 || lock_path_length == 0) return 0;
+    lock_token = file_lock_path_retry(lock_path_data, lock_path_length,
+                                      lock_path_length, max_attempts, retry_delay_ms);
+    if (lock_token == 0) {
+        (void)app_data_tx_rollback();
+        return 0;
+    }
+    if (!app_data_save(temporary_path_data, temporary_path_length) ||
+        !file_flush(temporary_path_data, temporary_path_length)) {
+        (void)file_unlock(lock_token);
+        (void)file_delete(temporary_path_data, temporary_path_length);
+        (void)app_data_tx_rollback();
+        return 0;
+    }
+    if (!file_replace_atomic(temporary_path_data, temporary_path_length,
+                             target_path_data, target_path_length)) {
+        (void)file_unlock(lock_token);
+        (void)file_delete(temporary_path_data, temporary_path_length);
+        (void)app_data_tx_rollback();
+        return 0;
+    }
+    if (!file_flush(target_path_data, target_path_length)) {
+        (void)file_unlock(lock_token);
+        (void)app_data_tx_commit();
+        return 0;
+    }
+    committed = app_data_tx_commit();
+    if (!file_unlock(lock_token)) return 0;
+    return committed;
+}
+
+/* Retry the durable commit only when the caller's equality-only revision is
+ * still current. A stale call returns before lock acquisition, sleep, file
+ * mutation, or transaction rollback so the caller retains the active snapshot. */
+int app_data_tx_commit_durable_retry_if_revision(const unsigned char *temporary_path_data,
+                                                 uint64_t temporary_path_length,
+                                                 const unsigned char *target_path_data,
+                                                 uint64_t target_path_length,
+                                                 const unsigned char *lock_path_data,
+                                                 uint64_t lock_path_length,
+                                                 uint64_t expected_revision,
+                                                 uint64_t max_attempts,
+                                                 uint64_t retry_delay_ms) {
+    if (!jadren_app_data_transaction_active || app_data_revision() != expected_revision) return 0;
+    return app_data_tx_commit_durable_retry(temporary_path_data, temporary_path_length,
+                                            target_path_data, target_path_length,
+                                            lock_path_data, lock_path_length,
+                                            max_attempts, retry_delay_ms);
+}
+
+/* Commit the active model transaction durably only when the caller's
+ * equality-only revision is still current. A stale call does not acquire the
+ * lock or mutate the transaction; callers may explicitly roll it back or
+ * retry with a fresh revision. */
+int app_data_tx_commit_durable_if_revision(const unsigned char *temporary_path_data,
+                                           uint64_t temporary_path_length,
+                                           const unsigned char *target_path_data,
+                                           uint64_t target_path_length,
+                                           const unsigned char *lock_path_data,
+                                           uint64_t lock_path_length,
+                                           uint64_t expected_revision) {
+    if (!jadren_app_data_transaction_active || app_data_revision() != expected_revision) return 0;
+    return app_data_tx_commit_durable(temporary_path_data, temporary_path_length,
+                                      target_path_data, target_path_length,
+                                      lock_path_data, lock_path_length);
 }
 
 static int app_data_expect_bytes(const unsigned char *data, uint64_t length,
@@ -33854,6 +49945,190 @@ index_file_export_done_posix:
     return success;
 }
 
+/* Export a bounded list to a flushed temporary CSV and atomically promote it. */
+int app_list_export_csv_file_durable(
+    int list_id,
+    const unsigned char *output_path_data, uint64_t output_path_length,
+    const unsigned char *temporary_path_data, uint64_t temporary_path_length) {
+    static unsigned char document[JADREN_APP_LIST_DOCUMENT_MAX];
+    static const unsigned char empty_document[1] = {0};
+    uint64_t csv_length;
+    int success = 0;
+    if (!app_list_valid(list_id) || output_path_data == 0 || temporary_path_data == 0 ||
+        output_path_length == 0 || temporary_path_length == 0 ||
+        app_data_journal_export_path_same(output_path_data, output_path_length,
+                                          temporary_path_data, temporary_path_length))
+        return 0;
+    if (file_exists(temporary_path_data, temporary_path_length) &&
+        !file_delete(temporary_path_data, temporary_path_length))
+        goto list_csv_file_done_posix;
+    if (jadren_app_lists[list_id].count == 0) {
+        if (file_write(temporary_path_data, temporary_path_length,
+                       empty_document, 0) != 0 ||
+            !file_exists(temporary_path_data, temporary_path_length) ||
+            directory_exists(temporary_path_data, temporary_path_length))
+            goto list_csv_file_done_posix;
+    } else {
+        csv_length = app_list_export_csv(list_id, document, sizeof(document));
+        if (csv_length == 0 ||
+            file_write(temporary_path_data, temporary_path_length,
+                       document, csv_length) != csv_length)
+            goto list_csv_file_done_posix;
+    }
+    if (!file_flush(temporary_path_data, temporary_path_length) ||
+        !file_replace_atomic(temporary_path_data, temporary_path_length,
+                             output_path_data, output_path_length) ||
+        !file_flush(output_path_data, output_path_length))
+        goto list_csv_file_done_posix;
+    success = 1;
+list_csv_file_done_posix:
+    if (!success) (void)file_delete(temporary_path_data, temporary_path_length);
+    return success;
+}
+
+/* Export a bounded table to a flushed temporary CSV and atomically promote it. */
+int app_table_export_csv_file_durable(
+    int table_id,
+    const unsigned char *output_path_data, uint64_t output_path_length,
+    const unsigned char *temporary_path_data, uint64_t temporary_path_length) {
+    static unsigned char document[JADREN_APP_TABLE_DOCUMENT_MAX];
+    uint64_t csv_length;
+    int success = 0;
+    if (!app_table_valid(table_id) || output_path_data == 0 || temporary_path_data == 0 ||
+        output_path_length == 0 || temporary_path_length == 0 ||
+        app_data_journal_export_path_same(output_path_data, output_path_length,
+                                          temporary_path_data, temporary_path_length))
+        return 0;
+    if (file_exists(temporary_path_data, temporary_path_length) &&
+        !file_delete(temporary_path_data, temporary_path_length))
+        goto table_csv_file_done_posix;
+    csv_length = app_table_export_csv(table_id, document, sizeof(document));
+    if (csv_length == 0 ||
+        file_write(temporary_path_data, temporary_path_length,
+                   document, csv_length) != csv_length)
+        goto table_csv_file_done_posix;
+    if (!file_flush(temporary_path_data, temporary_path_length) ||
+        !file_replace_atomic(temporary_path_data, temporary_path_length,
+                             output_path_data, output_path_length) ||
+        !file_flush(output_path_data, output_path_length))
+        goto table_csv_file_done_posix;
+    success = 1;
+table_csv_file_done_posix:
+    if (!success) (void)file_delete(temporary_path_data, temporary_path_length);
+    return success;
+}
+
+/* Export a bounded list to flushed temporary JSON and atomically promote it. */
+int app_list_export_json_file_durable(int list_id,
+    const unsigned char *output_path_data, uint64_t output_path_length,
+    const unsigned char *temporary_path_data, uint64_t temporary_path_length) {
+    static unsigned char document[JADREN_APP_LIST_DOCUMENT_MAX];
+    uint64_t json_length_slot = 0;
+    int success = 0;
+    if (!app_list_valid(list_id) || output_path_data == 0 || temporary_path_data == 0 ||
+        output_path_length == 0 || temporary_path_length == 0 ||
+        app_data_journal_export_path_same(output_path_data, output_path_length,
+                                          temporary_path_data, temporary_path_length))
+        return 0;
+    if (file_exists(temporary_path_data, temporary_path_length) &&
+        !file_delete(temporary_path_data, temporary_path_length))
+        goto list_json_file_done_posix;
+    if (!app_list_export_json_exact(list_id, document, sizeof(document),
+                                    &json_length_slot, 1))
+        goto list_json_file_done_posix;
+    if (file_write(temporary_path_data, temporary_path_length,
+                   document, json_length_slot) != json_length_slot)
+        goto list_json_file_done_posix;
+    if (!file_flush(temporary_path_data, temporary_path_length) ||
+        !file_replace_atomic(temporary_path_data, temporary_path_length,
+                             output_path_data, output_path_length) ||
+        !file_flush(output_path_data, output_path_length))
+        goto list_json_file_done_posix;
+    success = 1;
+list_json_file_done_posix:
+    if (!success) (void)file_delete(temporary_path_data, temporary_path_length);
+    return success;
+}
+
+/* Export a bounded table to flushed temporary JSON and atomically promote it. */
+int app_table_export_json_file_durable(int table_id,
+    const unsigned char *output_path_data, uint64_t output_path_length,
+    const unsigned char *temporary_path_data, uint64_t temporary_path_length) {
+    static unsigned char document[JADREN_APP_TABLE_DOCUMENT_MAX];
+    uint64_t json_length_slot = 0;
+    int success = 0;
+    if (!app_table_valid(table_id) || output_path_data == 0 || temporary_path_data == 0 ||
+        output_path_length == 0 || temporary_path_length == 0 ||
+        app_data_journal_export_path_same(output_path_data, output_path_length,
+                                          temporary_path_data, temporary_path_length))
+        return 0;
+    if (file_exists(temporary_path_data, temporary_path_length) &&
+        !file_delete(temporary_path_data, temporary_path_length))
+        goto table_json_file_done_posix;
+    if (!app_table_export_json_exact(table_id, document, sizeof(document),
+                                     &json_length_slot, 1))
+        goto table_json_file_done_posix;
+    if (file_write(temporary_path_data, temporary_path_length,
+                   document, json_length_slot) != json_length_slot)
+        goto table_json_file_done_posix;
+    if (!file_flush(temporary_path_data, temporary_path_length) ||
+        !file_replace_atomic(temporary_path_data, temporary_path_length,
+                             output_path_data, output_path_length) ||
+        !file_flush(output_path_data, output_path_length))
+        goto table_json_file_done_posix;
+    success = 1;
+table_json_file_done_posix:
+    if (!success) (void)file_delete(temporary_path_data, temporary_path_length);
+    return success;
+}
+
+/* Revision-guarded durable exports reject a stale caller snapshot before any
+ * temporary or target file is touched. Cross-thread serialization remains
+ * caller-owned, matching the other process-local guarded file APIs. */
+int app_list_export_csv_file_durable_if_revision(
+    int list_id,
+    const unsigned char *output_path_data, uint64_t output_path_length,
+    const unsigned char *temporary_path_data, uint64_t temporary_path_length,
+    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_export_csv_file_durable(
+        list_id, output_path_data, output_path_length,
+        temporary_path_data, temporary_path_length);
+}
+
+int app_list_export_json_file_durable_if_revision(
+    int list_id,
+    const unsigned char *output_path_data, uint64_t output_path_length,
+    const unsigned char *temporary_path_data, uint64_t temporary_path_length,
+    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_list_export_json_file_durable(
+        list_id, output_path_data, output_path_length,
+        temporary_path_data, temporary_path_length);
+}
+
+int app_table_export_csv_file_durable_if_revision(
+    int table_id,
+    const unsigned char *output_path_data, uint64_t output_path_length,
+    const unsigned char *temporary_path_data, uint64_t temporary_path_length,
+    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_export_csv_file_durable(
+        table_id, output_path_data, output_path_length,
+        temporary_path_data, temporary_path_length);
+}
+
+int app_table_export_json_file_durable_if_revision(
+    int table_id,
+    const unsigned char *output_path_data, uint64_t output_path_length,
+    const unsigned char *temporary_path_data, uint64_t temporary_path_length,
+    uint64_t expected_revision) {
+    if (app_data_revision() != expected_revision) return 0;
+    return app_table_export_json_file_durable(
+        table_id, output_path_data, output_path_length,
+        temporary_path_data, temporary_path_length);
+}
+
 /* Return one bounded page of indexed spans without copying journal payloads. */
 uint64_t app_data_journal_index_range_durable(
     const unsigned char *journal_path, uint64_t journal_path_length,
@@ -34766,6 +51041,13 @@ int file_delete(const unsigned char *path_data, uint64_t path_length) {
            unlink(native_path) == 0;
 }
 
+/* Deletes a file through an explicit valid caller-owned UTF-8 path. */
+int file_delete_path(const unsigned char *path_data, uint64_t path_capacity,
+                     uint64_t path_length) {
+    if (path_length > path_capacity) return 0;
+    return file_delete(path_data, path_length);
+}
+
 /* POSIX record locks are advisory and process-wide. A separate lock path is
  * recommended so the data file can still be read by other tooling. */
 uint64_t file_lock(const unsigned char *path_data, uint64_t path_length) {
@@ -34789,6 +51071,35 @@ uint64_t file_lock(const unsigned char *path_data, uint64_t path_length) {
         return 0;
     }
     return (uint64_t)descriptor + 1ULL;
+}
+
+/* Acquires a non-blocking lock through an explicit valid caller-owned path. */
+uint64_t file_lock_path(const unsigned char *path_data, uint64_t path_capacity,
+                        uint64_t path_length) {
+    if (path_length > path_capacity) return 0;
+    return file_lock(path_data, path_length);
+}
+
+/* Retries a caller-owned sidecar lock a finite caller-selected number of
+ * times. Each failed attempt except the last sleeps for retry_delay_ms on the
+ * calling thread; this is deliberately not an event-loop or real-time API. */
+uint64_t file_lock_path_retry(const unsigned char *path_data, uint64_t path_capacity,
+                              uint64_t path_length, uint64_t max_attempts,
+                              uint64_t retry_delay_ms) {
+    uint64_t attempt = 0;
+    if (path_length > path_capacity || max_attempts == 0) return 0;
+    while (attempt < max_attempts) {
+        uint64_t token = file_lock(path_data, path_length);
+        if (token != 0) return token;
+        attempt += 1;
+        if (attempt < max_attempts && retry_delay_ms != 0) {
+            struct timespec delay;
+            delay.tv_sec = (time_t)(retry_delay_ms / 1000ULL);
+            delay.tv_nsec = (long)((retry_delay_ms % 1000ULL) * 1000000ULL);
+            nanosleep(&delay, 0);
+        }
+    }
+    return 0;
 }
 
 int file_unlock(uint64_t token) {
@@ -34820,6 +51131,68 @@ int file_replace_atomic(const unsigned char *source_data, uint64_t source_length
         return 0;
     }
     return rename(source_path, target_path) == 0;
+}
+
+/* Atomically promotes an explicit valid caller-owned source path over target. */
+int file_replace_atomic_paths(const unsigned char *source_data,
+                              uint64_t source_capacity, uint64_t source_length,
+                              const unsigned char *target_data,
+                              uint64_t target_capacity, uint64_t target_length) {
+    if (source_length > source_capacity || target_length > target_capacity) return 0;
+    return file_replace_atomic(source_data, source_length, target_data, target_length);
+}
+
+/* Writes a valid caller-owned prefix, flushes it, then atomically promotes it. */
+int32_t file_write_atomic(const unsigned char *temporary_path_data,
+                          uint64_t temporary_path_length,
+                          const unsigned char *target_path_data,
+                          uint64_t target_path_length,
+                          const unsigned char *input_data,
+                          uint64_t input_length,
+                          uint64_t write_length) {
+    uint64_t path_index;
+    int32_t same_path;
+    if (temporary_path_data == 0 || target_path_data == 0 ||
+        temporary_path_length == 0 || target_path_length == 0) return 0;
+    same_path = temporary_path_length == target_path_length;
+    if (same_path) {
+        for (path_index = 0; path_index < temporary_path_length; path_index += 1) {
+            if (temporary_path_data[path_index] != target_path_data[path_index]) {
+                same_path = 0;
+                break;
+            }
+        }
+    }
+    if (same_path ||
+        write_length > input_length ||
+        write_file_bytes(temporary_path_data, temporary_path_length,
+                         input_data, write_length) != write_length) {
+        return 0;
+    }
+    if (!file_flush(temporary_path_data, temporary_path_length)) return 0;
+    return file_replace_atomic(temporary_path_data, temporary_path_length,
+                               target_path_data, target_path_length);
+}
+
+/* Durable caller-thread commit including promoted-file and directory flush. */
+int32_t file_write_atomic_durable(const unsigned char *temporary_path_data,
+                                  uint64_t temporary_path_length,
+                                  const unsigned char *target_path_data,
+                                  uint64_t target_path_length,
+                                  const unsigned char *directory_path_data,
+                                  uint64_t directory_path_length,
+                                  const unsigned char *input_data,
+                                  uint64_t input_length,
+                                  uint64_t write_length) {
+    if (directory_path_data == 0 || directory_path_length == 0 ||
+        !directory_exists(directory_path_data, directory_path_length) ||
+        !file_write_atomic(temporary_path_data, temporary_path_length,
+                           target_path_data, target_path_length, input_data,
+                           input_length, write_length)) {
+        return 0;
+    }
+    if (!file_flush(target_path_data, target_path_length)) return 0;
+    return directory_flush(directory_path_data, directory_path_length);
 }
 "#;
     let stem = output.with_extension("");
@@ -34883,12 +51256,14 @@ fn module_uses_memory_runtime(module: &jadren_jir::Module) -> bool {
                         | jadren_jir::InstructionKind::BufferResizeMoveNestedOwnedString { .. }
                         | jadren_jir::InstructionKind::RecursiveOwnedStringBufferDrop { .. }
                         | jadren_jir::InstructionKind::BufferRemoveDropOwnedString { .. }
+                        | jadren_jir::InstructionKind::BufferRemoveDropNestedOwnedString { .. }
                         | jadren_jir::InstructionKind::BufferResizeMoveRecordFields { .. }
                         | jadren_jir::InstructionKind::RecursiveRecordBufferFieldsDrop { .. }
                         | jadren_jir::InstructionKind::RecordBufferFieldsDrop { .. }
                         | jadren_jir::InstructionKind::RecordOwningFieldsDrop { .. }
                         | jadren_jir::InstructionKind::BufferRemoveDropRecordFields { .. }
                         | jadren_jir::InstructionKind::BufferRemoveDropNestedRecordFields { .. }
+                        | jadren_jir::InstructionKind::BufferRemoveDropNestedBuffer { .. }
                 ) {
                     return true;
                 }
@@ -34914,6 +51289,8 @@ fn module_uses_memory_runtime(module: &jadren_jir::Module) -> bool {
                                     | "buffer_reserve_i32"
                                     | "buffer_append_i32_grow"
                                     | "buffer_create"
+                                    | "buffer_slice"
+                                    | "buffer_slice_write"
                                     | "buffer_reserve"
                                     | "buffer_reserve_status"
                                     | "buffer_append"
@@ -35152,41 +51529,90 @@ fn validate_desktop_event_callback(modules: &[&jadren_jir::Module]) -> Result<bo
                     | "ui_layout_event_button"
                     | "ui_app_button"
                     | "ui_app_checkbox"
+                    | "ui_app_switch"
                     | "ui_app_menu"
                     | "ui_app_menu_item"
                     | "ui_app_select"
                     | "ui_app_select_index"
+                    | "ui_app_select_index_if_revision"
                     | "ui_app_select_option"
                     | "ui_app_select_set_index"
                     | "ui_app_text_input"
+                    | "ui_app_input_length"
+                    | "ui_app_input_read"
+                    | "ui_app_input_read_exact"
+                    | "ui_app_input_read_exact_if_revision"
                     | "ui_app_list"
                     | "ui_app_list_bind_app"
+                    | "ui_app_list_filter_text"
+                    | "ui_app_list_filter_text_if_revision"
+                    | "ui_app_list_filter_text_ex"
+                    | "ui_app_list_filter_text_ex_if_revision"
+                    | "ui_app_list_filter_callback"
+                    | "ui_app_list_filter_callback_if_revision"
+                    | "ui_app_list_page"
+                    | "ui_app_list_page_if_revision"
+                    | "ui_app_list_sort_text"
+                    | "ui_app_list_sort_text_if_revision"
                     | "ui_app_list_clear"
                     | "ui_app_list_count"
+                    | "ui_app_list_count_if_revision"
                     | "ui_app_list_index"
+                    | "ui_app_list_index_if_revision"
                     | "ui_app_list_item"
+                    | "ui_app_list_set_item"
+                    | "ui_app_list_set_item_if_revision"
+                    | "ui_app_list_insert_item"
+                    | "ui_app_list_insert_item_if_revision"
+                    | "ui_app_list_move_item"
+                    | "ui_app_list_move_item_if_revision"
+                    | "ui_app_list_remove_item"
+                    | "ui_app_list_remove_item_if_revision"
                     | "ui_app_list_refresh"
+                    | "ui_app_list_read_item_exact"
+                    | "ui_app_list_read_item_exact_if_revision"
                     | "ui_app_list_set_index"
                     | "ui_app_table"
                     | "ui_app_table_bind_app"
                     | "ui_app_table_cell"
+                    | "ui_app_table_cell_if_revision"
+                    | "ui_app_table_insert_row"
+                    | "ui_app_table_insert_row_if_revision"
+                    | "ui_app_table_move_row"
+                    | "ui_app_table_move_row_if_revision"
+                    | "ui_app_table_remove_row"
+                    | "ui_app_table_remove_row_if_revision"
                     | "ui_app_table_clear"
                     | "ui_app_table_column"
                     | "ui_app_table_read_cell"
+                    | "ui_app_table_read_cell_exact"
+                    | "ui_app_table_read_cell_exact_if_revision"
                     | "ui_app_table_refresh"
+                    | "ui_app_table_page"
+                    | "ui_app_table_page_if_revision"
                     | "ui_app_table_sort_text"
                     | "ui_app_table_sort_int"
                     | "ui_app_table_sort_uint"
                     | "ui_app_table_sort_float"
                     | "ui_app_table_sort_bool"
                     | "ui_app_table_filter_text"
+                    | "ui_app_table_filter_text_if_revision"
                     | "ui_app_table_filter_text_ex"
+                    | "ui_app_table_filter_text_ex_if_revision"
                     | "ui_app_table_filter_int"
+                    | "ui_app_table_filter_int_if_revision"
                     | "ui_app_table_filter_uint"
+                    | "ui_app_table_filter_uint_if_revision"
                     | "ui_app_table_filter_float"
+                    | "ui_app_table_filter_float_if_revision"
                     | "ui_app_table_filter_bool"
+                    | "ui_app_table_filter_bool_if_revision"
+                    | "ui_app_table_filter_callback"
+                    | "ui_app_table_filter_callback_if_revision"
                     | "ui_app_table_row_count"
+                    | "ui_app_table_row_count_if_revision"
                     | "ui_app_table_selected_row"
+                    | "ui_app_table_selected_row_if_revision"
                     | "ui_app_table_set_selected_row"
                     | "ui_checkbox"
                     | "ui_switch"
@@ -35909,7 +52335,7 @@ fn checked_build_sources_for_target(
         .is_dir()
         .then(|| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()));
     let files = if path.is_dir() {
-        package_source_files(path)?
+        package_build_source_files(path)?
     } else {
         vec![path.to_path_buf()]
     };
@@ -36098,6 +52524,7 @@ fn materialize_package_generics(units: &mut [CheckedBuildUnit]) -> Result<(), St
     let mut specifications: Vec<Vec<jadren_mir::GenericSpecialization>> =
         vec![Vec::new(); units.len()];
     let mut seen = HashSet::new();
+    let mut touched_callers = HashSet::new();
     let mut import_overrides = Vec::new();
 
     for caller_index in 0..units.len() {
@@ -36166,6 +52593,7 @@ fn materialize_package_generics(units: &mut [CheckedBuildUnit]) -> Result<(), St
                 canonical_path,
                 specialized_name,
             ));
+            touched_callers.insert(caller_index);
         }
     }
 
@@ -36219,6 +52647,30 @@ fn materialize_package_generics(units: &mut [CheckedBuildUnit]) -> Result<(), St
                         .map(|error| {
                             format!(
                                 "package lowering failed in `{}`: {}",
+                                unit.path.display(),
+                                error.message
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })?;
+        unit.imported_symbols = imported_symbols_for_unit(unit);
+    }
+
+    // The initial per-source check produces JIR before package generic
+    // materialization. Re-lower callers whose imported function-value types
+    // were rewritten, otherwise a generic callback signature can remain in
+    // stale caller JIR even though its MIR is concrete.
+    for caller_index in touched_callers {
+        let unit = &mut units[caller_index];
+        unit.jir =
+            jadren_jir::lower_from_mir(&unit.mir, &unit.types, jadren_jir::LowerOptions::default())
+                .map_err(|errors| {
+                    errors
+                        .into_iter()
+                        .map(|error| {
+                            format!(
+                                "generic caller lowering failed in `{}`: {}",
                                 unit.path.display(),
                                 error.message
                             )
@@ -36757,10 +53209,10 @@ fn print_help() {
            jadren doctor\n  \
            jadren check <file.jdn|package-directory> [--format text|json] [--target <triple>] [--edition <edition>] [--warnings-as-errors]\n  \
            jadren build <file.jdn> [-o <output>] [--profile debug|release] [--cpu baseline|avx2]\n  \
-           jadren run <file.jdn> [-o <output>] [--profile debug|release] [--cpu baseline|avx2]\n  \
+           jadren run <file.jdn> [-o <output>] [--profile debug|release] [--cpu baseline|avx2] [-- <program-arg> ...]\n  \
            jadren test <file.jdn|directory> [--format text|json] [--target <triple>] [--edition <edition>] [--warnings-as-errors]\n  \
            jadren doc <file.jdn|directory> [--output <file.md>] [--target <triple>] [--edition <edition>] [--warnings-as-errors]\n  \
-           jadren init [directory] [--name <package>]\n  \
+           jadren init [directory] [--name <package>] [--template desktop|full-app|server]\n  \
            jadren lock [directory|jadren.toml]\n  \
            jadren resolve [directory|jadren.toml]\n  \
            jadren toolchain verify <manifest> <artifact>\n  \
@@ -36779,14 +53231,15 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
+    use std::path::PathBuf;
     use std::str::FromStr;
 
     use jadren_driver::{BuildProfile, DiagnosticFormat, TargetTriple};
 
     use super::{
         checked_jir_for_target, lsp_arguments_valid, parse_check_arguments, parse_doc_arguments,
-        parse_object_arguments, parse_package_object_arguments, parse_test_arguments,
-        prepare_executable_entry,
+        parse_executable_arguments, parse_object_arguments, parse_package_object_arguments,
+        parse_test_arguments, prepare_executable_entry,
     };
 
     use jadren_jir::{CastOp, InstructionKind, Linkage, Type};
@@ -36796,6 +53249,39 @@ mod tests {
         assert!(lsp_arguments_valid(&[]));
         assert!(lsp_arguments_valid(&[OsString::from("--stdio")]));
         assert!(!lsp_arguments_valid(&[OsString::from("--socket=1234")]));
+    }
+
+    #[test]
+    fn parses_run_program_arguments_after_separator() {
+        let arguments = vec![
+            OsString::from("examples/hello.jdn"),
+            OsString::from("--profile"),
+            OsString::from("release"),
+            OsString::from("-o"),
+            OsString::from("target/hello.exe"),
+            OsString::from("--"),
+            OsString::from("alpha"),
+            OsString::from("two words"),
+        ];
+        let parsed = parse_executable_arguments("run", &arguments).expect("valid run arguments");
+        assert_eq!(parsed.profile, BuildProfile::Release);
+        assert_eq!(parsed.output, Some(PathBuf::from("target/hello.exe")));
+        assert_eq!(
+            parsed.program_arguments,
+            vec![OsString::from("alpha"), OsString::from("two words")]
+        );
+    }
+
+    #[test]
+    fn rejects_program_argument_separator_for_build() {
+        let arguments = vec![
+            OsString::from("examples/hello.jdn"),
+            OsString::from("--"),
+            OsString::from("alpha"),
+        ];
+        let error = parse_executable_arguments("build", &arguments)
+            .expect_err("build must reject program args");
+        assert!(error.contains("only supported by `jadren run`"));
     }
 
     #[test]

@@ -1,0 +1,80 @@
+module examples.stdlib_buffer_owning_record_nested_carrier_enum
+
+// A named owning enum may carry a C-layout record whose fields are tagged
+// Option/Result carriers.  The outer enum tag and the active carrier tag are
+// flattened into one bounded path marker; no hidden metadata or manual drop
+// code is required in Jadren source.
+@repr(C)
+struct Detail {
+    id: Int32,
+    selected: Option<Buffer<Int32>>,
+    outcome: Result<Buffer<Int32>, Int32>
+}
+
+@repr(C)
+enum Payload {
+    Empty,
+    Detail(Detail),
+    Done
+}
+
+@repr(C)
+struct Entry {
+    id: Int32,
+    payload: Payload
+}
+
+fn main() -> Int32 {
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match entries_created {
+        Ok(entries) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            if !buffer_append(first, 11) { result_code = 1 }
+                            if !buffer_append(second, 22) { result_code = 2 }
+
+                            let owned_detail: Detail = Detail {
+                                id: 1,
+                                selected: Some(first),
+                                outcome: Ok(second)
+                            }
+                            let owned_entry: Entry = Entry {
+                                id: 1,
+                                payload: Payload.Detail(owned_detail)
+                            }
+                            if !buffer_append(entries, owned_entry) { result_code = 3 }
+
+                            let empty_detail: Detail = Detail {
+                                id: 2,
+                                selected: None,
+                                outcome: Error(-7)
+                            }
+                            let empty_entry: Entry = Entry {
+                                id: 2,
+                                payload: Payload.Detail(empty_detail)
+                            }
+                            if !buffer_append(entries, empty_entry) { result_code = 4 }
+                            if buffer_length(entries) != 2usize { result_code = 5 }
+
+                            if !buffer_resize_move(entries, 3usize) { result_code = 6 }
+                            if !buffer_remove_drop(entries, 0usize) { result_code = 7 }
+                            if buffer_length(entries) != 2usize { result_code = 8 }
+                            if !buffer_clear_move(entries) { result_code = 9 }
+                            if buffer_length(entries) != 0usize { result_code = 10 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

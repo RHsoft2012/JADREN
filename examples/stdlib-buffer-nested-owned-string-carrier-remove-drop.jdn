@@ -1,0 +1,57 @@
+module examples.stdlib_buffer_nested_owned_string_carrier_remove_drop
+
+// A nested Buffer may contain a tagged owning string payload. Removing an
+// inner list must inspect the carrier tag and release only an active string.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Option<OwnedString>>>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Option<OwnedString>>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Option<OwnedString>>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            let first_text: Result<OwnedString, Int32> = string_owned_from("first")
+                            match first_text {
+                                Ok(text) => {
+                                    let first_value: Option<OwnedString> = Some(text)
+                                    if !buffer_append(first, first_value) { result_code = 1 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                            let second_text: Result<OwnedString, Int32> = string_owned_from("second")
+                            match second_text {
+                                Ok(text) => {
+                                    let second_value: Option<OwnedString> = Some(text)
+                                    if !buffer_append(second, second_value) { result_code = 2 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                            let empty_value: Option<OwnedString> = None
+                            if !buffer_append(second, empty_value) { result_code = 3 }
+                            if !buffer_append(outer, first) { result_code = 4 }
+                            if !buffer_append(outer, second) { result_code = 5 }
+                            if buffer_length(outer) != 2usize { result_code = 6 }
+
+                            let removed: Bool = buffer_remove_drop(outer, 0usize)
+                            if !removed { result_code = 7 }
+                            if buffer_length(outer) != 1usize { result_code = 8 }
+                            let status: Int32 = buffer_remove_drop_status(outer, 0usize)
+                            if status != 0 { result_code = 9 }
+                            if buffer_length(outer) != 0usize { result_code = 10 }
+                            let invalid: Int32 = buffer_remove_drop_status(outer, 0usize)
+                            if invalid != -20 { result_code = 11 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

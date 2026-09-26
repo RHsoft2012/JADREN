@@ -1,0 +1,105 @@
+module examples.stdlib_buffer_nested_owning_record_nested_enum_move
+
+// Exercise move-only operations at the outer Buffer<Buffer<Entry>> boundary.
+// Each leaf Entry carries a nested named enum whose active variant owns a
+// Buffer<Int32>; remove/pop/insert must transfer the inner descriptor exactly
+// once and leave the caller-owned output empty after a successful insert.
+@repr(C)
+enum Inner {
+    Empty,
+    Values(Buffer<Int32>),
+    Done
+}
+
+@repr(C)
+enum Outer {
+    Idle,
+    Nested(Inner),
+    Done
+}
+
+@repr(C)
+struct Entry {
+    id: Int32,
+    payload: Outer
+}
+
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Entry>>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let first_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let second_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let moved_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let popped_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            match first_values_created {
+                                Ok(first_values) => {
+                                    match second_values_created {
+                                        Ok(second_values) => {
+                                            match moved_created {
+                                                Ok(moved) => {
+                                                    match popped_created {
+                                                        Ok(popped) => {
+                                                            if !buffer_append(first_values, 11) { result_code = 1 }
+                                                            if !buffer_append(second_values, 22) { result_code = 2 }
+                                                            let first_item: Entry = Entry { id: 1, payload: Outer.Nested(Inner.Values(first_values)) }
+                                                            let second_item: Entry = Entry { id: 2, payload: Outer.Nested(Inner.Values(second_values)) }
+                                                            if !buffer_append(first, first_item) { result_code = 3 }
+                                                            if !buffer_append(second, second_item) { result_code = 4 }
+                                                            if !buffer_append(outer, first) { result_code = 5 }
+                                                            if !buffer_append(outer, second) { result_code = 6 }
+                                                            if buffer_length(outer) != 2usize { result_code = 7 }
+
+                                                            if !buffer_remove_move_into(outer, 0usize, moved) { result_code = 8 }
+                                                            if buffer_length(outer) != 1usize { result_code = 9 }
+                                                            if buffer_length(moved) != 1usize { result_code = 10 }
+
+                                                            let inserted: Bool = buffer_insert_move_from(outer, 0usize, moved)
+                                                            if !inserted { result_code = 11 }
+                                                            if buffer_length(outer) != 2usize { result_code = 12 }
+
+                                                            if !buffer_pop_move_into(outer, popped) { result_code = 14 }
+                                                            if buffer_length(outer) != 1usize { result_code = 15 }
+                                                            if buffer_length(popped) != 1usize { result_code = 16 }
+                                                            let clear_popped: Int32 = buffer_clear_move_status(popped)
+                                                            if clear_popped != 0 { result_code = 17 }
+                                                            if buffer_length(popped) != 0usize { result_code = 18 }
+                                                            let clear_outer: Int32 = buffer_clear_move_status(outer)
+                                                            if clear_outer != 0 { result_code = 19 }
+                                                            if buffer_length(outer) != 0usize { result_code = 20 }
+
+                                                            let invalid_remove: Int32 = buffer_remove_move_into_status(outer, 0usize, popped)
+                                                            if invalid_remove != -20 { result_code = 21 }
+                                                            let invalid_pop: Int32 = buffer_pop_move_into_status(outer, popped)
+                                                            if invalid_pop != -20 { result_code = 22 }
+                                                        }
+                                                        Error(status) => { result_code = status }
+                                                    }
+                                                }
+                                                Error(status) => { result_code = status }
+                                            }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

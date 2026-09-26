@@ -1,0 +1,17 @@
+version = 1
+manifest_fingerprint = "2ca38998e7ffcbd4"
+
+[package]
+name = "network-client-keep-alive-buffer-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-app"
+requirement = ""
+source = "path:../../stdlib/app"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

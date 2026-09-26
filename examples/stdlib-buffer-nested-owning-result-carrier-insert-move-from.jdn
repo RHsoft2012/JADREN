@@ -1,0 +1,70 @@
+module examples.stdlib_buffer_nested_owning_result_carrier_insert_move_from
+
+// Insert caller-owned nested Buffer<Result<OwnedString, Int32>> values into an
+// outer list. Ok payloads use the nested field table while Error stays scalar.
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Result<OwnedString, Int32>>>, Int32> = buffer_create(0usize)
+    let first_created: Result<Buffer<Result<OwnedString, Int32>>, Int32> = buffer_create(0usize)
+    let second_created: Result<Buffer<Result<OwnedString, Int32>>, Int32> = buffer_create(0usize)
+    let status_created: Result<Buffer<Result<OwnedString, Int32>>, Int32> = buffer_create(0usize)
+    let first_text_created: Result<OwnedString, Int32> = string_owned_from("first")
+    let second_text_created: Result<OwnedString, Int32> = string_owned_from("second")
+    let status_text_created: Result<OwnedString, Int32> = string_owned_from("status")
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            match status_created {
+                                Ok(status_inner) => {
+                                    match first_text_created {
+                                        Ok(first_text) => {
+                                            match second_text_created {
+                                                Ok(second_text) => {
+                                                    match status_text_created {
+                                                        Ok(status_text) => {
+                                                            let first_value: Result<OwnedString, Int32> = Ok(first_text)
+                                                            let second_value: Result<OwnedString, Int32> = Ok(second_text)
+                                                            let status_value: Result<OwnedString, Int32> = Ok(status_text)
+                                                            let first_error: Result<OwnedString, Int32> = Error(-7)
+                                                            let second_error: Result<OwnedString, Int32> = Error(-9)
+                                                            if !buffer_append(first, first_value) { result_code = 1 }
+                                                            if !buffer_append(first, first_error) { result_code = 2 }
+                                                            if !buffer_append(second, second_value) { result_code = 3 }
+                                                            if !buffer_append(second, second_error) { result_code = 4 }
+                                                            if !buffer_append(status_inner, status_value) { result_code = 5 }
+                                                            if !buffer_append(outer, first) { result_code = 6 }
+                                                            if !buffer_insert_move_from(outer, 0usize, second) { result_code = 7 }
+                                                            if buffer_length(outer) != 2usize { result_code = 8 }
+                                                            let status: Int32 = buffer_insert_move_from_status(outer, 99usize, status_inner)
+                                                            if status != -20 { result_code = 9 }
+                                                            if buffer_length(outer) != 2usize { result_code = 10 }
+                                                            if !buffer_remove_drop(outer, 0usize) { result_code = 11 }
+                                                            if !buffer_clear_move(outer) { result_code = 12 }
+                                                        }
+                                                        Error(status) => { result_code = status }
+                                                    }
+                                                }
+                                                Error(status) => { result_code = status }
+                                            }
+                                        }
+                                        Error(status) => { result_code = status }
+                                    }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

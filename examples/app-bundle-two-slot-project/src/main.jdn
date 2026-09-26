@@ -1,0 +1,171 @@
+module app_bundle_two_slot_project.main
+import jadren.app.bundle.commit_two_slot
+import jadren.app.bundle.read_slot
+import jadren.app.bundle.slot_is_valid
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.read_bytes_exact
+import jadren.app.fs.write_bytes_prefix
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn remove(path: String) {
+    delete(path)
+}
+
+fn write_temp(path: String, first: UInt8) -> Bool {
+    var payload:[UInt8;
+    3] =[first,
+    48u8,
+    49u8]
+    return write_bytes_prefix(path,
+    payload,
+    3usize) == 3usize
+}
+
+fn read_first(path: String, expected: UInt8) -> Bool {
+    var payload:[UInt8;
+    4] =[0u8,
+    0u8,
+    0u8,
+    0u8]
+    var length:[UIntSize;
+    1] =[0usize]
+    if ! read_bytes_exact(path,
+    payload,
+    length) {
+        return false
+    }
+    if length[0] != 3usize {
+        return false
+    }
+    return payload[0] == expected
+}
+
+fn commit(
+    slot: UInt8,
+    target_a: String,
+    target_b: String,
+    first: UInt8,
+    second: UInt8,
+) -> Bool {
+    if ! write_temp("target/app-bundle-two-slot-project/a.tmp",
+    first) {
+        return false
+    }
+    if ! write_temp("target/app-bundle-two-slot-project/b.tmp",
+    second) {
+        return false
+    }
+    return commit_two_slot(
+    "target/app-bundle-two-slot-project/a.tmp",
+    target_a,
+    "target/app-bundle-two-slot-project/b.tmp",
+    target_b,
+    "target/app-bundle-two-slot-project/commit.tmp",
+    "target/app-bundle-two-slot-project/commit",
+    "target/app-bundle-two-slot-project",
+    slot)
+}
+
+fn main() -> Int32 {
+    dir_create("target/app-bundle-two-slot-project")
+    remove("target/app-bundle-two-slot-project/a.tmp")
+    remove("target/app-bundle-two-slot-project/b.tmp")
+    remove("target/app-bundle-two-slot-project/a.slot-a")
+    remove("target/app-bundle-two-slot-project/b.slot-a")
+    remove("target/app-bundle-two-slot-project/a.slot-b")
+    remove("target/app-bundle-two-slot-project/b.slot-b")
+    remove("target/app-bundle-two-slot-project/commit")
+    remove("target/app-bundle-two-slot-project/commit.tmp")
+    if ! commit(65u8,
+    "target/app-bundle-two-slot-project/a.slot-a",
+    "target/app-bundle-two-slot-project/b.slot-a",
+    65u8,
+    83u8) {
+        return 1
+    }
+    var marker:[UInt8;
+    1] =[0u8]
+    var marker_length:[UIntSize;
+    1] =[0usize]
+    if ! read_slot("target/app-bundle-two-slot-project/commit",
+    marker,
+    marker_length) {
+        return 2
+    }
+    if marker_length[0] != 1usize {
+        return 3
+    }
+    if ! slot_is_valid(marker[0]) {
+        return 3
+    }
+    if marker[0] != 65u8 {
+        return 4
+    }
+    if ! read_first("target/app-bundle-two-slot-project/a.slot-a",
+    65u8) {
+        return 5
+    }
+    if ! read_first("target/app-bundle-two-slot-project/b.slot-a",
+    83u8) {
+        return 6
+    }
+
+    // A failed second-file preparation cannot advance the old marker.
+    if ! write_temp("target/app-bundle-two-slot-project/a.tmp",
+    66u8) {
+        return 7
+    }
+    if commit_two_slot(
+    "target/app-bundle-two-slot-project/a.tmp",
+    "target/app-bundle-two-slot-project/a.slot-b",
+    "target/app-bundle-two-slot-project/b.tmp",
+    "target/app-bundle-two-slot-project/b.slot-b",
+    "target/app-bundle-two-slot-project/commit.tmp",
+    "target/app-bundle-two-slot-project/commit",
+    "target/app-bundle-two-slot-project",
+    66u8) {
+        return 8
+    }
+    if ! read_slot("target/app-bundle-two-slot-project/commit",
+    marker,
+    marker_length) {
+        return 9
+    }
+    if marker[0] != 65u8 {
+        return 10
+    }
+    if ! commit(66u8,
+    "target/app-bundle-two-slot-project/a.slot-b",
+    "target/app-bundle-two-slot-project/b.slot-b",
+    66u8,
+    84u8) {
+        return 11
+    }
+    if ! read_slot("target/app-bundle-two-slot-project/commit",
+    marker,
+    marker_length) {
+        return 12
+    }
+    if marker[0] != 66u8 {
+        return 13
+    }
+    if ! read_first("target/app-bundle-two-slot-project/a.slot-b",
+    66u8) {
+        return 14
+    }
+    if ! read_first("target/app-bundle-two-slot-project/b.slot-b",
+    84u8) {
+        return 15
+    }
+    remove("target/app-bundle-two-slot-project/a.slot-a")
+    remove("target/app-bundle-two-slot-project/b.slot-a")
+    remove("target/app-bundle-two-slot-project/a.slot-b")
+    remove("target/app-bundle-two-slot-project/b.slot-b")
+    remove("target/app-bundle-two-slot-project/commit")
+    return 0
+}

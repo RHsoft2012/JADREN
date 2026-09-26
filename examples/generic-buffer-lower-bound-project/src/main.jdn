@@ -1,0 +1,58 @@
+module generic_buffer_lower_bound.main
+
+import jadren.core.collections.append
+import jadren.core.collections.create
+import jadren.core.collections.length
+import jadren.core.collections.lower_bound
+
+fn main() -> Int32 {
+    let integers: Result<Buffer<Int32>, Int32> = create(8usize)
+    var result_code: Int32 = 0
+    match integers {
+        Ok(values) => {
+            if ! append(values, 1) { result_code = 1 }
+            if ! append(values, 3) { result_code = 2 }
+            if ! append(values, 3) { result_code = 3 }
+            if ! append(values, 9) { result_code = 4 }
+            let initial_capacity: UIntSize = buffer_capacity(values)
+            if lower_bound(values, 0) != 0usize { result_code = 5 }
+            if lower_bound(values, 1) != 0usize { result_code = 6 }
+            if lower_bound(values, 2) != 1usize { result_code = 7 }
+            if lower_bound(values, 3) != 1usize { result_code = 8 }
+            if lower_bound(values, 4) != 3usize { result_code = 9 }
+            if lower_bound(values, 10) != 4usize { result_code = 10 }
+            if length(values) != 4usize { result_code = 11 }
+            if buffer_capacity(values) != initial_capacity { result_code = 12 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let floats: Result<Buffer<Float64>, Int32> = create(6usize)
+    match floats {
+        Ok(values) => {
+            if ! append(values, -2.0f64) { result_code = 13 }
+            if ! append(values, 0.5f64) { result_code = 14 }
+            if ! append(values, 8.0f64) { result_code = 15 }
+            let initial_capacity: UIntSize = buffer_capacity(values)
+            if lower_bound(values, -3.0f64) != 0usize { result_code = 16 }
+            if lower_bound(values, -2.0f64) != 0usize { result_code = 17 }
+            if lower_bound(values, 0.0f64) != 1usize { result_code = 18 }
+            if lower_bound(values, 0.5f64) != 1usize { result_code = 19 }
+            if lower_bound(values, 1.0f64) != 2usize { result_code = 20 }
+            if lower_bound(values, 9.0f64) != 3usize { result_code = 21 }
+            if length(values) != 3usize { result_code = 22 }
+            if buffer_capacity(values) != initial_capacity { result_code = 23 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let empty: Result<Buffer<Int32>, Int32> = create(0usize)
+    match empty {
+        Ok(values) => {
+            if lower_bound(values, 42) != 0usize { result_code = 24 }
+            if length(values) != 0usize { result_code = 25 }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

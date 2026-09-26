@@ -1,0 +1,15 @@
+module selfhost.typed_statement_assignment_float64_same_module_two_arg_call_sequence;
+
+// JADREN_STAGE2_DYNAMIC_SAME_MODULE_DEFINITIONS
+// The entry function calls a same-module helper with two scalar arguments.
+// The helper body is materialized as an internal definition and uses both
+// parameters in a bounded binary expression.
+fn local_value() -> Float64 {
+    let first: Float64 = helper(1.5f64, 2.5f64);
+    first = helper(first, 3.0f64);
+    return helper(first, 4.0f64);
+}
+
+fn helper(left: Float64, right: Float64) -> Float64 {
+    return left + right;
+}

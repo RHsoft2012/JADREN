@@ -8,14 +8,20 @@ use jadren_mir::{
 use jadren_resolve::SymbolId;
 use jadren_source::Span;
 use jadren_types::{
-    Capability, CarrierTag, FloatWidth, IntegerWidth, NominalLayout, NominalLayoutKind,
-    NominalTypeId, Signedness, Substitution, TypeId as SemanticTypeId, TypeKind, TypeStore,
+    Capability, CarrierTag, FloatWidth, IntegerWidth, MonomorphizationKey, NominalLayout,
+    NominalLayoutKind, NominalTypeId, Signedness, Substitution, TypeId as SemanticTypeId, TypeKind,
+    TypeStore,
 };
 
 use crate::{
     AddressSpace, BinaryOp, Block, BlockId, CarrierDropBranch, CarrierDropField, CastOp,
-    ComparePredicate, Constant, Function, FunctionId, Instruction, InstructionKind, Linkage,
-    Module, Parameter, RecordDropField, Terminator, Type, TypeId, TypedValue, UnaryOp, ValueId,
+    ComparePredicate, Constant, ENUM_CARRIER_FIELD_MULTI_TAG_MARKER,
+    ENUM_CARRIER_FIELD_MULTI_TAG_MASK, ENUM_CARRIER_FIELD_NESTED_TAG_MARKER,
+    ENUM_CARRIER_FIELD_NO_INNER_TAG, ENUM_CARRIER_FIELD_PATH_MARKER_BASE,
+    ENUM_CARRIER_FIELD_PATH_MAX_TAGS, Function, FunctionId, Instruction, InstructionKind, Linkage,
+    Module, Parameter, RECORD_FIELD_NAMED_ENUM_TAG_DISTANCE_MASK,
+    RECORD_FIELD_NAMED_ENUM_TAG_MARKER, RecordDropField, Terminator, Type, TypeId, TypedValue,
+    UnaryOp, ValueId,
 };
 
 /// Target choices needed while converting target-dependent semantic types.
@@ -58,23 +64,36 @@ pub fn lower_from_mir(
         }]);
     }
 
-    let local_function_ids: BTreeMap<_, _> = mir
-        .functions
-        .iter()
-        .enumerate()
-        .map(|(index, function)| (function.symbol, FunctionId::new(index)))
-        .collect();
     // Builtin byte-slice calls may receive arrays of different source lengths.
     // Keep one semantic store for both target collection and lowering so their
     // borrowed `Slice<UInt8>` ABI key is canonical and never duplicates a
     // native symbol such as `file_write`.
     let mut semantic_types = types.clone();
-    let call_targets = collect_call_targets(mir, &mut semantic_types, &local_function_ids);
+    // Generic MIR bodies are source templates, not native JIR functions: an
+    // unresolved `Buffer<T>` has no concrete element layout yet. Package
+    // materialization substitutes each instance and invokes this lowering
+    // again, so keeping those templates out here avoids guessing an ABI.
+    let concrete_functions: Vec<_> = mir
+        .functions
+        .iter()
+        .filter(|function| !semantic_type_contains_generic(&semantic_types, function.signature))
+        .collect();
+    let local_function_ids: BTreeMap<_, _> = concrete_functions
+        .iter()
+        .enumerate()
+        .map(|(index, function)| (function.symbol, FunctionId::new(index)))
+        .collect();
+    let call_targets = collect_call_targets(
+        mir,
+        &mut semantic_types,
+        &local_function_ids,
+        concrete_functions.len(),
+    );
     let mut type_table =
         TypeTable::new(&semantic_types, options.pointer_bits, &mir.nominal_layouts);
-    let mut functions = Vec::with_capacity(mir.functions.len() + call_targets.external.len());
+    let mut functions = Vec::with_capacity(concrete_functions.len() + call_targets.external.len());
     let mut errors = Vec::new();
-    for (index, function) in mir.functions.iter().enumerate() {
+    for (index, function) in concrete_functions.iter().enumerate() {
         match FunctionLowerer::new(
             function,
             FunctionId::new(index),
@@ -125,6 +144,10 @@ struct CallTargets {
 
 fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capability> {
     match name {
+        "site_server_start_with_webroot" if index == 1 => Some(Capability::Read),
+        "ui_set_input_text_exact" if index == 1 => Some(Capability::Read),
+        "buffer_slice" if index == 0 => Some(Capability::Read),
+        "buffer_slice_write" if index == 0 => Some(Capability::Write),
         "json_object_field_string"
         | "json_object_field_int"
         | "json_object_field_uint"
@@ -141,11 +164,67 @@ fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capa
                 _ => None,
             }
         }
-        "file_write" | "file_append" if index == 1 => Some(Capability::Read),
+        "file_delete"
+        | "file_delete_path"
+        | "file_flush"
+        | "file_flush_path"
+        | "directory_flush"
+        | "file_exists"
+        | "directory_create"
+        | "directory_exists"
+        | "directory_delete"
+        | "file_lock"
+        | "file_lock_path"
+        | "file_lock_path_retry"
+        | "directory_list"
+        | "directory_list_ex"
+        | "directory_list_ex_exact"
+        | "ui_file_open_exact"
+        | "ui_directory_open_exact"
+        | "ui_file_open_extension_exact"
+        | "ui_file_save_exact"
+        | "ui_file_save_suggested_exact"
+        | "ui_file_save_extension_exact"
+        | "file_size"
+        | "file_read"
+        | "file_read_text"
+        | "file_read_exact"
+        | "file_read_text_exact"
+        | "file_read_at"
+        | "file_write"
+        | "file_write_prefix"
+        | "file_write_prefix_path"
+        | "file_write_at"
+        | "file_append"
+            if index == 0 =>
+        {
+            Some(Capability::Read)
+        }
+        "file_replace_atomic" | "file_copy" if index < 2 => Some(Capability::Read),
+        "file_replace_atomic_paths" if index == 0 || index == 2 => Some(Capability::Read),
+        "file_write_atomic" if index == 0 || index == 1 || index == 2 => Some(Capability::Read),
+        "file_write_atomic_durable" if index <= 3 => Some(Capability::Read),
+        "file_write_text" | "file_append_text" if index < 2 => Some(Capability::Read),
+        "file_write" | "file_append" | "file_write_prefix" if index == 1 => Some(Capability::Read),
+        "file_write_prefix_path" if index == 0 || index == 2 => Some(Capability::Read),
         "file_write_at" if index == 2 => Some(Capability::Read),
         "file_read_exact" | "file_read_text_exact" if index == 1 || index == 2 => {
             Some(Capability::Write)
         }
+        "ui_file_open_exact" | "ui_directory_open_exact" | "ui_file_save_exact" if index == 0 => {
+            Some(Capability::Read)
+        }
+        "ui_file_open_exact" | "ui_directory_open_exact" | "ui_file_save_exact"
+            if index == 1 || index == 2 =>
+        {
+            Some(Capability::Write)
+        }
+        "ui_file_open_extension_exact" if index <= 1 => Some(Capability::Read),
+        "ui_file_open_extension_exact" if index == 2 || index == 3 => Some(Capability::Write),
+        "ui_file_save_suggested_exact" if index <= 2 => Some(Capability::Read),
+        "ui_file_save_suggested_exact" if index == 3 || index == 4 => Some(Capability::Write),
+        "ui_file_save_extension_exact" if index <= 2 => Some(Capability::Read),
+        "ui_file_save_extension_exact" if index == 3 || index == 4 => Some(Capability::Write),
         "app_state_read_text"
         | "app_state_read_text_exact"
         | "app_state_read_int"
@@ -153,11 +232,13 @@ fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capa
         | "app_state_read_float"
         | "app_state_read_bool"
         | "app_state_read_key"
+        | "app_state_read_key_exact"
             if index == 1 =>
         {
             Some(Capability::Write)
         }
         "app_state_read_text_exact" if index == 2 => Some(Capability::Write),
+        "app_state_read_key_exact" if index == 2 => Some(Capability::Write),
         "app_state_write_json_exact" if index == 0 || index == 1 => Some(Capability::Write),
         "app_state_load_json_exact" if index == 0 => Some(Capability::Read),
         "app_data_write_exact" | "app_data_write_exact_if_revision" if index == 0 || index == 1 => {
@@ -202,14 +283,42 @@ fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capa
         {
             Some(Capability::Write)
         }
-        "app_state_set_text_bytes" if index == 1 => Some(Capability::Read),
+        "app_state_set_text_bytes"
+        | "app_state_set_text_bytes_if_revision"
+        | "app_state_set_text_bytes_if_model_revision"
+            if index == 1 =>
+        {
+            Some(Capability::Read)
+        }
         "app_list_read_text" if index == 2 => Some(Capability::Write),
-        "app_list_push_text_bytes" if index == 1 => Some(Capability::Read),
+        "app_list_push_text_bytes" | "app_list_push_text_bytes_if_revision" if index == 1 => {
+            Some(Capability::Read)
+        }
+        "app_list_insert_text_bytes" | "app_list_insert_text_bytes_if_revision" if index == 2 => {
+            Some(Capability::Read)
+        }
         "app_list_export_csv" if index == 1 => Some(Capability::Write),
-        "app_list_set_text_bytes" if index == 2 => Some(Capability::Read),
+        "app_list_export_csv_exact" if index == 1 || index == 2 => Some(Capability::Write),
+        "app_list_export_json_exact" if index == 1 || index == 2 => Some(Capability::Write),
+        "app_list_import_csv"
+        | "app_list_import_csv_if_revision"
+        | "app_list_import_json_exact"
+        | "app_list_import_json_exact_if_revision"
+            if index == 1 =>
+        {
+            Some(Capability::Read)
+        }
+        "app_list_set_text_bytes" | "app_list_set_text_bytes_if_revision" if index == 2 => {
+            Some(Capability::Read)
+        }
         "app_list_filter_text_ex_bytes" if index == 2 => Some(Capability::Read),
-        "app_table_set_cell_bytes" if index == 3 => Some(Capability::Read),
-        "app_table_set_cell_bytes_ex" if index == 3 => Some(Capability::Read),
+        "app_table_set_cell_bytes"
+        | "app_table_set_cell_bytes_ex"
+        | "app_table_set_cell_bytes_if_revision"
+            if index == 3 =>
+        {
+            Some(Capability::Read)
+        }
         "app_table_filter_text_ex_bytes" if index == 3 => Some(Capability::Read),
         "app_table_index_collect_int_range"
         | "app_table_index_collect_uint_range"
@@ -219,11 +328,24 @@ fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capa
             Some(Capability::Write)
         }
         "app_table_export_csv" if index == 1 => Some(Capability::Write),
-        "app_table_import_csv" if index == 1 => Some(Capability::Read),
+        "app_table_export_csv_exact" if index == 1 || index == 2 => Some(Capability::Write),
+        "app_table_export_json_exact" if index == 1 || index == 2 => Some(Capability::Write),
+        "app_table_import_csv"
+        | "app_table_import_csv_if_revision"
+        | "app_table_import_json_exact"
+        | "app_table_import_json_exact_if_revision"
+            if index == 1 =>
+        {
+            Some(Capability::Read)
+        }
         "app_table_read_cell" if index == 3 => Some(Capability::Write),
         "app_table_read_column_name" if index == 2 => Some(Capability::Write),
         "app_table_read_named_cell" if index == 3 => Some(Capability::Write),
-        "net_tcp_send" | "net_tcp_send_prefix" if index == 1 => Some(Capability::Read),
+        "net_tcp_send" | "net_tcp_send_prefix" | "net_tcp_send_all" | "net_tcp_send_all_prefix"
+            if index == 1 =>
+        {
+            Some(Capability::Read)
+        }
         "net_tcp_receive" if index == 1 => Some(Capability::Write),
         "net_reactor_submit_send_buffer" | "net_reactor_submit_send_buffer_prefix"
             if index == 2 =>
@@ -231,20 +353,43 @@ fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capa
             Some(Capability::Read)
         }
         "net_reactor_submit_receive_buffer" if index == 2 => Some(Capability::Write),
-        "net_tls_send" if index == 1 => Some(Capability::Read),
+        "net_tls_open_server_paths" if index == 1 || index == 3 => Some(Capability::Read),
+        "net_tls_send" | "net_tls_send_prefix" | "net_tls_send_all_prefix" if index == 1 => {
+            Some(Capability::Read)
+        }
         "net_tls_receive" if index == 1 => Some(Capability::Write),
-        "http_response_write" if index == 2 => Some(Capability::Read),
-        "http_response_write" if index == 3 => Some(Capability::Write),
+        "http_response_write" | "http_response_write_chunked" if index == 2 => {
+            Some(Capability::Read)
+        }
+        "http_response_write" | "http_response_write_chunked" if index == 3 => {
+            Some(Capability::Write)
+        }
+        "http_response_write_chunked_prefix" if index == 2 => Some(Capability::Read),
+        "http_response_write_chunked_prefix" if index == 4 => Some(Capability::Write),
+        "http_response_write_chunked_header" if index == 2 => Some(Capability::Write),
+        "http_response_write_chunk" if index == 0 => Some(Capability::Read),
+        "http_response_write_chunk" if index == 2 => Some(Capability::Write),
+        "http_response_write_chunk_prefix" if index == 0 => Some(Capability::Read),
+        "http_response_write_chunk_prefix" if index == 3 => Some(Capability::Write),
         "http_response_write_ex" if index == 2 => Some(Capability::Read),
         "http_response_write_ex" if index == 4 => Some(Capability::Write),
+        "http_response_write_prefix_ex" if index == 2 => Some(Capability::Read),
+        "http_response_write_prefix_ex" if index == 5 => Some(Capability::Write),
         "http_response_write_header" if index == 4 => Some(Capability::Read),
         "http_response_write_header" if index == 5 => Some(Capability::Write),
+        "http_response_write_header_prefix" if index == 4 => Some(Capability::Read),
+        "http_response_write_header_prefix" if index == 6 => Some(Capability::Write),
         "http_response_write_header_ex" if index == 4 => Some(Capability::Read),
         "http_response_write_header_ex" if index == 6 => Some(Capability::Write),
+        "http_session_receive_request" if index == 2 => Some(Capability::Write),
+        "http_session_send" if index == 1 => Some(Capability::Read),
+        "http_session_send_prefix" if index == 1 => Some(Capability::Read),
         "http_response_write_cookie" if index == 5 => Some(Capability::Read),
         "http_response_write_cookie" if index == 6 => Some(Capability::Write),
         "http_response_write_cookie_ex" if index == 5 => Some(Capability::Read),
         "http_response_write_cookie_ex" if index == 7 => Some(Capability::Write),
+        "http_response_write_cookie_policy" if index == 9 => Some(Capability::Read),
+        "http_response_write_cookie_policy" if index == 11 => Some(Capability::Write),
         "http_response_write_header_block" if index == 3 => Some(Capability::Read),
         "http_response_write_header_block" if index == 4 => Some(Capability::Write),
         "http_response_write_header_block_ex" if index == 3 => Some(Capability::Read),
@@ -257,6 +402,11 @@ fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capa
         "http_response_header_prefix" if index == 0 => Some(Capability::Read),
         "http_response_header_prefix" if index == 3 => Some(Capability::Write),
         "http_response_header_exact" => match index {
+            0 => Some(Capability::Read),
+            2 | 3 => Some(Capability::Write),
+            _ => None,
+        },
+        "http_request_header_exact" => match index {
             0 => Some(Capability::Read),
             2 | 3 => Some(Capability::Write),
             _ => None,
@@ -284,10 +434,20 @@ fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capa
         "http_request_write" if index == 4 => Some(Capability::Write),
         "http_request_write_prefix" if index == 3 => Some(Capability::Read),
         "http_request_write_prefix" if index == 5 => Some(Capability::Write),
+        "http_request_write_prefix_ex" if index == 2 || index == 3 => Some(Capability::Read),
+        "http_request_write_prefix_ex" if index == 6 => Some(Capability::Write),
         "http_request_write_header" if index == 5 => Some(Capability::Read),
         "http_request_write_header" if index == 6 => Some(Capability::Write),
+        "http_request_write_header_ex" if index == 6 => Some(Capability::Read),
+        "http_request_write_header_ex" if index == 7 => Some(Capability::Write),
+        "http_request_write_cookie" if index == 5 => Some(Capability::Read),
+        "http_request_write_cookie" if index == 6 => Some(Capability::Write),
+        "http_request_write_cookie_block" if index == 4 => Some(Capability::Read),
+        "http_request_write_cookie_block" if index == 5 => Some(Capability::Write),
         "http_request_write_header_block" if index == 4 => Some(Capability::Read),
         "http_request_write_header_block" if index == 5 => Some(Capability::Write),
+        "http_request_write_header_block_ex" if index == 5 => Some(Capability::Read),
+        "http_request_write_header_block_ex" if index == 6 => Some(Capability::Write),
         "http_request_append" if index == 0 => Some(Capability::Write),
         "http_request_append" if index == 2 => Some(Capability::Read),
         "http_request_is_complete" if index == 0 => Some(Capability::Read),
@@ -302,6 +462,21 @@ fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capa
         "http_request_method" | "http_request_target" | "http_request_body" => match index {
             0 => Some(Capability::Read),
             1 => Some(Capability::Write),
+            _ => None,
+        },
+        "http_request_target_decode_exact" => match index {
+            0 => Some(Capability::Read),
+            1 | 2 => Some(Capability::Write),
+            _ => None,
+        },
+        "http_request_body_exact" => match index {
+            0 => Some(Capability::Read),
+            1 | 2 => Some(Capability::Write),
+            _ => None,
+        },
+        "http_request_body_exact_prefix" => match index {
+            0 => Some(Capability::Read),
+            2 | 3 => Some(Capability::Write),
             _ => None,
         },
         "http_request_header" => match index {
@@ -319,6 +494,16 @@ fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capa
             2 | 3 => Some(Capability::Write),
             _ => None,
         },
+        "http_form_param_exact_prefix" => match index {
+            0 => Some(Capability::Read),
+            3 | 4 => Some(Capability::Write),
+            _ => None,
+        },
+        "http_multipart_part_exact_prefix" => match index {
+            0 => Some(Capability::Read),
+            3 | 4 => Some(Capability::Write),
+            _ => None,
+        },
         "http_route_match" if index == 0 => Some(Capability::Read),
         "http_route_match_prefix" if index == 0 => Some(Capability::Read),
         "http_router_add" | "http_router_add_exact" | "http_router_add_prefix" if index == 4 => {
@@ -328,6 +513,10 @@ fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capa
         "http_router_respond" if index == 1 => Some(Capability::Write),
         "http_router_respond_prefix" if index == 0 => Some(Capability::Read),
         "http_router_respond_prefix" if index == 2 => Some(Capability::Write),
+        "http_router_respond_chunked" if index == 0 => Some(Capability::Read),
+        "http_router_respond_chunked" if index == 1 => Some(Capability::Write),
+        "http_router_respond_chunked_prefix" if index == 0 => Some(Capability::Read),
+        "http_router_respond_chunked_prefix" if index == 2 => Some(Capability::Write),
         "json_object_read_string" => match index {
             0 => Some(Capability::Read),
             2 => Some(Capability::Write),
@@ -360,14 +549,28 @@ fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capa
             _ => None,
         },
         "ui_list_read_item" | "ui_app_list_read_item" if index == 2 => Some(Capability::Write),
+        "ui_list_read_item_exact" | "ui_app_list_read_item_exact" if index == 2 || index == 3 => {
+            Some(Capability::Write)
+        }
         "ui_table_read_cell" | "ui_app_table_read_cell" if index == 3 => Some(Capability::Write),
+        "ui_app_table_read_cell_exact" if index == 3 || index == 4 => Some(Capability::Write),
         "time_utc_parts" if index == 1 => Some(Capability::Write),
         "time_utc_offset_parts" if index == 2 => Some(Capability::Write),
         "app_scheduler_poll" if index == 1 => Some(Capability::Write),
+        "app_scheduler_poll_exact" if index == 1 || index == 2 => Some(Capability::Write),
+        "app_scheduler_next_due_exact" if index == 0 || index == 1 => Some(Capability::Write),
+        "app_scheduler_write_exact" if index == 0 || index == 1 => Some(Capability::Write),
+        "app_scheduler_load_exact" if index == 0 => Some(Capability::Read),
+        "ui_event_queue_poll_exact" if index == 0 || index == 1 => Some(Capability::Write),
+        "ui_event_queue_peek_exact" if index == 0 || index == 1 => Some(Capability::Write),
+        "ui_event_queue_poll_batch_exact" if index == 0 || index == 2 => Some(Capability::Write),
         "stdin_read" if index == 0 => Some(Capability::Write),
         "stdout_write" | "stderr_write" if index == 0 => Some(Capability::Read),
         "ui_input_read"
+        | "ui_app_input_read"
         | "ui_input_read_exact"
+        | "ui_input_read_exact_if_revision"
+        | "ui_state_text_read"
         | "file_read"
         | "file_read_text"
         | "process_arg_read"
@@ -385,9 +588,47 @@ fn borrowed_runtime_argument_capability(name: &str, index: usize) -> Option<Capa
         "file_read_exact" | "file_read_text_exact" if index == 1 || index == 2 => {
             Some(Capability::Write)
         }
-        "ui_input_read_exact" if index == 2 => Some(Capability::Write),
+        "ui_file_open_exact" | "ui_directory_open_exact" | "ui_file_save_exact" if index == 0 => {
+            Some(Capability::Read)
+        }
+        "ui_file_open_exact" | "ui_directory_open_exact" | "ui_file_save_exact"
+            if index == 1 || index == 2 =>
+        {
+            Some(Capability::Write)
+        }
+        "ui_file_open_extension_exact" if index <= 1 => Some(Capability::Read),
+        "ui_file_open_extension_exact" if index == 2 || index == 3 => Some(Capability::Write),
+        "ui_file_save_suggested_exact" if index <= 2 => Some(Capability::Read),
+        "ui_file_save_suggested_exact" if index == 3 || index == 4 => Some(Capability::Write),
+        "ui_file_save_extension_exact" if index <= 2 => Some(Capability::Read),
+        "ui_file_save_extension_exact" if index == 3 || index == 4 => Some(Capability::Write),
+        "ui_input_read_exact" | "ui_input_read_exact_if_revision" if index == 2 => {
+            Some(Capability::Write)
+        }
+        "ui_app_input_read_exact" | "ui_app_input_read_exact_if_revision"
+            if index == 1 || index == 2 =>
+        {
+            Some(Capability::Write)
+        }
         "file_read_at" if index == 2 => Some(Capability::Write),
+        "file_exists_path" if index == 0 => Some(Capability::Read),
+        "file_path_valid" if index == 0 => Some(Capability::Read),
+        "file_size_path" if index == 0 => Some(Capability::Read),
+        "file_mtime_unix_nanos_path" if index == 0 => Some(Capability::Read),
+        "file_flush_path" if index == 0 => Some(Capability::Read),
+        "file_lock_path" if index == 0 => Some(Capability::Read),
+        "file_lock_path_retry" if index == 0 => Some(Capability::Read),
+        "file_delete_path" if index == 0 => Some(Capability::Read),
+        "file_replace_atomic_paths" if index == 0 || index == 2 => Some(Capability::Read),
+        "file_read_at_path" if index == 0 => Some(Capability::Read),
+        "file_read_at_path" if index == 3 => Some(Capability::Write),
+        "file_write_prefix_path" if index == 0 || index == 2 => Some(Capability::Read),
+        "string_builder_append_bytes_prefix" if index == 0 => Some(Capability::Read),
+        "string_builder_append_bytes_prefix" if index == 2 => Some(Capability::Write),
         "directory_list_ex" if index == 1 || index == 2 => Some(Capability::Write),
+        "directory_list_ex_exact" if index == 1 || index == 2 || index == 3 || index == 4 => {
+            Some(Capability::Write)
+        }
         "string_length" if index == 0 => Some(Capability::Read),
         "string_equals" if index < 2 => Some(Capability::Read),
         "buffer_length" | "buffer_capacity" if index == 0 => Some(Capability::Read),
@@ -447,6 +688,8 @@ fn descriptor_runtime_argument(name: &str, index: usize) -> bool {
         (name, index),
         ("string_owned_append", 0)
             | ("string_owned_clear", 0)
+            | ("buffer_slice", 0)
+            | ("buffer_slice_write", 0)
             | ("buffer_length", 0)
             | ("buffer_capacity", 0)
             | ("buffer_clear", 0)
@@ -502,7 +745,9 @@ fn generic_buffer_element(
         *ok
     } else if matches!(
         name,
-        "buffer_clear_move"
+        "buffer_slice"
+            | "buffer_slice_write"
+            | "buffer_clear_move"
             | "buffer_clear_move_status"
             | "buffer_reserve"
             | "buffer_resize_move"
@@ -552,6 +797,8 @@ fn generic_buffer_runtime_parameters(
     if !matches!(
         name,
         "buffer_create"
+            | "buffer_slice"
+            | "buffer_slice_write"
             | "buffer_clear_move"
             | "buffer_clear_move_status"
             | "buffer_resize_move"
@@ -716,6 +963,8 @@ fn is_generic_buffer_builtin(name: &str) -> bool {
     matches!(
         name,
         "buffer_create"
+            | "buffer_slice"
+            | "buffer_slice_write"
             | "buffer_reserve"
             | "buffer_append"
             | "buffer_insert"
@@ -814,10 +1063,21 @@ fn canonical_external_result(
 ) -> SemanticTypeId {
     if matches!(name, "buffer_create" | "buffer_pop" | "buffer_remove_move")
         && let Some(TypeKind::Result { ok, error }) = types.kind(result).cloned()
-        && matches!(types.kind(ok), Some(TypeKind::Buffer(_)))
     {
-        let buffer = types.intern(TypeKind::Buffer(types.core().uint8));
-        return types.intern(TypeKind::Result { ok: buffer, error });
+        // These runtime calls return the same three-word descriptor-shaped
+        // result for every owning materialization.  A generic package
+        // template may still spell the success payload as `T` (not yet a
+        // concrete Buffer/OwnedString), so keep the external declaration
+        // opaque until the injected size/alignment arguments describe the
+        // materialized element.  Concrete callers already used this shape;
+        // the generic case now follows the same ABI without asking the JIR
+        // type lowerer to represent `GenericParameter`.
+        if matches!(name, "buffer_pop" | "buffer_remove_move")
+            || matches!(types.kind(ok), Some(TypeKind::Buffer(_)))
+        {
+            let buffer = types.intern(TypeKind::Buffer(types.core().uint8));
+            return types.intern(TypeKind::Result { ok: buffer, error });
+        }
     }
     result
 }
@@ -965,6 +1225,7 @@ fn collect_call_targets(
     mir: &MirModule,
     types: &mut TypeStore,
     local: &BTreeMap<SymbolId, FunctionId>,
+    local_function_count: usize,
 ) -> CallTargets {
     let mut targets = CallTargets {
         local: local.clone(),
@@ -984,7 +1245,7 @@ fn collect_call_targets(
                                 index,
                                 mir,
                                 types,
-                                mir.functions.len(),
+                                local_function_count,
                                 &mut targets,
                             );
                         }
@@ -993,7 +1254,7 @@ fn collect_call_targets(
                                 value,
                                 mir,
                                 types,
-                                mir.functions.len(),
+                                local_function_count,
                                 &mut targets,
                             );
                         }
@@ -1004,7 +1265,7 @@ fn collect_call_targets(
                                 value,
                                 mir,
                                 types,
-                                mir.functions.len(),
+                                local_function_count,
                                 &mut targets,
                             );
                         }
@@ -1020,11 +1281,17 @@ fn collect_call_targets(
             match &block.terminator {
                 MirTerminator::Switch { value, .. } | MirTerminator::Return { value, .. } => {
                     if let Some(value) = value {
-                        collect_operand_calls(value, mir, types, mir.functions.len(), &mut targets);
+                        collect_operand_calls(
+                            value,
+                            mir,
+                            types,
+                            local_function_count,
+                            &mut targets,
+                        );
                     }
                 }
                 MirTerminator::Match { value, .. } | MirTerminator::Propagate { value, .. } => {
-                    collect_operand_calls(value, mir, types, mir.functions.len(), &mut targets);
+                    collect_operand_calls(value, mir, types, local_function_count, &mut targets);
                 }
                 MirTerminator::Goto { .. } | MirTerminator::Unreachable { .. } => {}
             }
@@ -1049,9 +1316,11 @@ fn collect_operand_calls(
             {
                 let source_signature = source_function_signature(*symbol, callee.ty, types).filter(
                     |(parameters, result)| {
-                        !parameters
-                            .iter()
-                            .any(|parameter| semantic_type_contains_generic(types, *parameter))
+                        !is_generic_buffer_builtin(name)
+                            && name != "ui_event_queue_peek_exact"
+                            && !parameters
+                                .iter()
+                                .any(|parameter| semantic_type_contains_generic(types, *parameter))
                             && !semantic_type_contains_generic(types, *result)
                     },
                 );
@@ -1142,7 +1411,10 @@ fn collect_operand_calls(
                 && let Some(TypeKind::Function { parameters, result }) =
                     types.kind(operand.ty).cloned() =>
         {
-            let source_signature = source_function_signature(*symbol, operand.ty, types);
+            let source_signature = (!is_generic_buffer_builtin(name)
+                && name != "ui_event_queue_peek_exact")
+                .then(|| source_function_signature(*symbol, operand.ty, types))
+                .flatten();
             let (parameters, result) = if let Some((parameters, result)) = source_signature {
                 (parameters, result)
             } else {
@@ -1316,7 +1588,7 @@ struct CarrierDropBranchInfo {
 
 #[derive(Clone, Copy)]
 struct CarrierDropFieldInfo {
-    variant: u32,
+    variant: u64,
     offset: u64,
     depth: u32,
     leaf: SemanticTypeId,
@@ -1328,6 +1600,112 @@ struct RecordDropFieldInfo {
     offset: u64,
     depth: u32,
     leaf: SemanticTypeId,
+}
+
+fn pack_enum_carrier_field_variant(outer: u32, inner: Option<u32>) -> Option<u64> {
+    (outer < (1u32 << 30)).then_some(
+        ENUM_CARRIER_FIELD_NESTED_TAG_MARKER
+            | (u64::from(outer) << 32)
+            | u64::from(inner.unwrap_or(ENUM_CARRIER_FIELD_NO_INNER_TAG)),
+    )
+}
+
+fn pack_enum_carrier_field_path(outer: u32, tags: &[u32]) -> Option<u64> {
+    match tags {
+        [] => pack_enum_carrier_field_variant(outer, None),
+        [inner] => pack_enum_carrier_field_variant(outer, Some(*inner)),
+        [first, second]
+            if outer <= ENUM_CARRIER_FIELD_MULTI_TAG_MASK
+                && *first <= ENUM_CARRIER_FIELD_MULTI_TAG_MASK
+                && *second <= ENUM_CARRIER_FIELD_MULTI_TAG_MASK =>
+        {
+            Some(
+                ENUM_CARRIER_FIELD_MULTI_TAG_MARKER
+                    | (u64::from(outer) << 41)
+                    | (u64::from(*first) << 21)
+                    | (u64::from(*second) << 1),
+            )
+        }
+        tags if tags.len() >= 2 && tags.len() < ENUM_CARRIER_FIELD_PATH_MAX_TAGS => {
+            let tag_count = tags.len() + 1;
+            let mut path = ENUM_CARRIER_FIELD_PATH_MARKER_BASE | ((tag_count as u64) << 56);
+            if outer > u8::MAX as u32 {
+                return None;
+            }
+            path |= u64::from(outer) << (8 * (tag_count - 1));
+            for (index, tag) in tags.iter().copied().enumerate() {
+                if tag > u8::MAX as u32 {
+                    return None;
+                }
+                let shift = 8 * (tag_count - index - 2);
+                path |= u64::from(tag) << shift;
+            }
+            Some(path)
+        }
+        _ => None,
+    }
+}
+
+fn pack_record_named_enum_field_variant(variant: u32, payload_offset: u64) -> Option<u64> {
+    if payload_offset == 0 || !payload_offset.is_multiple_of(8) {
+        return None;
+    }
+    let distance_words = payload_offset / 8;
+    (distance_words <= RECORD_FIELD_NAMED_ENUM_TAG_DISTANCE_MASK)
+        .then_some(RECORD_FIELD_NAMED_ENUM_TAG_MARKER | (distance_words << 32) | u64::from(variant))
+}
+
+fn unpack_enum_carrier_field_path(variant: u64) -> Option<Vec<u32>> {
+    let path_prefix_mask = 0xf0u64 << 56;
+    if variant & path_prefix_mask == ENUM_CARRIER_FIELD_PATH_MARKER_BASE {
+        let tag_count = ((variant >> 56) & 0x0f) as usize;
+        if !(2..=ENUM_CARRIER_FIELD_PATH_MAX_TAGS).contains(&tag_count) {
+            return None;
+        }
+        return Some(
+            (0..tag_count)
+                .map(|index| ((variant >> (8 * (tag_count - index - 1))) & 0xff) as u32)
+                .collect(),
+        );
+    }
+    if variant & (3u64 << 62) == ENUM_CARRIER_FIELD_MULTI_TAG_MARKER {
+        let mask = u64::from(ENUM_CARRIER_FIELD_MULTI_TAG_MASK);
+        return Some(vec![
+            ((variant >> 41) & mask) as u32,
+            ((variant >> 21) & mask) as u32,
+            ((variant >> 1) & mask) as u32,
+        ]);
+    }
+    if variant & ENUM_CARRIER_FIELD_NESTED_TAG_MARKER != 0 {
+        let outer = ((variant >> 32) & 0x7fff_ffff) as u32;
+        let inner = (variant & u64::from(u32::MAX)) as u32;
+        return if inner == ENUM_CARRIER_FIELD_NO_INNER_TAG {
+            Some(vec![outer])
+        } else {
+            Some(vec![outer, inner])
+        };
+    }
+    None
+}
+
+fn pack_record_named_enum_field_path(tags: &[u32], payload_offset: u64) -> Option<u64> {
+    let [variant] = tags else {
+        if !(2..=ENUM_CARRIER_FIELD_PATH_MAX_TAGS).contains(&tags.len())
+            || payload_offset < (tags.len() as u64).checked_mul(8)?
+        {
+            return None;
+        }
+        let mut path = ENUM_CARRIER_FIELD_PATH_MARKER_BASE | ((tags.len() as u64) << 56);
+        for (index, tag) in tags.iter().copied().enumerate() {
+            if tag > u8::MAX as u32 {
+                return None;
+            }
+            let shift = 8 * (tags.len() - index - 1);
+            path |= u64::from(tag) << shift;
+        }
+        return Some(path);
+    };
+    pack_record_named_enum_field_variant(*variant, payload_offset)
 }
 
 struct TypeTable {
@@ -1608,18 +1986,228 @@ impl TypeTable {
                 let field = substitution.apply(&mut self.semantic, field).ok()?;
                 let (field_size, field_alignment) = self.semantic_layout(field)?;
                 field_offset = align_layout(field_offset, field_alignment)?;
-                if let Some((depth, leaf)) = self.carrier_owning_leaf_depth(field) {
-                    fields.push(CarrierDropFieldInfo {
-                        variant,
-                        offset: payload_offset.checked_add(field_offset)?,
-                        depth,
-                        leaf,
-                    });
-                }
+                let mut carrier_tags = Vec::new();
+                self.collect_enum_carrier_drop_value_fields(
+                    field,
+                    payload_offset.checked_add(field_offset)?,
+                    variant,
+                    &mut carrier_tags,
+                    &mut fields,
+                )?;
                 field_offset = field_offset.checked_add(field_size)?;
             }
         }
         (!fields.is_empty()).then_some(fields)
+    }
+
+    /// Flattens direct owning descriptors and bounded carrier paths nested in
+    /// fixed arrays of one named enum variant. One carrier level uses the
+    /// legacy packed discriminant; two levels use the compact three-tag
+    /// encoding without changing the five-word ABI.
+    fn collect_enum_carrier_drop_value_fields(
+        &mut self,
+        value_ty: SemanticTypeId,
+        base_offset: u64,
+        variant: u32,
+        carrier_tags: &mut Vec<u32>,
+        fields: &mut Vec<CarrierDropFieldInfo>,
+    ) -> Option<()> {
+        if let Some((depth, leaf)) = self.carrier_owning_leaf_depth(value_ty) {
+            let variant = pack_enum_carrier_field_path(variant, carrier_tags)?;
+            fields.push(CarrierDropFieldInfo {
+                variant,
+                offset: base_offset,
+                depth,
+                leaf,
+            });
+            return Some(());
+        }
+        match self.semantic.kind(value_ty).cloned() {
+            Some(TypeKind::Option(inner)) => {
+                let payload_offset = align_layout(4, self.semantic_layout(value_ty)?.1)?;
+                carrier_tags.push(1);
+                self.collect_enum_carrier_drop_value_fields(
+                    inner,
+                    base_offset.checked_add(payload_offset)?,
+                    variant,
+                    carrier_tags,
+                    fields,
+                )?;
+                carrier_tags.pop();
+            }
+            Some(TypeKind::Result { ok, error }) => {
+                let payload_offset = align_layout(4, self.semantic_layout(value_ty)?.1)?;
+                carrier_tags.push(0);
+                self.collect_enum_carrier_drop_value_fields(
+                    error,
+                    base_offset.checked_add(payload_offset)?,
+                    variant,
+                    carrier_tags,
+                    fields,
+                )?;
+                carrier_tags.pop();
+                carrier_tags.push(1);
+                self.collect_enum_carrier_drop_value_fields(
+                    ok,
+                    base_offset.checked_add(payload_offset)?,
+                    variant,
+                    carrier_tags,
+                    fields,
+                )?;
+                carrier_tags.pop();
+            }
+            Some(TypeKind::Array { element, length }) => {
+                let (element_size, _) = self.semantic_layout(element)?;
+                for index in 0..length {
+                    let offset = base_offset.checked_add(index.checked_mul(element_size)?)?;
+                    self.collect_enum_carrier_drop_value_fields(
+                        element,
+                        offset,
+                        variant,
+                        carrier_tags,
+                        fields,
+                    )?;
+                }
+            }
+            Some(TypeKind::Nominal { constructor, .. })
+                if matches!(
+                    self.layouts.get(&constructor).map(|layout| &layout.kind),
+                    Some(NominalLayoutKind::Enum { .. })
+                ) =>
+            {
+                // Nested C-layout enums are inline values. Add their
+                // discriminant to the same bounded tag path as carrier tags,
+                // then flatten their owning leaves into the outer field table.
+                self.collect_enum_carrier_nested_enum_drop_fields(
+                    value_ty,
+                    base_offset,
+                    variant,
+                    carrier_tags,
+                    fields,
+                )?;
+            }
+            Some(TypeKind::Nominal { constructor, .. })
+                if matches!(
+                    self.layouts.get(&constructor).map(|layout| &layout.kind),
+                    Some(NominalLayoutKind::Record { .. })
+                ) =>
+            {
+                // A named C-layout record inside an enum variant is inline
+                // storage. Flatten its owning descriptors into the same
+                // outer-variant/tag path used by direct enum fields so the
+                // runtime can select the outer variant and any nested
+                // Option/Result carrier without hidden metadata.
+                self.collect_enum_carrier_record_drop_fields(
+                    value_ty,
+                    base_offset,
+                    variant,
+                    carrier_tags,
+                    fields,
+                )?;
+            }
+            _ => {}
+        }
+        Some(())
+    }
+
+    fn collect_enum_carrier_nested_enum_drop_fields(
+        &mut self,
+        enum_ty: SemanticTypeId,
+        base_offset: u64,
+        outer_variant: u32,
+        carrier_tags: &mut Vec<u32>,
+        fields: &mut Vec<CarrierDropFieldInfo>,
+    ) -> Option<()> {
+        let TypeKind::Nominal {
+            constructor,
+            arguments,
+        } = self.semantic.kind(enum_ty).cloned()?
+        else {
+            return None;
+        };
+        let layout = self.layouts.get(&constructor)?.clone();
+        let NominalLayoutKind::Enum { variants } = layout.kind else {
+            return None;
+        };
+        let mut substitution = Substitution::new();
+        for (parameter, argument) in layout
+            .generic_parameters
+            .iter()
+            .zip(arguments.iter().copied())
+        {
+            substitution.insert(*parameter, argument);
+        }
+        let payload_alignment = self.semantic_layout(enum_ty)?.1;
+        let payload_offset = align_layout(4, payload_alignment)?;
+        for (nested_variant_index, variant_layout) in variants.into_iter().enumerate() {
+            let nested_variant = u32::try_from(nested_variant_index).ok()?;
+            carrier_tags.push(nested_variant);
+            let mut field_offset = 0u64;
+            for field in variant_layout.fields {
+                let field = substitution.apply(&mut self.semantic, field).ok()?;
+                let (field_size, field_alignment) = self.semantic_layout(field)?;
+                field_offset = align_layout(field_offset, field_alignment)?;
+                self.collect_enum_carrier_drop_value_fields(
+                    field,
+                    base_offset
+                        .checked_add(payload_offset)?
+                        .checked_add(field_offset)?,
+                    outer_variant,
+                    carrier_tags,
+                    fields,
+                )?;
+                field_offset = field_offset.checked_add(field_size)?;
+            }
+            carrier_tags.pop();
+        }
+        Some(())
+    }
+
+    fn collect_enum_carrier_record_drop_fields(
+        &mut self,
+        record_ty: SemanticTypeId,
+        base_offset: u64,
+        variant: u32,
+        carrier_tags: &mut Vec<u32>,
+        fields: &mut Vec<CarrierDropFieldInfo>,
+    ) -> Option<()> {
+        let TypeKind::Nominal {
+            constructor,
+            arguments,
+        } = self.semantic.kind(record_ty).cloned()?
+        else {
+            return None;
+        };
+        let layout = self.layouts.get(&constructor)?.clone();
+        let NominalLayoutKind::Record {
+            fields: record_fields,
+        } = layout.kind
+        else {
+            return None;
+        };
+        let mut substitution = Substitution::new();
+        for (parameter, argument) in layout
+            .generic_parameters
+            .iter()
+            .zip(arguments.iter().copied())
+        {
+            substitution.insert(*parameter, argument);
+        }
+        let mut field_offset = 0u64;
+        for field in record_fields {
+            let field_ty = substitution.apply(&mut self.semantic, field.ty).ok()?;
+            let (field_size, field_alignment) = self.semantic_layout(field_ty)?;
+            field_offset = align_layout(field_offset, field_alignment)?;
+            self.collect_enum_carrier_drop_value_fields(
+                field_ty,
+                base_offset.checked_add(field_offset)?,
+                variant,
+                carrier_tags,
+                fields,
+            )?;
+            field_offset = field_offset.checked_add(field_size)?;
+        }
+        Some(())
     }
 
     fn record_drop_fields_info(
@@ -1678,7 +2266,7 @@ impl TypeTable {
                 fields
                     .into_iter()
                     .map(|field| RecordDropFieldInfo {
-                        payload_variant: u64::from(field.variant),
+                        payload_variant: field.variant,
                         offset: field.offset,
                         depth: field.depth,
                         leaf: field.leaf,
@@ -1724,6 +2312,28 @@ impl TypeTable {
         let (depth, record_ty) = self.buffer_chain_leaf_depth(outer_element)?;
         let fields = self.buffer_record_drop_fields_info(record_ty)?;
         Some((depth, record_ty, fields))
+    }
+
+    /// Returns metadata for a nested Buffer remove-drop whose final leaf is
+    /// copy-safe. Owning leaves with their own field-table/string/carrier
+    /// cleanup are selected by the more specific lowering paths instead.
+    fn nested_buffer_copy_leaf_remove_drop_info(
+        &mut self,
+        outer_element: SemanticTypeId,
+    ) -> Option<(u32, SemanticTypeId)> {
+        let (depth, leaf) = self.buffer_chain_leaf_depth(outer_element)?;
+        (!self.buffer_element_requires_move(leaf)).then_some((depth, leaf))
+    }
+
+    /// Returns metadata for a nested Buffer remove-drop whose final leaf is an
+    /// `OwnedString`. This path must use string-aware cleanup rather than the
+    /// generic nested Buffer destructor, because each leaf owns byte storage.
+    fn nested_buffer_owned_string_remove_drop_info(
+        &mut self,
+        outer_element: SemanticTypeId,
+    ) -> Option<(u32, SemanticTypeId)> {
+        let (depth, leaf) = self.buffer_chain_leaf_depth(outer_element)?;
+        matches!(self.semantic.kind(leaf), Some(TypeKind::OwnedString)).then_some((depth, leaf))
     }
 
     fn nested_record_drop_fields_info(
@@ -1834,6 +2444,30 @@ impl TypeTable {
                     offset: base_offset.checked_add(payload_offset)?,
                     depth: alternate.depth,
                     leaf: alternate.leaf,
+                });
+            }
+            return Some(());
+        }
+        if matches!(
+            self.semantic.kind(value_ty),
+            Some(TypeKind::Nominal { constructor, .. })
+                if matches!(
+                    self.layouts.get(constructor).map(|layout| &layout.kind),
+                    Some(NominalLayoutKind::Enum { .. })
+                )
+        ) {
+            // A named enum embedded in a record uses the same bounded tag
+            // paths as enum carriers. Convert its local enum offsets to
+            // record-relative offsets while retaining every nested tag.
+            let enum_fields = self.enum_carrier_drop_fields_info(value_ty)?;
+            for field in enum_fields {
+                let tags = unpack_enum_carrier_field_path(field.variant)?;
+                let marker = pack_record_named_enum_field_path(&tags, field.offset)?;
+                owning_fields.push(RecordDropFieldInfo {
+                    payload_variant: marker,
+                    offset: base_offset.checked_add(field.offset)?,
+                    depth: field.depth,
+                    leaf: field.leaf,
                 });
             }
             return Some(());
@@ -2044,6 +2678,16 @@ impl TypeTable {
     ) -> Result<TypeId, LowerError> {
         let pointee = match self.semantic.kind(inner).cloned() {
             Some(TypeKind::Buffer(element) | TypeKind::Slice(element)) => {
+                // A generic helper that only traverses `.indices` must still
+                // lower its borrowed descriptor before monomorphization. Its
+                // element layout is intentionally opaque; value reads/writes
+                // remain unsupported until a concrete instantiation is
+                // materialized.
+                let element = if semantic_type_contains_generic(&self.semantic, element) {
+                    self.semantic.core().uint8
+                } else {
+                    element
+                };
                 return self.lower_buffer(element, AddressSpace::Generic, false, span);
             }
             Some(TypeKind::String) => return self.lower(inner, span),
@@ -2090,7 +2734,14 @@ impl TypeTable {
                 span,
                 message: format!("missing nominal layout for {constructor:?}"),
             })?;
-        let identity = constructor.fingerprint().as_u64();
+        // A generic nominal declaration has one source constructor but each
+        // concrete instantiation is a distinct nominal type.  The old
+        // constructor-only identity made `Row<Int32>` and
+        // `Row<OwnedString>` collide when their lowered physical fields were
+        // both opaque owning Buffer descriptors.  Keep the non-generic
+        // identity stable and derive a deterministic monomorphization
+        // identity for concrete generic arguments.
+        let identity = self.nominal_identity(constructor, arguments, span)?;
         let placeholder = match layout.kind {
             NominalLayoutKind::Record { .. } => Type::NominalStruct {
                 identity,
@@ -2115,6 +2766,35 @@ impl TypeTable {
                 Err(error)
             }
         }
+    }
+
+    fn nominal_identity(
+        &self,
+        constructor: NominalTypeId,
+        arguments: &[SemanticTypeId],
+        span: Option<Span>,
+    ) -> Result<u64, LowerError> {
+        if arguments.is_empty() {
+            return Ok(constructor.fingerprint().as_u64());
+        }
+        let fingerprints = arguments
+            .iter()
+            .map(|argument| {
+                self.semantic
+                    .stable_fingerprint(*argument)
+                    .map_err(|error| LowerError {
+                        span,
+                        message: format!(
+                            "cannot derive concrete nominal argument fingerprint: {error:?}"
+                        ),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(
+            MonomorphizationKey::new(constructor.fingerprint(), &fingerprints)
+                .fingerprint()
+                .as_u64(),
+        )
     }
 
     fn build_nominal(
@@ -2157,7 +2837,7 @@ impl TypeTable {
                     .map(|field| lower_field(field.ty))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(Type::NominalStruct {
-                    identity: constructor.fingerprint().as_u64(),
+                    identity: self.nominal_identity(constructor, arguments, span)?,
                     fields,
                 })
             }
@@ -2173,7 +2853,7 @@ impl TypeTable {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(Type::NominalEnum {
-                    identity: constructor.fingerprint().as_u64(),
+                    identity: self.nominal_identity(constructor, arguments, span)?,
                     variants,
                 })
             }
@@ -2628,9 +3308,13 @@ impl<'a, 'types> FunctionLowerer<'a, 'types> {
             MirStatement::Borrow {
                 destination,
                 source,
+                preserve_value,
                 span,
                 ..
             } => {
+                if *preserve_value {
+                    return;
+                }
                 let Some(destination_local) = self.source.locals.get(destination.index()) else {
                     self.errors
                         .push(self.error(Some(*span), "borrow destination local does not exist"));
@@ -3007,7 +3691,7 @@ impl<'a, 'types> FunctionLowerer<'a, 'types> {
                             || fields.iter().any(|field| {
                                 field.offset != payload_offset
                                     || !branches.iter().any(|branch| {
-                                        branch.variant == field.variant
+                                        u64::from(branch.variant) == field.variant
                                             && branch.depth == field.depth
                                             && branch.leaf == field.leaf
                                     })
@@ -3052,7 +3736,7 @@ impl<'a, 'types> FunctionLowerer<'a, 'types> {
                                     || fields.iter().any(|field| {
                                         field.offset != payload_offset
                                             || !branches.iter().any(|branch| {
-                                                branch.variant == field.variant
+                                                u64::from(branch.variant) == field.variant
                                                     && branch.depth == field.depth
                                                     && branch.leaf == field.leaf
                                             })
@@ -3158,7 +3842,7 @@ impl<'a, 'types> FunctionLowerer<'a, 'types> {
                             || fields.iter().any(|field| {
                                 field.offset != payload_offset
                                     || !branches.iter().any(|branch| {
-                                        branch.variant == field.variant
+                                        u64::from(branch.variant) == field.variant
                                             && branch.depth == field.depth
                                             && branch.leaf == field.leaf
                                     })
@@ -3198,7 +3882,7 @@ impl<'a, 'types> FunctionLowerer<'a, 'types> {
                                     || fields.iter().any(|field| {
                                         field.offset != payload_offset
                                             || !branches.iter().any(|branch| {
-                                                branch.variant == field.variant
+                                                u64::from(branch.variant) == field.variant
                                                     && branch.depth == field.depth
                                                     && branch.leaf == field.leaf
                                             })
@@ -4002,11 +4686,16 @@ impl<'a, 'types> FunctionLowerer<'a, 'types> {
                         .and_then(|symbol| self.call_targets.local.get(&symbol).copied())
                         .or_else(|| {
                             {
-                                let source_signature = source_function_signature(
-                                    *symbol,
-                                    callee.ty,
-                                    &self.type_table.semantic,
-                                );
+                                let source_signature = (!is_generic_buffer_builtin(name)
+                                    && name != "ui_event_queue_peek_exact")
+                                    .then(|| {
+                                        source_function_signature(
+                                            *symbol,
+                                            callee.ty,
+                                            &self.type_table.semantic,
+                                        )
+                                    })
+                                    .flatten();
                                 let (parameters, result) = if let Some((parameters, result)) =
                                     source_signature
                                 {
@@ -4116,11 +4805,40 @@ impl<'a, 'types> FunctionLowerer<'a, 'types> {
                                     .unwrap_or(Capability::Write),
                                 inner,
                             });
-                            lowered_arguments.push(self.lower_descriptor_call_argument(
-                                argument,
-                                Some(expected),
-                                instructions,
-                            )?);
+                            let read_buffer_view = name == "buffer_slice"
+                                && matches!(
+                                    self.type_table.semantic.kind(expected),
+                                    Some(TypeKind::Capability {
+                                        capability: Capability::Read,
+                                        inner,
+                                    }) if matches!(
+                                        self.type_table.semantic.kind(*inner),
+                                        Some(TypeKind::Buffer(_))
+                                    )
+                                )
+                                && !matches!(
+                                    self.type_table.semantic.kind(argument.ty),
+                                    Some(TypeKind::Capability {
+                                        capability: Capability::Write,
+                                        inner,
+                                    }) if matches!(
+                                        self.type_table.semantic.kind(*inner),
+                                        Some(TypeKind::Buffer(_))
+                                    )
+                                );
+                            lowered_arguments.push(if read_buffer_view {
+                                self.lower_read_buffer_descriptor_call_argument(
+                                    argument,
+                                    Some(expected),
+                                    instructions,
+                                )?
+                            } else {
+                                self.lower_descriptor_call_argument(
+                                    argument,
+                                    Some(expected),
+                                    instructions,
+                                )?
+                            });
                             continue;
                         }
                         if is_borrowed_runtime_argument(name, index) {
@@ -4338,9 +5056,57 @@ impl<'a, 'types> FunctionLowerer<'a, 'types> {
                         } else {
                             None
                         };
+                    let nested_buffer_remove_drop =
+                        if matches!(name, "buffer_remove_drop" | "buffer_remove_drop_status") {
+                            generic_buffer_element(
+                                name,
+                                operand.ty,
+                                arguments,
+                                &self.type_table.semantic,
+                            )
+                            .and_then(|outer_element| {
+                                let (depth, leaf) = self
+                                    .type_table
+                                    .nested_buffer_copy_leaf_remove_drop_info(outer_element)?;
+                                let element = self
+                                    .type_table
+                                    .lower(outer_element, Some(operand.span))
+                                    .ok()?;
+                                let leaf_element =
+                                    self.type_table.lower(leaf, Some(operand.span)).ok()?;
+                                Some((element, leaf_element, depth))
+                            })
+                        } else {
+                            None
+                        };
+                    let nested_owned_string_remove_drop =
+                        if matches!(name, "buffer_remove_drop" | "buffer_remove_drop_status") {
+                            generic_buffer_element(
+                                name,
+                                operand.ty,
+                                arguments,
+                                &self.type_table.semantic,
+                            )
+                            .and_then(|outer_element| {
+                                let (depth, string_ty) = self
+                                    .type_table
+                                    .nested_buffer_owned_string_remove_drop_info(outer_element)?;
+                                let element = self
+                                    .type_table
+                                    .lower(outer_element, Some(operand.span))
+                                    .ok()?;
+                                let string_element =
+                                    self.type_table.lower(string_ty, Some(operand.span)).ok()?;
+                                Some((element, string_element, depth))
+                            })
+                        } else {
+                            None
+                        };
                     if matches!(
                         name,
                         "buffer_create"
+                            | "buffer_slice"
+                            | "buffer_slice_write"
                             | "buffer_clear_move"
                             | "buffer_clear_move_status"
                             | "buffer_reserve"
@@ -4368,6 +5134,33 @@ impl<'a, 'types> FunctionLowerer<'a, 'types> {
                             | "buffer_append_move"
                             | "buffer_append_move_status"
                     ) {
+                        if matches!(
+                            name,
+                            "buffer_pop_move_into"
+                                | "buffer_pop_move_into_status"
+                                | "buffer_remove_move_into"
+                                | "buffer_remove_move_into_status"
+                        ) {
+                            let Some(element) = generic_buffer_element(
+                                name,
+                                operand.ty,
+                                arguments,
+                                &self.type_table.semantic,
+                            ) else {
+                                self.errors.push(self.error(
+                                    Some(operand.span),
+                                    "move-into Buffer call has no materialized element type",
+                                ));
+                                return None;
+                            };
+                            if !self.type_table.buffer_element_requires_move(element) {
+                                self.errors.push(self.error(
+                                    Some(operand.span),
+                                    "move-into Buffer call requires a move-safe owning Buffer element",
+                                ));
+                                return None;
+                            }
+                        }
                         let (element_size, element_alignment) =
                             generic_buffer_layout(name, operand.ty, arguments, self.type_table)
                                 .ok_or_else(|| {
@@ -4488,12 +5281,20 @@ impl<'a, 'types> FunctionLowerer<'a, 'types> {
                             ));
                             return None;
                         };
-                        let Some(new_length) = lowered_arguments.get(1).copied() else {
-                            self.errors.push(self.error(
-                                Some(operand.span),
-                                "nested owned string resize move is missing its length argument",
-                            ));
-                            return None;
+                        let new_length = if matches!(
+                            name,
+                            "buffer_clear_move" | "buffer_clear_move_status"
+                        ) {
+                            self.lower_layout_constant(0, operand.span, instructions)?
+                        } else {
+                            let Some(new_length) = lowered_arguments.get(1).copied() else {
+                                self.errors.push(self.error(
+                                        Some(operand.span),
+                                        "nested owned string resize move is missing its length argument",
+                                    ));
+                                return None;
+                            };
+                            new_length
                         };
                         let instruction = InstructionKind::BufferResizeMoveNestedOwnedString {
                             descriptor,
@@ -4672,6 +5473,85 @@ impl<'a, 'types> FunctionLowerer<'a, 'types> {
                             element,
                             record_element,
                             fields,
+                            depth,
+                            status_result: name.ends_with("_status"),
+                        };
+                        if self.type_table.is_unit(ty) {
+                            instructions.push(Instruction {
+                                result: None,
+                                kind: instruction,
+                                span: Some(operand.span),
+                            });
+                            return Some(None);
+                        }
+                        let value = self.new_value();
+                        instructions.push(Instruction {
+                            result: Some(TypedValue { value, ty }),
+                            kind: instruction,
+                            span: Some(operand.span),
+                        });
+                        return Some(Some(value));
+                    }
+                    if let Some((element, leaf_element, depth)) = nested_buffer_remove_drop {
+                        let Some(descriptor) = lowered_arguments.first().copied() else {
+                            self.errors.push(self.error(
+                                Some(operand.span),
+                                "nested buffer remove drop is missing its descriptor argument",
+                            ));
+                            return None;
+                        };
+                        let Some(index) = lowered_arguments.get(1).copied() else {
+                            self.errors.push(self.error(
+                                Some(operand.span),
+                                "nested buffer remove drop is missing its index argument",
+                            ));
+                            return None;
+                        };
+                        let instruction = InstructionKind::BufferRemoveDropNestedBuffer {
+                            descriptor,
+                            index,
+                            element,
+                            leaf_element,
+                            depth,
+                            status_result: name.ends_with("_status"),
+                        };
+                        if self.type_table.is_unit(ty) {
+                            instructions.push(Instruction {
+                                result: None,
+                                kind: instruction,
+                                span: Some(operand.span),
+                            });
+                            return Some(None);
+                        }
+                        let value = self.new_value();
+                        instructions.push(Instruction {
+                            result: Some(TypedValue { value, ty }),
+                            kind: instruction,
+                            span: Some(operand.span),
+                        });
+                        return Some(Some(value));
+                    }
+                    if let Some((element, string_element, depth)) = nested_owned_string_remove_drop
+                    {
+                        let Some(descriptor) = lowered_arguments.first().copied() else {
+                            self.errors.push(self.error(
+                                Some(operand.span),
+                                "nested owned string remove drop is missing its descriptor argument",
+                            ));
+                            return None;
+                        };
+                        let Some(index) = lowered_arguments.get(1).copied() else {
+                            self.errors.push(self.error(
+                                Some(operand.span),
+                                "nested owned string remove drop is missing its index argument",
+                            ));
+                            return None;
+                        };
+                        let instruction = InstructionKind::BufferRemoveDropNestedOwnedString {
+                            descriptor,
+                            index,
+                            element,
+                            string_element,
                             depth,
                             status_result: name.ends_with("_status"),
                         };
@@ -5735,6 +6615,169 @@ impl<'a, 'types> FunctionLowerer<'a, 'types> {
             kind: InstructionKind::Cast {
                 op: crate::CastOp::PointerCast,
                 value: source_pointer,
+                target,
+            },
+            span: Some(argument.span),
+        });
+        Some(value)
+    }
+
+    /// Adapts a source-level `read Buffer<T>` view to the full native Buffer
+    /// descriptor expected by generic runtime helpers such as `buffer_slice`.
+    /// Read capabilities intentionally use a two-word `{data, length}` view;
+    /// the C helper also validates the capacity word, so pass a bounded
+    /// temporary descriptor whose capacity equals the readable length. This
+    /// keeps the caller read-only and prevents the callee from observing
+    /// adjacent stack memory as a capacity.
+    fn lower_read_buffer_descriptor_call_argument(
+        &mut self,
+        argument: &MirOperand,
+        expected: Option<SemanticTypeId>,
+        instructions: &mut Vec<Instruction>,
+    ) -> Option<ValueId> {
+        let Some(TypeKind::Capability {
+            capability: Capability::Read,
+            inner,
+        }) = expected.and_then(|ty| self.type_table.semantic.kind(ty).cloned())
+        else {
+            self.errors.push(self.error(
+                Some(argument.span),
+                "read Buffer descriptor adaptation requires a read capability",
+            ));
+            return None;
+        };
+        if !matches!(
+            self.type_table.semantic.kind(inner),
+            Some(TypeKind::Buffer(_))
+        ) {
+            self.errors.push(self.error(
+                Some(argument.span),
+                "read Buffer descriptor adaptation requires a Buffer element",
+            ));
+            return None;
+        }
+        let Some((place, dynamic_indices)) = self.operand_place_with_indices(argument) else {
+            self.errors.push(self.error(
+                Some(argument.span),
+                "read Buffer descriptor adaptation requires an addressable source",
+            ));
+            return None;
+        };
+        let view = self.lower_borrow_from_place(
+            &place,
+            &dynamic_indices,
+            inner,
+            instructions,
+            argument.span,
+        )?;
+        let view_ty = self
+            .type_table
+            .lower_borrow_capability(inner, false, Some(argument.span))
+            .ok()?;
+        let view_fields = match self.type_table.types.get(view_ty.index()) {
+            Some(Type::Struct { fields }) if fields.len() >= 2 => fields.clone(),
+            _ => {
+                self.errors.push(self.error(
+                    Some(argument.span),
+                    "read Buffer view has no data/length descriptor",
+                ));
+                return None;
+            }
+        };
+        let data = self.new_value();
+        instructions.push(Instruction {
+            result: Some(TypedValue {
+                value: data,
+                ty: view_fields[0],
+            }),
+            kind: InstructionKind::ExtractValue {
+                aggregate: view,
+                index: 0,
+            },
+            span: Some(argument.span),
+        });
+        let length = self.new_value();
+        instructions.push(Instruction {
+            result: Some(TypedValue {
+                value: length,
+                ty: view_fields[1],
+            }),
+            kind: InstructionKind::ExtractValue {
+                aggregate: view,
+                index: 1,
+            },
+            span: Some(argument.span),
+        });
+        let pointee = self.type_table.lower(inner, Some(argument.span)).ok()?;
+        let full_fields = match self.type_table.types.get(pointee.index()) {
+            Some(Type::Struct { fields }) if fields.len() >= 3 => fields.clone(),
+            _ => {
+                self.errors.push(self.error(
+                    Some(argument.span),
+                    "Buffer descriptor has no data/length/capacity layout",
+                ));
+                return None;
+            }
+        };
+        let data = if full_fields[0] == view_fields[0] {
+            data
+        } else {
+            let cast = self.new_value();
+            instructions.push(Instruction {
+                result: Some(TypedValue {
+                    value: cast,
+                    ty: full_fields[0],
+                }),
+                kind: InstructionKind::Cast {
+                    op: CastOp::PointerCast,
+                    value: data,
+                    target: full_fields[0],
+                },
+                span: Some(argument.span),
+            });
+            cast
+        };
+        let descriptor = self.new_value();
+        instructions.push(Instruction {
+            result: Some(TypedValue {
+                value: descriptor,
+                ty: pointee,
+            }),
+            kind: InstructionKind::Aggregate {
+                elements: vec![data, length, length],
+            },
+            span: Some(argument.span),
+        });
+        let stack_pointer_ty = self.type_table.stack_pointer(pointee);
+        let stack_pointer = self.new_value();
+        instructions.push(Instruction {
+            result: Some(TypedValue {
+                value: stack_pointer,
+                ty: stack_pointer_ty,
+            }),
+            kind: InstructionKind::StackAlloc {
+                ty: pointee,
+                count: None,
+            },
+            span: Some(argument.span),
+        });
+        instructions.push(Instruction {
+            result: None,
+            kind: InstructionKind::Store {
+                pointer: stack_pointer,
+                value: descriptor,
+                alignment: 1,
+                volatile: false,
+            },
+            span: Some(argument.span),
+        });
+        let target = self.type_table.pointer(pointee, AddressSpace::Generic);
+        let value = self.new_value();
+        instructions.push(Instruction {
+            result: Some(TypedValue { value, ty: target }),
+            kind: InstructionKind::Cast {
+                op: CastOp::PointerCast,
+                value: stack_pointer,
                 target,
             },
             span: Some(argument.span),
@@ -7740,7 +8783,7 @@ mod tests {
         let id = sources
             .add(
                 "ui-control-app-state.jdn",
-                "module test; fn main() -> Int32 { ui_checkbox_bind_app_state(10, \"enabled\"); ui_checkbox_refresh_app_state(10); ui_select_bind_app_state(20, \"choice\"); ui_select_refresh_app_state(20); ui_list_bind_app_state(30, \"list_choice\"); ui_list_refresh_app_state(30); ui_table_bind_app_state(40, \"table_choice\"); ui_table_refresh_app_state(40); let list: Bool = ui_app_bind_app_state(30, \"list_choice\"); ui_app_refresh_app_state(30); if list { return 0 } return 1 }",
+                "module test; fn main() -> Int32 { ui_checkbox_bind_app_state(10, \"enabled\"); ui_checkbox_refresh_app_state(10); let checkbox_exact: Bool = ui_checkbox_refresh_app_state_exact(10); ui_select_bind_app_state(20, \"choice\"); ui_select_refresh_app_state(20); let select_exact: Bool = ui_select_refresh_app_state_exact(20); ui_list_bind_app_state(30, \"list_choice\"); ui_list_refresh_app_state(30); let list_exact: Bool = ui_list_refresh_app_state_exact(30); ui_table_bind_app_state(40, \"table_choice\"); ui_table_refresh_app_state(40); let table_exact: Bool = ui_table_refresh_app_state_exact(40); let list: Bool = ui_app_bind_app_state(30, \"list_choice\"); ui_app_refresh_app_state(30); let retained_exact: Bool = ui_app_bind_app_state_exact(30, \"list_choice\"); let retained_refresh: Bool = ui_app_refresh_app_state_exact(30); if checkbox_exact { if select_exact { if list_exact { if table_exact { if list { if retained_exact { if retained_refresh { return 0 } } } } } } } return 1 }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -7769,6 +8812,11 @@ mod tests {
         assert!(text.contains("\"ui_table_refresh_app_state\""), "{text}");
         assert!(text.contains("\"ui_app_bind_app_state\""), "{text}");
         assert!(text.contains("\"ui_app_refresh_app_state\""), "{text}");
+        assert!(text.contains("\"ui_app_bind_app_state_exact\""), "{text}");
+        assert!(
+            text.contains("\"ui_app_refresh_app_state_exact\""),
+            "{text}"
+        );
     }
 
     #[test]
@@ -7777,7 +8825,7 @@ mod tests {
         let id = sources
             .add(
                 "ui-input-array.jdn",
-                "module test; fn process_input() -> Int32 { var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; ui_input_read(10, output); ui_input_read_exact(10, output, length); ui_input_bind_app_state(10, \"note\"); ui_input_refresh_app_state(10); return 0 } fn main() -> Int32 { process_input(); return 0 }",
+                "module test; fn process_input() -> Int32 { var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; ui_input_read(10, output); ui_input_read_exact(10, output, length); ui_input_bind_app_state(10, \"note\"); let exact: Bool = ui_input_bind_app_state_exact(10, \"note\"); ui_input_refresh_app_state(10); let refreshed: Bool = ui_input_refresh_app_state_exact(10); if exact { if refreshed { return 0 } } return 1 } fn main() -> Int32 { process_input(); return 0 }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -7803,13 +8851,42 @@ mod tests {
         assert!(text.contains("\"ui_input_read\""), "{text}");
         assert!(text.contains("\"ui_input_read_exact\""), "{text}");
         assert!(text.contains("\"ui_input_bind_app_state\""), "{text}");
+        assert!(text.contains("\"ui_input_bind_app_state_exact\""), "{text}");
         assert!(text.contains("\"ui_input_refresh_app_state\""), "{text}");
+        assert!(
+            text.contains("\"ui_input_refresh_app_state_exact\""),
+            "{text}"
+        );
         assert_eq!(
             borrowed_runtime_argument_capability("ui_input_read_exact", 1),
             Some(Capability::Write)
         );
         assert_eq!(
             borrowed_runtime_argument_capability("ui_input_read_exact", 2),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_event_queue_poll_exact", 0),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_event_queue_poll_exact", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_event_queue_peek_exact", 0),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_event_queue_peek_exact", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_event_queue_poll_batch_exact", 0),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_event_queue_poll_batch_exact", 2),
             Some(Capability::Write)
         );
     }
@@ -7844,9 +8921,145 @@ mod tests {
         assert!(text.contains("\"ui_state_bind\""), "{text}");
         assert!(text.contains("\"ui_state_bind_text\""), "{text}");
         assert!(text.contains("\"ui_state_text_read\""), "{text}");
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_state_text_read", 1),
+            Some(Capability::Write)
+        );
         assert!(text.contains("\"ui_list_bind_app\""), "{text}");
         assert!(text.contains("\"ui_table_refresh_app\""), "{text}");
         assert!(text.contains("\"ui_refresh_bindings\""), "{text}");
+    }
+
+    #[test]
+    fn lowers_retained_ui_input_reads_to_one_borrowed_import() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "ui-app-input-read.jdn",
+                r#"module test; fn main() -> Int32 { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var short: [UInt8; 1] = [0u8]; var length: [UIntSize; 1] = [0usize]; let count: UIntSize = ui_app_input_length(10); let copied: UIntSize = ui_app_input_read(10, output); let exact: Bool = ui_app_input_read_exact(10, output, length); let guarded: Bool = ui_app_input_read_exact_if_revision(10, short, length, 0u64); if exact { if guarded { return (count + copied) as Int32 } } return 0 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("retained input buffers must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("\"ui_app_input_length\""), "{text}");
+        assert!(text.contains("\"ui_app_input_read\""), "{text}");
+        assert_eq!(
+            text.matches("\"ui_app_input_read_exact\"").count(),
+            1,
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("\"ui_app_input_read_exact_if_revision\"")
+                .count(),
+            1,
+            "{text}"
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_app_input_read_exact", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_app_input_read_exact", 2),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_app_input_read_exact_if_revision", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_app_input_read_exact_if_revision", 2),
+            Some(Capability::Write)
+        );
+    }
+
+    #[test]
+    fn lowers_windows_ui_list_exact_reads_to_borrowed_slices() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "ui-list-exact-read.jdn",
+                "module test; fn main() -> Int32 { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let legacy: Bool = ui_list_read_item_exact(20, 0, output, length); let retained: Bool = ui_app_list_read_item_exact(30, 0, output, length); if legacy { return 1 } if retained { return 2 } return 0 }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("exact list reads must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("\"ui_list_read_item_exact\""), "{text}");
+        assert!(text.contains("\"ui_app_list_read_item_exact\""), "{text}");
+        for name in ["ui_list_read_item_exact", "ui_app_list_read_item_exact"] {
+            assert_eq!(
+                borrowed_runtime_argument_capability(name, 2),
+                Some(Capability::Write)
+            );
+            assert_eq!(
+                borrowed_runtime_argument_capability(name, 3),
+                Some(Capability::Write)
+            );
+        }
+    }
+
+    #[test]
+    fn lowers_windows_ui_table_exact_reads_to_borrowed_slices() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "ui-table-exact-read.jdn",
+                "module test; fn main() -> Int32 { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let exact: Bool = ui_app_table_read_cell_exact(30, 0, 0, output, length); if exact { return length[0] as Int32 } return 0 }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("exact table reads must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("\"ui_app_table_read_cell_exact\""), "{text}");
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_app_table_read_cell_exact", 3),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_app_table_read_cell_exact", 4),
+            Some(Capability::Write)
+        );
     }
 
     #[test]
@@ -7897,7 +9110,7 @@ mod tests {
         let id = sources
             .add(
                 "app-state-read.jdn",
-                r#"module test; fn main() -> Int32 { region frame { let output: Buffer<UInt8> = frame.allocate(32); var text_length: [UIntSize; 1] = [0usize]; var data_length: [UIntSize; 1] = [0usize]; var signed_output: [Int64; 1] = [0 as Int64]; var unsigned_output: [UInt64; 1] = [0u64]; var float_output: [Float64; 1] = [0.0f64]; var bool_output: [Bool; 1] = [false]; app_state_clear(); app_state_set_int("minutes", 42 as Int64); app_state_set_uint("total", 7u64); app_state_set_float("rate", 1.25f64); app_state_set_bool("done", true); app_state_set_text("name", "Focus"); let count: Int32 = app_state_count(); let first_kind: Int32 = app_state_type_at(0); let exists: Bool = app_state_exists("name"); let removed: Bool = app_state_remove("missing"); let key: UIntSize = app_state_read_key(0, output); let text: UIntSize = app_state_read_text("name", output); app_state_read_text_exact("name", output, text_length); app_state_read_int("minutes", signed_output); app_state_read_uint("total", unsigned_output); app_state_read_float("rate", float_output); app_state_read_bool("done", bool_output); let signed: Int64 = app_state_get_int("minutes"); let saved: Bool = app_state_save("target/state.json"); let atomic: Bool = app_state_save_atomic("target/state.tmp", "target/state.json"); let loaded: Bool = app_state_load("target/state.json"); let data_saved: Bool = app_data_save("target/data.jdn"); let data_exact: Bool = app_data_write_exact(output, data_length); let data_atomic: Bool = app_data_save_atomic("target/data.tmp", "target/data.jdn"); let data_loaded: Bool = app_data_load("target/data.jdn"); let data_loaded_exact: Bool = app_data_load_exact(output, data_length[0]); let begun: Bool = app_state_tx_begin(); let committed: Bool = app_state_tx_commit(); let rolled_back: Bool = app_state_tx_rollback(); let data_begun: Bool = app_data_tx_begin(); let data_committed: Bool = app_data_tx_commit(); let data_rolled_back: Bool = app_data_tx_rollback(); if !exists { return 1 } return (text + key + (signed as UIntSize) + (count as UIntSize) + (first_kind as UIntSize)) as Int32 } }"#,
+                r#"module test; fn main() -> Int32 { region frame { let output: Buffer<UInt8> = frame.allocate(32); var text_length: [UIntSize; 1] = [0usize]; var data_length: [UIntSize; 1] = [0usize]; var signed_output: [Int64; 1] = [0 as Int64]; var unsigned_output: [UInt64; 1] = [0u64]; var float_output: [Float64; 1] = [0.0f64]; var bool_output: [Bool; 1] = [false]; app_state_clear(); app_state_set_int("minutes", 42 as Int64); app_state_set_uint("total", 7u64); app_state_set_float("rate", 1.25f64); app_state_set_bool("done", true); app_state_set_text("name", "Focus"); let count: Int32 = app_state_count(); let first_kind: Int32 = app_state_type_at(0); let exists: Bool = app_state_exists("name"); let removed: Bool = app_state_remove("missing"); let key: UIntSize = app_state_read_key(0, output); let text: UIntSize = app_state_read_text("name", output); app_state_read_text_exact("name", output, text_length); app_state_read_int("minutes", signed_output); app_state_read_uint("total", unsigned_output); app_state_read_float("rate", float_output); app_state_read_bool("done", bool_output); let signed: Int64 = app_state_get_int("minutes"); let saved: Bool = app_state_save("target/state.json"); let atomic: Bool = app_state_save_atomic("target/state.tmp", "target/state.json"); let durable: Bool = app_state_save_atomic_durable("target/state.durable.tmp", "target/state.durable.json", "target"); let durable_guarded: Bool = app_state_save_atomic_durable_if_revision("target/state.guarded.tmp", "target/state.guarded.json", "target", app_state_revision()); let loaded: Bool = app_state_load("target/state.json"); let data_saved: Bool = app_data_save("target/data.jdn"); let data_exact: Bool = app_data_write_exact(output, data_length); let data_atomic: Bool = app_data_save_atomic("target/data.tmp", "target/data.jdn"); let data_durable_directory: Bool = app_data_tx_commit_durable_directory("target/data.durable-dir.tmp", "target/data.durable-dir.jdn", "target", "target/data.durable-dir.lock"); let data_durable_directory_guarded: Bool = app_data_tx_commit_durable_directory_if_revision("target/data.durable-dir-if.tmp", "target/data.durable-dir-if.jdn", "target", "target/data.durable-dir-if.lock", app_data_revision()); let data_loaded: Bool = app_data_load("target/data.jdn"); let data_loaded_exact: Bool = app_data_load_exact(output, data_length[0]); let begun: Bool = app_state_tx_begin(); let committed: Bool = app_state_tx_commit(); let rolled_back: Bool = app_state_tx_rollback(); let data_begun: Bool = app_data_tx_begin(); let data_committed: Bool = app_data_tx_commit(); let data_rolled_back: Bool = app_data_tx_rollback(); if !exists { return 1 } if durable { if durable_guarded { return (text + key + (signed as UIntSize) + (count as UIntSize) + (first_kind as UIntSize)) as Int32 } } return 2 } }"#,
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -7933,10 +9146,14 @@ mod tests {
             "app_state_read_bool",
             "app_state_save",
             "app_state_save_atomic",
+            "app_state_save_atomic_durable",
+            "app_state_save_atomic_durable_if_revision",
             "app_state_load",
             "app_data_save",
             "app_data_write_exact",
             "app_data_save_atomic",
+            "app_data_tx_commit_durable_directory",
+            "app_data_tx_commit_durable_directory_if_revision",
             "app_data_load",
             "app_data_load_exact",
             "app_state_tx_begin",
@@ -8021,7 +9238,7 @@ mod tests {
         let id = sources
             .add(
                 "app-list-read.jdn",
-                r#"module test; fn main() -> Int32 { region frame { let output: Buffer<UInt8> = frame.allocate(32); var query: [UInt8; 2] = [70u8, 79u8]; app_list_clear(0); let pushed_bytes: Bool = app_list_push_text_bytes(0, query, 2usize); app_list_push_text(0, "Focus"); let count: Int32 = app_list_count(0); let sorted: Bool = app_list_sort_text(0, false); let found: Int32 = app_list_find_text(0, "Focus", 0); let filtered: Bool = app_list_filter_text(0, 1, "Focus"); let filtered_ex: Bool = app_list_filter_text_ex(0, 1, "FO", 5); let filtered_bytes: Bool = app_list_filter_text_ex_bytes(0, 1, query, 2usize, 5); let text: UIntSize = app_list_read_text(0, 0, output); let exported: UIntSize = app_list_export_csv(0, output); let updated: Bool = app_list_set_text(0, 0, "Done"); let updated_bytes: Bool = app_list_set_text_bytes(0, 0, query, 2usize); let removed: Bool = app_list_remove(0, 0); let saved: Bool = app_list_save(0, "target/list.json"); let atomic: Bool = app_list_save_atomic(0, "target/list.tmp", "target/list.json"); let loaded: Bool = app_list_load(0, "target/list.json"); if !pushed_bytes { return 1 } if !sorted { return 2 } if !filtered { return 3 } if !filtered_ex { return 4 } if !filtered_bytes { return 5 } if !updated { return 6 } if !updated_bytes { return 7 } return count + found + (text as Int32) + (exported as Int32) } }"#,
+                 r#"module test; fn main() -> Int32 { region frame { let output: Buffer<UInt8> = frame.allocate(32); var query: [UInt8; 2] = [70u8, 79u8]; app_list_clear(0); let pushed_bytes: Bool = app_list_push_text_bytes(0, query, 2usize); app_list_push_text(0, "Focus"); let inserted: Bool = app_list_insert_text(0, 0, "Start"); let inserted_if_revision: Bool = app_list_insert_text_if_revision(0, 1, "Guarded", 0u64); let inserted_bytes: Bool = app_list_insert_text_bytes(0, 2, query, 2usize); let inserted_bytes_if_revision: Bool = app_list_insert_text_bytes_if_revision(0, 3, query, 2usize, 0u64); let count: Int32 = app_list_count(0); let sorted: Bool = app_list_sort_text(0, false); let found: Int32 = app_list_find_text(0, "Focus", 0); let filtered: Bool = app_list_filter_text(0, 1, "Focus"); let filtered_ex: Bool = app_list_filter_text_ex(0, 1, "FO", 5); let filtered_bytes: Bool = app_list_filter_text_ex_bytes(0, 1, query, 2usize, 5); let text: UIntSize = app_list_read_text(0, 0, output); let exported: UIntSize = app_list_export_csv(0, output); let updated: Bool = app_list_set_text(0, 0, "Done"); let updated_bytes: Bool = app_list_set_text_bytes(0, 0, query, 2usize); let updated_bytes_if_revision: Bool = app_list_set_text_bytes_if_revision(0, 0, query, 2usize, 0u64); let removed: Bool = app_list_remove(0, 0); let saved: Bool = app_list_save(0, "target/list.json"); let atomic: Bool = app_list_save_atomic(0, "target/list.tmp", "target/list.json"); let loaded: Bool = app_list_load(0, "target/list.json"); if !pushed_bytes { return 1 } if !inserted { return 2 } if !inserted_if_revision { return 3 } if !inserted_bytes { return 4 } if !inserted_bytes_if_revision { return 5 } if !sorted { return 6 } if !filtered { return 7 } if !filtered_ex { return 8 } if !filtered_bytes { return 9 } if !updated { return 10 } if !updated_bytes { return 11 } if !updated_bytes_if_revision { return 12 } return count + found + (text as Int32) + (exported as Int32) } }"#,
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -8044,6 +9261,10 @@ mod tests {
             "app_list_clear",
             "app_list_push_text",
             "app_list_push_text_bytes",
+            "app_list_insert_text",
+            "app_list_insert_text_if_revision",
+            "app_list_insert_text_bytes",
+            "app_list_insert_text_bytes_if_revision",
             "app_list_count",
             "app_list_sort_text",
             "app_list_find_text",
@@ -8054,6 +9275,7 @@ mod tests {
             "app_list_export_csv",
             "app_list_set_text",
             "app_list_set_text_bytes",
+            "app_list_set_text_bytes_if_revision",
             "app_list_remove",
             "app_list_save",
             "app_list_save_atomic",
@@ -8074,11 +9296,47 @@ mod tests {
             Some(Capability::Read)
         );
         assert_eq!(
+            borrowed_runtime_argument_capability("app_list_insert_text_bytes", 2),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_list_insert_text_bytes_if_revision", 2),
+            Some(Capability::Read)
+        );
+        assert_eq!(
             borrowed_runtime_argument_capability("app_list_set_text_bytes", 2),
             Some(Capability::Read)
         );
         assert_eq!(
+            borrowed_runtime_argument_capability("app_list_set_text_bytes_if_revision", 2),
+            Some(Capability::Read)
+        );
+        assert_eq!(
             borrowed_runtime_argument_capability("app_list_export_csv", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_list_export_csv_exact", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_list_export_csv_exact", 2),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_list_export_json_exact", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_list_export_json_exact", 2),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_table_export_json_exact", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_table_export_json_exact", 2),
             Some(Capability::Write)
         );
         assert!(text.contains("aggregate "), "{text}");
@@ -8323,6 +9581,157 @@ mod tests {
     }
 
     #[test]
+    fn lowers_app_table_row_insertion_builtins() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "app-table-insert.jdn",
+                r#"module test; fn main() -> Int32 { app_table_clear(0); app_table_append_row(0); app_table_insert_row(0, 0); app_table_insert_row_if_revision(0, 1, 0u64); return app_table_row_count(0) }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("app table insertion must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("\"app_table_insert_row\""), "{text}");
+        assert!(
+            text.contains("\"app_table_insert_row_if_revision\""),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn lowers_retained_ui_table_row_insertion_builtins() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "ui-app-table-insert.jdn",
+                r#"module test; fn main() -> Int32 { let table: Bool = ui_app_table_insert_row(1, 0); let guarded: Bool = ui_app_table_insert_row_if_revision(1, 1, 0u64); if !table { return 1 } if !guarded { return 2 } return 0 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("retained UI table insertion must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("\"ui_app_table_insert_row\""), "{text}");
+        assert!(
+            text.contains("\"ui_app_table_insert_row_if_revision\""),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn lowers_retained_ui_list_item_insertion_builtins() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "ui-app-list-insert.jdn",
+                r#"module test; fn main() -> Int32 { let list: Bool = ui_app_list_insert_item(1, 0, "Inserted"); let guarded: Bool = ui_app_list_insert_item_if_revision(1, 1, "Guarded", 0u64); if !list { return 1 } if !guarded { return 2 } return 0 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("retained UI list insertion must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("\"ui_app_list_insert_item\""), "{text}");
+        assert!(
+            text.contains("\"ui_app_list_insert_item_if_revision\""),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn lowers_revision_guarded_collection_bytes_to_borrowed_slices() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "app-collection-bytes-revision.jdn",
+                r#"module test; fn main() -> Int32 { region frame { let value: Buffer<UInt8> = frame.allocate(8); let list: Bool = app_list_set_text_bytes_if_revision(0, 0, value, 2usize, 0u64); let table: Bool = app_table_set_cell_bytes_if_revision(0, 0, 0, value, 2usize, 0u64); let list_json: Bool = app_list_import_json_exact_if_revision(0, value, 2usize, 0u64); let table_json: Bool = app_table_import_json_exact_if_revision(0, value, 2usize, 0u64); if list { return 1 } if table { return 2 } if list_json { return 3 } if table_json { return 4 } return 0 } }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("guarded collection bytes must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(
+            text.contains("\"app_list_set_text_bytes_if_revision\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("\"app_table_set_cell_bytes_if_revision\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("\"app_list_import_json_exact_if_revision\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("\"app_table_import_json_exact_if_revision\""),
+            "{text}"
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_list_set_text_bytes_if_revision", 2),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_table_set_cell_bytes_if_revision", 3),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_list_import_json_exact_if_revision", 1),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_table_import_json_exact_if_revision", 1),
+            Some(Capability::Read)
+        );
+    }
+
+    #[test]
     fn lowers_app_table_csv_export_to_borrowed_slice() {
         let mut sources = SourceManager::new();
         let id = sources
@@ -8372,7 +9781,7 @@ mod tests {
         let id = sources
             .add(
                 "app-table-import.jdn",
-                "module test; fn main() -> Int32 { region frame { let input: Buffer<UInt8> = frame.allocate(64); let imported: Bool = app_table_import_csv(0, input, 64usize); if imported { return 1 } return 0 } }",
+                "module test; fn main() -> Int32 { region frame { let input: Buffer<UInt8> = frame.allocate(64); let imported: Bool = app_table_import_csv(0, input, 64usize); let guarded: Bool = app_table_import_csv_if_revision(0, input, 64usize, 0u64); if imported { return 1 } if guarded { return 1 } return 0 } }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -8393,6 +9802,14 @@ mod tests {
         assert!(text.contains("\"app_table_import_csv\""), "{text}");
         assert_eq!(
             borrowed_runtime_argument_capability("app_table_import_csv", 1),
+            Some(Capability::Read)
+        );
+        assert!(
+            text.contains("\"app_table_import_csv_if_revision\""),
+            "{text}"
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_table_import_csv_if_revision", 1),
             Some(Capability::Read)
         );
         assert!(text.contains("aggregate "), "{text}");
@@ -8567,7 +9984,7 @@ mod tests {
         let id = sources
             .add(
                 "file-array.jdn",
-                "module test; fn main() -> Int32 { var payload: [UInt8; 4] = [1u8, 2u8, 3u8, 4u8]; file_write(\"target/test.tmp\", payload); file_write_at(\"target/test.tmp\", 1usize, payload); var digits: [UInt8; 20] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let number: UIntSize = format_int(1 as Int64, digits); let unsigned: UIntSize = format_uint(2u64, digits); let float: UIntSize = format_float(1.5f64, digits); file_append(\"target/test.tmp\", digits, number); file_append_text(\"target/test.tmp\", \"row\"); file_replace_atomic(\"target/test.tmp\", \"target/test.bin\"); var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; var kinds: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; file_read(\"target/test.bin\", output); file_read_at(\"target/test.bin\", 0usize, output); file_read_text(\"target/test.bin\", output); directory_list(\"target\", output); directory_list_ex(\"target\", output, kinds); process_arg_count(); process_arg_read(0usize, output); return float as Int32 }",
+                "module test; fn main() -> Int32 { var payload: [UInt8; 4] = [1u8, 2u8, 3u8, 4u8]; file_write(\"target/test.tmp\", payload); file_write_at(\"target/test.tmp\", 1usize, payload); var digits: [UInt8; 20] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let number: UIntSize = format_int(1 as Int64, digits); let unsigned: UIntSize = format_uint(2u64, digits); let float: UIntSize = format_float(1.5f64, digits); file_append(\"target/test.tmp\", digits, number); file_append_text(\"target/test.tmp\", \"row\"); file_replace_atomic(\"target/test.tmp\", \"target/test.bin\"); var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; var kinds: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; file_read(\"target/test.bin\", output); file_read_at(\"target/test.bin\", 0usize, output); file_read_text(\"target/test.bin\", output); directory_list(\"target\", output); directory_list_ex(\"target\", output, kinds); process_arg_count(); process_arg_read(0usize, output); let handle: UInt64 = site_server_start(18081u16); let running: Bool = site_server_is_running(handle); let stopped: Bool = site_server_stop(handle, 2000u32); if running { return 0 } if stopped { return 0 } return float as Int32 }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -8591,6 +10008,9 @@ mod tests {
         assert!(text.contains("\"file_write_at\""), "{text}");
         assert!(text.contains("\"process_arg_count\""), "{text}");
         assert!(text.contains("\"process_arg_read\""), "{text}");
+        assert!(text.contains("\"site_server_start\""), "{text}");
+        assert!(text.contains("\"site_server_is_running\""), "{text}");
+        assert!(text.contains("\"site_server_stop\""), "{text}");
         assert!(text.contains("\"file_read\""), "{text}");
         assert!(text.contains("\"file_read_at\""), "{text}");
         assert!(text.contains("\"file_read_text\""), "{text}");
@@ -8603,6 +10023,463 @@ mod tests {
         assert!(text.contains("\"format_uint\""), "{text}");
         assert!(text.contains("\"format_float\""), "{text}");
         assert!(text.contains("aggregate "), "{text}");
+    }
+
+    #[test]
+    fn lowers_directory_list_ex_exact_with_all_write_outputs() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "directory-list-exact.jdn",
+                r#"module test; fn main() -> Int32 { var names: [UInt8; 1] = [0u8]; var names_length: [UIntSize; 1] = [0usize]; var kinds: [UInt8; 1] = [0u8]; var item_count: [UIntSize; 1] = [0usize]; let listed: Bool = directory_list_ex_exact("target", names, names_length, kinds, item_count); if listed { return 0 } return 1 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("exact directory listing must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("\"directory_list_ex_exact\""), "{text}");
+        assert_eq!(
+            borrowed_runtime_argument_capability("directory_list_ex_exact", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("directory_list_ex_exact", 2),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("directory_list_ex_exact", 3),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("directory_list_ex_exact", 4),
+            Some(Capability::Write)
+        );
+    }
+
+    #[test]
+    fn lowers_native_file_dialogs_with_borrowed_outputs() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "native-file-dialogs.jdn",
+                r#"module test; fn main() -> Int32 { var path: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let opened: Bool = ui_file_open_exact("Choose source", path, length); let filtered: Bool = ui_file_open_extension_exact("Import CSV", "csv", path, length); let saved: Bool = ui_file_save_exact("Choose destination", path, length); let suggested: Bool = ui_file_save_suggested_exact("Export", "tasks", "csv", path, length); let filtered_save: Bool = ui_file_save_extension_exact("Export CSV", "tasks", "csv", path, length); if opened { if filtered { if saved { if suggested { if filtered_save { return length[0] as Int32 } } } } } return 0 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("native file dialogs must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(jir.to_text().contains("\"ui_file_open_exact\""));
+        assert!(jir.to_text().contains("\"ui_file_open_extension_exact\""));
+        assert!(jir.to_text().contains("\"ui_file_save_exact\""));
+        assert!(jir.to_text().contains("\"ui_file_save_suggested_exact\""));
+        assert!(jir.to_text().contains("\"ui_file_save_extension_exact\""));
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_open_exact", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_open_exact", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_open_exact", 2),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_open_extension_exact", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_open_extension_exact", 1),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_open_extension_exact", 2),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_open_extension_exact", 3),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_exact", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_exact", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_exact", 2),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_suggested_exact", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_suggested_exact", 1),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_suggested_exact", 2),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_suggested_exact", 3),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_suggested_exact", 4),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_extension_exact", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_extension_exact", 1),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_extension_exact", 2),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_extension_exact", 3),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("ui_file_save_extension_exact", 4),
+            Some(Capability::Write)
+        );
+    }
+
+    #[test]
+    fn lowers_file_write_prefix_path_with_borrowed_path_and_input() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "file-write-prefix-path.jdn",
+                r#"module test; fn main() -> Int32 { var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; var input: [UInt8; 3] = [97u8, 98u8, 99u8]; let written: UIntSize = file_write_prefix_path(path, 4usize, input, 2usize); return written as Int32 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("file path write must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(jir.to_text().contains("\"file_write_prefix_path\""));
+        assert_eq!(
+            borrowed_runtime_argument_capability("file_write_prefix_path", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("file_write_prefix_path", 2),
+            Some(Capability::Read)
+        );
+    }
+
+    #[test]
+    fn lowers_file_flush_path_with_borrowed_path() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "file-flush-path.jdn",
+                r#"module test; fn main() -> Int32 { var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; if file_flush_path(path, 4usize) { return 0 } return 1 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("file path flush must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(jir.to_text().contains("\"file_flush_path\""));
+        assert_eq!(
+            borrowed_runtime_argument_capability("file_flush_path", 0),
+            Some(Capability::Read)
+        );
+    }
+
+    #[test]
+    fn lowers_file_mtime_unix_nanos_path_with_borrowed_path() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "file-mtime-path.jdn",
+                r#"module test; fn main() -> Int32 { var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; let modified: UInt64 = file_mtime_unix_nanos_path(path, 4usize); return modified as Int32 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("file mtime path must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(jir.to_text().contains("\"file_mtime_unix_nanos_path\""));
+        assert_eq!(
+            borrowed_runtime_argument_capability("file_mtime_unix_nanos_path", 0),
+            Some(Capability::Read)
+        );
+    }
+
+    #[test]
+    fn lowers_file_exists_path_with_borrowed_path() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "file-exists-path.jdn",
+                r#"module test; fn main() -> Int32 { var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; if file_exists_path(path, 4usize) { return 0 } return 1 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("file path exists must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(jir.to_text().contains("\"file_exists_path\""));
+        assert_eq!(
+            borrowed_runtime_argument_capability("file_exists_path", 0),
+            Some(Capability::Read)
+        );
+    }
+
+    #[test]
+    fn lowers_file_path_valid_with_borrowed_path() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "file-path-valid.jdn",
+                r#"module test; fn main() -> Int32 { var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; if file_path_valid(path, 4usize) { return 0 } return 1 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("file path valid must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(jir.to_text().contains("\"file_path_valid\""));
+        assert_eq!(
+            borrowed_runtime_argument_capability("file_path_valid", 0),
+            Some(Capability::Read)
+        );
+    }
+
+    #[test]
+    fn lowers_file_delete_path_with_borrowed_path() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "file-delete-path.jdn",
+                r#"module test; fn main() -> Int32 { var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; if file_delete_path(path, 4usize) { return 0 } return 1 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("file path delete must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(jir.to_text().contains("\"file_delete_path\""));
+        assert_eq!(
+            borrowed_runtime_argument_capability("file_delete_path", 0),
+            Some(Capability::Read)
+        );
+    }
+
+    #[test]
+    fn lowers_file_lock_path_with_borrowed_path() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "file-lock-path.jdn",
+                r#"module test; fn main() -> Int32 { var path: [UInt8; 4] = [108u8, 111u8, 99u8, 107u8]; let token: UIntSize = file_lock_path(path, 4usize); if token == 0usize { return 1 } if file_unlock(token) { return 0 } return 2 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("file path lock must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(jir.to_text().contains("\"file_lock_path\""));
+        assert_eq!(
+            borrowed_runtime_argument_capability("file_lock_path", 0),
+            Some(Capability::Read)
+        );
+    }
+
+    #[test]
+    fn lowers_file_lock_path_retry_with_borrowed_path() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "file-lock-path-retry.jdn",
+                r#"module test; fn main() -> Int32 { var path: [UInt8; 4] = [108u8, 111u8, 99u8, 107u8]; let token: UIntSize = file_lock_path_retry(path, 4usize, 2usize, 1usize); if token == 0usize { return 1 } if file_unlock(token) { return 0 } return 2 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("file path retry lock must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(jir.to_text().contains("\"file_lock_path_retry\""));
+        assert_eq!(
+            borrowed_runtime_argument_capability("file_lock_path_retry", 0),
+            Some(Capability::Read)
+        );
+    }
+
+    #[test]
+    fn lowers_file_replace_atomic_paths_with_borrowed_paths() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "file-replace-atomic-paths.jdn",
+                r#"module test; fn main() -> Int32 { var source: [UInt8; 3] = [116u8, 109u8, 112u8]; var target: [UInt8; 3] = [111u8, 117u8, 116u8]; if file_replace_atomic_paths(source, 3usize, target, 3usize) { return 0 } return 1 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("file path atomic replacement must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(jir.to_text().contains("\"file_replace_atomic_paths\""));
+        assert_eq!(
+            borrowed_runtime_argument_capability("file_replace_atomic_paths", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("file_replace_atomic_paths", 2),
+            Some(Capability::Read)
+        );
+    }
+
+    #[test]
+    fn lowers_directory_flush_as_string_bool_import() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "directory-flush.jdn",
+                r#"module test; fn main() -> Int32 { let flushed: Bool = directory_flush("target"); if flushed { return 0 } return 1 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("directory flush must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(jir.to_text().contains("\"directory_flush\""));
     }
 
     #[test]
@@ -8796,6 +10673,14 @@ mod tests {
             Some(Capability::Read)
         );
         assert_eq!(
+            borrowed_runtime_argument_capability("http_request_write_prefix_ex", 3),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_request_write_prefix_ex", 6),
+            Some(Capability::Write)
+        );
+        assert_eq!(
             borrowed_runtime_argument_capability("http_query_param", 0),
             Some(Capability::Read)
         );
@@ -8813,6 +10698,30 @@ mod tests {
         );
         assert_eq!(
             borrowed_runtime_argument_capability("http_query_param_exact", 3),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_form_param_exact_prefix", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_form_param_exact_prefix", 3),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_form_param_exact_prefix", 4),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_multipart_part_exact_prefix", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_multipart_part_exact_prefix", 3),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_multipart_part_exact_prefix", 4),
             Some(Capability::Write)
         );
         assert!(text.contains("\"net_tcp_receive\""), "{text}");
@@ -8889,6 +10798,18 @@ mod tests {
             Some(Capability::Write)
         );
         assert_eq!(
+            borrowed_runtime_argument_capability("http_request_header_exact", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_request_header_exact", 2),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_request_header_exact", 3),
+            Some(Capability::Write)
+        );
+        assert_eq!(
             borrowed_runtime_argument_capability("http_response_body_prefix", 2),
             Some(Capability::Write)
         );
@@ -8902,6 +10823,43 @@ mod tests {
         );
         assert_eq!(
             borrowed_runtime_argument_capability("http_response_body_exact", 2),
+            Some(Capability::Write)
+        );
+    }
+
+    #[test]
+    fn lowers_http_response_cookie_policy_with_directional_borrows() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "http-response-cookie-policy.jdn",
+                "module test; fn main() -> Int32 { var body: [UInt8; 1] = [79u8]; var output: [UInt8; 1] = [0u8]; let written: UIntSize = http_response_write_cookie_policy(200u16, \"text/plain\", \"sid\", \"abc\", \"/\", \"example.test\", 3600i64, 1u32, 3u32, body, true, output); return written as Int32 }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("structured cookie response must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(
+            jir.to_text()
+                .contains("\"http_response_write_cookie_policy\"")
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_response_write_cookie_policy", 9),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_response_write_cookie_policy", 11),
             Some(Capability::Write)
         );
     }
@@ -9166,6 +11124,65 @@ mod tests {
     }
 
     #[test]
+    fn lowers_dynamic_array_alias_to_buffer_abi() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!("../../../examples/dynamic-array.jdn");
+        let id = sources
+            .add("dynamic-array.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("DynamicArray alias must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("fn import @f"), "{text}");
+        assert!(text.contains("\"buffer_create\""), "{text}");
+        assert!(text.contains("\"buffer_append\""), "{text}");
+        assert!(text.contains("\"buffer_reserve\""), "{text}");
+        assert!(text.contains("\"buffer_resize\""), "{text}");
+        assert!(text.contains("\"buffer_clear\""), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_dynamic_array_alias_to_nested_buffer_abi() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!("../../../examples/dynamic-array-nested.jdn");
+        let id = sources
+            .add("dynamic-array-nested.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested DynamicArray alias must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("nested_buffer_drop "), "{text}");
+        assert!(text.contains("\"buffer_append_move\""), "{text}");
+        assert!(text.contains("\"buffer_clear_move\""), "{text}");
+    }
+
+    #[test]
     fn lowers_nested_owning_buffer_drop_glue_and_move_calls() {
         let mut sources = SourceManager::new();
         let id = sources
@@ -9305,6 +11322,303 @@ mod tests {
     }
 
     #[test]
+    fn lowers_named_enum_field_inside_record_with_bounded_tag_offset() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-record-enum-field.jdn");
+        let id = sources
+            .add("buffer-owning-record-enum-field.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("named enum record field must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(
+            text.contains("variant 4611686022722355201, offset 16"),
+            "{text}"
+        );
+        assert!(
+            text.contains("variant 4611686022722355202, offset 16"),
+            "{text}"
+        );
+        assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_named_enum_field_inside_record_with_tag_path() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-record-nested-enum.jdn");
+        let id = sources
+            .add("stdlib-buffer-owning-record-nested-enum.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested named enum record field must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(
+            text.contains("variant 16285016252571713793, offset 24"),
+            "{text}"
+        );
+        assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_named_enum_record_move_into_with_field_table() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-record-nested-enum-move-into.jdn");
+        let id = sources
+            .add(
+                "stdlib-buffer-owning-record-nested-enum-move-into.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested named enum record move-into must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(
+            text.contains("variant 16285016252571713793, offset 24"),
+            "{text}"
+        );
+        assert!(text.contains("buffer_remove_move_into"), "{text}");
+        assert!(text.contains("buffer_pop_move_into"), "{text}");
+    }
+
+    #[test]
+    fn lowers_generic_buffer_reserve_for_owning_record_element() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!("../../../examples/stdlib-buffer-owning-reserve.jdn");
+        let id = sources
+            .add("stdlib-buffer-owning-reserve.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("owning record reserve must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("fn import @f1 \"buffer_create\""), "{text}");
+        assert!(text.contains("\"buffer_reserve\""), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+    }
+
+    #[test]
+    fn lowers_named_enum_record_payload_inside_record_with_bounded_tag_offsets() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-record-enum-record-payload.jdn");
+        let id = sources
+            .add("buffer-owning-record-enum-record-payload.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("named enum record payload must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(
+            text.contains("variant 4611686027017322497, offset 24"),
+            "{text}"
+        );
+        assert!(
+            text.contains("variant 4611686027017322498, offset 24"),
+            "{text}"
+        );
+        assert!(
+            text.contains("variant 4611686044197191682, offset 56"),
+            "{text}"
+        );
+        assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+    }
+
+    #[test]
+    fn lowers_named_enum_record_payload_move_into_with_field_tables() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-owning-enum-record-payload-move-into.jdn"
+        );
+        let id = sources
+            .add(
+                "buffer-owning-enum-record-payload-move-into.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("named enum record payload move-into must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(text.contains("buffer_remove_move_into"), "{text}");
+        assert!(text.contains("buffer_remove_move_into_status"), "{text}");
+        assert!(text.contains("buffer_pop_move_into"), "{text}");
+        assert!(text.contains("buffer_pop_move_into_status"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_named_enum_owning_buffer_with_tag_path() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!("../../../examples/stdlib-buffer-owning-nested-enum.jdn");
+        let id = sources
+            .add("stdlib-buffer-owning-nested-enum.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested named enum owning Buffer must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("enum_carrier_fields_drop "), "{text}");
+        assert!(text.contains("buffer_remove_move_into"), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields"), "{text}");
+        assert!(text.contains("enum_owning_fields_drop "), "{text}");
+        assert!(text.contains("variant 1/1"), "{text}");
+    }
+
+    #[test]
+    fn lowers_deep_nested_named_enum_owning_buffer_with_multi_tag_path() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-deep-nested-enum.jdn");
+        let id = sources
+            .add("stdlib-buffer-owning-deep-nested-enum.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("deep nested named enum owning Buffer must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("enum_owning_fields_drop "), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields"), "{text}");
+        assert!(text.contains("variant 1/1/1"), "{text}");
+    }
+
+    #[test]
+    fn lowers_max_bounded_named_enum_owning_buffer_with_path_marker() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-path-nested-enum.jdn");
+        let id = sources
+            .add("stdlib-buffer-owning-path-nested-enum.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("maximum bounded nested named enum must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("enum_owning_fields_drop "), "{text}");
+        assert!(text.contains("variant/1/1/1/1/1/1/1"), "{text}");
+    }
+
+    #[test]
     fn lowers_inline_nested_owning_record_fields_to_flat_drop_offsets() {
         let mut sources = SourceManager::new();
         let source_text = include_str!("../../../examples/stdlib-buffer-owning-nested-record.jdn");
@@ -9360,6 +11674,123 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("offset 8"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_buffer_record_with_nested_named_enum_field_table() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-nested-owning-record-nested-enum.jdn");
+        let id = sources
+            .add(
+                "stdlib-buffer-nested-owning-record-nested-enum.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested record named enum field table must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(
+            text.contains("recursive_record_buffer_fields_drop "),
+            "{text}"
+        );
+        assert!(text.contains("variant/1/1"), "{text}");
+        assert!(
+            text.contains("buffer_remove_drop_nested_record_fields"),
+            "{text}"
+        );
+        assert!(text.contains("buffer_resize_move_record_fields"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_buffer_record_with_nested_named_enum_move_operations() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-nested-owning-record-nested-enum-move.jdn"
+        );
+        let id = sources
+            .add(
+                "stdlib-buffer-nested-owning-record-nested-enum-move.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested record move operations must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(
+            text.contains("recursive_record_buffer_fields_drop "),
+            "{text}"
+        );
+        assert!(text.contains("buffer_remove_move_into"), "{text}");
+        assert!(text.contains("buffer_insert_move_from"), "{text}");
+        assert!(text.contains("buffer_pop_move_into"), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields"), "{text}");
+        assert!(text.contains("variant/1/1"), "{text}");
+    }
+
+    #[test]
+    fn lowers_triple_nested_buffer_record_with_nested_named_enum_move_operations() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-triple-nested-owning-record-nested-enum-move.jdn"
+        );
+        let id = sources
+            .add(
+                "stdlib-buffer-triple-nested-owning-record-nested-enum-move.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("triple nested record move operations must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(
+            text.contains("recursive_record_buffer_fields_drop "),
+            "{text}"
+        );
+        assert!(text.contains("buffer_remove_move_into"), "{text}");
+        assert!(text.contains("buffer_insert_move_from"), "{text}");
+        assert!(text.contains("buffer_pop_move_into"), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields"), "{text}");
+        assert!(text.contains("variant/1/1"), "{text}");
     }
 
     #[test]
@@ -9571,6 +12002,530 @@ mod tests {
     }
 
     #[test]
+    fn lowers_direct_owning_array_move_into_operations() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-array-move-into.jdn");
+        let id = sources
+            .add("buffer-owning-array-move-into.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("direct owning array move-into must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(
+            text.contains("fn import @f4 \"buffer_remove_move_into\""),
+            "{text}"
+        );
+        assert!(text.contains("buffer_insert_move_from"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_owning_array_element_with_descriptor_projection() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!("../../../examples/stdlib-buffer-nested-owning-array.jdn");
+        let id = sources
+            .add("buffer-nested-owning-array.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested owning array must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("buffer_remove_move"), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields"), "{text}");
+        assert!(text.contains("offset 0"), "{text}");
+        assert!(text.contains("offset 24"), "{text}");
+    }
+
+    #[test]
+    fn lowers_direct_owned_string_array_element_to_multiple_offsets() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!("../../../examples/stdlib-buffer-owned-string-array.jdn");
+        let id = sources
+            .add("buffer-owned-string-array.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("owned string array element must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+        assert!(text.contains("offset 0"), "{text}");
+        assert!(text.contains("offset 24"), "{text}");
+        assert!(text.contains("depth 4294967295"), "{text}");
+    }
+
+    #[test]
+    fn lowers_direct_owned_string_carrier_array_to_multiple_offsets() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!("../../../examples/stdlib-buffer-owning-carrier-array.jdn");
+        let id = sources
+            .add("buffer-owning-carrier-array.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("owned string carrier array element must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("variant 1, offset 40"), "{text}");
+        assert!(text.matches("depth 4294967295").count() >= 2, "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+        assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
+    }
+
+    #[test]
+    fn lowers_direct_owned_string_carrier_array_move_into() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-carrier-array-move-into.jdn");
+        let id = sources
+            .add("buffer-owning-carrier-array-move-into.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("owned string carrier array move-into must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("variant 1, offset 40"), "{text}");
+        assert!(text.contains("buffer_remove_move_into"), "{text}");
+        assert!(text.contains("buffer_remove_move_into_status"), "{text}");
+    }
+
+    #[test]
+    fn lowers_direct_owned_string_carrier_array_pop_move_into() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-carrier-array-pop-move-into.jdn");
+        let id = sources
+            .add("buffer-owning-carrier-array-pop-move-into.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("owned string carrier array pop_move_into must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("variant 1, offset 40"), "{text}");
+        assert!(text.contains("buffer_pop_move_into"), "{text}");
+        assert!(text.contains("buffer_pop_move_into_status"), "{text}");
+    }
+
+    #[test]
+    fn lowers_direct_owned_string_carrier_array_insert_move_from() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-owning-carrier-array-insert-move-from.jdn"
+        );
+        let id = sources
+            .add(
+                "stdlib-buffer-owning-carrier-array-insert-move-from.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("owned string carrier array insert_move_from must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("variant 1, offset 40"), "{text}");
+        assert!(text.contains("buffer_insert_move_from"), "{text}");
+        assert!(text.contains("buffer_insert_move_from_status"), "{text}");
+        assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+    }
+
+    #[test]
+    fn lowers_direct_result_owned_string_carrier_move_into() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-result-carrier-move-into.jdn");
+        let id = sources
+            .add("buffer-owning-result-carrier-move-into.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("Result<OwnedString, Int32> carrier move-into must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("buffer_remove_move_into"), "{text}");
+        assert!(text.contains("buffer_remove_move_into_status"), "{text}");
+        assert!(text.contains("buffer_pop_move_into"), "{text}");
+        assert!(text.contains("buffer_pop_move_into_status"), "{text}");
+    }
+
+    #[test]
+    fn lowers_direct_option_owned_string_carrier_move_into() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-option-carrier-move-into.jdn");
+        let id = sources
+            .add("buffer-owning-option-carrier-move-into.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("Option<OwnedString> carrier move-into must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("buffer_remove_move_into"), "{text}");
+        assert!(text.contains("buffer_remove_move_into_status"), "{text}");
+        assert!(text.contains("buffer_pop_move_into"), "{text}");
+        assert!(text.contains("buffer_pop_move_into_status"), "{text}");
+    }
+
+    #[test]
+    fn lowers_direct_option_owned_string_carrier_insert_move_from() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-owning-option-carrier-insert-move-from.jdn"
+        );
+        let id = sources
+            .add(
+                "buffer-owning-option-carrier-insert-move-from.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("Option<OwnedString> carrier insert_move_from must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("buffer_insert_move_from"), "{text}");
+        assert!(text.contains("buffer_insert_move_from_status"), "{text}");
+        assert!(text.contains("buffer_remove_drop"), "{text}");
+        assert!(text.contains("buffer_clear_move"), "{text}");
+    }
+
+    #[test]
+    fn lowers_direct_result_owned_string_carrier_insert_move_from() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-owning-result-carrier-insert-move-from.jdn"
+        );
+        let id = sources
+            .add(
+                "buffer-owning-result-carrier-insert-move-from.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("Result<OwnedString, Int32> carrier insert_move_from must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("buffer_insert_move_from"), "{text}");
+        assert!(text.contains("buffer_insert_move_from_status"), "{text}");
+        assert!(text.contains("buffer_remove_drop"), "{text}");
+        assert!(text.contains("buffer_clear_move"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_option_owned_string_carrier_insert_move_from() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-nested-owning-option-carrier-insert-move-from.jdn"
+        );
+        let id = sources
+            .add(
+                "stdlib-buffer-nested-owning-option-carrier-insert-move-from.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested Option<OwnedString> carrier insert_move_from must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(text.contains("buffer_insert_move_from"), "{text}");
+        assert!(text.contains("buffer_insert_move_from_status"), "{text}");
+        assert!(
+            text.contains("buffer_remove_drop_nested_record_fields "),
+            "{text}"
+        );
+        assert!(text.contains("buffer_clear_move"), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+        assert!(text.contains("depth 1"), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_result_owned_string_carrier_insert_move_from() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-nested-owning-result-carrier-insert-move-from.jdn"
+        );
+        let id = sources
+            .add(
+                "stdlib-buffer-nested-owning-result-carrier-insert-move-from.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested Result<OwnedString, Int32> carrier insert_move_from must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(text.contains("buffer_insert_move_from"), "{text}");
+        assert!(text.contains("buffer_insert_move_from_status"), "{text}");
+        assert!(
+            text.contains("buffer_remove_drop_nested_record_fields "),
+            "{text}"
+        );
+        assert!(text.contains("buffer_clear_move"), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+        assert!(text.contains("depth 1"), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_owned_string_insert_move_from_to_string_aware_runtime() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-nested-owning-string-insert-move-from.jdn"
+        );
+        let id = sources
+            .add(
+                "stdlib-buffer-nested-owning-string-insert-move-from.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested Buffer<OwnedString> insert_move_from must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("buffer_insert_move_from"), "{text}");
+        assert!(text.contains("buffer_insert_move_from_status"), "{text}");
+        assert!(
+            text.contains("buffer_remove_drop_nested_owned_string "),
+            "{text}"
+        );
+        assert!(
+            text.contains("buffer_resize_move_nested_owned_string "),
+            "{text}"
+        );
+        assert!(text.contains("depth 1"), "{text}");
+        assert!(text.contains("owned_string_buffer_drop "), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_owned_string_carrier_array_move_into() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-nested-owning-carrier-array-move-into.jdn"
+        );
+        let id = sources
+            .add(
+                "buffer-nested-owning-carrier-array-move-into.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested owned carrier array move-into must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(
+            text.contains("recursive_record_buffer_fields_drop "),
+            "{text}"
+        );
+        assert!(text.contains("buffer_remove_move_into"), "{text}");
+        assert!(text.contains("buffer_remove_move_into_status"), "{text}");
+        assert!(text.contains("buffer_pop_move_into"), "{text}");
+        assert!(text.contains("buffer_pop_move_into_status"), "{text}");
+        assert!(text.contains("depth 1"), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("variant 1, offset 40"), "{text}");
+    }
+
+    #[test]
     fn lowers_owning_record_remove_drop_with_field_table() {
         let mut sources = SourceManager::new();
         let id = sources
@@ -9636,6 +12591,232 @@ mod tests {
         );
         assert!(text.contains("depth 1"), "{text}");
         assert!(text.contains("offset 0"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_buffer_remove_drop_with_leaf_layout() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "buffer-nested-remove-drop.jdn",
+                "module test; fn run(values: write Buffer<Buffer<Int32>>) -> Int32 { let removed: Bool = buffer_remove_drop(values, 0usize); let status: Int32 = buffer_remove_drop_status(values, 0usize); if !removed { return 1 } return status }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested buffer remove drop must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert_eq!(
+            text.matches("buffer_remove_drop_nested_buffer ").count(),
+            2,
+            "{text}"
+        );
+        assert!(text.contains("depth 1"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_owned_string_remove_drop_with_string_layout() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "buffer-nested-owned-string-remove-drop.jdn",
+                "module test; fn run(values: write Buffer<Buffer<OwnedString>>) -> Int32 { let removed: Bool = buffer_remove_drop(values, 0usize); let status: Int32 = buffer_remove_drop_status(values, 0usize); if !removed { return 1 } return status }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested owned string remove drop must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert_eq!(
+            text.matches("buffer_remove_drop_nested_owned_string ")
+                .count(),
+            2,
+            "{text}"
+        );
+        assert!(text.contains("depth 1"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_owned_string_carrier_remove_drop_with_field_table() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "buffer-nested-owned-string-carrier-remove-drop.jdn",
+                "module test; fn run(values: write Buffer<Buffer<Option<OwnedString>>>) -> Int32 { let removed: Bool = buffer_remove_drop(values, 0usize); let status: Int32 = buffer_remove_drop_status(values, 0usize); if !removed { return 1 } return status }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested carrier string remove drop must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert_eq!(
+            text.matches("buffer_remove_drop_nested_record_fields ")
+                .count(),
+            2,
+            "{text}"
+        );
+        assert!(text.contains("depth 1"), "{text}");
+        assert!(text.contains("depth 4294967295"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_owned_string_carrier_array_with_field_table() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-nested-owning-carrier-array.jdn");
+        let id = sources
+            .add("buffer-nested-owning-carrier-array.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested carrier array must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(
+            text.contains("recursive_record_buffer_fields_drop "),
+            "{text}"
+        );
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(
+            text.contains("buffer_remove_drop_nested_record_fields "),
+            "{text}"
+        );
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+        assert!(text.contains("depth 1"), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("variant 1, offset 40"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_owned_string_carrier_matrix_with_field_table() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-nested-owning-carrier-matrix.jdn");
+        let id = sources
+            .add("buffer-nested-owning-carrier-matrix.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested carrier matrix must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(
+            text.contains("recursive_record_buffer_fields_drop "),
+            "{text}"
+        );
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(
+            text.contains("buffer_remove_drop_nested_record_fields "),
+            "{text}"
+        );
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+        assert!(text.contains("depth 1"), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("variant 1, offset 40"), "{text}");
+        assert!(text.contains("variant 1, offset 72"), "{text}");
+        assert!(text.contains("variant 1, offset 104"), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_owned_string_carrier_matrix_move_into() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-nested-owning-carrier-matrix-move-into.jdn"
+        );
+        let id = sources
+            .add(
+                "buffer-nested-owning-carrier-matrix-move-into.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested carrier matrix move-into must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(
+            text.contains("recursive_record_buffer_fields_drop "),
+            "{text}"
+        );
+        assert!(text.contains("buffer_remove_move_into"), "{text}");
+        assert!(text.contains("buffer_remove_move_into_status"), "{text}");
+        assert!(text.contains("buffer_pop_move_into"), "{text}");
+        assert!(text.contains("buffer_pop_move_into_status"), "{text}");
+        assert!(text.contains("depth 1"), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("variant 1, offset 40"), "{text}");
+        assert!(text.contains("variant 1, offset 72"), "{text}");
+        assert!(text.contains("variant 1, offset 104"), "{text}");
     }
 
     #[test]
@@ -9756,6 +12937,71 @@ mod tests {
     }
 
     #[test]
+    fn lowers_buffer_owning_enum_record_field_table_offsets() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!("../../../examples/stdlib-buffer-owning-enum-record.jdn");
+        let id = sources
+            .add("buffer-owning-enum-record.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("enum record owning payload must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("enum_carrier_fields_drop "), "{text}");
+        // Entry's values and label descriptors are at record offsets 8/32;
+        // the enum payload starts at 8, so the flattened table must expose
+        // both descriptors at 16/40 under outer variant 1.
+        assert!(text.contains("variant 1, offset 16"), "{text}");
+        assert!(text.contains("variant 1, offset 40"), "{text}");
+        assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+    }
+
+    #[test]
+    fn lowers_buffer_owning_enum_generic_record_field_table_offsets() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-enum-generic-record.jdn");
+        let id = sources
+            .add("buffer-owning-enum-generic-record.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("generic enum record owning payload must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("enum_carrier_fields_drop "), "{text}");
+        // Frame<Buffer<Int32>> substitutes the generic payload at offset 0;
+        // the enum payload starts at offset 8 on the target ABI.
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+    }
+
+    #[test]
     fn lowers_buffer_owned_string_enum_raw_move_calls() {
         let mut sources = SourceManager::new();
         let source_text =
@@ -9812,6 +13058,235 @@ mod tests {
         assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
         assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
         assert!(text.contains("depth 4294967295"), "{text}");
+    }
+
+    #[test]
+    fn lowers_buffer_owned_string_enum_array_field_table_offsets() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-enum-string-array.jdn");
+        let id = sources
+            .add("buffer-owned-string-enum-array.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("enum owning string array must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("enum_carrier_fields_drop "), "{text}");
+        assert!(text.contains("variant 1, offset 8"), "{text}");
+        assert!(text.contains("variant 1, offset 32"), "{text}");
+        assert!(text.matches("depth 4294967295").count() >= 2, "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+        assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
+    }
+
+    #[test]
+    fn lowers_buffer_owned_string_enum_carrier_array_with_packed_tags() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-enum-carrier-array.jdn");
+        let id = sources
+            .add("buffer-owned-string-enum-carrier-array.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("enum carrier string array must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("enum_carrier_fields_drop "), "{text}");
+        assert!(text.contains("variant 1/1, offset 16"), "{text}");
+        assert!(text.contains("variant 1/1, offset 48"), "{text}");
+        assert!(text.matches("depth 4294967295").count() >= 2, "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+        assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
+    }
+
+    #[test]
+    fn lowers_buffer_owned_string_enum_nested_carrier_array_with_multi_tags() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-enum-nested-carrier-array.jdn");
+        let id = sources
+            .add(
+                "buffer-owned-string-enum-nested-carrier-array.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested enum carrier array must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("enum_carrier_fields_drop "), "{text}");
+        assert!(text.contains("offset 24"), "{text}");
+        assert!(text.contains("offset 64"), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+        assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
+    }
+
+    #[test]
+    fn lowers_buffer_owned_string_enum_deep_carrier_array_with_path_tags() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-enum-deep-carrier-array.jdn");
+        let id = sources
+            .add(
+                "buffer-owned-string-enum-deep-carrier-array.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("deep enum carrier array must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("enum_carrier_fields_drop "), "{text}");
+        assert!(text.contains("offset 32"), "{text}");
+        assert!(text.contains("offset 80"), "{text}");
+        assert!(text.contains("buffer_resize_move_record_fields "), "{text}");
+        assert!(text.contains("buffer_remove_drop_record_fields "), "{text}");
+    }
+
+    #[test]
+    fn lowers_buffer_owned_string_enum_deep_carrier_array_move_into() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-owning-enum-deep-carrier-array-move-into.jdn"
+        );
+        let id = sources
+            .add(
+                "buffer-owned-string-enum-deep-carrier-array-move-into.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("deep enum carrier move-into must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("enum_carrier_fields_drop "), "{text}");
+        assert!(text.contains("offset 32"), "{text}");
+        assert!(text.contains("offset 80"), "{text}");
+        assert_eq!(text.matches("buffer_remove_move_into").count(), 2, "{text}");
+        assert_eq!(text.matches("buffer_pop_move_into").count(), 2, "{text}");
+    }
+
+    #[test]
+    fn lowers_buffer_owned_string_enum_mixed_max_carrier_move_into() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-owning-enum-mixed-carrier-max-move-into.jdn"
+        );
+        let id = sources
+            .add(
+                "buffer-owned-string-enum-mixed-carrier-max-move-into.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("mixed maximum enum carrier move-into must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("enum_carrier_fields_drop "), "{text}");
+        assert!(text.contains("offset 56"), "{text}");
+        assert!(text.contains("offset 128"), "{text}");
+        assert!(text.matches("depth 4294967295").count() >= 2, "{text}");
+        assert_eq!(text.matches("buffer_remove_move_into").count(), 2, "{text}");
+        assert_eq!(text.matches("buffer_pop_move_into").count(), 2, "{text}");
+    }
+
+    #[test]
+    fn rejects_overlong_enum_carrier_move_into_before_jir_lowering() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/invalid/stdlib-enum-carrier-too-deep-move-into.jdn");
+        let id = sources
+            .add("stdlib-enum-carrier-too-deep-move-into.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        let diagnostics = checked
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "J0301")
+            .count();
+        assert!(checked.has_errors(), "overlong carrier must be rejected");
+        assert!(
+            diagnostics >= 4,
+            "expected four move-into/pop J0301 diagnostics, got {:?}",
+            checked.diagnostics
+        );
     }
 
     #[test]
@@ -10045,6 +13520,55 @@ mod tests {
     }
 
     #[test]
+    fn lowers_distinct_generic_nominal_specializations_with_opaque_nested_buffers() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "generic-nominal-specializations.jdn",
+                "module test; @repr(C) struct Row<T> { id: Int32, values: DynamicArray<T> } fn scalar(row: Row<Int32>) -> Int32 { return row.id } fn text(row: Row<OwnedString>) -> Int32 { return row.id } fn deep(row: Row<DynamicArray<OwnedString>>) -> Int32 { return row.id } fn grow(values: write DynamicArray<Row<DynamicArray<OwnedString>>>) -> Int32 { return buffer_resize_move_status(values, 3usize) }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("generic nominal specializations must lower");
+        let errors = crate::verify(&jir);
+        assert!(errors.is_empty(), "{errors:?}");
+        let identities: Vec<_> = jir
+            .types
+            .iter()
+            .filter_map(|ty| match ty {
+                Type::NominalStruct { identity, .. } => Some(*identity),
+                _ => None,
+            })
+            .collect();
+        let unique = identities
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(
+            identities.len() >= 3,
+            "expected all generic rows: {identities:?}"
+        );
+        assert_eq!(identities.len(), unique.len(), "{identities:?}");
+        assert!(
+            jir.to_text().contains("buffer_resize_move_record_fields"),
+            "{}",
+            jir.to_text()
+        );
+    }
+
+    #[test]
     fn lowers_owning_enum_remove_move_into_with_raw_output_pointer() {
         let mut sources = SourceManager::new();
         let id = sources
@@ -10188,6 +13712,42 @@ mod tests {
         assert!(text.contains("buffer_insert_move_from"), "{text}");
         assert!(text.contains("stack_alloc"), "{text}");
         assert!(text.contains("call @f1("), "{text}");
+    }
+
+    #[test]
+    fn lowers_nested_named_enum_record_insert_move_from_with_field_table() {
+        let mut sources = SourceManager::new();
+        let source_text = include_str!(
+            "../../../examples/stdlib-buffer-owning-record-nested-enum-insert-move-from.jdn"
+        );
+        let id = sources
+            .add(
+                "stdlib-buffer-owning-record-nested-enum-insert-move-from.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("nested named enum record insert-move must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("record_buffer_fields_drop "), "{text}");
+        assert!(
+            text.contains("variant 16285016252571713793, offset 24"),
+            "{text}"
+        );
+        assert!(text.contains("buffer_insert_move_from"), "{text}");
     }
 
     #[test]
@@ -10717,7 +14277,7 @@ mod tests {
         let id = sources
             .add(
                 "scheduler.jdn",
-                "module test; fn main() -> Int32 { app_scheduler_clear(); app_scheduler_set(7, 100 as Int64, 60u64); var due: [Int32; 4] = [0, 0, 0, 0]; let count: UIntSize = app_scheduler_poll(100 as Int64, due); if count == 1usize { return due[0] } return 1 }",
+                "module test; fn main() -> Int32 { app_scheduler_clear(); app_scheduler_set(7, 100 as Int64, 60u64); var due: [Int32; 4] = [0, 0, 0, 0]; var next_due: [Int64; 1] = [0 as Int64]; var has_due: [Bool; 1] = [false]; let next: Bool = app_scheduler_next_due_exact(next_due, has_due); let count: UIntSize = app_scheduler_poll(99 as Int64, due); if !next { return 1 } if !has_due[0] { return 1 } if next_due[0] != 100 as Int64 { return 1 } if count != 0usize { return 1 } app_scheduler_set(7, 100 as Int64, 60u64); var exact_count: [UIntSize; 1] = [99usize]; let exact: Bool = app_scheduler_poll_exact(100 as Int64, due, exact_count); if !exact { return 1 } if exact_count[0] != 1usize { return 1 } if due[0] != 7 { return 1 } return due[0] }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -10752,6 +14312,114 @@ mod tests {
                 bits: _
             }
         ));
+        let exact_import = jir
+            .functions
+            .iter()
+            .find(|function| function.name == "app_scheduler_poll_exact")
+            .expect("scheduler exact poll import");
+        assert_eq!(exact_import.parameters.len(), 3);
+        assert!(matches!(
+            jir.types[exact_import.result.index()],
+            crate::Type::Bool
+        ));
+        let next_import = jir
+            .functions
+            .iter()
+            .find(|function| function.name == "app_scheduler_next_due_exact")
+            .expect("scheduler next-due import");
+        assert_eq!(next_import.parameters.len(), 2);
+        assert!(matches!(
+            jir.types[next_import.result.index()],
+            crate::Type::Bool
+        ));
+
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_scheduler_write_exact", 0),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_scheduler_write_exact", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("app_scheduler_load_exact", 0),
+            Some(Capability::Read)
+        );
+    }
+
+    #[test]
+    fn lowers_http_request_body_exact_with_directional_borrows() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "http-request-body-exact.jdn",
+                "module test; fn main() -> Int32 { var input: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let body: Bool = http_request_body_exact(input, output, length); let prefix: Bool = http_request_body_exact_prefix(input, 12usize, output, length); if body { return length[0] as Int32 } if prefix { return length[0] as Int32 } return 0 }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("exact request body must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("fn import @f"), "{text}");
+        assert!(text.contains("\"http_request_body_exact\""), "{text}");
+        assert!(
+            text.contains("\"http_request_body_exact_prefix\""),
+            "{text}"
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_request_body_exact_prefix", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_request_body_exact_prefix", 2),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_request_body_exact_prefix", 3),
+            Some(Capability::Write)
+        );
+    }
+
+    #[test]
+    fn lowers_http_request_target_decode_exact_with_directional_borrows() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "http-request-target-decode-exact.jdn",
+                "module test; fn main() -> Int32 { var input: [UInt8; 1] = [0u8]; var output: [UInt8; 1] = [0u8]; var length: [UIntSize; 1] = [0usize]; let decoded: Bool = http_request_target_decode_exact(input, output, length); if decoded { return 1 } return 0 }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("exact request target must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("fn import @f"), "{text}");
+        assert!(
+            text.contains("\"http_request_target_decode_exact\""),
+            "{text}"
+        );
     }
 
     #[test]
@@ -10760,7 +14428,7 @@ mod tests {
         let id = sources
             .add(
                 "http-router-active.jdn",
-                "module test; fn main() -> Int32 { http_router_clear(); var body: [UInt8; 1] = [79u8]; var input: [UInt8; 1] = [0u8]; var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let _added: Bool = http_router_add(\"GET\", \"/\", 200u16, \"text/plain\", body); let _prefix_added: Bool = http_router_add_prefix(\"GET\", \"/api/\", 200u16, \"text/plain\", body); let _removed: Bool = http_router_remove(\"GET\", \"/\"); let _prefix_removed: Bool = http_router_remove_prefix(\"GET\", \"/api/\"); let _written: UIntSize = http_router_respond(input, output); let _count: UIntSize = http_router_count(); return 0 }",
+                "module test; fn main() -> Int32 { http_router_clear(); var body: [UInt8; 1] = [79u8]; var input: [UInt8; 1] = [0u8]; var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let _added: Bool = http_router_add(\"GET\", \"/\", 200u16, \"text/plain\", body); let _prefix_added: Bool = http_router_add_prefix(\"GET\", \"/api/\", 200u16, \"text/plain\", body); let _removed: Bool = http_router_remove(\"GET\", \"/\"); let _prefix_removed: Bool = http_router_remove_prefix(\"GET\", \"/api/\"); let _written: UIntSize = http_router_respond(input, output); let _chunked: UIntSize = http_router_respond_chunked(input, output); let _chunked_prefix: UIntSize = http_router_respond_chunked_prefix(input, 1usize, output); let _count: UIntSize = http_router_count(); return 0 }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -10784,6 +14452,8 @@ mod tests {
             "http_router_remove",
             "http_router_remove_prefix",
             "http_router_respond",
+            "http_router_respond_chunked",
+            "http_router_respond_chunked_prefix",
             "http_router_count",
         ] {
             assert!(
@@ -10791,6 +14461,22 @@ mod tests {
                 "missing {name}"
             );
         }
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_router_respond_chunked", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_router_respond_chunked", 1),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_router_respond_chunked_prefix", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_router_respond_chunked_prefix", 2),
+            Some(Capability::Write)
+        );
     }
 
     #[test]
@@ -10799,7 +14485,7 @@ mod tests {
         let id = sources
             .add(
                 "http-keep-alive-active.jdn",
-                "module test; fn main() -> Int32 { var body: [UInt8; 1] = [79u8]; var input: [UInt8; 1] = [0u8]; var output: [UInt8; 1] = [0u8]; let keep: Bool = http_request_keep_alive(input); let _written: UIntSize = http_response_write_ex(200u16, \"text/plain\", body, keep, output); return 0 }",
+                "module test; fn main() -> Int32 { var body: [UInt8; 2] = [79u8, 75u8]; var input: [UInt8; 1] = [0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let keep: Bool = http_request_keep_alive(input); let _written: UIntSize = http_response_write_ex(200u16, \"text/plain\", body, keep, output); let _prefix: UIntSize = http_response_write_prefix_ex(200u16, \"text/plain\", body, 1usize, keep, output); let _chunk: UIntSize = http_response_write_chunk(body, true, output); let _chunk_prefix: UIntSize = http_response_write_chunk_prefix(body, 1usize, true, output); return 0 }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -10816,12 +14502,106 @@ mod tests {
         let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
             .expect("keep-alive MIR must lower");
         assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
-        for name in ["http_request_keep_alive", "http_response_write_ex"] {
+        for name in [
+            "http_request_keep_alive",
+            "http_response_write_ex",
+            "http_response_write_prefix_ex",
+            "http_response_write_chunk",
+            "http_response_write_chunk_prefix",
+        ] {
             assert!(
                 jir.functions.iter().any(|function| function.name == name),
                 "missing {name}"
             );
         }
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_response_write_chunk", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_response_write_chunk", 2),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_response_write_chunk_prefix", 0),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_response_write_chunk_prefix", 3),
+            Some(Capability::Write)
+        );
+    }
+
+    #[test]
+    fn lowers_http_response_chunked_prefix_with_directional_borrows_active() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "http-response-chunked-prefix.jdn",
+                "module test; fn main() -> Int32 { var body: [UInt8; 8] = [65u8, 104u8, 111u8, 106u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let _written: UIntSize = http_response_write_chunked_prefix(200u16, \"text/plain\", body, 4usize, output); return 0 }",
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("chunked prefix MIR must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(
+            jir.functions
+                .iter()
+                .any(|function| function.name == "http_response_write_chunked_prefix")
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_response_write_chunked_prefix", 2),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_response_write_chunked_prefix", 4),
+            Some(Capability::Write)
+        );
+    }
+
+    #[test]
+    fn lowers_http_response_chunked_header_with_directional_borrow_active() {
+        let mut sources = SourceManager::new();
+        let id = sources
+            .add(
+                "http-response-chunked-header.jdn",
+                r#"module test; fn main() -> Int32 { var output: [UInt8; 80] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let _written: UIntSize = http_response_write_chunked_header(200u16, "text/plain", output); return 0 }"#,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("chunked header MIR must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        assert!(
+            jir.functions
+                .iter()
+                .any(|function| function.name == "http_response_write_chunked_header")
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_response_write_chunked_header", 2),
+            Some(Capability::Write)
+        );
     }
 
     #[test]
@@ -10902,7 +14682,7 @@ mod tests {
         let id = sources
             .add(
                 "http-session-active.jdn",
-                "module test; fn main() -> Int32 { let listener: UIntSize = net_tcp_listen(38125u16); let session: UIntSize = http_session_open(listener, 2u32, 1024u32, 1024u32); let tls_session: UIntSize = http_session_open_tls(listener, 2u32, 1024u32, 1024u32, \"cert.pem\", \"key.pem\"); let state: UInt32 = http_session_step(session, 1u32); let _closed: Bool = http_session_close(session); let _tls_closed: Bool = http_session_close(tls_session); return state as Int32 }",
+                r#"module test; fn main() -> Int32 { var request: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let listener: UIntSize = net_tcp_listen(38125u16); let session: UIntSize = http_session_open(listener, 2u32, 1024u32, 1024u32); let connection: UIntSize = http_session_accept(session, 1u32); let request_length: UIntSize = http_session_receive_request(connection, 1u32, request); let _sent: Bool = http_session_send(connection, request); let _sent_prefix: Bool = http_session_send_prefix(connection, request, request_length); let _connection_closed: Bool = http_session_close_connection(connection); let chunked_session: UIntSize = http_session_open_chunked(listener, 2u32, 1024u32, 1024u32); let tls_session: UIntSize = http_session_open_tls(listener, 2u32, 1024u32, 1024u32, "cert.pem", "key.pem"); let tls_chunked_session: UIntSize = http_session_open_tls_chunked(listener, 2u32, 1024u32, 1024u32, "cert.pem", "key.pem"); let state: UInt32 = http_session_step(session, 1u32); let _closed: Bool = http_session_close(session); let _chunked_closed: Bool = http_session_close(chunked_session); let _tls_closed: Bool = http_session_close(tls_session); let _tls_chunked_closed: Bool = http_session_close(tls_chunked_session); return (state + request_length as UInt32) as Int32 }"#,
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -10921,7 +14701,14 @@ mod tests {
         assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
         for name in [
             "http_session_open",
+            "http_session_open_chunked",
             "http_session_open_tls",
+            "http_session_open_tls_chunked",
+            "http_session_accept",
+            "http_session_receive_request",
+            "http_session_send",
+            "http_session_send_prefix",
+            "http_session_close_connection",
             "http_session_step",
             "http_session_close",
         ] {
@@ -10930,6 +14717,18 @@ mod tests {
                 "missing {name}"
             );
         }
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_session_receive_request", 2),
+            Some(Capability::Write)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_session_send", 1),
+            Some(Capability::Read)
+        );
+        assert_eq!(
+            borrowed_runtime_argument_capability("http_session_send_prefix", 1),
+            Some(Capability::Read)
+        );
     }
 
     #[test]
@@ -11017,7 +14816,7 @@ mod tests {
         let id = sources
             .add(
                 "tls-active.jdn",
-                "module test; fn main() -> Int32 { let socket: UIntSize = net_tcp_connect_dns(\"localhost\", 38127u16); let tls: UIntSize = net_tls_open_client(socket, \"localhost\", false); let server_tls: UIntSize = net_tls_open_server(socket, \"cert.pem\", \"key.pem\"); let step: UInt32 = net_tls_step(tls, 1000u32); let state: UInt32 = net_tls_state(tls); let error: Int32 = net_tls_error(tls); var input: [UInt8; 2] = [1u8, 2u8]; var output: [UInt8; 2] = [0u8, 0u8]; let sent: UIntSize = net_tls_send(tls, input); let received: UIntSize = net_tls_receive(tls, output); let closed: Bool = net_tls_close(tls); let server_closed: Bool = net_tls_close(server_tls); if !server_closed { return 1 } if closed { return (step as Int32) + (state as Int32) + (sent as Int32) + (received as Int32) } return error }",
+                "module test; fn main() -> Int32 { let socket: UIntSize = net_tcp_connect_dns(\"localhost\", 38127u16); let tls: UIntSize = net_tls_open_client(socket, \"localhost\", false); let server_tls: UIntSize = net_tls_open_server(socket, \"cert.pem\", \"key.pem\"); var cert_path: [UInt8; 8] = [99u8, 101u8, 114u8, 116u8, 0u8, 0u8, 0u8, 0u8]; var key_path: [UInt8; 8] = [107u8, 101u8, 121u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let server_paths: UIntSize = net_tls_open_server_paths(socket, cert_path, 4usize, key_path, 3usize); let step: UInt32 = net_tls_step(tls, 1000u32); let state: UInt32 = net_tls_state(tls); let error: Int32 = net_tls_error(tls); var input: [UInt8; 2] = [1u8, 2u8]; var output: [UInt8; 2] = [0u8, 0u8]; let sent: UIntSize = net_tls_send(tls, input); let sent_all: UIntSize = net_tls_send_all_prefix(tls, input, 1usize); let received: UIntSize = net_tls_receive(tls, output); let closed: Bool = net_tls_close(tls); let server_closed: Bool = net_tls_close(server_tls); let server_paths_closed: Bool = net_tls_close(server_paths); if !server_closed { return 1 } if !server_paths_closed { return 2 } if closed { return (step as Int32) + (state as Int32) + (sent as Int32) + (sent_all as Int32) + (received as Int32) } return error }",
             )
             .expect("source");
         let source = sources.get(id).expect("source");
@@ -11037,10 +14836,12 @@ mod tests {
         for name in [
             "net_tls_open_client",
             "net_tls_open_server",
+            "net_tls_open_server_paths",
             "net_tls_step",
             "net_tls_state",
             "net_tls_error",
             "net_tls_send",
+            "net_tls_send_all_prefix",
             "net_tls_receive",
             "net_tls_close",
         ] {
@@ -11157,6 +14958,69 @@ mod tests {
     }
 
     #[test]
+    fn lowers_owned_string_buffer_pop_move_into_to_string_aware_runtime() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-string-pop-move-into.jdn");
+        let id = sources
+            .add("stdlib-buffer-owning-string-pop-move-into.jdn", source_text)
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("OwnedString pop_move_into must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("buffer_pop_move_into"), "{text}");
+        assert!(text.contains("buffer_pop_move_into_status"), "{text}");
+        assert!(text.contains("owned_string_buffer_drop "), "{text}");
+    }
+
+    #[test]
+    fn lowers_owned_string_buffer_insert_move_from_to_string_aware_runtime() {
+        let mut sources = SourceManager::new();
+        let source_text =
+            include_str!("../../../examples/stdlib-buffer-owning-string-insert-move-from.jdn");
+        let id = sources
+            .add(
+                "stdlib-buffer-owning-string-insert-move-from.jdn",
+                source_text,
+            )
+            .expect("source");
+        let source = sources.get(id).expect("source");
+        let lexed = lex(source);
+        let parsed = parse(source, &lexed.tokens);
+        let resolved = resolve(source, &parsed.file);
+        let checked = check_types(source, &parsed.file, &resolved);
+        assert!(!checked.has_errors(), "{:?}", checked.diagnostics);
+        let hir = lower_hir(source, &parsed.file, &resolved, &checked);
+        let mut mir = lower_mir(&hir.module, &checked.types);
+        materialize_returns(&mut mir, &checked.types);
+        elaborate_region_cleanup(&mut mir);
+        elaborate_drops(&mut mir, &checked.types);
+
+        let jir = lower_from_mir(&mir, &checked.types, LowerOptions::default())
+            .expect("OwnedString insert_move_from must lower");
+        assert!(crate::verify(&jir).is_empty(), "{:?}", crate::verify(&jir));
+        let text = jir.to_text();
+        assert!(text.contains("buffer_insert_move_from"), "{text}");
+        assert!(text.contains("buffer_insert_move_from_status"), "{text}");
+        assert!(text.contains("buffer_remove_drop_owned_string"), "{text}");
+        assert!(text.contains("buffer_clear_move"), "{text}");
+        assert!(text.contains("owned_string_buffer_drop "), "{text}");
+    }
+
+    #[test]
     fn lowers_nested_owned_string_projection_calls() {
         let mut sources = SourceManager::new();
         let source_text = include_str!("../../../examples/stdlib-buffer-nested-owned-string.jdn");
@@ -11228,6 +15092,15 @@ mod tests {
         assert!(
             text.contains("buffer_resize_move_nested_owned_string "),
             "{text}"
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        let clear_index = lines
+            .iter()
+            .position(|line| line.contains("buffer_resize_move_nested_owned_string "))
+            .expect("nested clear must lower to a resize-to-zero operation");
+        assert!(
+            clear_index > 0 && lines[clear_index - 1].contains("const 0"),
+            "nested clear must pass an explicit zero length: {text}"
         );
         assert!(
             text.contains("recursive_owned_string_buffer_drop "),

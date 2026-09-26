@@ -1,0 +1,13 @@
+module examples.selfhost.typed_statement_assignment_int32_three_locals
+
+// The Stage-2 source-driver keeps three mutable Int32 locals homogeneous,
+// reads each earlier slot from a later assignment, and returns the last slot.
+fn local_value() -> Int32 {
+    let first: Int32 = 10;
+    let second: Int32 = 20;
+    let third: Int32 = 30;
+    first = first + 1;
+    second = first - 2;
+    third = second * 3;
+    return third;
+}

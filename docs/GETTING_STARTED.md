@@ -1,10 +1,14 @@
 # Getting started
 
 This guide uses the compiler from the public source repository. The repository
-is currently the 0.1.3-preview.11 public preview: it provides source, examples,
-editor support, and the Unity preview packages under `unity/`. The Windows
-preview installer is unsigned and updates the user PATH; installation may
-require administrator confirmation. The Downloads page provides a versioned Unity Integration
+is currently the 0.1.3-preview.13 public preview: it provides source, examples,
+editor support, and the Unity preview packages under `unity/`. Public preview
+downloads are manifest-verified `signed-local` artifacts, not trusted
+Authenticode releases. Local Windows developer copies may be self-signed as
+`Roman Hladky, C=SK`; other machines will normally show an untrusted or
+unknown publisher until a public CA certificate and timestamp are used.
+The preview installer updates the user PATH; installation may require
+administrator confirmation. The Downloads page provides a versioned Unity Integration
 Bundle; local packages and native plugins must match the same release line.
 
 ## Requirements
@@ -67,6 +71,33 @@ entry is a parameterless
 process exit code. The Windows and Linux console runtimes support the built-in
 `print(String)` used by this example.
 
+## Growable arrays
+
+Use `DynamicArray<T>` when the source should describe a growable array rather
+than the lower-level `Buffer<T>` spelling. It is a canonical source-level
+alias for the same owning descriptor, so the existing bounded operations keep
+their ownership and rollback rules:
+
+```jadren
+fn main() -> Int32 {
+    let created: Result<DynamicArray<Int32>, Int32> = buffer_create(0usize)
+    match created {
+        Ok(values) => {
+            if !buffer_append(values, 7) { return 1 }
+            if !buffer_insert(values, 0usize, 3) { return 2 }
+            if !buffer_reserve(values, 4usize) { return 3 }
+            return buffer_length(values) as Int32
+        }
+        Error(status) => { return status }
+    }
+}
+```
+
+`DynamicArray<T>` uses the same `buffer_append`, `buffer_insert`,
+`buffer_resize`, `buffer_remove`, `buffer_clear`, indexing, and capacity
+checks as `Buffer<T>`. Fixed `[T; N]` values remain inline arrays with a
+compile-time length and are not aliases.
+
 For a guided calculation-to-window path, continue with the
 [practical beginner course](BEGINNER_PRACTICAL_COURSE.md).
 
@@ -117,8 +148,9 @@ length, and mode `3` publishes list/table count. Slots remain bounded to
 The retained UI contract also supports bounded hover help without a C/Win32
 bridge: call `ui_app_tooltip(node, text, width, height, text_color,
 background_color, corner_radius)` immediately after `ui_app_button` or
-`ui_app_checkbox`. The Windows backend uses the native tooltip controller and
-the X11 backend paints the hint above the hovered control.
+`ui_app_checkbox`, `ui_app_switch`, `ui_app_text_input`, `ui_app_select`,
+`ui_app_list`, or `ui_app_table`. The Windows backend uses the native tooltip
+controller and the X11 backend paints the hint above the hovered control.
 
 ## Local file persistence
 
@@ -146,8 +178,10 @@ serialization or allocation is introduced.
 
 When an existing file must cross an explicit durability boundary, call
 `file_flush(path)` after the write or append succeeds. Windows uses
-`FlushFileBuffers` and Linux uses `fsync`; the call does not flush directory
-metadata, make a rename transactional, or turn the file into a database.
+`FlushFileBuffers` and Linux uses `fsync`; the call does not make a rename
+transactional or turn the file into a database. After a create, rename or
+delete, call `directory_flush(directory)` when filesystem metadata must cross
+its own explicit durability boundary.
 
 For a multi-process application, reserve a separate lock path and use the
 non-blocking token API:
@@ -181,8 +215,9 @@ needed. Each call is independent and writes only the supplied UTF-8 block.
 
 Directory setup is explicit as well. `directory_exists(path)` distinguishes a
 directory from a file, `directory_create(path)` creates one and is idempotent
-when the directory already exists, and `directory_delete(path)` removes only an
-empty directory. The same three builtins use Win32 on Windows and POSIX
+when the directory already exists, `directory_flush(path)` synchronizes its
+metadata, and `directory_delete(path)` removes only an empty directory. The
+same builtins use Win32 on Windows and POSIX
 `mkdir`/`rmdir` on Linux; `examples/directory-runtime.jdn` exercises the full
 create/check/write/delete/cleanup flow.
 
@@ -199,6 +234,12 @@ parallel kind bytes in the same sorted order: `1` is a regular file, `2` is a
 directory, and `3` is another filesystem entry. Both caller-owned buffers are
 validated before either is written. See
 `examples/directory-list-ex-runtime.jdn` for capacity, ordering, and cleanup.
+
+Use `directory_list_ex_exact(path, names, names_length, kinds, item_count)` when
+an empty directory must be distinguishable from a failed read. It returns a
+`Bool` and publishes both lengths only after the complete bounded listing has
+been validated; a short output leaves names, kinds, and both length slots
+unchanged.
 
 For text configuration and import files, `file_read_text(path, output)` is the
 bounded counterpart to `file_write_text`. It reads the complete file only when
@@ -287,6 +328,13 @@ empty string; `app_state_read_key` enumerates keys in insertion order, and
 `app_state_remove` deletes one key without resetting the rest.
 `app_state_save_atomic` combines temporary JSON output and atomic replacement
 for crash-resistant settings updates.
+The natural stdlib facade `jadren.app.state.clear_if_model_revision` clears
+those scalar entries only when the caller's opaque `app_data_revision()` is
+still current. A list or table mutation therefore rejects a stale reset,
+while a current token leaves dynamic collections untouched. This is a
+process-local coordination boundary without a new ABI, persistence commit,
+or cross-thread atomicity; see
+`examples/app-state-clear-if-model-revision-project`.
 
 The composed desktop example `examples/time-tracker.jdn` shows the intended
 next level: it restores three bounded task rows, binds the table selection,
@@ -352,6 +400,9 @@ caller-owned `write Slice<UInt8>`. Standard quoting is applied for commas,
 quotes and line breaks; the runtime calculates the complete size first and
 writes nothing when the output capacity is too small. See
 `examples/app-list-export-csv.jdn`.
+The natural stdlib facade `jadren.app.list.clear_if_model_revision` applies
+the complete-model `app_data_revision()` guard when a controller must clear a
+list only if its snapshot is still current.
 
 For row/column application data, `app_table_*` provides four bounded tables
 with 64 rows and 8 text columns. Call `app_table_append_row`,
@@ -361,6 +412,9 @@ widget. `examples/app-table-runtime.jdn` is a runnable example. The bounded
 model supports stable byte-wise `app_table_sort_text` and exact-match
 `app_table_find_text` from a chosen start row; a general filter engine and
 automatic UI projection remain later stages.
+The matching `jadren.app.table.clear_if_model_revision` facade exposes the
+same complete-model guard for a table without adding another native mutation
+path.
 `app_table_filter_text` provides the first bounded exact-match projection into
 a separate destination table; the source remains unchanged. See
 `examples/app-table-filter.jdn`.
@@ -499,6 +553,11 @@ Use `app_data_write_exact_if_revision(output, length, expected_revision)` when
 an HTTP or IPC controller must export only the equality-only model revision it
 read; stale calls return `false` before changing the caller-owned buffer or
 length. Transport, locking, and retry remain explicit caller responsibilities.
+To size that buffer without accepting a stale model, use
+`app_data_snapshot_length_if_revision(expected_revision) -> UIntSize`; it
+returns `0` when the equality-only token is stale or serialization fails. Keep
+the final export guarded with `app_data_write_exact_if_revision` because the
+model can still change after sizing.
 Use `app_data_load_exact_if_revision(input, input_length, expected_revision)`
 when a delayed response must not overwrite local changes made after the
 request started; the stale token is rejected before the transactional restore.
@@ -520,6 +579,12 @@ When a controller must persist exactly the revision it read, use
 `app_data_save_atomic_if_revision(temporary_path, target_path, expected_revision)`.
 The atomic promotion is rejected when the model-wide equality-only revision is
 stale; this remains a process-local, caller-driven guard.
+The same complete-model contract is also available through the natural
+`jadren.app.data.*_if_model_revision` spellings. They cover snapshot sizing,
+Slice and dynamic `Buffer<UInt8>` export, atomic/durable publish, exact/file
+restore, and transaction begin/durable commit (including bounded retry and
+directory-flush variants). These are aliases over the existing equality-only
+paths; they add no worker, hidden lock, Electron bridge, or new ABI.
 For append-only crash recovery, `app_data_journal_append(journal_path,
 scratch_path)` writes a length- and FNV-1a-checksum-framed checkpoint and
 `app_data_journal_recover(journal_path, scratch_path)` restores the last
@@ -732,7 +797,9 @@ are blocking I/O and carry an opaque `UIntSize`
 token; `connect` supports `localhost` and IPv4 literals only. For an explicit
 TLS client, wrap the connected socket with `net_tls_open_client(socket,
 server_name, verify_peer)`, advance `net_tls_step(tls, timeout_ms)` until it
-returns `2`, then use `net_tls_send`/`net_tls_receive` and `net_tls_close`.
+returns `2`, then use `net_tls_send`/`net_tls_send_prefix`/`net_tls_send_all_prefix`,
+`net_tls_receive`, and `net_tls_close`. The prefix variant accepts a larger
+caller-owned buffer plus an explicit valid length and sends only that prefix.
 `net_tls_state` reports `closed`, `handshaking`, `open`, `error`, or
 `peer-closed`, while `net_tls_error` exposes the native diagnostic code.
 Windows uses Schannel and Linux uses the native OpenSSL backend. Keep
@@ -756,11 +823,81 @@ calls. The complete accept/connect/receive/send flow is in
 `examples/net-reactor-operations.jdn`; `examples/net-reactor-timeout.jdn`
 shows the timeout flag and deterministic cleanup.
 
+For one bounded outbound plain-HTTP exchange, the natural
+`jadren.network.client.request_once` facade composes DNS/TCP connect, timeout,
+HTTP request serialization, complete send, one caller-owned receive, and
+status/response-length read-back. It returns the HTTP status on success or a
+negative step code on failure. The request and response buffers remain owned by
+the caller; TLS, keep-alive, retries, pooling, and streaming remain explicit
+`tls`/`session`/`reactor` contracts. The native package proof is in
+`examples/network-api-client-project`.
+
+The exact one-shot variant is `jadren.network.client.request_once_exact`.
+It preserves the same preflight and ownership rules while validating
+`Content-Length` before publishing the body length or changing the body output.
+
+For sequential plain-HTTP requests that also need an exact body read-back, use
+`jadren.network.client.request_exact`. It keeps the socket and buffers
+caller-owned, validates `Content-Length` before publishing the body length, and
+retains the explicit keep-alive/final-close policy of `client.request`.
+
+For one bounded outbound HTTPS-style exchange, use
+`jadren.network.client_tls.request_once_tls`. It keeps the request/response
+buffers caller-owned, validates the request before opening a socket, performs
+an explicit bounded TLS handshake (`max_handshake_steps` and
+`verify_certificate`), sends the complete request, receives once, and reports
+the status and response length only after TLS close. It does not add
+keep-alive, retries, pooling, streaming, or automatic certificate policy; the
+native proof is the TLS-backed `examples/network-session-client` fixture.
+
+The exact-body one-shot variant is
+`jadren.network.client_tls.request_once_exact`. It keeps the same explicit
+handshake and ownership rules, then validates `Content-Length` before
+publishing the body length or changing the caller-owned body output; malformed
+or undersized output returns a bounded error.
+
+For sequential HTTPS-style requests on one caller-owned TLS token, use
+`jadren.network.client_tls.open`, `client_tls.request`, and
+`client_tls.close_session`. The handshake step bound and certificate-verification
+choice remain explicit; `connection_mode` selects keep-alive or final close and
+each request performs one bounded receive. The standalone
+`examples/network-client-tls-keep-alive-project` gate proves this locally with
+an ephemeral self-signed certificate; it does not claim public CA trust or
+production HTTPS deployment.
+
+When the caller also wants an exact body read-back, use
+`client_tls.request_exact` with a separate caller-owned body buffer and length
+slot. It validates the received `Content-Length` before publishing the body
+length or changing the body output, while retaining the same explicit
+keep-alive/close and TLS-token ownership rules.
+
+For bounded request cookies, use `jadren.network.cookies`. The caller owns
+fixed-width name/value slots and chooses the current Unix time; `put`, `get`,
+`remove`, and `write_request_header` provide deterministic upsert, expiry,
+Secure filtering, and no-partial-write behavior without a global store. The
+`read_response_cookie` helper parses one `Set-Cookie` header into caller-owned
+name/value, relative `Max-Age`, and Secure outputs before the caller chooses an
+absolute expiry and calls `put`. For a bounded restart-safe local handoff,
+`snapshot_length`, `snapshot_write_exact`, and `snapshot_load_exact` provide a
+canonical `JCK1` snapshot; the caller still chooses the file, atomic promotion,
+encryption, and origin/domain/path policy. The standalone
+`examples/network-cookie-persistence-project` additionally proves a seed run,
+restart load through `write_atomic_durable`, and rejection of a corrupted file
+without silently resetting the jar. The bounded proofs are
+`examples/network-cookie-jar-project` and
+`examples/network-cookie-persistence-project`.
+
 A bounded server uses `net_tls_open_server(socket, certificate, private_key)`
 after `net_tcp_accept`. Windows expects an explicit PFX/PKCS#12 certificate
 path and password; Linux expects PEM certificate and private-key paths. The
 server token owns the accepted socket and exposes the same `step`, `state`,
 `error`, `send`, `receive`, and `close` operations.
+
+When credential paths or the Windows PFX password come from CLI/configuration,
+use `net_tls_open_server_paths(socket, certificate_path, certificate_length,
+private_key_path, private_key_length)`. The runtime validates both caller-owned
+slice capacities before opening credentials; Windows treats the second view as
+the PFX password, while Linux treats it as the PEM private-key path.
 
 For a server that should keep the HTTP routing/session loop in Jadren, use
 `http_session_open_tls(listener, max_connections, max_header_bytes,
@@ -803,7 +940,12 @@ state remain higher-level contracts.
 The direct HTTP input helpers are `http_request_is_complete(input)`,
 `http_request_method(input, output)`, `http_request_target(input, output)`,
 `http_request_header(input, name, output)`, and
-`http_request_body(input, output)`. They parse caller-owned HTTP/1.1 bytes
+`http_request_body(input, output)` and `http_request_body_exact(input, output, length)`.
+For an accumulated receive buffer, use
+`http_request_body_exact_prefix(input, input_length, output, length)` so bytes
+outside the valid prefix are never parsed.
+The exact variant distinguishes a valid empty body from invalid framing and
+writes the parsed `Content-Length` only after a complete validation. They parse caller-owned HTTP/1.1 bytes
 without allocation. The parser validates the request line and header framing,
 rejects duplicate `Content-Length` and `Transfer-Encoding`, and only copies a
 body when a valid `Content-Length` is available. A `0` result means invalid
@@ -879,7 +1021,7 @@ cargo run -p jadren-cli -- emit jir hello.jdn
 ## Important limitations
 
 - The language specification is still a draft.
-- A signed public installer and release artifacts are not yet available.
+- A trusted public Authenticode installer and release artifacts are not yet available; local developer signing is documented separately.
 - Native `build` and `run` currently target Windows and Linux x86-64.
 - Target support differs by platform and workload.
 - GPU and mobile targets require their own execution validation.

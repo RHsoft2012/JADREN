@@ -1,0 +1,10 @@
+module selfhost.typed_statement_assignment_int32_generic_sequence;
+
+fn local_value() -> Int32 {
+    let first: Int32 = 10;
+    let second: Int32 = first + 2;
+    let third: Int32 = second * 2;
+    let fourth: Int32 = third - 1;
+    first = fourth + second;
+    return first + third;
+}

@@ -1,0 +1,118 @@
+module generic_buffer_insert_grow.main
+
+import jadren.core.collections.append
+import jadren.core.collections.append_move
+import jadren.core.collections.capacity
+import jadren.core.collections.clear_move
+import jadren.core.collections.create
+import jadren.core.collections.insert_grow
+import jadren.core.collections.insert_grow_status
+import jadren.core.collections.insert_move_from_grow
+import jadren.core.collections.insert_move_from_grow_status
+import jadren.core.collections.length
+
+fn main() -> Int32 {
+    var result_code: Int32 = 0
+
+    let integers: Result<Buffer<Int32>, Int32> = create(1usize)
+    match integers {
+        Ok(values) => {
+            if ! append(values, 10) { result_code = 1 }
+            let initial_capacity: UIntSize = capacity(values)
+            if ! insert_grow(values, 0usize, 20) { result_code = 2 }
+            if length(values) != 2usize { result_code = 3 }
+            if values[0] != 20 { result_code = 4 }
+            if values[1] != 10 { result_code = 4 }
+            if capacity(values) <= initial_capacity { result_code = 5 }
+            if insert_grow_status(values, 1usize, 30) != 0 { result_code = 6 }
+            if length(values) != 3usize { result_code = 7 }
+            if values[1] != 30 { result_code = 8 }
+            let before_invalid_length: UIntSize = length(values)
+            let before_invalid_capacity: UIntSize = capacity(values)
+            if insert_grow_status(values, 99usize, 40) != -20 { result_code = 9 }
+            if length(values) != before_invalid_length { result_code = 10 }
+            if capacity(values) != before_invalid_capacity { result_code = 11 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let floats: Result<Buffer<Float32>, Int32> = create(1usize)
+    match floats {
+        Ok(values) => {
+            if ! append(values, 1.5f32) { result_code = 12 }
+            if ! insert_grow(values, 1usize, 2.5f32) { result_code = 13 }
+            if length(values) != 2usize { result_code = 14 }
+            if values[0] != 1.5f32 { result_code = 15 }
+            if values[1] != 2.5f32 { result_code = 15 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let outer_created: Result<Buffer<Buffer<Int32>>, Int32> = create(1usize)
+    let first_created: Result<Buffer<Int32>, Int32> = create(0usize)
+    let second_created: Result<Buffer<Int32>, Int32> = create(0usize)
+    let third_created: Result<Buffer<Int32>, Int32> = create(0usize)
+    match outer_created {
+        Ok(outer) => {
+            match first_created {
+                Ok(first) => {
+                    match second_created {
+                        Ok(second) => {
+                            match third_created {
+                                Ok(third) => {
+                                    if ! append(first, 11) { result_code = 16 }
+                                    if ! append(second, 22) { result_code = 17 }
+                                    if ! append(third, 33) { result_code = 18 }
+                                    if ! append_move(outer, first) { result_code = 19 }
+                                    if ! insert_move_from_grow(outer, 0usize, second) { result_code = 20 }
+                                    if insert_move_from_grow_status(outer, 2usize, third) != 0 { result_code = 21 }
+                                    if length(outer) != 3usize { result_code = 22 }
+                                    if outer[0][0] != 22 { result_code = 23 }
+                                    if outer[1][0] != 11 { result_code = 23 }
+                                    if outer[2][0] != 33 { result_code = 23 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let owned_created: Result<Buffer<OwnedString>, Int32> = create(1usize)
+    let owned_first_created: Result<OwnedString, Int32> = string_owned_from("first")
+    let owned_second_created: Result<OwnedString, Int32> = string_owned_from("second")
+    let owned_status_created: Result<OwnedString, Int32> = string_owned_from("status")
+    match owned_created {
+        Ok(strings) => {
+            match owned_first_created {
+                Ok(first) => {
+                    match owned_second_created {
+                        Ok(second) => {
+                            match owned_status_created {
+                                Ok(status_value) => {
+                                    if ! append_move(strings, first) { result_code = 24 }
+                                    if ! insert_move_from_grow(strings, 0usize, second) { result_code = 25 }
+                                    if insert_move_from_grow_status(strings, 2usize, status_value) != 0 { result_code = 26 }
+                                    if length(strings) != 3usize { result_code = 27 }
+                                    if ! clear_move(strings) { result_code = 28 }
+                                    if length(strings) != 0usize { result_code = 29 }
+                                }
+                                Error(status) => { result_code = status }
+                            }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

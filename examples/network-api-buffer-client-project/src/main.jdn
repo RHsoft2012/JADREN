@@ -1,0 +1,105 @@
+module network_api_buffer_client_project.main
+
+import jadren.network.http.response_body_prefix
+import jadren.network.http.response_body_chunked_exact
+import jadren.network.http.response_status_prefix
+import jadren.network.tcp.close_socket
+import jadren.network.tcp.connect_dns
+import jadren.network.tcp.receive_buffer
+import jadren.network.tcp.send_buffer
+import jadren.network.tcp.set_timeout
+
+fn chunked_mode() -> Bool {
+    if process_arg_count() < 2usize { return false }
+    var mode: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let length: UIntSize = process_arg_read(1usize, mode)
+    if length != 7usize { return false }
+    if mode[0] != 99u8 { return false }
+    if mode[1] != 104u8 { return false }
+    if mode[2] != 117u8 { return false }
+    if mode[3] != 110u8 { return false }
+    if mode[4] != 107u8 { return false }
+    if mode[5] != 101u8 { return false }
+    if mode[6] != 100u8 { return false }
+    return true
+}
+
+fn append_request(request: write Buffer<UInt8>) -> Bool {
+    var frame: [UInt8; 38] = [71u8, 69u8, 84u8, 32u8, 47u8, 104u8, 101u8, 97u8, 108u8, 116u8, 104u8, 122u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 108u8, 111u8, 99u8, 97u8, 108u8, 13u8, 10u8, 13u8, 10u8]
+    var index: UIntSize = 0usize
+    while index < 38usize {
+        if !buffer_append(request, frame[index]) { return false }
+        index = index + 1usize
+    }
+    return true
+}
+
+fn run_client() -> Int32 {
+    let request_created: Result<Buffer<UInt8>, Int32> = buffer_create(128usize)
+    var status: Int32 = 0i32
+    match request_created {
+        Error(error) => { status = error }
+        Ok(request) => {
+            if !append_request(request) { return 1 }
+            let response_created: Result<Buffer<UInt8>, Int32> = buffer_create(512usize)
+            match response_created {
+                Error(error) => { status = error }
+                Ok(response) => {
+                    if !buffer_resize(response, 512usize) { return 2 }
+                    var port: UInt16 = 38176u16
+                    if chunked_mode() { port = 38177u16 }
+                    let socket: UIntSize = connect_dns("localhost", port)
+                    if socket == 0usize { return 3 }
+                    if !set_timeout(socket, 3000u32) {
+                        close_socket(socket)
+                        return 4
+                    }
+                    if send_buffer(socket, request) != 38usize {
+                        close_socket(socket)
+                        return 5
+                    }
+                    let received: UIntSize = receive_buffer(socket, response)
+                    if received == 0usize {
+                        close_socket(socket)
+                        return 6
+                    }
+                    let status_code: UInt16 = response_status_prefix(
+                        buffer_slice(response, 0usize, received),
+                        received,
+                    )
+                    var body: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+                    var body_length: UIntSize = 0usize
+                    if chunked_mode() {
+                        var decoded_length: [UIntSize; 1] = [0usize]
+                        if !response_body_chunked_exact(
+                            buffer_slice(response, 0usize, received),
+                            body,
+                            decoded_length,
+                        ) {
+                            close_socket(socket)
+                            return 9
+                        }
+                        body_length = decoded_length[0]
+                    } else {
+                        body_length = response_body_prefix(
+                            buffer_slice(response, 0usize, received),
+                            received,
+                            body,
+                        )
+                    }
+                    if !close_socket(socket) { return 7 }
+                    if status_code != 200u16 { return 8 }
+                    if body_length != 2usize { return 9 }
+                    if body[0] != 79u8 { return 10 }
+                    if body[1] != 75u8 { return 11 }
+                    status = 0i32
+                }
+            }
+        }
+    }
+    return status
+}
+
+fn main() -> Int32 {
+    return run_client()
+}

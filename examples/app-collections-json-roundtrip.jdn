@@ -1,0 +1,64 @@
+module examples.app_collections_json_roundtrip
+
+// Caller-owned JSON imports are bounded and transactional. A malformed
+// document must not partially replace an existing list or table.
+fn main() -> Int32 {
+    app_list_clear(0)
+
+    var list_input: [UInt8; 16] = [
+        91u8, 34u8, 65u8, 92u8, 34u8, 34u8, 44u8, 34u8,
+        108u8, 105u8, 110u8, 101u8, 92u8, 110u8, 34u8, 93u8
+    ]
+    if !app_list_import_json_exact(0, list_input, 16usize) { return 1 }
+    if app_list_count(0) != 2 { return 2 }
+
+    var list_value: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var list_value_length: [UIntSize; 1] = [0usize]
+    if !app_list_read_text_exact(0, 0, list_value, list_value_length) { return 3 }
+    if list_value_length[0] != 2usize { return 4 }
+    if list_value[0] != 65u8 { return 5 }
+    if list_value[1] != 34u8 { return 6 }
+
+    var bad_list: [UInt8; 1] = [91u8]
+    if app_list_import_json_exact(0, bad_list, 1usize) { return 7 }
+    if app_list_count(0) != 2 { return 8 }
+
+    app_table_clear(0)
+    if !app_table_set_column_name(0, 0, "name") { return 9 }
+    if !app_table_append_row(0) { return 10 }
+    if !app_table_set_cell(0, 0, 0, "Alice") { return 11 }
+
+    var table_json: [UInt8; 64] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var table_json_length: [UIntSize; 1] = [0usize]
+    if !app_table_export_json_exact(0, table_json, table_json_length) { return 12 }
+    if !app_table_set_cell(0, 0, 0, "Changed") { return 13 }
+    if !app_table_import_json_exact(0, table_json, table_json_length[0]) { return 14 }
+
+    var table_value: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var table_value_length: [UIntSize; 1] = [0usize]
+    if !app_table_read_cell_exact(0, 0, 0, table_value, table_value_length) { return 15 }
+    if table_value_length[0] != 5usize { return 16 }
+    if table_value[0] != 65u8 { return 17 }
+    if table_value[4] != 101u8 { return 18 }
+
+    var bad_table: [UInt8; 1] = [123u8]
+    if app_table_import_json_exact(0, bad_table, 1usize) { return 19 }
+    if !app_table_read_cell_exact(0, 0, 0, table_value, table_value_length) { return 20 }
+    if table_value_length[0] != 5usize { return 21 }
+
+    app_list_clear(0)
+    app_table_clear(0)
+    return 0
+}

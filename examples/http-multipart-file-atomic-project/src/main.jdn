@@ -1,0 +1,394 @@
+module examples.http_multipart_file_atomic_project
+import jadren.network.http.multipart_part_write_file_atomic_prefix
+// This standalone project verifies a binary multipart upload is fully checked
+// before a flushed temporary file replaces the live target.
+fn main() -> Int32 {
+    var request:[UInt8;
+    247] =[80u8,
+    79u8,
+    83u8,
+    84u8,
+    32u8,
+    47u8,
+    117u8,
+    112u8,
+    108u8,
+    111u8,
+    97u8,
+    100u8,
+    32u8,
+    72u8,
+    84u8,
+    84u8,
+    80u8,
+    47u8,
+    49u8,
+    46u8,
+    49u8,
+    13u8,
+    10u8,
+    72u8,
+    111u8,
+    115u8,
+    116u8,
+    58u8,
+    32u8,
+    108u8,
+    111u8,
+    99u8,
+    97u8,
+    108u8,
+    104u8,
+    111u8,
+    115u8,
+    116u8,
+    13u8,
+    10u8,
+    67u8,
+    111u8,
+    110u8,
+    116u8,
+    101u8,
+    110u8,
+    116u8,
+    45u8,
+    84u8,
+    121u8,
+    112u8,
+    101u8,
+    58u8,
+    32u8,
+    109u8,
+    117u8,
+    108u8,
+    116u8,
+    105u8,
+    112u8,
+    97u8,
+    114u8,
+    116u8,
+    47u8,
+    102u8,
+    111u8,
+    114u8,
+    109u8,
+    45u8,
+    100u8,
+    97u8,
+    116u8,
+    97u8,
+    59u8,
+    32u8,
+    98u8,
+    111u8,
+    117u8,
+    110u8,
+    100u8,
+    97u8,
+    114u8,
+    121u8,
+    61u8,
+    74u8,
+    65u8,
+    68u8,
+    82u8,
+    69u8,
+    78u8,
+    13u8,
+    10u8,
+    67u8,
+    111u8,
+    110u8,
+    116u8,
+    101u8,
+    110u8,
+    116u8,
+    45u8,
+    76u8,
+    101u8,
+    110u8,
+    103u8,
+    116u8,
+    104u8,
+    58u8,
+    32u8,
+    49u8,
+    51u8,
+    50u8,
+    13u8,
+    10u8,
+    13u8,
+    10u8,
+    45u8,
+    45u8,
+    74u8,
+    65u8,
+    68u8,
+    82u8,
+    69u8,
+    78u8,
+    13u8,
+    10u8,
+    67u8,
+    111u8,
+    110u8,
+    116u8,
+    101u8,
+    110u8,
+    116u8,
+    45u8,
+    68u8,
+    105u8,
+    115u8,
+    112u8,
+    111u8,
+    115u8,
+    105u8,
+    116u8,
+    105u8,
+    111u8,
+    110u8,
+    58u8,
+    32u8,
+    102u8,
+    111u8,
+    114u8,
+    109u8,
+    45u8,
+    100u8,
+    97u8,
+    116u8,
+    97u8,
+    59u8,
+    32u8,
+    110u8,
+    97u8,
+    109u8,
+    101u8,
+    61u8,
+    34u8,
+    102u8,
+    105u8,
+    108u8,
+    101u8,
+    34u8,
+    59u8,
+    32u8,
+    102u8,
+    105u8,
+    108u8,
+    101u8,
+    110u8,
+    97u8,
+    109u8,
+    101u8,
+    61u8,
+    34u8,
+    97u8,
+    46u8,
+    98u8,
+    105u8,
+    110u8,
+    34u8,
+    13u8,
+    10u8,
+    67u8,
+    111u8,
+    110u8,
+    116u8,
+    101u8,
+    110u8,
+    116u8,
+    45u8,
+    84u8,
+    121u8,
+    112u8,
+    101u8,
+    58u8,
+    32u8,
+    97u8,
+    112u8,
+    112u8,
+    108u8,
+    105u8,
+    99u8,
+    97u8,
+    116u8,
+    105u8,
+    111u8,
+    110u8,
+    47u8,
+    111u8,
+    99u8,
+    116u8,
+    101u8,
+    116u8,
+    45u8,
+    115u8,
+    116u8,
+    114u8,
+    101u8,
+    97u8,
+    109u8,
+    13u8,
+    10u8,
+    13u8,
+    10u8,
+    0u8,
+    65u8,
+    66u8,
+    13u8,
+    10u8,
+    45u8,
+    45u8,
+    74u8,
+    65u8,
+    68u8,
+    82u8,
+    69u8,
+    78u8,
+    45u8,
+    45u8,
+    13u8,
+    10u8
+    ]
+    var scratch:[UInt8;
+    8] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var output:[UInt8;
+    8] =[0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8]
+    var output_length:[UIntSize;
+    1] =[0usize]
+    let target: String = "target/http-multipart-file-atomic.bin"
+    let temporary: String = "target/http-multipart-file-atomic.tmp"
+    file_delete(target)
+    file_delete(temporary)
+    if file_write_text(target,
+    "old") != 3usize {
+        return 1
+    }
+    if ! multipart_part_write_file_atomic_prefix(request,
+    247usize,
+    "file",
+    temporary,
+    target,
+    scratch,
+    ) {
+        return 2
+    }
+    if file_exists(temporary) {
+        return 3
+    }
+    if file_size(target) != 3usize {
+        return 4
+    }
+    if ! file_read_exact(target,
+    output,
+    output_length) {
+        return 5
+    }
+    if output_length[0] != 3usize {
+        return 6
+    }
+    if output[0] != 0u8 {
+        return 7
+    }
+    if output[1] != 65u8 {
+        return 8
+    }
+    if output[2] != 66u8 {
+        return 9
+    }
+    // An insufficient scratch buffer fails before the temporary file is opened.
+    if file_write_text(target,
+    "keep") != 4usize {
+        return 10
+    }
+    var too_small:[UInt8;
+    2] =[99u8,
+    99u8]
+    if multipart_part_write_file_atomic_prefix(request,
+    247usize,
+    "file",
+    temporary,
+    target,
+    too_small,
+    ) {
+        return 11
+    }
+    if file_exists(temporary) {
+        return 12
+    }
+    if file_size(target) != 4usize {
+        return 13
+    }
+    // An incomplete final delimiter fails without publishing a partial file.
+    request[246] = 88u8
+    if multipart_part_write_file_atomic_prefix(request,
+    247usize,
+    "file",
+    temporary,
+    target,
+    scratch,
+    ) {
+        return 14
+    }
+    if file_exists(temporary) {
+        return 15
+    }
+    if file_size(target) != 4usize {
+        return 16
+    }
+    request[246] = 10u8
+    // Never use the live target as the temporary source for replacement.
+    if multipart_part_write_file_atomic_prefix(request,
+    247usize,
+    "file",
+    target,
+    target,
+    scratch,
+    ) {
+        return 17
+    }
+    if file_size(target) != 4usize {
+        return 18
+    }
+    // Prefix writes reject an out-of-range length before opening the target.
+    var prefix:[UInt8;
+    4] =[10u8,
+    20u8,
+    30u8,
+    40u8]
+    if file_write_prefix(target,
+    prefix,
+    3usize) != 3usize {
+        return 19
+    }
+    if file_size(target) != 3usize {
+        return 20
+    }
+    if file_write_prefix(target,
+    prefix,
+    5usize) != 0usize {
+        return 21
+    }
+    if file_size(target) != 3usize {
+        return 22
+    }
+    file_delete(target)
+    file_delete(temporary)
+    return 0
+}

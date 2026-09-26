@@ -1,0 +1,56 @@
+module examples.stdlib_buffer_pop_drop
+
+// Generic pop/drop is a small source-level composition over the existing
+// move-aware remove ABI: it computes the last initialized index, then lets
+// the native field-table destructor release that element exactly once.
+fn pop_drop<T>(values: write Buffer<T>) -> Bool {
+    let count: UIntSize = buffer_length(values)
+    if count == 0usize { return false }
+    return buffer_remove_drop(values, count - 1usize)
+}
+
+fn pop_drop_status<T>(values: write Buffer<T>) -> Int32 {
+    let count: UIntSize = buffer_length(values)
+    if count == 0usize { return -20 }
+    return buffer_remove_drop_status(values, count - 1usize)
+}
+
+fn main() -> Int32 {
+    let outer_created: Result<Buffer<Buffer<Int32>>, Int32> = buffer_create(0usize)
+    let inner_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    let strings_created: Result<Buffer<OwnedString>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match outer_created {
+        Ok(outer) => {
+            match inner_created {
+                Ok(inner) => {
+                    if !buffer_append(inner, 7) { result_code = 1 }
+                    if !buffer_append(outer, inner) { result_code = 2 }
+                    if !pop_drop(outer) { result_code = 3 }
+                    if buffer_length(outer) != 0usize { result_code = 4 }
+                    if pop_drop_status(outer) != -20 { result_code = 5 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    match strings_created {
+        Ok(values) => {
+            let text_created: Result<OwnedString, Int32> = string_owned_from("drop")
+            match text_created {
+                Ok(text) => {
+                    if !buffer_append(values, text) { result_code = 6 }
+                    if pop_drop_status(values) != 0 { result_code = 7 }
+                    if pop_drop(values) { result_code = 8 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

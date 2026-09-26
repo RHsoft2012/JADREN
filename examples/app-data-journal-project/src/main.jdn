@@ -1,0 +1,151 @@
+module app_data_journal_project.main
+
+import jadren.app.data.journal_append_durable
+import jadren.app.data.journal_count_frames_durable
+import jadren.app.data.journal_frame_length_durable
+import jadren.app.data.journal_maintenance_plan_durable
+import jadren.app.data.journal_read_frame_exact_durable
+import jadren.app.data.journal_read_latest_frame_exact_durable
+import jadren.app.data.journal_recover_frame_durable
+import jadren.app.data.journal_stats_durable
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.exists
+import jadren.app.state.clear
+import jadren.app.state.get_int
+import jadren.app.state.set_int
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn cleanup() -> Bool {
+    delete("target/app-data-journal-project-smoke/journal.data")
+    delete("target/app-data-journal-project-smoke/journal.scratch")
+    delete("target/app-data-journal-project-smoke/journal.lock")
+    return true
+}
+
+fn main() -> Int32 {
+    dir_create("target/app-data-journal-project-smoke")
+    cleanup()
+    clear()
+
+    if !set_int("counter", 1i64) { return 1 }
+    if !journal_append_durable(
+        "target/app-data-journal-project-smoke/journal.data",
+        "target/app-data-journal-project-smoke/journal.scratch",
+        "target/app-data-journal-project-smoke/journal.lock"
+    ) { return 2 }
+    if !set_int("counter", 2i64) { return 3 }
+    if !journal_append_durable(
+        "target/app-data-journal-project-smoke/journal.data",
+        "target/app-data-journal-project-smoke/journal.scratch",
+        "target/app-data-journal-project-smoke/journal.lock"
+    ) { return 4 }
+    if !set_int("counter", 3i64) { return 5 }
+    if !journal_append_durable(
+        "target/app-data-journal-project-smoke/journal.data",
+        "target/app-data-journal-project-smoke/journal.scratch",
+        "target/app-data-journal-project-smoke/journal.lock"
+    ) { return 6 }
+
+    let frame_count: UIntSize = journal_count_frames_durable(
+        "target/app-data-journal-project-smoke/journal.data",
+        "target/app-data-journal-project-smoke/journal.lock"
+    )
+    if frame_count != 3usize { return 7 }
+
+    var stats: [UIntSize; 2] = [777usize, 777usize]
+    if !journal_stats_durable(
+        "target/app-data-journal-project-smoke/journal.data",
+        "target/app-data-journal-project-smoke/journal.lock",
+        stats
+    ) { return 8 }
+    if stats[0] != 3usize { return 9 }
+    if stats[1] <= 1usize { return 10 }
+
+    var plan: [UIntSize; 3] = [777usize, 777usize, 777usize]
+    if !journal_maintenance_plan_durable(
+        "target/app-data-journal-project-smoke/journal.data",
+        "target/app-data-journal-project-smoke/journal.lock",
+        stats[1] - 1usize,
+        8usize,
+        plan
+    ) { return 11 }
+    if plan[0] != 1usize { return 12 }
+    if plan[1] != stats[0] { return 13 }
+    if plan[2] != stats[1] { return 14 }
+
+    let frame_length: UIntSize = journal_frame_length_durable(
+        "target/app-data-journal-project-smoke/journal.data",
+        "target/app-data-journal-project-smoke/journal.lock",
+        0usize
+    )
+    if frame_length == 0usize { return 15 }
+
+    let created: Result<Buffer<UInt8>, Int32> = buffer_create(2048usize)
+    var read_status: Int32 = 0
+    match created {
+        Error(_) => { read_status = 16 }
+        Ok(output) => {
+            if !buffer_resize(output, 2048usize) { read_status = 17 }
+            var output_length: [UIntSize; 1] = [777usize]
+            if read_status == 0 {
+                if !journal_read_frame_exact_durable(
+                "target/app-data-journal-project-smoke/journal.data",
+                "target/app-data-journal-project-smoke/journal.lock",
+                0usize,
+                output,
+                output_length
+                ) { read_status = 18 }
+            }
+            if read_status == 0 {
+                if output_length[0] != frame_length { read_status = 19 }
+            }
+            if read_status == 0 {
+                if output_length[0] == 0usize { read_status = 20 }
+            }
+            if read_status == 0 {
+                if !journal_read_latest_frame_exact_durable(
+                "target/app-data-journal-project-smoke/journal.data",
+                "target/app-data-journal-project-smoke/journal.lock",
+                output,
+                output_length
+                ) { read_status = 21 }
+            }
+            if read_status == 0 {
+                if output_length[0] != frame_length { read_status = 22 }
+            }
+        }
+    }
+    if read_status != 0 { return read_status }
+
+    clear()
+    if !journal_recover_frame_durable(
+        "target/app-data-journal-project-smoke/journal.data",
+        "target/app-data-journal-project-smoke/journal.scratch",
+        "target/app-data-journal-project-smoke/journal.lock",
+        1usize
+    ) { return 23 }
+    if get_int("counter") != 2i64 { return 24 }
+    if !journal_recover_frame_durable(
+        "target/app-data-journal-project-smoke/journal.data",
+        "target/app-data-journal-project-smoke/journal.scratch",
+        "target/app-data-journal-project-smoke/journal.lock",
+        2usize
+    ) { return 25 }
+    if get_int("counter") != 3i64 { return 26 }
+    if journal_recover_frame_durable(
+        "target/app-data-journal-project-smoke/journal.data",
+        "target/app-data-journal-project-smoke/journal.scratch",
+        "target/app-data-journal-project-smoke/journal.lock",
+        3usize
+    ) { return 27 }
+
+    cleanup()
+    if exists("target/app-data-journal-project-smoke/journal.data") { return 28 }
+    if exists("target/app-data-journal-project-smoke/journal.lock") { return 29 }
+    return 0
+}

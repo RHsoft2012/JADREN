@@ -1,0 +1,75 @@
+module generic_buffer_sort.main
+import jadren.core.collections.append
+import jadren.core.collections.create
+import jadren.core.collections.length
+import jadren.core.collections.sort_buffer_i32
+fn main() -> Int32 {
+    let created: Result<Buffer<Int32>,
+    Int32> = create(8usize)
+    var result_code: Int32 = 0
+    match created {
+        Ok(values) => {
+            if ! append(values,
+            7) {
+                result_code = 1
+            }
+            if ! append(values,
+            3) {
+                result_code = 2
+            }
+            if ! append(values,
+            9) {
+                result_code = 3
+            }
+            if ! append(values,
+            3) {
+                result_code = 4
+            }
+            if length(values) != 4usize {
+                result_code = 5
+            }
+            if ! sort_buffer_i32(values,
+            false) {
+                result_code = 6
+            }
+            if values[0] != 3 {
+                result_code = 7
+            }
+            if values[1] != 3 {
+                result_code = 8
+            }
+            if values[2] != 7 {
+                result_code = 9
+            }
+            if values[3] != 9 {
+                result_code = 10
+            }
+            if length(values) != 4usize {
+                result_code = 11
+            }
+            if ! sort_buffer_i32(values,
+            true) {
+                result_code = 12
+            }
+            if values[0] != 9 {
+                result_code = 13
+            }
+            if values[1] != 7 {
+                result_code = 14
+            }
+            if values[2] != 3 {
+                result_code = 15
+            }
+            if values[3] != 3 {
+                result_code = 16
+            }
+            if length(values) != 4usize {
+                result_code = 17
+            }
+        }
+        Error(status) => {
+            result_code = status
+        }
+    }
+    return result_code
+}

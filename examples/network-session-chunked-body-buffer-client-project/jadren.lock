@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "f2e5fbe45516f011"
+
+[package]
+name = "network-session-chunked-body-buffer-client-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

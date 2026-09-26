@@ -1,0 +1,65 @@
+module generic_buffer_fold.main
+
+import jadren.core.collections.append
+import jadren.core.collections.capacity
+import jadren.core.collections.create
+import jadren.core.collections.fold
+import jadren.core.collections.fold_i32
+import jadren.core.collections.fold_f32
+import jadren.core.collections.length
+
+fn add_i32(left: Int32, right: Int32) -> Int32 {
+    return left + right
+}
+
+fn add_f32(left: Float32, right: Float32) -> Float32 {
+    return left + right
+}
+
+fn main() -> Int32 {
+    var result_code: Int32 = 0
+
+    let integers: Result<Buffer<Int32>, Int32> = create(5usize)
+    match integers {
+        Ok(values) => {
+            if ! append(values, 2) { result_code = 1 }
+            if ! append(values, -3) { result_code = 2 }
+            if ! append(values, 7) { result_code = 3 }
+            let initial_capacity: UIntSize = capacity(values)
+            let total: Int32 = fold(values, 10, add_i32)
+            if total != 16 { result_code = 4 }
+            if length(values) != 3usize { result_code = 5 }
+            if capacity(values) != initial_capacity { result_code = 6 }
+            let repeated: Int32 = fold_i32(values, 0, add_i32)
+            if repeated != 6 { result_code = 7 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let floats: Result<Buffer<Float32>, Int32> = create(4usize)
+    match floats {
+        Ok(values) => {
+            if ! append(values, 1.5f32) { result_code = 8 }
+            if ! append(values, -2.0f32) { result_code = 9 }
+            if ! append(values, 3.0f32) { result_code = 10 }
+            let total: Float32 = fold(values, 0.5f32, add_f32)
+            if total != 3.0f32 { result_code = 11 }
+            if length(values) != 3usize { result_code = 12 }
+            let concrete: Float32 = fold_f32(values, 1.0f32, add_f32)
+            if concrete != 3.5f32 { result_code = 13 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    let empty: Result<Buffer<Int32>, Int32> = create(0usize)
+    match empty {
+        Ok(values) => {
+            let identity: Int32 = fold_i32(values, 9, add_i32)
+            if identity != 9 { result_code = 14 }
+            if length(values) != 0usize { result_code = 15 }
+        }
+        Error(status) => { result_code = status }
+    }
+
+    return result_code
+}

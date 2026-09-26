@@ -1,0 +1,57 @@
+module examples.ui_table_read_exact_project
+
+import jadren.app.ui.begin
+import jadren.app.ui.finish
+import jadren.app.ui.panel
+import jadren.app.ui.table
+import jadren.app.ui.table_cell
+import jadren.app.ui.table_column
+import jadren.app.ui.table_read_cell_exact
+
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    let root: Int32 = begin("Jadren exact table", 640, 420, 0xF6F8FCu32)
+    if root == 0 { return 1 }
+    let panel_node: Int32 = panel(root, 580, 280, 0xFFFFFFu32, 16, 12, 8, 0, 1)
+    if panel_node == 0 { return 2 }
+    let table_node: Int32 = table(panel_node, 10, 520, 180,
+                                  0x111827u32, 0xFFFFFFu32, 8, 1)
+    if table_node == 0 { return 3 }
+    if !table_column(table_node, 0, "Name", 220) { return 4 }
+    if !table_column(table_node, 1, "Empty", 180) { return 5 }
+    if !table_cell(table_node, 0, 0, "Open") { return 6 }
+    if !table_cell(table_node, 0, 1, "") { return 7 }
+
+    var output: [UInt8; 16] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+    ]
+    var length: [UIntSize; 1] = [99usize]
+    if !table_read_cell_exact(table_node, 0, 0, output, length) { return 8 }
+    if length[0] != 4usize { return 9 }
+    if output[0] != 79u8 { return 10 }
+    if output[1] != 112u8 { return 10 }
+    if output[2] != 101u8 { return 10 }
+    if output[3] != 110u8 { return 10 }
+
+    // A valid empty cell is successful and publishes a zero length.
+    length[0] = 99usize
+    if !table_read_cell_exact(table_node, 0, 1, output, length) { return 11 }
+    if length[0] != 0usize { return 12 }
+
+    // A short buffer is rejected before either caller-owned output changes.
+    var short_output: [UInt8; 2] = [90u8, 91u8]
+    var short_length: [UIntSize; 1] = [77usize]
+    if table_read_cell_exact(table_node, 0, 0, short_output, short_length) { return 13 }
+    if short_output[0] != 90u8 { return 14 }
+    if short_output[1] != 91u8 { return 14 }
+    if short_length[0] != 77usize { return 14 }
+
+    if !finish(panel_node) { return 15 }
+    if !finish(root) { return 16 }
+    return 0
+}

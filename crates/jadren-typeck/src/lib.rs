@@ -1063,20 +1063,18 @@ impl<'a> Checker<'a> {
     /// this declaration-level pass only needs to reserve the stable descriptor
     /// layout while keeping FFI signatures copy-safe.
     fn is_c_record_field_type(
-        &self,
+        &mut self,
         ty: TypeId,
         visiting: &mut DeterministicSet<NominalTypeId>,
     ) -> bool {
-        match self.types.kind(ty) {
+        match self.types.kind(ty).cloned() {
             Some(TypeKind::Buffer(_)) => true,
-            Some(TypeKind::Option(inner)) => self.is_c_record_field_type(*inner, visiting),
+            Some(TypeKind::Option(inner)) => self.is_c_record_field_type(inner, visiting),
             Some(TypeKind::Result { ok, error }) => {
-                self.is_c_record_field_type(*ok, visiting)
-                    && self.is_c_record_field_type(*error, visiting)
+                self.is_c_record_field_type(ok, visiting)
+                    && self.is_c_record_field_type(error, visiting)
             }
-            Some(TypeKind::Array { element, .. }) => {
-                self.is_c_record_field_type(*element, visiting)
-            }
+            Some(TypeKind::Array { element, .. }) => self.is_c_record_field_type(element, visiting),
             Some(TypeKind::Nominal {
                 constructor,
                 arguments,
@@ -1087,12 +1085,17 @@ impl<'a> Checker<'a> {
                 {
                     return false;
                 }
-                let Some(record) = self.records.get(constructor) else {
-                    // Owning enum carriers need tag-aware metadata and are
-                    // intentionally not nested inside records in this ABI.
+                let Some(record) = self.records.get(&constructor).cloned() else {
+                    // Named C-layout owning enums are admitted for the
+                    // bounded record-field path. Their tag-aware cleanup
+                    // metadata is emitted separately.
+                    if let Some(declaration) = self.enums.get(&constructor).cloned() {
+                        return declaration.repr == AbiRepr::C
+                            && self.is_c_enum_payload_type(ty, visiting);
+                    }
                     return self.is_c_abi_type(ty, visiting);
                 };
-                if !visiting.insert(*constructor) {
+                if !visiting.insert(constructor) {
                     return false;
                 }
                 let result = record.repr == AbiRepr::C
@@ -1100,7 +1103,7 @@ impl<'a> Checker<'a> {
                         .fields
                         .values()
                         .all(|field| self.is_c_record_field_type(field.ty, visiting));
-                visiting.remove(constructor);
+                visiting.remove(&constructor);
                 result
             }
             _ => self.is_c_abi_type(ty, visiting),
@@ -1113,12 +1116,55 @@ impl<'a> Checker<'a> {
     /// FFI signatures.  The owning carrier move/drop checker applies the
     /// stricter one-owning-variant contract below.
     fn is_c_enum_payload_type(
-        &self,
+        &mut self,
         ty: TypeId,
         visiting: &mut DeterministicSet<NominalTypeId>,
     ) -> bool {
-        match self.types.kind(ty) {
-            Some(TypeKind::Buffer(inner)) => self.is_c_enum_payload_type(*inner, visiting),
+        match self.types.kind(ty).cloned() {
+            Some(TypeKind::Buffer(inner)) => self.is_c_enum_payload_type(inner, visiting),
+            Some(TypeKind::Array { element, .. }) => self.is_c_enum_payload_type(element, visiting),
+            Some(TypeKind::Option(inner)) => self.is_c_enum_payload_type(inner, visiting),
+            Some(TypeKind::Result { ok, error }) => {
+                self.is_c_enum_payload_type(ok, visiting)
+                    && self.is_c_enum_payload_type(error, visiting)
+            }
+            Some(TypeKind::Nominal { constructor, .. })
+                if self.records.contains_key(&constructor) =>
+            {
+                // Named C-layout records are inline enum payloads.  Reuse
+                // the record declaration check so their Buffer descriptors
+                // retain the same target layout contract as direct fields.
+                self.is_c_record_field_type(ty, visiting)
+            }
+            Some(TypeKind::Nominal {
+                constructor,
+                arguments,
+            }) if self.enums.contains_key(&constructor) => {
+                let Some(declaration) = self.enums.get(&constructor).cloned() else {
+                    return false;
+                };
+                if declaration.repr != AbiRepr::C || !visiting.insert(constructor) {
+                    return false;
+                }
+                let mut substitution = Substitution::new();
+                for (parameter, argument) in declaration
+                    .generic_parameters
+                    .iter()
+                    .zip(arguments.iter().copied())
+                {
+                    substitution.insert(*parameter, argument);
+                }
+                let result = declaration.variants.values().all(|variant| {
+                    variant.fields.iter().all(|field| {
+                        let field_ty = substitution
+                            .apply(&mut self.types, *field)
+                            .unwrap_or(self.types.core().error);
+                        self.is_c_enum_payload_type(field_ty, visiting)
+                    })
+                });
+                visiting.remove(&constructor);
+                result
+            }
             // OwnedString is the same target-native three-word descriptor as
             // Buffer, and the owning enum field table supplies its destructor
             // marker after the declaration-level layout check.
@@ -1516,13 +1562,15 @@ impl<'a> Checker<'a> {
                     ..
                 } => {
                     let explicit = ty.as_ref().map(|ty| self.lower_type(ty));
-                    let inferred = value
-                        .as_ref()
+                    let inferred = value.as_ref().map(|value| {
                         // Feed an explicit binding type into the initializer
                         // so generic constructors and region allocations can
                         // validate their element type before inference is
-                        // finalized.
-                        .map(|value| self.infer_expression(value, explicit.unwrap_or(return_type)));
+                        // finalized.  The expected type is also available to
+                        // generic calls whose type parameter occurs only in
+                        // the return value.
+                        self.infer_expression_with_expected(value, return_type, explicit)
+                    });
                     let binding_type = match (explicit, inferred) {
                         (Some(expected), Some(actual)) => {
                             self.unify_or_error(expected, actual, *span)
@@ -1547,7 +1595,7 @@ impl<'a> Checker<'a> {
                 }
                 Statement::Return { value, span } => {
                     let actual = value.as_ref().map_or(self.types.core().unit, |value| {
-                        self.infer_expression(value, return_type)
+                        self.infer_expression_with_expected(value, return_type, Some(return_type))
                     });
                     self.unify_or_error(return_type, actual, *span);
                     self.types.core().never
@@ -1666,7 +1714,7 @@ impl<'a> Checker<'a> {
                 callee,
                 arguments,
                 span,
-            } => self.infer_call(callee, arguments, *span, return_type),
+            } => self.infer_call(callee, arguments, *span, return_type, None),
             Expression::Field {
                 base, field, span, ..
             } => self.infer_field(base, field, *span, return_type),
@@ -1750,6 +1798,31 @@ impl<'a> Checker<'a> {
             ty,
         });
         ty
+    }
+
+    fn infer_expression_with_expected(
+        &mut self,
+        expression: &Expression,
+        return_type: TypeId,
+        expected: Option<TypeId>,
+    ) -> TypeId {
+        match expression {
+            Expression::Call {
+                callee,
+                arguments,
+                span,
+            } => {
+                let ty = self.infer_call(callee, arguments, *span, return_type, expected);
+                self.expressions.push(ExpressionType {
+                    id: TypedExpressionId::default(),
+                    kind: ExpressionKind::of(expression),
+                    span: expression.span(),
+                    ty,
+                });
+                ty
+            }
+            _ => self.infer_expression(expression, return_type),
+        }
     }
 
     fn iterable_element_type(&mut self, ty: TypeId) -> Option<TypeId> {
@@ -2458,6 +2531,7 @@ impl<'a> Checker<'a> {
         arguments: &[Expression],
         span: Span,
         return_type: TypeId,
+        expected_type: Option<TypeId>,
     ) -> TypeId {
         if let Some(ty) = self.try_infer_region_allocation(callee, arguments, span, return_type) {
             return ty;
@@ -2492,6 +2566,15 @@ impl<'a> Checker<'a> {
         let resolved = self.unification.resolve_shallow(&self.types, instantiated);
         match self.types.kind(resolved).cloned() {
             Some(TypeKind::Function { parameters, result }) => {
+                if !generic_arguments.is_empty()
+                    && let Some(expected) = expected_type
+                {
+                    // A generic function whose type parameter occurs only in
+                    // its return value (for example `create<T>()`) cannot be
+                    // inferred from arguments.  An explicit binding/return
+                    // type is the caller-owned source of that information.
+                    self.unify_or_error(expected, result, span);
+                }
                 if parameters.len() != argument_types.len() {
                     self.diagnostics.push(Diagnostic::error(
                         "J0304",
@@ -2770,14 +2853,21 @@ impl<'a> Checker<'a> {
             "time_now_monotonic_ms" => 0,
             "process_arg_count" => 0,
             "process_arg_read" => 2,
+            "site_server_start" | "site_server_is_running" => 1,
+            "site_server_start_with_webroot" => 3,
+            "site_server_stop" => 2,
             "time_utc_parts" => 2,
             "time_utc_offset_parts" => 3,
             "app_scheduler_clear" => 0,
             "app_scheduler_set" => 3,
             "app_scheduler_cancel" => 1,
             "app_scheduler_poll" => 2,
+            "app_scheduler_poll_exact" => 3,
+            "app_scheduler_next_due_exact" => 2,
+            "app_scheduler_write_exact" | "app_scheduler_load_exact" => 2,
             "app_scheduler_count" => 0,
             "buffer_create" | "buffer_create_i32" => 1,
+            "buffer_slice" | "buffer_slice_write" => 3,
             "buffer_length"
             | "buffer_capacity"
             | "buffer_clear"
@@ -2810,20 +2900,37 @@ impl<'a> Checker<'a> {
             "string_length" => 1,
             "string_equals" => 2,
             "string_builder_append" | "string_builder_append_bytes" => 3,
+            "string_builder_append_bytes_prefix" => 4,
             "string_owned_create" | "string_owned_from" => 1,
             "string_owned_append" => 2,
             "string_owned_length" => 1,
             "string_owned_copy" => 2,
             "string_owned_clear" => 1,
             "assert_eq" => 2,
-            "file_delete" | "file_flush" | "file_exists" | "directory_create"
-            | "directory_exists" | "directory_delete" | "file_size" => 1,
+            "file_delete" | "file_flush" | "directory_flush" | "file_exists"
+            | "directory_create" | "directory_exists" | "directory_delete" | "file_size" => 1,
+            "file_delete_path" | "file_flush_path" | "file_lock_path" | "file_exists_path"
+            | "file_path_valid" => 2,
+            "file_lock_path_retry" => 4,
             "file_lock" | "file_unlock" => 1,
             "file_replace_atomic" | "file_copy" => 2,
+            "file_replace_atomic_paths" => 4,
+            "file_write_atomic" => 4,
+            "file_write_atomic_durable" => 5,
             "directory_list" => 2,
             "directory_list_ex" => 3,
+            "directory_list_ex_exact" => 5,
+            "ui_file_open_exact" | "ui_directory_open_exact" | "ui_file_save_exact" => 3,
+            "ui_file_open_extension_exact" => 4,
+            "ui_file_save_suggested_exact" => 5,
+            "ui_file_save_extension_exact" => 5,
             "file_read_at" => 3,
+            "file_size_path" => 2,
+            "file_mtime_unix_nanos_path" => 2,
+            "file_read_at_path" => 4,
             "file_write_at" => 3,
+            "file_write_prefix" => 3,
+            "file_write_prefix_path" => 4,
             "file_read_exact" | "file_read_text_exact" => 3,
             "file_read" | "file_read_text" | "file_write" | "file_write_text"
             | "file_append_text" | "format_bool" | "format_int" | "format_uint"
@@ -2845,15 +2952,32 @@ impl<'a> Checker<'a> {
             | "json_object_read_float_exact"
             | "json_object_read_bool_exact" => 3,
             "json_array_int" | "json_array_uint" | "json_array_float" | "json_array_bool" => 2,
-            "app_state_clear" | "app_state_count" | "app_state_revision" | "app_data_revision"
-            | "app_data_validate" => 0,
+            "app_state_clear"
+            | "app_state_count"
+            | "app_state_revision"
+            | "app_data_revision"
+            | "app_data_validate"
+            | "app_data_snapshot_length" => 0,
+            "app_data_snapshot_length_if_revision" => 1,
             "app_state_exists" | "app_state_remove" => 1,
+            "app_state_remove_if_revision" => 2,
             "app_state_set_int"
             | "app_state_set_uint"
             | "app_state_set_float"
             | "app_state_set_bool"
             | "app_state_set_text" => 2,
+            "app_state_set_uint_if_revision"
+            | "app_state_set_float_if_revision"
+            | "app_state_set_bool_if_revision"
+            | "app_state_set_text_if_revision" => 3,
+            "app_state_set_int_if_revision" => 3,
+            "app_state_add_int" | "app_state_add_uint" | "app_state_add_float" => 2,
+            "app_state_add_int_if_revision"
+            | "app_state_add_uint_if_revision"
+            | "app_state_add_float_if_revision" => 3,
             "app_state_set_text_bytes" => 3,
+            "app_state_set_text_bytes_if_revision"
+            | "app_state_set_text_bytes_if_model_revision" => 4,
             "app_state_get_int"
             | "app_state_get_uint"
             | "app_state_get_float"
@@ -2873,12 +2997,19 @@ impl<'a> Checker<'a> {
             | "app_data_tx_commit"
             | "app_data_tx_rollback" => 0,
             "app_state_save_atomic_if_revision" | "app_data_save_atomic_if_revision" => 3,
+            "app_state_save_atomic_durable" => 3,
+            "app_state_save_atomic_durable_if_revision" => 4,
             "app_state_save_atomic"
             | "app_data_save_atomic"
             | "app_data_tx_save_atomic"
             | "app_data_journal_append"
             | "app_data_journal_recover" => 2,
             "app_data_tx_commit_durable" => 3,
+            "app_data_tx_commit_durable_retry" => 5,
+            "app_data_tx_commit_durable_retry_if_revision" => 6,
+            "app_data_tx_commit_durable_if_revision" => 4,
+            "app_data_tx_commit_durable_directory" => 4,
+            "app_data_tx_commit_durable_directory_if_revision" => 5,
             "app_data_journal_append_durable" => 3,
             "app_data_journal_recover_compact" => 3,
             "app_data_journal_recover_compact_durable" => 4,
@@ -2910,29 +3041,61 @@ impl<'a> Checker<'a> {
             | "app_state_read_float"
             | "app_state_read_bool" => 2,
             "app_state_read_key" => 2,
+            "app_state_read_key_exact" => 3,
             "app_state_type_at" => 1,
             "app_list_clear" | "app_list_count" => 1,
+            "app_list_clear_if_revision" => 2,
             "app_list_push_text" => 2,
+            "app_list_push_text_if_revision" => 3,
             "app_list_push_text_bytes" => 3,
+            "app_list_push_text_bytes_if_revision" => 4,
+            "app_list_insert_text" => 3,
+            "app_list_insert_text_if_revision" => 4,
+            "app_list_insert_text_bytes" => 4,
+            "app_list_insert_text_bytes_if_revision" => 5,
             "app_list_export_csv" => 2,
+            "app_list_export_csv_file_durable" => 3,
+            "app_list_export_csv_file_durable_if_revision" => 4,
+            "app_list_export_json_file_durable" => 3,
+            "app_list_export_json_file_durable_if_revision" => 4,
+            "app_list_export_csv_exact" => 3,
+            "app_list_export_json_exact" => 3,
             "app_list_sort_text" => 2,
             "app_list_sort_callback" => 2,
+            "app_list_sort_callback_if_revision" => 3,
             "app_list_find_text" => 3,
             "app_list_filter_text" => 3,
+            "app_list_filter_text_if_revision" => 4,
             "app_list_filter_text_ex" => 4,
+            "app_list_filter_text_ex_if_revision" => 5,
             "app_list_filter_text_ex_bytes" => 5,
             "app_list_filter_callback" => 3,
+            "app_list_filter_callback_if_revision" => 4,
             "app_list_page" => 4,
+            "app_list_page_if_revision" => 5,
             "app_list_read_text" | "app_list_set_text" => 3,
+            "app_list_set_text_if_revision" => 4,
             "app_list_read_text_exact" => 4,
             "app_list_set_text_bytes" => 4,
+            "app_list_set_text_bytes_if_revision" => 5,
             "app_list_remove" => 2,
+            "app_list_remove_if_revision" => 3,
             "app_list_save" | "app_list_load" => 2,
+            "app_list_import_json_exact" => 3,
+            "app_list_import_json_exact_if_revision" => 4,
+            "app_list_import_json_file" => 2,
+            "app_list_import_json_file_if_revision" => 3,
+            "app_list_import_csv" => 3,
+            "app_list_import_csv_if_revision" => 4,
+            "app_list_import_csv_file" => 2,
+            "app_list_import_csv_file_if_revision" => 3,
             "app_list_save_atomic" => 3,
-            "app_table_clear"
-            | "app_table_row_count"
-            | "app_table_append_row"
-            | "app_table_tx_begin" => 1,
+            "app_table_clear" => 1,
+            "app_table_clear_if_revision" => 2,
+            "app_table_row_count" | "app_table_append_row" | "app_table_tx_begin" => 1,
+            "app_table_append_row_if_revision" => 2,
+            "app_table_insert_row" => 2,
+            "app_table_insert_row_if_revision" => 3,
             "app_table_tx_begin_all"
             | "app_table_tx_commit"
             | "app_table_tx_commit_all"
@@ -2966,14 +3129,17 @@ impl<'a> Checker<'a> {
             "app_table_column_type" => 2,
             "app_table_validate" => 1,
             "app_table_remove_row" => 2,
+            "app_table_remove_row_if_revision" => 3,
             "app_table_remove_text"
             | "app_table_remove_int"
             | "app_table_remove_uint"
             | "app_table_remove_float"
             | "app_table_remove_bool" => 3,
             "app_table_set_cell" => 4,
+            "app_table_set_cell_if_revision" => 5,
             "app_table_set_cell_bytes" => 4,
             "app_table_set_cell_bytes_ex" => 5,
+            "app_table_set_cell_bytes_if_revision" => 6,
             "app_table_set_int"
             | "app_table_set_uint"
             | "app_table_set_float"
@@ -2993,8 +3159,15 @@ impl<'a> Checker<'a> {
             | "app_table_sort_uint"
             | "app_table_sort_float"
             | "app_table_sort_bool" => 3,
+            "app_table_sort_text_if_revision"
+            | "app_table_sort_int_if_revision"
+            | "app_table_sort_uint_if_revision"
+            | "app_table_sort_float_if_revision"
+            | "app_table_sort_bool_if_revision" => 4,
             "app_table_sort_callback" => 2,
+            "app_table_sort_callback_if_revision" => 3,
             "app_table_page" => 4,
+            "app_table_page_if_revision" => 5,
             "app_table_find_text"
             | "app_table_find_int"
             | "app_table_find_uint"
@@ -3018,20 +3191,46 @@ impl<'a> Checker<'a> {
             | "app_table_index_find_uint"
             | "app_table_index_find_float"
             | "app_table_index_find_bool" => 3,
+            "app_table_index_find_text_if_revision"
+            | "app_table_index_find_int_if_revision"
+            | "app_table_index_find_uint_if_revision"
+            | "app_table_index_find_float_if_revision"
+            | "app_table_index_find_bool_if_revision" => 4,
             "app_table_index_find_pair_text" => 5,
+            "app_table_index_find_pair_text_if_revision" => 6,
             "app_table_index_collect_int_range"
             | "app_table_index_collect_uint_range"
             | "app_table_index_collect_float_range" => 5,
+            "app_table_index_collect_int_range_if_revision"
+            | "app_table_index_collect_uint_range_if_revision"
+            | "app_table_index_collect_float_range_if_revision" => 6,
             "app_table_filter_text" => 4,
+            "app_table_filter_text_if_revision" => 5,
             "app_table_filter_text_ex" => 5,
             "app_table_filter_text_ex_bytes" => 6,
             "app_table_filter_int"
             | "app_table_filter_uint"
             | "app_table_filter_float"
             | "app_table_filter_bool" => 4,
+            "app_table_filter_int_if_revision"
+            | "app_table_filter_uint_if_revision"
+            | "app_table_filter_float_if_revision"
+            | "app_table_filter_bool_if_revision" => 5,
             "app_table_filter_callback" => 3,
+            "app_table_filter_callback_if_revision" => 4,
             "app_table_export_csv" => 2,
-            "app_table_import_csv" => 3,
+            "app_table_export_csv_file_durable" => 3,
+            "app_table_export_csv_file_durable_if_revision" => 4,
+            "app_table_export_json_file_durable" => 3,
+            "app_table_export_json_file_durable_if_revision" => 4,
+            "app_table_export_csv_exact" => 3,
+            "app_table_export_json_exact" => 3,
+            "app_table_import_csv" | "app_table_import_json_exact" => 3,
+            "app_table_import_csv_if_revision" | "app_table_import_json_exact_if_revision" => 4,
+            "app_table_import_csv_file" => 2,
+            "app_table_import_csv_file_if_revision" => 3,
+            "app_table_import_json_file" => 2,
+            "app_table_import_json_file_if_revision" => 3,
             "app_table_save"
             | "app_table_load"
             | "app_table_save_schema"
@@ -3043,6 +3242,8 @@ impl<'a> Checker<'a> {
             | "app_table_save_schema_atomic"
             | "app_table_save_schema_full_atomic" => 3,
             "net_tcp_connect" | "net_tcp_connect_dns" => 2,
+            "net_tcp_listen_on" => 2,
+            "net_tcp_listen_on_prefix" => 3,
             "net_tcp_listen" | "net_tcp_accept" | "net_socket_close" => 1,
             "net_reactor_open" => 2,
             "net_reactor_watch" => 4,
@@ -3059,13 +3260,22 @@ impl<'a> Checker<'a> {
             "net_reactor_event_operation" | "net_reactor_event_bytes" => 2,
             "net_tcp_send" | "net_tcp_receive" => 2,
             "net_tcp_send_prefix" => 3,
+            "net_tcp_send_all" => 2,
+            "net_tcp_send_all_prefix" => 3,
             "net_socket_set_timeout" => 2,
-            "http_response_write" => 4,
+            "http_response_write" | "http_response_write_chunked" => 4,
+            "http_response_write_chunked_prefix" => 5,
+            "http_response_write_chunked_header" => 3,
+            "http_response_write_chunk" => 3,
+            "http_response_write_chunk_prefix" => 4,
             "http_response_write_ex" => 5,
+            "http_response_write_prefix_ex" => 6,
             "http_response_write_header" => 6,
+            "http_response_write_header_prefix" => 7,
             "http_response_write_header_ex" => 7,
             "http_response_write_cookie" => 7,
             "http_response_write_cookie_ex" => 8,
+            "http_response_write_cookie_policy" => 12,
             "http_response_write_header_block" => 5,
             "http_response_write_header_block_ex" => 6,
             "http_response_status" => 1,
@@ -3077,8 +3287,13 @@ impl<'a> Checker<'a> {
             "http_response_body_chunked_exact" | "http_request_body_chunked_exact" => 3,
             "http_request_write" => 5,
             "http_request_write_prefix" => 6,
+            "http_request_write_prefix_ex" => 7,
             "http_request_write_header" => 7,
+            "http_request_write_header_ex" => 8,
+            "http_request_write_cookie" => 7,
+            "http_request_write_cookie_block" => 6,
             "http_request_write_header_block" => 6,
+            "http_request_write_header_block_ex" => 7,
             "http_request_append" => 4,
             "http_request_is_complete" => 1,
             "http_request_is_complete_prefix" => 2,
@@ -3086,9 +3301,15 @@ impl<'a> Checker<'a> {
             "http_request_consume_prefix" => 3,
             "http_request_keep_alive" => 1,
             "http_request_method" | "http_request_target" | "http_request_body" => 2,
+            "http_request_target_decode_exact" => 3,
+            "http_request_body_exact" => 3,
+            "http_request_body_exact_prefix" => 4,
             "http_request_header" => 3,
+            "http_request_header_exact" => 4,
             "http_query_param" => 3,
             "http_query_param_exact" => 4,
+            "http_form_param_exact_prefix" => 5,
+            "http_multipart_part_exact_prefix" => 5,
             "http_route_match" => 3,
             "http_route_match_prefix" => 4,
             "http_router_clear" => 0,
@@ -3099,16 +3320,27 @@ impl<'a> Checker<'a> {
             "http_router_remove_prefix" => 2,
             "http_router_respond" => 2,
             "http_router_respond_prefix" => 3,
+            "http_router_respond_chunked" => 2,
+            "http_router_respond_chunked_prefix" => 3,
             "http_router_count" => 0,
             "http_session_open" => 4,
+            "http_session_open_chunked" => 4,
             "http_session_open_tls" => 6,
+            "http_session_open_tls_chunked" => 6,
+            "http_session_accept" => 2,
+            "http_session_receive_request" => 3,
+            "http_session_send" => 2,
+            "http_session_send_prefix" => 3,
+            "http_session_close_connection" => 1,
             "http_session_step" => 2,
             "http_session_close" => 1,
             "net_tls_open_client" => 3,
             "net_tls_open_server" => 3,
+            "net_tls_open_server_paths" => 5,
             "net_tls_step" => 2,
             "net_tls_state" | "net_tls_error" | "net_tls_close" => 1,
             "net_tls_send" | "net_tls_receive" => 2,
+            "net_tls_send_prefix" | "net_tls_send_all_prefix" => 3,
             "file_append" => 3,
             "ui_app_begin" => 4,
             "ui_app_on_resize" | "ui_app_on_close" => 1,
@@ -3125,44 +3357,108 @@ impl<'a> Checker<'a> {
             "ui_app_menu_item" => 3,
             "ui_app_tooltip" => 7,
             "ui_app_label" => 8,
+            "ui_app_label_set_text" => 2,
             "ui_app_status" => 8,
             "ui_app_button" => 9,
             "ui_app_text_input" => 9,
+            "ui_app_input_length" => 1,
+            "ui_app_input_read" => 2,
+            "ui_app_input_read_exact" => 3,
+            "ui_app_input_read_exact_if_revision" => 4,
             "ui_app_checkbox" => 10,
+            "ui_app_switch" => 10,
             "ui_app_select" => 8,
             "ui_app_select_option" => 2,
             "ui_app_select_index" => 1,
+            "ui_app_select_index_if_revision" => 2,
             "ui_app_select_set_index" => 2,
             "ui_app_list" => 8,
             "ui_app_list_item" | "ui_app_list_bind_app" => 2,
+            "ui_app_list_set_item" => 3,
+            "ui_app_list_set_item_if_revision" => 4,
+            "ui_app_list_insert_item" => 3,
+            "ui_app_list_insert_item_if_revision" => 4,
+            "ui_app_list_move_item" => 3,
+            "ui_app_list_move_item_if_revision" => 4,
+            "ui_app_list_remove_item" => 2,
+            "ui_app_list_remove_item_if_revision" => 3,
+            "ui_app_list_filter_text" => 3,
+            "ui_app_list_filter_text_if_revision" => 4,
+            "ui_app_list_filter_text_ex" => 4,
+            "ui_app_list_filter_text_ex_if_revision" => 5,
+            "ui_app_list_filter_callback" => 3,
+            "ui_app_list_filter_callback_if_revision" => 4,
+            "ui_app_list_page" => 4,
+            "ui_app_list_page_if_revision" => 5,
+            "ui_app_list_sort_text" => 2,
+            "ui_app_list_sort_text_if_revision" => 3,
             "ui_app_list_read_item" => 3,
+            "ui_app_list_read_item_exact" => 4,
+            "ui_app_list_read_item_exact_if_revision" => 5,
             "ui_app_list_clear"
             | "ui_app_list_count"
             | "ui_app_list_index"
             | "ui_app_list_refresh" => 1,
+            "ui_app_list_count_if_revision" => 2,
+            "ui_app_list_index_if_revision" => 2,
             "ui_app_list_set_index" => 2,
+            "ui_app_list_set_index_if_revision" => 3,
             "ui_app_bind_app_state" => 2,
+            "ui_app_bind_app_state_exact" => 2,
             "ui_app_refresh_app_state" => 1,
+            "ui_app_refresh_app_state_exact" => 1,
+            "ui_app_refresh_app_state_if_revision" => 2,
+            "ui_app_commit_app_state_if_revision" => 2,
             "ui_app_table" => 8,
             "ui_app_table_column" | "ui_app_table_cell" => 4,
+            "ui_app_table_cell_if_revision" => 5,
+            "ui_app_table_insert_row" | "ui_app_table_remove_row" => 2,
+            "ui_app_table_insert_row_if_revision" | "ui_app_table_remove_row_if_revision" => 3,
+            "ui_app_table_move_row" => 3,
+            "ui_app_table_move_row_if_revision" => 4,
             "ui_app_table_read_cell" => 4,
+            "ui_app_table_read_cell_exact" => 5,
+            "ui_app_table_read_cell_exact_if_revision" => 6,
             "ui_app_table_bind_app" => 3,
+            "ui_app_table_index_find_pair_text_if_revision" => 6,
+            "ui_app_table_index_find_int_if_revision"
+            | "ui_app_table_index_find_uint_if_revision"
+            | "ui_app_table_index_find_float_if_revision"
+            | "ui_app_table_index_find_bool_if_revision" => 4,
             "ui_app_table_refresh"
             | "ui_app_table_clear"
             | "ui_app_table_row_count"
             | "ui_app_table_selected_row" => 1,
+            "ui_app_table_row_count_if_revision" => 2,
+            "ui_app_table_selected_row_if_revision" => 2,
+            "ui_app_table_page" => 4,
+            "ui_app_table_page_if_revision" => 5,
             "ui_app_table_set_selected_row" => 2,
+            "ui_app_table_set_selected_row_if_revision" => 3,
             "ui_app_table_sort_text"
             | "ui_app_table_sort_int"
             | "ui_app_table_sort_uint"
             | "ui_app_table_sort_float"
             | "ui_app_table_sort_bool" => 3,
+            "ui_app_table_sort_text_if_revision"
+            | "ui_app_table_sort_int_if_revision"
+            | "ui_app_table_sort_uint_if_revision"
+            | "ui_app_table_sort_float_if_revision"
+            | "ui_app_table_sort_bool_if_revision" => 4,
             "ui_app_table_filter_text" => 4,
+            "ui_app_table_filter_text_if_revision" => 5,
             "ui_app_table_filter_text_ex" => 5,
+            "ui_app_table_filter_text_ex_if_revision" => 6,
             "ui_app_table_filter_int"
             | "ui_app_table_filter_uint"
             | "ui_app_table_filter_float"
             | "ui_app_table_filter_bool" => 4,
+            "ui_app_table_filter_int_if_revision"
+            | "ui_app_table_filter_uint_if_revision"
+            | "ui_app_table_filter_float_if_revision"
+            | "ui_app_table_filter_bool_if_revision" => 5,
+            "ui_app_table_filter_callback" => 3,
+            "ui_app_table_filter_callback_if_revision" => 4,
             "ui_app_end" => 1,
             "ui_app_run" => 0,
             "ui_window" => 4,
@@ -3174,11 +3470,21 @@ impl<'a> Checker<'a> {
             "ui_menu" => 9,
             "ui_checkbox" | "ui_switch" | "ui_text_input" => 9,
             "ui_checked" | "ui_select_index" => 1,
+            "ui_checked_if_revision" => 2,
+            "ui_select_index_if_revision" => 2,
             "ui_list_clear" | "ui_list_count" | "ui_list_index" => 1,
+            "ui_list_count_if_revision" => 2,
+            "ui_list_index_if_revision" => 2,
             "ui_close_button" | "ui_disabled_button" => 8,
             "ui_tooltip" => 7,
             "ui_column" | "ui_panel" => 8,
             "ui_event_button" => 9,
+            "ui_event_queue_clear"
+            | "ui_event_queue_count"
+            | "ui_event_queue_capacity"
+            | "ui_event_queue_dropped" => 0,
+            "ui_event_queue_peek_exact" | "ui_event_queue_poll_exact" => 2,
+            "ui_event_queue_poll_batch_exact" => 3,
             "ui_row" => 6,
             "ui_layout_label" | "ui_layout_status" => 7,
             "ui_layout_event_button" => 8,
@@ -3187,41 +3493,78 @@ impl<'a> Checker<'a> {
             "ui_set_button_enabled" => 2,
             "ui_set_button_text" => 2,
             "ui_set_checked" | "ui_set_input_enabled" | "ui_set_input_text" => 2,
+            "ui_set_input_text_exact" => 3,
             "ui_input_length" => 1,
             "ui_input_read_exact" => 3,
+            "ui_input_read_exact_if_revision" => 4,
             "ui_input_read" => 2,
             "ui_input_bind_app_state" => 2,
+            "ui_input_bind_app_state_exact" => 2,
             "ui_input_refresh_app_state" => 1,
+            "ui_input_refresh_app_state_exact" => 1,
+            "ui_input_refresh_app_state_if_revision" => 2,
+            "ui_input_commit_app_state_if_revision" => 2,
             "ui_checkbox_bind_app_state"
             | "ui_select_bind_app_state"
             | "ui_list_bind_app_state"
             | "ui_table_bind_app_state" => 2,
             "ui_checkbox_refresh_app_state"
+            | "ui_checkbox_refresh_app_state_exact"
             | "ui_select_refresh_app_state"
+            | "ui_select_refresh_app_state_exact"
             | "ui_list_refresh_app_state"
-            | "ui_table_refresh_app_state" => 1,
+            | "ui_list_refresh_app_state_exact"
+            | "ui_table_refresh_app_state"
+            | "ui_table_refresh_app_state_exact" => 1,
+            "ui_checkbox_refresh_app_state_if_revision"
+            | "ui_select_refresh_app_state_if_revision"
+            | "ui_list_refresh_app_state_if_revision"
+            | "ui_table_refresh_app_state_if_revision"
+            | "ui_checkbox_commit_app_state_if_revision"
+            | "ui_select_commit_app_state_if_revision"
+            | "ui_list_commit_app_state_if_revision"
+            | "ui_table_commit_app_state_if_revision" => 2,
             "ui_select" => 7,
             "ui_select_option" | "ui_select_set_index" => 2,
             "ui_menu_option" => 3,
             "ui_list" => 7,
             "ui_list_item" | "ui_list_set_index" => 2,
+            "ui_list_set_index_if_revision" => 3,
             "ui_list_read_item" => 3,
+            "ui_list_read_item_exact" => 4,
+            "ui_list_read_item_exact_if_revision" => 5,
             "ui_list_set_item" => 3,
             "ui_list_bind_app" => 2,
             "ui_list_refresh_app" => 1,
             "ui_table" => 7,
             "ui_table_column" | "ui_table_cell" => 4,
             "ui_table_read_cell" => 4,
+            "ui_table_read_cell_exact" => 5,
+            "ui_table_read_cell_exact_if_revision" => 6,
             "ui_table_bind_app" => 3,
             "ui_table_refresh_app" => 1,
             "ui_refresh_bindings" => 0,
+            "ui_refresh_bindings_if_revision" => 1,
             "ui_table_clear" | "ui_table_row_count" | "ui_table_selected_row" => 1,
+            "ui_table_row_count_if_revision" => 2,
+            "ui_table_selected_row_if_revision" => 2,
             "ui_table_set_selected_row" => 2,
+            "ui_table_set_selected_row_if_revision" => 3,
             "ui_table_sort_text"
             | "ui_table_sort_int"
             | "ui_table_sort_uint"
             | "ui_table_sort_float"
             | "ui_table_sort_bool" => 3,
+            "ui_table_sort_text_if_revision"
+            | "ui_table_sort_int_if_revision"
+            | "ui_table_sort_uint_if_revision"
+            | "ui_table_sort_float_if_revision"
+            | "ui_table_sort_bool_if_revision" => 4,
+            "ui_table_index_find_pair_text_if_revision" => 6,
+            "ui_table_index_find_int_if_revision"
+            | "ui_table_index_find_uint_if_revision"
+            | "ui_table_index_find_float_if_revision"
+            | "ui_table_index_find_bool_if_revision" => 4,
             "ui_table_filter_text" => 4,
             "ui_table_filter_text_ex" => 5,
             "ui_table_filter_int"
@@ -3369,6 +3712,39 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "site_server_start" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                core.uint64
+            }
+            "site_server_start_with_webroot" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.uint64
+            }
+            "site_server_is_running" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint64, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "site_server_stop" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint64, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(1));
+                }
+                core.bool_
+            }
             "stdin_read" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(write_byte_slice, *actual, arg_span(0));
@@ -3430,7 +3806,80 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "app_scheduler_poll_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int64, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_scheduler_next_due_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_slice_int64, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_bool, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_scheduler_write_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_scheduler_load_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
             "app_scheduler_count" => core.uint_size,
+            "ui_event_queue_clear" => core.unit,
+            "ui_event_queue_count" | "ui_event_queue_capacity" | "ui_event_queue_dropped" => {
+                core.uint_size
+            }
+            "ui_event_queue_peek_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "ui_event_queue_poll_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "ui_event_queue_poll_batch_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
             "buffer_create" | "buffer_create_i32" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.uint_size, *actual, arg_span(0));
@@ -3446,6 +3895,37 @@ impl<'a> Checker<'a> {
                 self.types.intern(TypeKind::Result {
                     ok: buffer,
                     error: core.int32,
+                })
+            }
+            "buffer_slice" | "buffer_slice_write" => {
+                if let Some(actual) = argument_types.first() {
+                    let capability = if name == "buffer_slice_write" {
+                        Capability::Write
+                    } else {
+                        Capability::Read
+                    };
+                    self.require_buffer_capability(*actual, capability, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                let element = argument_types
+                    .first()
+                    .and_then(|actual| self.buffer_element_from_type(*actual))
+                    .unwrap_or_else(|| self.unification.fresh(&mut self.types));
+                self.require_buffer_element_abi(element, span);
+                let slice = self.types.intern(TypeKind::Slice(element));
+                let capability = if name == "buffer_slice_write" {
+                    Capability::Write
+                } else {
+                    Capability::Read
+                };
+                self.types.intern(TypeKind::Capability {
+                    capability,
+                    inner: slice,
                 })
             }
             "buffer_length" | "buffer_capacity" => {
@@ -3488,6 +3968,23 @@ impl<'a> Checker<'a> {
                         arg_span(0),
                     );
                 };
+                // A generic wrapper is checked before package materialization,
+                // so `T` has no concrete ownership/drop layout at this point.
+                // Defer the move-aware element check; the specialized body is
+                // type-checked again with the concrete `T` and must pass the
+                // same owning ABI rules below.
+                if matches!(
+                    self.types
+                        .kind(self.unification.resolve_shallow(&self.types, element)),
+                    Some(TypeKind::GenericParameter(_) | TypeKind::InferenceVariable(_))
+                ) {
+                    self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                    return if name.ends_with("_status") {
+                        core.int32
+                    } else {
+                        core.bool_
+                    };
+                }
                 let nested = matches!(self.types.kind(element), Some(TypeKind::Buffer(_)));
                 let owned_string = matches!(self.types.kind(element), Some(TypeKind::OwnedString));
                 let direct_record = if nested || owned_string {
@@ -3539,6 +4036,21 @@ impl<'a> Checker<'a> {
                         arg_span(0),
                     );
                 };
+                // Generic package wrappers are checked before `T` is
+                // materialized.  Keep the result shape visible to inference
+                // and defer the move/layout admission until the concrete
+                // instantiation is checked again.
+                if matches!(
+                    self.types
+                        .kind(self.unification.resolve_shallow(&self.types, element)),
+                    Some(TypeKind::GenericParameter(_) | TypeKind::InferenceVariable(_))
+                ) {
+                    self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                    return self.types.intern(TypeKind::Result {
+                        ok: element,
+                        error: core.int32,
+                    });
+                }
                 let result_element = match self.types.kind(element).cloned() {
                     Some(TypeKind::Buffer(inner)) => self.types.intern(TypeKind::Buffer(inner)),
                     Some(TypeKind::OwnedString) => element,
@@ -3579,6 +4091,24 @@ impl<'a> Checker<'a> {
                         arg_span(0),
                     );
                 };
+                // Generic package wrappers are checked before `T` is
+                // materialized.  Preserve the result shape and index
+                // contract here; the concrete move-safe nested/owned layout
+                // is rechecked when the package instance is specialized.
+                if matches!(
+                    self.types
+                        .kind(self.unification.resolve_shallow(&self.types, element)),
+                    Some(TypeKind::GenericParameter(_) | TypeKind::InferenceVariable(_))
+                ) {
+                    self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                    if let Some(actual) = argument_types.get(1) {
+                        self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                    }
+                    return self.types.intern(TypeKind::Result {
+                        ok: element,
+                        error: core.int32,
+                    });
+                }
                 let result_element = match self.types.kind(element).cloned() {
                     Some(TypeKind::Buffer(inner)) => self.types.intern(TypeKind::Buffer(inner)),
                     Some(TypeKind::OwnedString) => element,
@@ -3632,8 +4162,15 @@ impl<'a> Checker<'a> {
                 let Some(element) = self.buffer_element_from_type(*outer) else {
                     return self.type_error("J0301", buffer_message, arg_span(0));
                 };
+                let unresolved_generic = matches!(
+                    self.types
+                        .kind(self.unification.resolve_shallow(&self.types, element)),
+                    Some(TypeKind::GenericParameter(_))
+                );
                 let mut visiting = DeterministicSet::new();
-                if !self.buffer_move_into_element_is_supported(element, &mut visiting) {
+                if !unresolved_generic
+                    && !self.buffer_move_into_element_is_supported(element, &mut visiting)
+                {
                     return self.type_error("J0301", owning_message, arg_span(0));
                 }
                 self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
@@ -3719,6 +4256,24 @@ impl<'a> Checker<'a> {
                         arg_span(0),
                     );
                 };
+                if matches!(
+                    self.types
+                        .kind(self.unification.resolve_shallow(&self.types, element)),
+                    Some(TypeKind::GenericParameter(_))
+                ) {
+                    self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                    if let Some(actual) = argument_types.get(1) {
+                        self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                    }
+                    if let Some(actual) = argument_types.get(2) {
+                        self.unify_or_error(element, *actual, arg_span(2));
+                    }
+                    return if name.ends_with("_status") {
+                        core.int32
+                    } else {
+                        core.bool_
+                    };
+                }
                 let mut visiting = DeterministicSet::new();
                 if !self.buffer_move_into_element_is_supported(element, &mut visiting) {
                     return self.type_error(
@@ -3755,6 +4310,21 @@ impl<'a> Checker<'a> {
                         arg_span(0),
                     );
                 };
+                if matches!(
+                    self.types
+                        .kind(self.unification.resolve_shallow(&self.types, element)),
+                    Some(TypeKind::GenericParameter(_))
+                ) {
+                    self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                    if let Some(actual) = argument_types.get(1) {
+                        self.unify_or_error(element, *actual, arg_span(1));
+                    }
+                    return if name.ends_with("_status") {
+                        core.int32
+                    } else {
+                        core.bool_
+                    };
+                }
                 let mut visiting = DeterministicSet::new();
                 if !self.buffer_move_into_element_is_supported(element, &mut visiting) {
                     return self.type_error(
@@ -3788,6 +4358,23 @@ impl<'a> Checker<'a> {
                         arg_span(0),
                     );
                 };
+                if matches!(
+                    self.types
+                        .kind(self.unification.resolve_shallow(&self.types, element)),
+                    Some(TypeKind::GenericParameter(_))
+                ) {
+                    // Generic package wrappers are checked again after the
+                    // defining module is materialized with a concrete T.
+                    self.require_buffer_capability(*outer, Capability::Write, arg_span(0));
+                    if let Some(actual) = argument_types.get(1) {
+                        self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                    }
+                    return if name.ends_with("_status") {
+                        core.int32
+                    } else {
+                        core.bool_
+                    };
+                }
                 let nested = matches!(self.types.kind(element), Some(TypeKind::Buffer(_)));
                 let owned_string = matches!(self.types.kind(element), Some(TypeKind::OwnedString));
                 let direct_record = if nested || owned_string {
@@ -3891,7 +4478,16 @@ impl<'a> Checker<'a> {
                 let element = argument_types
                     .first()
                     .and_then(|actual| self.buffer_element_from_type(*actual));
-                if let Some(element) = element {
+                let unresolved_generic = element.is_some_and(|element| {
+                    matches!(
+                        self.types
+                            .kind(self.unification.resolve_shallow(&self.types, element)),
+                        Some(TypeKind::GenericParameter(_))
+                    )
+                });
+                if let Some(element) = element
+                    && !unresolved_generic
+                {
                     self.require_buffer_element_move_abi(element, arg_span(0));
                 }
                 if let Some(actual) = argument_types.first() {
@@ -4009,6 +4605,21 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "string_builder_append_bytes_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                core.uint_size
+            }
             "string_owned_create" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.uint_size, *actual, arg_span(0));
@@ -4057,16 +4668,45 @@ impl<'a> Checker<'a> {
                 }
                 core.int32
             }
-            "file_delete" | "file_flush" | "file_exists" | "directory_create"
-            | "directory_exists" | "directory_delete" => {
+            "file_delete" | "file_flush" | "directory_flush" | "file_exists"
+            | "directory_create" | "directory_exists" | "directory_delete" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "file_delete_path" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
                 }
                 core.bool_
             }
             "file_lock" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                core.uint_size
+            }
+            "file_lock_path" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "file_lock_path_retry" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                for index in 1..4 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(core.uint_size, *actual, arg_span(index));
+                    }
                 }
                 core.uint_size
             }
@@ -4078,7 +4718,7 @@ impl<'a> Checker<'a> {
             }
             "directory_list" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(write_byte_slice, *actual, arg_span(1));
@@ -4087,28 +4727,180 @@ impl<'a> Checker<'a> {
             }
             "directory_list_ex" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 for (index, actual) in argument_types.iter().skip(1).take(2).enumerate() {
                     self.unify_or_error(write_byte_slice, *actual, arg_span(index + 1));
                 }
                 core.uint_size
             }
+            "directory_list_ex_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(4));
+                }
+                core.bool_
+            }
+            "ui_file_open_exact" | "ui_directory_open_exact" | "ui_file_save_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "ui_file_open_extension_exact" => {
+                for index in 0..2 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(read_string, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "ui_file_save_suggested_exact" => {
+                for index in 0..3 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(read_string, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(4));
+                }
+                core.bool_
+            }
+            "ui_file_save_extension_exact" => {
+                for index in 0..3 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(read_string, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(4));
+                }
+                core.bool_
+            }
             "file_replace_atomic" | "file_copy" => {
                 for (index, actual) in argument_types.iter().take(2).enumerate() {
-                    self.unify_or_error(core.string, *actual, arg_span(index));
+                    self.unify_or_error(read_string, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "file_replace_atomic_paths" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "file_write_atomic" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "file_write_atomic_durable" => {
+                for index in 0..3 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(read_string, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(4));
                 }
                 core.bool_
             }
             "file_size" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 core.uint_size
             }
+            "file_exists_path" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "file_path_valid" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "file_size_path" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "file_mtime_unix_nanos_path" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.uint64
+            }
             "file_read" | "file_read_text" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(write_byte_slice, *actual, arg_span(1));
@@ -4117,7 +4909,7 @@ impl<'a> Checker<'a> {
             }
             "file_read_exact" | "file_read_text_exact" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(write_byte_slice, *actual, arg_span(1));
@@ -4129,7 +4921,7 @@ impl<'a> Checker<'a> {
             }
             "file_read_at" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(core.uint_size, *actual, arg_span(1));
@@ -4139,18 +4931,69 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "file_read_at_path" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                core.uint_size
+            }
             "file_write" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(read_byte_slice, *actual, arg_span(1));
                 }
                 core.uint_size
             }
+            "file_write_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "file_write_prefix_path" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                core.uint_size
+            }
+            "file_flush_path" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                core.bool_
+            }
             "file_write_at" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(core.uint_size, *actual, arg_span(1));
@@ -4162,19 +5005,19 @@ impl<'a> Checker<'a> {
             }
             "file_write_text" => {
                 for (index, actual) in argument_types.iter().take(2).enumerate() {
-                    self.unify_or_error(core.string, *actual, arg_span(index));
+                    self.unify_or_error(read_string, *actual, arg_span(index));
                 }
                 core.uint_size
             }
             "file_append_text" => {
                 for (index, actual) in argument_types.iter().take(2).enumerate() {
-                    self.unify_or_error(core.string, *actual, arg_span(index));
+                    self.unify_or_error(read_string, *actual, arg_span(index));
                 }
                 core.uint_size
             }
             "file_append" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(read_byte_slice, *actual, arg_span(1));
@@ -4382,6 +5225,8 @@ impl<'a> Checker<'a> {
             "app_state_revision" => core.uint64,
             "app_data_revision" => core.uint64,
             "app_data_validate" => core.bool_,
+            "app_data_snapshot_length" => core.uint_size,
+            "app_data_snapshot_length_if_revision" => core.uint_size,
             "app_state_type_at" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
@@ -4390,7 +5235,7 @@ impl<'a> Checker<'a> {
             }
             "app_state_exists" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 core.bool_
             }
@@ -4403,79 +5248,211 @@ impl<'a> Checker<'a> {
             | "app_data_tx_rollback" => core.bool_,
             "app_state_remove" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 core.bool_
             }
-            "app_state_set_int" => {
+            "app_state_remove_if_revision" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
-                }
-                if let Some(actual) = argument_types.get(1) {
-                    self.unify_or_error(core.int64, *actual, arg_span(1));
-                }
-                core.bool_
-            }
-            "app_state_get_int" => {
-                if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
-                }
-                core.int64
-            }
-            "app_state_set_uint" => {
-                if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(core.uint64, *actual, arg_span(1));
                 }
                 core.bool_
             }
+            "app_state_set_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int64, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_set_int_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int64, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_state_add_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int64, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_add_int_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int64, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_state_get_int" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                core.int64
+            }
+            "app_state_set_uint" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_set_uint_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_state_add_uint" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_add_uint_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
             "app_state_get_uint" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 core.uint64
             }
             "app_state_set_float" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(core.float64, *actual, arg_span(1));
                 }
                 core.bool_
             }
+            "app_state_set_float_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.float64, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_state_add_float" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.float64, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_state_add_float_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.float64, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
             "app_state_get_float" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 core.float64
             }
             "app_state_set_bool" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(core.bool_, *actual, arg_span(1));
                 }
                 core.bool_
             }
+            "app_state_set_bool_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
             "app_state_get_bool" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 core.bool_
             }
             "app_state_set_text" => {
                 for (index, actual) in argument_types.iter().take(2).enumerate() {
-                    self.unify_or_error(core.string, *actual, arg_span(index));
+                    self.unify_or_error(read_string, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_state_set_text_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
                 }
                 core.bool_
             }
             "app_state_set_text_bytes" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(read_byte_slice, *actual, arg_span(1));
@@ -4485,9 +5462,25 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "app_state_set_text_bytes_if_revision"
+            | "app_state_set_text_bytes_if_model_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_string, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
             "app_state_read_text" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(write_byte_slice, *actual, arg_span(1));
@@ -4496,7 +5489,7 @@ impl<'a> Checker<'a> {
             }
             "app_state_read_text_exact" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(write_byte_slice, *actual, arg_span(1));
@@ -4568,7 +5561,7 @@ impl<'a> Checker<'a> {
             }
             "app_state_read_int" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(write_slice_int64, *actual, arg_span(1));
@@ -4577,7 +5570,7 @@ impl<'a> Checker<'a> {
             }
             "app_state_read_uint" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(write_slice_uint64, *actual, arg_span(1));
@@ -4586,7 +5579,7 @@ impl<'a> Checker<'a> {
             }
             "app_state_read_float" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(write_slice_float64, *actual, arg_span(1));
@@ -4595,7 +5588,7 @@ impl<'a> Checker<'a> {
             }
             "app_state_read_bool" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(write_slice_bool, *actual, arg_span(1));
@@ -4611,9 +5604,21 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "app_state_read_key_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
             "app_state_save" | "app_state_load" | "app_data_save" | "app_data_load" => {
                 if let Some(actual) = argument_types.first() {
-                    self.unify_or_error(core.string, *actual, arg_span(0));
+                    self.unify_or_error(read_string, *actual, arg_span(0));
                 }
                 core.bool_
             }
@@ -4625,7 +5630,7 @@ impl<'a> Checker<'a> {
             | "app_data_journal_append"
             | "app_data_journal_recover" => {
                 for (index, actual) in argument_types.iter().take(2).enumerate() {
-                    self.unify_or_error(core.string, *actual, arg_span(index));
+                    self.unify_or_error(read_string, *actual, arg_span(index));
                 }
                 if (name == "app_state_save_atomic_if_revision"
                     || name == "app_data_save_atomic_if_revision")
@@ -4635,15 +5640,64 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "app_state_save_atomic_durable" | "app_state_save_atomic_durable_if_revision" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(read_string, *actual, arg_span(index));
+                }
+                if name == "app_state_save_atomic_durable_if_revision"
+                    && let Some(actual) = argument_types.get(3)
+                {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
             "app_data_journal_append_durable" => {
                 for (index, actual) in argument_types.iter().take(3).enumerate() {
                     self.unify_or_error(core.string, *actual, arg_span(index));
                 }
                 core.bool_
             }
-            "app_data_tx_commit_durable" => {
+            "app_data_tx_commit_durable" | "app_data_tx_commit_durable_if_revision" => {
                 for (index, actual) in argument_types.iter().take(3).enumerate() {
                     self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if name == "app_data_tx_commit_durable_if_revision"
+                    && let Some(actual) = argument_types.get(3)
+                {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_data_tx_commit_durable_directory"
+            | "app_data_tx_commit_durable_directory_if_revision" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if name == "app_data_tx_commit_durable_directory_if_revision"
+                    && let Some(actual) = argument_types.get(4)
+                {
+                    self.unify_or_error(core.uint64, *actual, arg_span(4));
+                }
+                core.bool_
+            }
+            "app_data_tx_commit_durable_retry" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                for (index, actual) in argument_types.iter().skip(3).take(2).enumerate() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(index + 3));
+                }
+                core.bool_
+            }
+            "app_data_tx_commit_durable_retry_if_revision" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                for (index, actual) in argument_types.iter().skip(4).take(2).enumerate() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(index + 4));
                 }
                 core.bool_
             }
@@ -4715,11 +5769,10 @@ impl<'a> Checker<'a> {
                 core.bool_
             }
             "app_data_journal_maintenance_retry_durable" => {
-                for (index, actual) in argument_types[..4].iter().enumerate() {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
                     self.unify_or_error(core.string, *actual, arg_span(index));
                 }
-                for (offset, actual) in argument_types[4..8].iter().enumerate() {
-                    let index = offset + 4;
+                for (index, actual) in argument_types.iter().enumerate().skip(4).take(4) {
                     self.unify_or_error(core.uint_size, *actual, arg_span(index));
                 }
                 core.bool_
@@ -4753,13 +5806,13 @@ impl<'a> Checker<'a> {
                 core.bool_
             }
             "app_data_journal_build_index_durable" => {
-                for (index, actual) in argument_types[..4].iter().enumerate() {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
                     self.unify_or_error(core.string, *actual, arg_span(index));
                 }
                 core.bool_
             }
             "app_data_journal_index_lookup_durable" => {
-                for (index, actual) in argument_types[..3].iter().enumerate() {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
                     self.unify_or_error(core.string, *actual, arg_span(index));
                 }
                 self.unify_or_error(core.uint_size, argument_types[3], arg_span(3));
@@ -4774,13 +5827,13 @@ impl<'a> Checker<'a> {
                 core.uint_size
             }
             "app_data_journal_index_export_csv_file_durable" => {
-                for (index, actual) in argument_types[..5].iter().enumerate() {
+                for (index, actual) in argument_types.iter().take(5).enumerate() {
                     self.unify_or_error(core.string, *actual, arg_span(index));
                 }
                 core.bool_
             }
             "app_data_journal_index_range_durable" => {
-                for (index, actual) in argument_types[..3].iter().enumerate() {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
                     self.unify_or_error(core.string, *actual, arg_span(index));
                 }
                 self.unify_or_error(core.uint_size, argument_types[3], arg_span(3));
@@ -4789,7 +5842,7 @@ impl<'a> Checker<'a> {
                 core.uint_size
             }
             "app_data_journal_index_read_page_durable" => {
-                for (index, actual) in argument_types[..3].iter().enumerate() {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
                     self.unify_or_error(core.string, *actual, arg_span(index));
                 }
                 self.unify_or_error(core.uint_size, argument_types[3], arg_span(3));
@@ -4803,6 +5856,15 @@ impl<'a> Checker<'a> {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
                 }
                 core.unit
+            }
+            "app_list_clear_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(1));
+                }
+                core.bool_
             }
             "app_list_count" => {
                 if let Some(actual) = argument_types.first() {
@@ -4831,6 +5893,93 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "app_list_push_text_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_list_push_text_bytes_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_list_insert_text" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_list_insert_text_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_list_insert_text_bytes" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_list_insert_text_bytes_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(4));
+                }
+                core.bool_
+            }
             "app_list_export_csv" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
@@ -4839,6 +5988,70 @@ impl<'a> Checker<'a> {
                     self.unify_or_error(write_byte_slice, *actual, arg_span(1));
                 }
                 core.uint_size
+            }
+            "app_list_export_csv_file_durable" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_list_export_csv_file_durable_if_revision"
+            | "app_list_export_json_file_durable_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_list_export_json_file_durable" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_list_export_csv_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_list_export_json_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
             }
             "app_list_sort_text" => {
                 if let Some(actual) = argument_types.first() {
@@ -4859,6 +6072,22 @@ impl<'a> Checker<'a> {
                         result: core.int32,
                     });
                     self.unify_or_error(comparator, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_list_sort_callback_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    let comparator = self.types.intern(TypeKind::Function {
+                        parameters: vec![core.int32, core.int32, core.int32].into_boxed_slice(),
+                        result: core.int32,
+                    });
+                    self.unify_or_error(comparator, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
                 }
                 core.bool_
             }
@@ -4888,6 +6117,29 @@ impl<'a> Checker<'a> {
                     && let Some(actual) = argument_types.get(3)
                 {
                     self.unify_or_error(core.int32, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_list_filter_text_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.string, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "app_list_filter_text_ex_if_revision" => {
+                for (index, expected) in
+                    [core.int32, core.int32, core.string, core.int32, core.uint64]
+                        .iter()
+                        .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
                 }
                 core.bool_
             }
@@ -4925,9 +6177,37 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "app_list_filter_callback_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    let predicate = self.types.intern(TypeKind::Function {
+                        parameters: vec![core.int32, core.int32].into_boxed_slice(),
+                        result: core.bool_,
+                    });
+                    self.unify_or_error(predicate, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
             "app_list_page" => {
                 for (index, actual) in argument_types.iter().take(4).enumerate() {
                     self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_list_page_if_revision" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(4));
                 }
                 core.bool_
             }
@@ -4970,6 +6250,21 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "app_list_set_text_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
             "app_list_set_text_bytes" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
@@ -4985,6 +6280,24 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "app_list_set_text_bytes_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(4));
+                }
+                core.bool_
+            }
             "app_list_remove" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
@@ -4994,12 +6307,72 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "app_list_remove_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
             "app_list_save" | "app_list_load" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_list_import_csv" | "app_list_import_json_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_list_import_csv_if_revision" | "app_list_import_json_exact_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_list_import_csv_file" | "app_list_import_json_file" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_list_import_csv_file_if_revision" | "app_list_import_json_file_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
                 }
                 core.bool_
             }
@@ -5017,6 +6390,15 @@ impl<'a> Checker<'a> {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
                 }
                 core.unit
+            }
+            "app_table_clear_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(1));
+                }
+                core.bool_
             }
             "app_table_tx_begin" => {
                 if let Some(actual) = argument_types.first() {
@@ -5241,12 +6623,54 @@ impl<'a> Checker<'a> {
                     core.bool_
                 }
             }
+            "app_table_append_row_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_table_insert_row" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_table_insert_row_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
             "app_table_remove_row" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_table_remove_row_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
                 }
                 core.bool_
             }
@@ -5262,6 +6686,18 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(actual) = argument_types.get(3) {
                     self.unify_or_error(core.string, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_set_cell_if_revision" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.string, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(4));
                 }
                 core.bool_
             }
@@ -5283,6 +6719,21 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(actual) = argument_types.get(4) {
                     self.unify_or_error(core.uint_size, *actual, arg_span(4));
+                }
+                core.bool_
+            }
+            "app_table_set_cell_bytes_if_revision" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(5));
                 }
                 core.bool_
             }
@@ -5407,6 +6858,21 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "app_table_sort_text_if_revision"
+            | "app_table_sort_int_if_revision"
+            | "app_table_sort_uint_if_revision"
+            | "app_table_sort_float_if_revision"
+            | "app_table_sort_bool_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.bool_, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
             "app_table_sort_callback" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
@@ -5420,9 +6886,34 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "app_table_sort_callback_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    let comparator = self.types.intern(TypeKind::Function {
+                        parameters: vec![core.int32, core.int32, core.int32].into_boxed_slice(),
+                        result: core.int32,
+                    });
+                    self.unify_or_error(comparator, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                core.bool_
+            }
             "app_table_page" => {
                 for (index, actual) in argument_types.iter().take(4).enumerate() {
                     self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                core.bool_
+            }
+            "app_table_page_if_revision" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(4));
                 }
                 core.bool_
             }
@@ -5655,12 +7146,39 @@ impl<'a> Checker<'a> {
                 }
                 core.int32
             }
+            "app_table_index_find_text_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.int32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.int32
+            }
             "app_table_index_find_pair_text" => {
                 for (index, actual) in argument_types.iter().take(3).enumerate() {
                     self.unify_or_error(core.int32, *actual, arg_span(index));
                 }
                 for (index, actual) in argument_types.iter().skip(3).take(3).enumerate() {
                     self.unify_or_error(core.string, *actual, arg_span(index + 3));
+                }
+                core.int32
+            }
+            "app_table_index_find_pair_text_if_revision" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                for (index, actual) in argument_types.iter().skip(3).take(2).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index + 3));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(5));
                 }
                 core.int32
             }
@@ -5676,6 +7194,21 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "app_table_index_collect_int_range_if_revision" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                for (index, actual) in argument_types.iter().skip(2).take(2).enumerate() {
+                    self.unify_or_error(core.int64, *actual, arg_span(index + 2));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(5));
+                }
+                core.uint_size
+            }
             "app_table_index_collect_uint_range" => {
                 for (index, actual) in argument_types.iter().take(2).enumerate() {
                     self.unify_or_error(core.int32, *actual, arg_span(index));
@@ -5685,6 +7218,21 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(actual) = argument_types.get(4) {
                     self.unify_or_error(write_slice_int32, *actual, arg_span(4));
+                }
+                core.uint_size
+            }
+            "app_table_index_collect_uint_range_if_revision" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                for (index, actual) in argument_types.iter().skip(2).take(2).enumerate() {
+                    self.unify_or_error(core.uint64, *actual, arg_span(index + 2));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(5));
                 }
                 core.uint_size
             }
@@ -5700,12 +7248,39 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "app_table_index_collect_float_range_if_revision" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                for (index, actual) in argument_types.iter().skip(2).take(2).enumerate() {
+                    self.unify_or_error(core.float64, *actual, arg_span(index + 2));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_int32, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(5));
+                }
+                core.uint_size
+            }
             "app_table_index_find_int" => {
                 for (index, actual) in argument_types.iter().take(2).enumerate() {
                     self.unify_or_error(core.int32, *actual, arg_span(index));
                 }
                 if let Some(actual) = argument_types.get(2) {
                     self.unify_or_error(core.int64, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_table_index_find_int_if_revision" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.int64, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
                 }
                 core.int32
             }
@@ -5718,6 +7293,18 @@ impl<'a> Checker<'a> {
                 }
                 core.int32
             }
+            "app_table_index_find_uint_if_revision" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.int32
+            }
             "app_table_index_find_float" => {
                 for (index, actual) in argument_types.iter().take(2).enumerate() {
                     self.unify_or_error(core.int32, *actual, arg_span(index));
@@ -5727,12 +7314,36 @@ impl<'a> Checker<'a> {
                 }
                 core.int32
             }
+            "app_table_index_find_float_if_revision" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.float64, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.int32
+            }
             "app_table_index_find_bool" => {
                 for (index, actual) in argument_types.iter().take(2).enumerate() {
                     self.unify_or_error(core.int32, *actual, arg_span(index));
                 }
                 if let Some(actual) = argument_types.get(2) {
                     self.unify_or_error(core.bool_, *actual, arg_span(2));
+                }
+                core.int32
+            }
+            "app_table_index_find_bool_if_revision" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
                 }
                 core.int32
             }
@@ -5754,6 +7365,18 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(actual) = argument_types.get(3) {
                     self.unify_or_error(core.string, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_filter_text_if_revision" => {
+                for (index, expected) in
+                    [core.int32, core.int32, core.int32, core.string, core.uint64]
+                        .iter()
+                        .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
                 }
                 core.bool_
             }
@@ -5793,6 +7416,29 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "app_table_filter_int_if_revision"
+            | "app_table_filter_uint_if_revision"
+            | "app_table_filter_float_if_revision"
+            | "app_table_filter_bool_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                let expected = match name {
+                    "app_table_filter_int_if_revision" => core.int64,
+                    "app_table_filter_uint_if_revision" => core.uint64,
+                    "app_table_filter_float_if_revision" => core.float64,
+                    _ => core.bool_,
+                };
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(expected, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(4));
+                }
+                core.bool_
+            }
             "app_table_filter_callback" => {
                 for (index, actual) in argument_types.iter().take(2).enumerate() {
                     self.unify_or_error(core.int32, *actual, arg_span(index));
@@ -5803,6 +7449,22 @@ impl<'a> Checker<'a> {
                         result: core.bool_,
                     });
                     self.unify_or_error(predicate, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_filter_callback_if_revision" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    let predicate = self.types.intern(TypeKind::Function {
+                        parameters: vec![core.int32, core.int32].into_boxed_slice(),
+                        result: core.bool_,
+                    });
+                    self.unify_or_error(predicate, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
                 }
                 core.bool_
             }
@@ -5842,7 +7504,71 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
-            "app_table_import_csv" => {
+            "app_table_export_csv_file_durable" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_export_csv_file_durable_if_revision"
+            | "app_table_export_json_file_durable_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_export_json_file_durable" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_export_csv_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_export_json_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_import_csv" | "app_table_import_json_exact" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
                 }
@@ -5851,6 +7577,42 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(actual) = argument_types.get(2) {
                     self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "app_table_import_csv_if_revision" | "app_table_import_json_exact_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "app_table_import_csv_file" | "app_table_import_json_file" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "app_table_import_csv_file_if_revision" | "app_table_import_json_file_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(2));
                 }
                 core.bool_
             }
@@ -5906,6 +7668,27 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "http_request_write_prefix_ex" => {
+                for (index, actual) in argument_types.iter().take(3).enumerate() {
+                    if index == 2 && *actual == read_string {
+                        continue;
+                    }
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(5));
+                }
+                if let Some(actual) = argument_types.get(6) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(6));
+                }
+                core.uint_size
+            }
             "http_request_write" => {
                 for (index, actual) in argument_types.iter().take(3).enumerate() {
                     self.unify_or_error(core.string, *actual, arg_span(index));
@@ -5930,6 +7713,48 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "http_request_write_header_ex" => {
+                for (index, actual) in argument_types.iter().take(5).enumerate() {
+                    if index == 2 && *actual == read_string {
+                        continue;
+                    }
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(5));
+                }
+                if let Some(actual) = argument_types.get(6) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(6));
+                }
+                if let Some(actual) = argument_types.get(7) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(7));
+                }
+                core.uint_size
+            }
+            "http_request_write_cookie" => {
+                for (index, actual) in argument_types.iter().take(5).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(5));
+                }
+                if let Some(actual) = argument_types.get(6) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(6));
+                }
+                core.uint_size
+            }
+            "http_request_write_cookie_block" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(5));
+                }
+                core.uint_size
+            }
             "http_request_write_header_block" => {
                 for (index, actual) in argument_types.iter().take(4).enumerate() {
                     self.unify_or_error(core.string, *actual, arg_span(index));
@@ -5942,7 +7767,25 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
-            "http_response_write" => {
+            "http_request_write_header_block_ex" => {
+                for (index, actual) in argument_types.iter().take(4).enumerate() {
+                    if index == 2 && *actual == read_string {
+                        continue;
+                    }
+                    self.unify_or_error(core.string, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(5));
+                }
+                if let Some(actual) = argument_types.get(6) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(6));
+                }
+                core.uint_size
+            }
+            "http_response_write" | "http_response_write_chunked" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.uint16, *actual, arg_span(0));
                 }
@@ -5951,6 +7794,63 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(actual) = argument_types.get(2) {
                     self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                core.uint_size
+            }
+            "http_response_write_chunked_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(4));
+                }
+                core.uint_size
+            }
+            "http_response_write_chunked_header" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "http_response_write_chunk" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "http_response_write_chunk_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(2));
                 }
                 if let Some(actual) = argument_types.get(3) {
                     self.unify_or_error(write_byte_slice, *actual, arg_span(3));
@@ -5975,6 +7875,27 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "http_response_write_prefix_ex" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(5));
+                }
+                core.uint_size
+            }
             "http_response_write_header" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.uint16, *actual, arg_span(0));
@@ -5989,6 +7910,26 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(actual) = argument_types.get(5) {
                     self.unify_or_error(write_byte_slice, *actual, arg_span(5));
+                }
+                core.uint_size
+            }
+            "http_response_write_header_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                for index in 1..=3 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(core.string, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(5));
+                }
+                if let Some(actual) = argument_types.get(6) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(6));
                 }
                 core.uint_size
             }
@@ -6046,6 +7987,32 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(actual) = argument_types.get(7) {
                     self.unify_or_error(write_byte_slice, *actual, arg_span(7));
+                }
+                core.uint_size
+            }
+            "http_response_write_cookie_policy" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint16, *actual, arg_span(0));
+                }
+                for index in 1..=5 {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(core.string, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(6) {
+                    self.unify_or_error(core.int64, *actual, arg_span(6));
+                }
+                if let Some(actual) = argument_types.get(7) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(7));
+                }
+                if let Some(actual) = argument_types.get(9) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(9));
+                }
+                if let Some(actual) = argument_types.get(10) {
+                    self.unify_or_error(core.bool_, *actual, arg_span(10));
+                }
+                if let Some(actual) = argument_types.get(11) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(11));
                 }
                 core.uint_size
             }
@@ -6134,6 +8101,48 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "http_request_header_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.string, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "http_request_body_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "http_request_body_exact_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
                 }
                 if let Some(actual) = argument_types.get(2) {
                     self.unify_or_error(write_byte_slice, *actual, arg_span(2));
@@ -6266,6 +8275,18 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "http_request_target_decode_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
             "http_request_header" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(read_byte_slice, *actual, arg_span(0));
@@ -6302,6 +8323,42 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(actual) = argument_types.get(3) {
                     self.unify_or_error(write_slice_uint_size, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "http_form_param_exact_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(4));
+                }
+                core.bool_
+            }
+            "http_multipart_part_exact_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.string, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(write_slice_uint_size, *actual, arg_span(4));
                 }
                 core.bool_
             }
@@ -6396,8 +8453,38 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "http_router_respond_chunked" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "http_router_respond_chunked_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
             "http_router_count" => core.uint_size,
             "http_session_open" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                for (index, actual) in argument_types.iter().skip(1).take(3).enumerate() {
+                    self.unify_or_error(core.uint32, *actual, arg_span(index + 1));
+                }
+                core.uint_size
+            }
+            "http_session_open_chunked" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.uint_size, *actual, arg_span(0));
                 }
@@ -6420,6 +8507,69 @@ impl<'a> Checker<'a> {
                     self.unify_or_error(core.string, *actual, arg_span(5));
                 }
                 core.uint_size
+            }
+            "http_session_open_tls_chunked" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                for (index, actual) in argument_types.iter().skip(1).take(3).enumerate() {
+                    self.unify_or_error(core.uint32, *actual, arg_span(index + 1));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.string, *actual, arg_span(4));
+                }
+                if let Some(actual) = argument_types.get(5) {
+                    self.unify_or_error(core.string, *actual, arg_span(5));
+                }
+                core.uint_size
+            }
+            "http_session_accept" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "http_session_receive_request" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint32, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(write_byte_slice, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "http_session_send" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                core.bool_
+            }
+            "http_session_send_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "http_session_close_connection" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                core.bool_
             }
             "http_session_step" => {
                 if let Some(actual) = argument_types.first() {
@@ -6460,6 +8610,24 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "net_tls_open_server_paths" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(4));
+                }
+                core.uint_size
+            }
             "net_tls_step" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.uint_size, *actual, arg_span(0));
@@ -6487,6 +8655,18 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(actual) = argument_types.get(1) {
                     self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "net_tls_send_prefix" | "net_tls_send_all_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
                 }
                 core.uint_size
             }
@@ -6529,6 +8709,27 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "net_tcp_listen_on" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint16, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "net_tcp_listen_on_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint16, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
             "net_tcp_accept" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.uint_size, *actual, arg_span(0));
@@ -6545,6 +8746,27 @@ impl<'a> Checker<'a> {
                 core.uint_size
             }
             "net_tcp_send_prefix" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.uint_size
+            }
+            "net_tcp_send_all" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                core.uint_size
+            }
+            "net_tcp_send_all_prefix" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.uint_size, *actual, arg_span(0));
                 }
@@ -6826,11 +9048,41 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "ui_app_bind_app_state_exact" => {
+                for (index, expected) in [core.int32, core.string].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
             "ui_app_refresh_app_state" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
                 }
                 core.unit
+            }
+            "ui_app_refresh_app_state_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "ui_app_refresh_app_state_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_commit_app_state_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
             }
             "ui_app_panel" => {
                 for (index, expected) in [
@@ -6979,6 +9231,14 @@ impl<'a> Checker<'a> {
                 }
                 core.int32
             }
+            "ui_app_label_set_text" => {
+                for (index, expected) in [core.int32, core.string].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
             "ui_app_button" => {
                 for (index, expected) in [
                     core.int32,
@@ -7021,7 +9281,7 @@ impl<'a> Checker<'a> {
                 }
                 core.int32
             }
-            "ui_app_checkbox" => {
+            "ui_app_checkbox" | "ui_app_switch" => {
                 for (index, expected) in [
                     core.int32,
                     core.string,
@@ -7078,6 +9338,14 @@ impl<'a> Checker<'a> {
                 }
                 core.int32
             }
+            "ui_app_select_index_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
             "ui_app_select_set_index" => {
                 for (index, expected) in [core.int32, core.int32].iter().enumerate() {
                     if let Some(actual) = argument_types.get(index) {
@@ -7115,8 +9383,198 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "ui_app_list_insert_item"
+            | "ui_app_list_insert_item_if_revision"
+            | "ui_app_list_set_item"
+            | "ui_app_list_set_item_if_revision" => {
+                let expected_types = if name == "ui_app_list_insert_item_if_revision"
+                    || name == "ui_app_list_set_item_if_revision"
+                {
+                    &[core.int32, core.int32, core.string, core.uint64][..]
+                } else {
+                    &[core.int32, core.int32, core.string][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_move_item" | "ui_app_list_move_item_if_revision" => {
+                let expected_types = if name == "ui_app_list_move_item_if_revision" {
+                    &[core.int32, core.int32, core.int32, core.uint64][..]
+                } else {
+                    &[core.int32, core.int32, core.int32][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_remove_item" | "ui_app_list_remove_item_if_revision" => {
+                let expected_types = if name == "ui_app_list_remove_item_if_revision" {
+                    &[core.int32, core.int32, core.uint64][..]
+                } else {
+                    &[core.int32, core.int32][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
             "ui_app_list_bind_app" => {
                 for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_filter_text" => {
+                for (index, expected) in [core.int32, core.int32, core.string].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_filter_text_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.string, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_filter_text_ex" => {
+                for (index, expected) in [core.int32, core.int32, core.string, core.int32]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_filter_text_ex_if_revision" => {
+                for (index, expected) in
+                    [core.int32, core.int32, core.string, core.int32, core.uint64]
+                        .iter()
+                        .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_page" => {
+                for (index, expected) in [core.int32, core.int32, core.int32, core.int32]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_page_if_revision" => {
+                for (index, expected) in
+                    [core.int32, core.int32, core.int32, core.int32, core.uint64]
+                        .iter()
+                        .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_sort_text" => {
+                for (index, expected) in [core.int32, core.bool_].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_sort_text_if_revision" => {
+                for (index, expected) in [core.int32, core.bool_, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_filter_callback" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    let predicate = self.types.intern(TypeKind::Function {
+                        parameters: vec![core.int32, core.int32].into_boxed_slice(),
+                        result: core.bool_,
+                    });
+                    self.unify_or_error(predicate, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "ui_app_list_filter_callback_if_revision" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    let predicate = self.types.intern(TypeKind::Function {
+                        parameters: vec![core.int32, core.int32].into_boxed_slice(),
+                        result: core.bool_,
+                    });
+                    self.unify_or_error(predicate, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "ui_app_input_length" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.uint_size
+            }
+            "ui_app_input_read" => {
+                for (index, expected) in [core.int32, write_byte_slice].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.uint_size
+            }
+            "ui_app_input_read_exact" | "ui_app_input_read_exact_if_revision" => {
+                let expected_types = if name == "ui_app_input_read_exact_if_revision" {
+                    &[
+                        core.int32,
+                        write_byte_slice,
+                        write_slice_uint_size,
+                        core.uint64,
+                    ][..]
+                } else {
+                    &[core.int32, write_byte_slice, write_slice_uint_size][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
                     if let Some(actual) = argument_types.get(index) {
                         self.unify_or_error(*expected, *actual, arg_span(index));
                     }
@@ -7135,6 +9593,22 @@ impl<'a> Checker<'a> {
                 }
                 core.int32
             }
+            "ui_app_list_count_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_list_index_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
             "ui_app_list_read_item" => {
                 for (index, expected) in [core.int32, core.int32, write_byte_slice]
                     .iter()
@@ -7146,8 +9620,37 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
-            "ui_app_list_set_index" => {
-                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+            "ui_app_list_read_item_exact" | "ui_app_list_read_item_exact_if_revision" => {
+                let expected_types = if name == "ui_app_list_read_item_exact_if_revision" {
+                    &[
+                        core.int32,
+                        core.int32,
+                        write_byte_slice,
+                        write_slice_uint_size,
+                        core.uint64,
+                    ][..]
+                } else {
+                    &[
+                        core.int32,
+                        core.int32,
+                        write_byte_slice,
+                        write_slice_uint_size,
+                    ][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_list_set_index" | "ui_app_list_set_index_if_revision" => {
+                let expected_types = if name == "ui_app_list_set_index_if_revision" {
+                    &[core.int32, core.int32, core.uint64][..]
+                } else {
+                    &[core.int32, core.int32][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
                     if let Some(actual) = argument_types.get(index) {
                         self.unify_or_error(*expected, *actual, arg_span(index));
                     }
@@ -7196,6 +9699,49 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "ui_app_table_cell_if_revision" => {
+                for (index, expected) in
+                    [core.int32, core.int32, core.int32, core.string, core.uint64]
+                        .iter()
+                        .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table_insert_row"
+            | "ui_app_table_insert_row_if_revision"
+            | "ui_app_table_remove_row"
+            | "ui_app_table_remove_row_if_revision" => {
+                let expected_types = if name == "ui_app_table_insert_row_if_revision"
+                    || name == "ui_app_table_remove_row_if_revision"
+                {
+                    &[core.int32, core.int32, core.uint64][..]
+                } else {
+                    &[core.int32, core.int32][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table_move_row" | "ui_app_table_move_row_if_revision" => {
+                let expected_types = if name == "ui_app_table_move_row_if_revision" {
+                    &[core.int32, core.int32, core.int32, core.uint64][..]
+                } else {
+                    &[core.int32, core.int32, core.int32][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
             "ui_app_table_read_cell" => {
                 for (index, expected) in [core.int32, core.int32, core.int32, write_byte_slice]
                     .iter()
@@ -7207,6 +9753,32 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "ui_app_table_read_cell_exact" | "ui_app_table_read_cell_exact_if_revision" => {
+                let expected_types = if name == "ui_app_table_read_cell_exact_if_revision" {
+                    &[
+                        core.int32,
+                        core.int32,
+                        core.int32,
+                        write_byte_slice,
+                        write_slice_uint_size,
+                        core.uint64,
+                    ][..]
+                } else {
+                    &[
+                        core.int32,
+                        core.int32,
+                        core.int32,
+                        write_byte_slice,
+                        write_slice_uint_size,
+                    ][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
             "ui_app_table_bind_app" => {
                 for (index, expected) in [core.int32, core.int32, core.int32].iter().enumerate() {
                     if let Some(actual) = argument_types.get(index) {
@@ -7215,9 +9787,94 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "ui_app_table_index_find_pair_text_if_revision" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.string,
+                    core.string,
+                    core.uint64,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_table_index_find_int_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.int64, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_table_index_find_uint_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.uint64, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_table_index_find_float_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.float64, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_table_index_find_bool_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.bool_, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
             "ui_app_table_refresh" | "ui_app_table_clear" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "ui_app_table_page" => {
+                for (index, expected) in [core.int32, core.int32, core.int32, core.int32]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table_page_if_revision" => {
+                for (index, expected) in
+                    [core.int32, core.int32, core.int32, core.int32, core.uint64]
+                        .iter()
+                        .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
                 }
                 core.bool_
             }
@@ -7227,8 +9884,29 @@ impl<'a> Checker<'a> {
                 }
                 core.int32
             }
-            "ui_app_table_set_selected_row" => {
-                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+            "ui_app_table_row_count_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_table_selected_row_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_app_table_set_selected_row" | "ui_app_table_set_selected_row_if_revision" => {
+                let expected_types = if name == "ui_app_table_set_selected_row_if_revision" {
+                    &[core.int32, core.int32, core.uint64][..]
+                } else {
+                    &[core.int32, core.int32][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
                     if let Some(actual) = argument_types.get(index) {
                         self.unify_or_error(*expected, *actual, arg_span(index));
                     }
@@ -7247,10 +9925,37 @@ impl<'a> Checker<'a> {
                 }
                 core.bool_
             }
+            "ui_app_table_sort_text_if_revision"
+            | "ui_app_table_sort_int_if_revision"
+            | "ui_app_table_sort_uint_if_revision"
+            | "ui_app_table_sort_float_if_revision"
+            | "ui_app_table_sort_bool_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.bool_, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
             "ui_app_table_filter_text" => {
                 for (index, expected) in [core.int32, core.int32, core.int32, core.string]
                     .iter()
                     .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table_filter_text_if_revision" => {
+                for (index, expected) in
+                    [core.int32, core.int32, core.int32, core.string, core.uint64]
+                        .iter()
+                        .enumerate()
                 {
                     if let Some(actual) = argument_types.get(index) {
                         self.unify_or_error(*expected, *actual, arg_span(index));
@@ -7263,6 +9968,24 @@ impl<'a> Checker<'a> {
                     [core.int32, core.int32, core.int32, core.string, core.int32]
                         .iter()
                         .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_app_table_filter_text_ex_if_revision" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.string,
+                    core.int32,
+                    core.uint64,
+                ]
+                .iter()
+                .enumerate()
                 {
                     if let Some(actual) = argument_types.get(index) {
                         self.unify_or_error(*expected, *actual, arg_span(index));
@@ -7287,6 +10010,60 @@ impl<'a> Checker<'a> {
                 };
                 if let Some(actual) = argument_types.get(3) {
                     self.unify_or_error(expected, *actual, arg_span(3));
+                }
+                core.bool_
+            }
+            "ui_app_table_filter_int_if_revision"
+            | "ui_app_table_filter_uint_if_revision"
+            | "ui_app_table_filter_float_if_revision"
+            | "ui_app_table_filter_bool_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                let expected = match name {
+                    "ui_app_table_filter_int_if_revision" => core.int64,
+                    "ui_app_table_filter_uint_if_revision" => core.uint64,
+                    "ui_app_table_filter_float_if_revision" => core.float64,
+                    _ => core.bool_,
+                };
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(expected, *actual, arg_span(3));
+                }
+                if let Some(actual) = argument_types.get(4) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(4));
+                }
+                core.bool_
+            }
+            "ui_app_table_filter_callback" => {
+                for (index, actual) in argument_types.iter().take(2).enumerate() {
+                    self.unify_or_error(core.int32, *actual, arg_span(index));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    let predicate = self.types.intern(TypeKind::Function {
+                        parameters: vec![core.int32, core.int32].into_boxed_slice(),
+                        result: core.bool_,
+                    });
+                    self.unify_or_error(predicate, *actual, arg_span(2));
+                }
+                core.bool_
+            }
+            "ui_app_table_filter_callback_if_revision" => {
+                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    let predicate = self.types.intern(TypeKind::Function {
+                        parameters: vec![core.int32, core.int32].into_boxed_slice(),
+                        result: core.bool_,
+                    });
+                    self.unify_or_error(predicate, *actual, arg_span(2));
+                }
+                if let Some(actual) = argument_types.get(3) {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
                 }
                 core.bool_
             }
@@ -7581,6 +10358,22 @@ impl<'a> Checker<'a> {
                 }
                 core.int32
             }
+            "ui_checked_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_select_index_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
             "ui_list_clear" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
@@ -7593,6 +10386,22 @@ impl<'a> Checker<'a> {
                 }
                 core.int32
             }
+            "ui_list_count_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_list_index_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
             "ui_set_checked" | "ui_set_input_enabled" | "ui_select_set_index" => {
                 for (index, expected) in [core.int32, core.int32].iter().enumerate() {
                     if let Some(actual) = argument_types.get(index) {
@@ -7601,13 +10410,22 @@ impl<'a> Checker<'a> {
                 }
                 core.unit
             }
-            "ui_list_set_index" => {
-                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+            "ui_list_set_index" | "ui_list_set_index_if_revision" => {
+                let expected_types = if name == "ui_list_set_index_if_revision" {
+                    &[core.int32, core.int32, core.uint64][..]
+                } else {
+                    &[core.int32, core.int32][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
                     if let Some(actual) = argument_types.get(index) {
                         self.unify_or_error(*expected, *actual, arg_span(index));
                     }
                 }
-                core.unit
+                if name == "ui_list_set_index_if_revision" {
+                    core.bool_
+                } else {
+                    core.unit
+                }
             }
             "ui_set_input_text" | "ui_select_option" => {
                 for (index, expected) in [core.int32, core.string].iter().enumerate() {
@@ -7616,6 +10434,18 @@ impl<'a> Checker<'a> {
                     }
                 }
                 core.unit
+            }
+            "ui_set_input_text_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                if let Some(actual) = argument_types.get(1) {
+                    self.unify_or_error(read_byte_slice, *actual, arg_span(1));
+                }
+                if let Some(actual) = argument_types.get(2) {
+                    self.unify_or_error(core.uint_size, *actual, arg_span(2));
+                }
+                core.bool_
             }
             "ui_select" => {
                 for (index, expected) in [
@@ -7673,6 +10503,30 @@ impl<'a> Checker<'a> {
                     }
                 }
                 core.uint_size
+            }
+            "ui_list_read_item_exact" | "ui_list_read_item_exact_if_revision" => {
+                let expected_types = if name == "ui_list_read_item_exact_if_revision" {
+                    &[
+                        core.int32,
+                        core.int32,
+                        write_byte_slice,
+                        write_slice_uint_size,
+                        core.uint64,
+                    ][..]
+                } else {
+                    &[
+                        core.int32,
+                        core.int32,
+                        write_byte_slice,
+                        write_slice_uint_size,
+                    ][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
             }
             "ui_list_set_item" => {
                 for (index, expected) in [core.int32, core.int32, core.string].iter().enumerate() {
@@ -7748,6 +10602,32 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
+            "ui_table_read_cell_exact" | "ui_table_read_cell_exact_if_revision" => {
+                let expected_types = if name == "ui_table_read_cell_exact_if_revision" {
+                    &[
+                        core.int32,
+                        core.int32,
+                        core.int32,
+                        write_byte_slice,
+                        write_slice_uint_size,
+                        core.uint64,
+                    ][..]
+                } else {
+                    &[
+                        core.int32,
+                        core.int32,
+                        core.int32,
+                        write_byte_slice,
+                        write_slice_uint_size,
+                    ][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
             "ui_table_bind_app" => {
                 for (index, expected) in [core.int32, core.int32, core.int32].iter().enumerate() {
                     if let Some(actual) = argument_types.get(index) {
@@ -7763,6 +10643,12 @@ impl<'a> Checker<'a> {
                 core.unit
             }
             "ui_refresh_bindings" => core.unit,
+            "ui_refresh_bindings_if_revision" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.uint64, *actual, arg_span(0));
+                }
+                core.bool_
+            }
             "ui_table_clear" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
@@ -7775,13 +10661,38 @@ impl<'a> Checker<'a> {
                 }
                 core.int32
             }
-            "ui_table_set_selected_row" => {
-                for (index, expected) in [core.int32, core.int32].iter().enumerate() {
+            "ui_table_row_count_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
                     if let Some(actual) = argument_types.get(index) {
                         self.unify_or_error(*expected, *actual, arg_span(index));
                     }
                 }
-                core.unit
+                core.int32
+            }
+            "ui_table_selected_row_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_table_set_selected_row" | "ui_table_set_selected_row_if_revision" => {
+                let expected_types = if name == "ui_table_set_selected_row_if_revision" {
+                    &[core.int32, core.int32, core.uint64][..]
+                } else {
+                    &[core.int32, core.int32][..]
+                };
+                for (index, expected) in expected_types.iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                if name == "ui_table_set_selected_row_if_revision" {
+                    core.bool_
+                } else {
+                    core.unit
+                }
             }
             "ui_table_sort_text"
             | "ui_table_sort_int"
@@ -7794,6 +10705,83 @@ impl<'a> Checker<'a> {
                     }
                 }
                 core.unit
+            }
+            "ui_table_sort_text_if_revision"
+            | "ui_table_sort_int_if_revision"
+            | "ui_table_sort_uint_if_revision"
+            | "ui_table_sort_float_if_revision"
+            | "ui_table_sort_bool_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.bool_, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.unit
+            }
+            "ui_table_index_find_pair_text_if_revision" => {
+                for (index, expected) in [
+                    core.int32,
+                    core.int32,
+                    core.int32,
+                    core.string,
+                    core.string,
+                    core.uint64,
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_table_index_find_int_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.int64, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_table_index_find_uint_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.uint64, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_table_index_find_float_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.float64, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
+            }
+            "ui_table_index_find_bool_if_revision" => {
+                for (index, expected) in [core.int32, core.int32, core.bool_, core.uint64]
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.int32
             }
             "ui_table_filter_text" => {
                 for (index, expected) in [core.int32, core.int32, core.int32, core.string]
@@ -7953,7 +10941,7 @@ impl<'a> Checker<'a> {
                 }
                 core.uint_size
             }
-            "ui_input_read_exact" => {
+            "ui_input_read_exact" | "ui_input_read_exact_if_revision" => {
                 if let Some(actual) = argument_types.first() {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
                 }
@@ -7962,6 +10950,11 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(actual) = argument_types.get(2) {
                     self.unify_or_error(write_slice_uint_size, *actual, arg_span(2));
+                }
+                if name == "ui_input_read_exact_if_revision"
+                    && let Some(actual) = argument_types.get(3)
+                {
+                    self.unify_or_error(core.uint64, *actual, arg_span(3));
                 }
                 core.bool_
             }
@@ -7972,6 +10965,14 @@ impl<'a> Checker<'a> {
                     }
                 }
                 core.unit
+            }
+            "ui_input_bind_app_state_exact" => {
+                for (index, expected) in [core.int32, core.string].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
             }
             "ui_checkbox_bind_app_state"
             | "ui_select_bind_app_state"
@@ -7990,6 +10991,28 @@ impl<'a> Checker<'a> {
                 }
                 core.unit
             }
+            "ui_input_refresh_app_state_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "ui_input_refresh_app_state_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_input_commit_app_state_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
             "ui_checkbox_refresh_app_state"
             | "ui_select_refresh_app_state"
             | "ui_list_refresh_app_state"
@@ -7998,6 +11021,37 @@ impl<'a> Checker<'a> {
                     self.unify_or_error(core.int32, *actual, arg_span(0));
                 }
                 core.unit
+            }
+            "ui_checkbox_refresh_app_state_exact"
+            | "ui_select_refresh_app_state_exact"
+            | "ui_list_refresh_app_state_exact"
+            | "ui_table_refresh_app_state_exact" => {
+                if let Some(actual) = argument_types.first() {
+                    self.unify_or_error(core.int32, *actual, arg_span(0));
+                }
+                core.bool_
+            }
+            "ui_checkbox_refresh_app_state_if_revision"
+            | "ui_select_refresh_app_state_if_revision"
+            | "ui_list_refresh_app_state_if_revision"
+            | "ui_table_refresh_app_state_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
+            }
+            "ui_checkbox_commit_app_state_if_revision"
+            | "ui_select_commit_app_state_if_revision"
+            | "ui_list_commit_app_state_if_revision"
+            | "ui_table_commit_app_state_if_revision" => {
+                for (index, expected) in [core.int32, core.uint64].iter().enumerate() {
+                    if let Some(actual) = argument_types.get(index) {
+                        self.unify_or_error(*expected, *actual, arg_span(index));
+                    }
+                }
+                core.bool_
             }
             "ui_run" => core.int32,
             "vector_splat2" | "vector_splat3" | "vector_splat4" | "vector_splat8" => {
@@ -8342,20 +11396,49 @@ impl<'a> Checker<'a> {
         ty: TypeId,
         visiting: &mut DeterministicSet<TypeId>,
     ) -> bool {
+        self.buffer_carrier_move_is_abi_safe_at_depth(ty, visiting, 1)
+    }
+
+    fn buffer_carrier_move_is_abi_safe_at_depth(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+        carrier_depth: u32,
+    ) -> bool {
+        // The field-table ABI has a bounded compact path for up to six nested
+        // carrier levels (outer enum plus six carrier tags, seven total tags).
+        // Deeper paths or tags wider than the path encoding remain rejected.
+        if carrier_depth > 6 {
+            return false;
+        }
         match self.types.kind(ty).cloned() {
-            Some(TypeKind::Option(inner)) => {
-                self.buffer_carrier_payload_move_is_abi_safe(inner, visiting)
-            }
+            Some(TypeKind::Option(inner)) => self.buffer_carrier_payload_move_is_abi_safe_at_depth(
+                inner,
+                visiting,
+                carrier_depth,
+            ),
             Some(TypeKind::Result { ok, error }) => {
-                let ok_is_owning = self.buffer_carrier_payload_move_is_abi_safe(ok, visiting);
-                let error_is_owning = self.buffer_carrier_payload_move_is_abi_safe(error, visiting);
+                let ok_is_owning = self.buffer_carrier_payload_move_is_abi_safe_at_depth(
+                    ok,
+                    visiting,
+                    carrier_depth,
+                );
+                let error_is_owning = self.buffer_carrier_payload_move_is_abi_safe_at_depth(
+                    error,
+                    visiting,
+                    carrier_depth,
+                );
                 if !ok_is_owning && !error_is_owning {
                     return false;
                 }
                 if ok_is_owning {
                     (!error_is_owning && self.buffer_element_is_copy_safe(error, visiting))
                         || (error_is_owning
-                            && self.buffer_carrier_payload_move_is_abi_safe(error, visiting))
+                            && self.buffer_carrier_payload_move_is_abi_safe_at_depth(
+                                error,
+                                visiting,
+                                carrier_depth,
+                            ))
                 } else {
                     self.buffer_element_is_copy_safe(ok, visiting) && error_is_owning
                 }
@@ -8373,10 +11456,98 @@ impl<'a> Checker<'a> {
         ty: TypeId,
         visiting: &mut DeterministicSet<TypeId>,
     ) -> bool {
-        matches!(
-            self.types.kind(ty),
-            Some(TypeKind::Buffer(_)) | Some(TypeKind::OwnedString)
-        ) && self.buffer_element_is_abi_safe(ty, visiting, true)
+        self.buffer_carrier_payload_move_is_abi_safe_at_depth(ty, visiting, 1)
+    }
+
+    fn buffer_carrier_payload_move_is_abi_safe_at_depth(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+        carrier_depth: u32,
+    ) -> bool {
+        match self.types.kind(ty) {
+            Some(TypeKind::Buffer(_)) | Some(TypeKind::OwnedString) => {
+                self.buffer_element_is_abi_safe(ty, visiting, true)
+            }
+            Some(TypeKind::Option(_)) | Some(TypeKind::Result { .. }) => self
+                .buffer_carrier_move_is_abi_safe_at_depth(
+                    ty,
+                    visiting,
+                    carrier_depth.saturating_add(1),
+                ),
+            _ => false,
+        }
+    }
+
+    /// Returns whether a value contains at least one owning descriptor.  This
+    /// is deliberately separate from `buffer_element_is_abi_safe`: a
+    /// copy-safe record is a valid Buffer element but must not make an enum
+    /// variant look like an owning carrier.  The distinction keeps the enum
+    /// field table empty for copy-only records while admitting a record that
+    /// owns a nested Buffer or OwnedString field.
+    fn buffer_type_contains_owning(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        let resolved = self.unification.resolve_shallow(&self.types, ty);
+        if !visiting.insert(resolved) {
+            return false;
+        }
+        let result = match self.types.kind(resolved).cloned() {
+            Some(TypeKind::Buffer(_)) | Some(TypeKind::OwnedString) => true,
+            Some(TypeKind::Option(inner)) => self.buffer_type_contains_owning(inner, visiting),
+            Some(TypeKind::Result { ok, error }) => {
+                self.buffer_type_contains_owning(ok, visiting)
+                    || self.buffer_type_contains_owning(error, visiting)
+            }
+            Some(TypeKind::Array { element, .. }) | Some(TypeKind::Vector { element, .. }) => {
+                self.buffer_type_contains_owning(element, visiting)
+            }
+            Some(TypeKind::Nominal {
+                constructor,
+                arguments,
+            }) => {
+                if let Some(record) = self.records.get(&constructor).cloned() {
+                    let mut substitution = Substitution::new();
+                    for (parameter, argument) in record
+                        .generic_parameters
+                        .iter()
+                        .zip(arguments.iter().copied())
+                    {
+                        substitution.insert(*parameter, argument);
+                    }
+                    record.fields.values().any(|field| {
+                        let field_ty = substitution
+                            .apply(&mut self.types, field.ty)
+                            .unwrap_or(self.types.core().error);
+                        self.buffer_type_contains_owning(field_ty, visiting)
+                    })
+                } else if let Some(declaration) = self.enums.get(&constructor).cloned() {
+                    let mut substitution = Substitution::new();
+                    for (parameter, argument) in declaration
+                        .generic_parameters
+                        .iter()
+                        .zip(arguments.iter().copied())
+                    {
+                        substitution.insert(*parameter, argument);
+                    }
+                    declaration.variants.values().any(|variant| {
+                        variant.fields.iter().any(|field| {
+                            let field_ty = substitution
+                                .apply(&mut self.types, *field)
+                                .unwrap_or(self.types.core().error);
+                            self.buffer_type_contains_owning(field_ty, visiting)
+                        })
+                    })
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+        visiting.remove(&resolved);
+        result
     }
 
     fn buffer_enum_carrier_move_is_abi_safe(
@@ -8409,16 +11580,13 @@ impl<'a> Checker<'a> {
                 let field_ty = substitution
                     .apply(&mut self.types, *field)
                     .unwrap_or(self.types.core().error);
-                if matches!(
-                    self.types.kind(field_ty),
-                    Some(TypeKind::Buffer(_)) | Some(TypeKind::OwnedString)
-                ) {
-                    if !self.buffer_element_is_abi_safe(field_ty, visiting, true) {
-                        return false;
-                    }
-                    owning_fields += 1;
-                } else if !self.buffer_element_is_copy_safe(field_ty, visiting) {
+                let (is_owning, is_supported) =
+                    self.buffer_enum_field_move_is_abi_safe(field_ty, visiting);
+                if !is_supported {
                     return false;
+                }
+                if is_owning {
+                    owning_fields += 1;
                 }
             }
             if owning_fields > 0 {
@@ -8426,6 +11594,50 @@ impl<'a> Checker<'a> {
             }
         }
         owning_variants > 0
+    }
+
+    /// Returns whether one named enum field is supported by the carrier
+    /// field-table ABI and whether it contains an owning descriptor. Direct
+    /// Buffer/OwnedString fields already have a descriptor path; fixed arrays
+    /// may contain those direct owners at each static offset. A one-level
+    /// Option/Result carrier is also accepted; its two tags are packed into
+    /// the existing field-table discriminant.
+    fn buffer_enum_field_move_is_abi_safe(
+        &mut self,
+        ty: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> (bool, bool) {
+        match self.types.kind(ty).cloned() {
+            Some(TypeKind::Buffer(_)) | Some(TypeKind::OwnedString) => {
+                (true, self.buffer_element_is_abi_safe(ty, visiting, true))
+            }
+            Some(TypeKind::Array { element, .. }) => {
+                let (is_owning, is_supported) =
+                    self.buffer_enum_field_move_is_abi_safe(element, visiting);
+                (is_owning, is_supported)
+            }
+            Some(TypeKind::Option(_) | TypeKind::Result { .. }) => {
+                (true, self.buffer_carrier_move_is_abi_safe(ty, visiting))
+            }
+            Some(TypeKind::Nominal { constructor, .. })
+                if self.records.contains_key(&constructor) =>
+            {
+                let mut ownership_visiting = DeterministicSet::new();
+                let is_owning = self.buffer_type_contains_owning(ty, &mut ownership_visiting);
+                (
+                    is_owning,
+                    self.buffer_element_is_abi_safe(ty, visiting, true),
+                )
+            }
+            Some(TypeKind::Nominal {
+                constructor,
+                arguments,
+            }) if self.enums.contains_key(&constructor) => (
+                true,
+                self.buffer_enum_carrier_move_is_abi_safe(constructor, &arguments, visiting),
+            ),
+            _ => (false, self.buffer_element_is_copy_safe(ty, visiting)),
+        }
     }
 
     fn owning_buffer_chain_is_abi_safe(
@@ -8441,6 +11653,12 @@ impl<'a> Checker<'a> {
         }
         if depth == 0 {
             return false;
+        }
+        if matches!(self.types.kind(cursor), Some(TypeKind::Array { .. })) {
+            // A nested Buffer may terminate in a fixed inline owning array.
+            // Its descriptors are flattened into the same path-aware field
+            // table used by direct record elements.
+            return self.buffer_element_is_abi_safe(cursor, visiting, true);
         }
         // A C-layout record leaf may own its own Buffer fields.  Its cleanup
         // metadata is flattened into the path-aware nested-record drop table
@@ -8475,6 +11693,11 @@ impl<'a> Checker<'a> {
         }
         if depth == 0 {
             return false;
+        }
+        if matches!(self.types.kind(cursor), Some(TypeKind::Array { .. })) {
+            // Inline arrays reuse record field-table cleanup at the final
+            // nested Buffer depth.
+            return self.resize_record_fields_are_supported(cursor, visiting);
         }
         if matches!(
             self.types.kind(cursor),
@@ -8605,6 +11828,12 @@ impl<'a> Checker<'a> {
             {
                 self.resize_record_fields_are_supported(resolved, visiting)
             }
+            Some(TypeKind::Nominal {
+                constructor,
+                arguments,
+            }) if self.enums.contains_key(&constructor) => {
+                self.embedded_enum_record_field_is_abi_safe(constructor, &arguments, visiting)
+            }
             _ => self.buffer_element_is_copy_safe(resolved, visiting),
         }
     }
@@ -8639,8 +11868,172 @@ impl<'a> Checker<'a> {
         ) {
             return self.buffer_carrier_move_is_abi_safe(ty, visiting);
         }
+        if let Some(TypeKind::Nominal {
+            constructor,
+            arguments,
+        }) = self.types.kind(ty).cloned()
+            && self.enums.contains_key(&constructor)
+        {
+            return self.embedded_enum_record_field_is_abi_safe(constructor, &arguments, visiting);
+        }
         matches!(self.types.kind(ty), Some(TypeKind::Nominal { constructor, .. }) if self.records.contains_key(constructor))
             && self.buffer_element_is_abi_safe(ty, visiting, true)
+    }
+
+    /// Returns whether a named enum can be embedded in an owning record using
+    /// the bounded record-field tag marker. Direct Buffer/OwnedString
+    /// payloads, fixed arrays, C-layout records and bounded Option/Result
+    /// carriers made from the same values may own memory. Carrier tags are
+    /// retained in the compact path marker emitted by JIR.
+    fn embedded_enum_record_field_is_abi_safe(
+        &mut self,
+        constructor: NominalTypeId,
+        arguments: &[TypeId],
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        let Some(declaration) = self.enums.get(&constructor).cloned() else {
+            return false;
+        };
+        if declaration.repr != AbiRepr::C {
+            return false;
+        }
+        let enum_ty = self.types.intern(TypeKind::Nominal {
+            constructor,
+            arguments: arguments.to_vec().into(),
+        });
+        if !visiting.insert(enum_ty) {
+            return false;
+        }
+        let mut substitution = Substitution::new();
+        for (parameter, argument) in declaration
+            .generic_parameters
+            .iter()
+            .zip(arguments.iter().copied())
+        {
+            substitution.insert(*parameter, argument);
+        }
+        let result = declaration.variants.values().all(|variant| {
+            variant.fields.iter().all(|field| {
+                let field_ty = substitution
+                    .apply(&mut self.types, *field)
+                    .unwrap_or(self.types.core().error);
+                match self.types.kind(field_ty).cloned() {
+                    Some(TypeKind::Buffer(_)) => {
+                        self.owning_buffer_chain_is_abi_safe(field_ty, visiting)
+                    }
+                    Some(TypeKind::OwnedString) => true,
+                    Some(TypeKind::Option(_)) | Some(TypeKind::Result { .. }) => {
+                        self.buffer_carrier_move_is_abi_safe(field_ty, visiting)
+                    }
+                    Some(TypeKind::Array { element, .. }) => {
+                        self.embedded_enum_record_array_is_abi_safe(element, visiting)
+                    }
+                    Some(TypeKind::Nominal {
+                        constructor,
+                        arguments,
+                    }) if self.records.contains_key(&constructor) => self
+                        .embedded_enum_record_record_is_abi_safe(constructor, &arguments, visiting),
+                    Some(TypeKind::Nominal {
+                        constructor,
+                        arguments,
+                    }) if self.enums.contains_key(&constructor) => self
+                        .embedded_enum_record_field_is_abi_safe(constructor, &arguments, visiting),
+                    _ => self.buffer_element_is_copy_safe(field_ty, visiting),
+                }
+            })
+        });
+        visiting.remove(&enum_ty);
+        result
+    }
+
+    fn embedded_enum_record_array_is_abi_safe(
+        &mut self,
+        element: TypeId,
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        match self.types.kind(element).cloned() {
+            Some(TypeKind::Buffer(_)) => self.owning_buffer_chain_is_abi_safe(element, visiting),
+            Some(TypeKind::OwnedString) => true,
+            Some(TypeKind::Option(_)) | Some(TypeKind::Result { .. }) => {
+                self.buffer_carrier_move_is_abi_safe(element, visiting)
+            }
+            Some(TypeKind::Array { element, .. }) => {
+                self.embedded_enum_record_array_is_abi_safe(element, visiting)
+            }
+            Some(TypeKind::Nominal {
+                constructor,
+                arguments,
+            }) if self.records.contains_key(&constructor) => {
+                self.embedded_enum_record_record_is_abi_safe(constructor, &arguments, visiting)
+            }
+            Some(TypeKind::Nominal {
+                constructor,
+                arguments,
+            }) if self.enums.contains_key(&constructor) => {
+                self.embedded_enum_record_field_is_abi_safe(constructor, &arguments, visiting)
+            }
+            _ => self.buffer_element_is_copy_safe(element, visiting),
+        }
+    }
+
+    fn embedded_enum_record_record_is_abi_safe(
+        &mut self,
+        constructor: NominalTypeId,
+        arguments: &[TypeId],
+        visiting: &mut DeterministicSet<TypeId>,
+    ) -> bool {
+        let Some(record) = self.records.get(&constructor).cloned() else {
+            return false;
+        };
+        if record.repr != AbiRepr::C {
+            return false;
+        }
+        let record_ty = self.types.intern(TypeKind::Nominal {
+            constructor,
+            arguments: arguments.to_vec().into(),
+        });
+        if !visiting.insert(record_ty) {
+            return false;
+        }
+        let mut substitution = Substitution::new();
+        for (parameter, argument) in record
+            .generic_parameters
+            .iter()
+            .zip(arguments.iter().copied())
+        {
+            substitution.insert(*parameter, argument);
+        }
+        let result =
+            record.fields.values().all(|field| {
+                let field_ty = substitution
+                    .apply(&mut self.types, field.ty)
+                    .unwrap_or(self.types.core().error);
+                match self.types.kind(field_ty).cloned() {
+                    Some(TypeKind::Buffer(_)) => {
+                        self.owning_buffer_chain_is_abi_safe(field_ty, visiting)
+                    }
+                    Some(TypeKind::OwnedString) => true,
+                    Some(TypeKind::Option(_)) | Some(TypeKind::Result { .. }) => {
+                        self.buffer_carrier_move_is_abi_safe(field_ty, visiting)
+                    }
+                    Some(TypeKind::Array { element, .. }) => {
+                        self.embedded_enum_record_array_is_abi_safe(element, visiting)
+                    }
+                    Some(TypeKind::Nominal {
+                        constructor,
+                        arguments,
+                    }) if self.records.contains_key(&constructor) => self
+                        .embedded_enum_record_record_is_abi_safe(constructor, &arguments, visiting),
+                    Some(TypeKind::Nominal {
+                        constructor,
+                        arguments,
+                    }) if self.enums.contains_key(&constructor) => self
+                        .embedded_enum_record_field_is_abi_safe(constructor, &arguments, visiting),
+                    _ => self.buffer_element_is_copy_safe(field_ty, visiting),
+                }
+            });
+        visiting.remove(&record_ty);
+        result
     }
 
     /// Returns whether `buffer_remove_drop` can dispose one element without
@@ -8675,12 +12068,18 @@ impl<'a> Checker<'a> {
             nested_depth = nested_depth.saturating_add(1);
             nested_cursor = self.unification.resolve_shallow(&self.types, *inner);
         }
-        if nested_depth > 0
-            && self
-                .buffer_remove_drop_value_is_supported(nested_cursor, &mut DeterministicSet::new())
-        {
-            visiting.remove(&resolved);
-            return true;
+        if nested_depth > 0 {
+            let mut leaf_visiting = DeterministicSet::new();
+            let leaf_supported = self
+                .buffer_element_is_copy_safe(nested_cursor, &mut leaf_visiting)
+                || self.buffer_remove_drop_value_is_supported(
+                    nested_cursor,
+                    &mut DeterministicSet::new(),
+                );
+            if leaf_supported {
+                visiting.remove(&resolved);
+                return true;
+            }
         }
         let result = match self.types.kind(resolved).cloned() {
             Some(TypeKind::Array { .. }) => {
@@ -8797,6 +12196,14 @@ impl<'a> Checker<'a> {
             Some(TypeKind::Nominal { constructor, .. }) if self.records.contains_key(constructor)
         ) {
             return self.buffer_remove_drop_element_is_supported(resolved, visiting);
+        }
+        if let Some(TypeKind::Nominal {
+            constructor,
+            arguments,
+        }) = self.types.kind(resolved).cloned()
+            && self.enums.contains_key(&constructor)
+        {
+            return self.embedded_enum_record_field_is_abi_safe(constructor, &arguments, visiting);
         }
         false
     }
@@ -9631,6 +13038,24 @@ mod tests {
     }
 
     #[test]
+    fn accepts_dynamic_array_alias_with_buffer_mutations() {
+        let output = check(
+            "module test; fn main(values: write DynamicArray<Int32>) { let appended: Bool = buffer_append(values, 7); let inserted: Bool = buffer_insert(values, 0usize, 3); let resized: Bool = buffer_resize(values, 4usize); let removed: Bool = buffer_remove(values, 0usize); let cleared: Bool = buffer_clear(values); if !appended { } if !inserted { } if !resized { } if !removed { } if !cleared { } }",
+        );
+        assert!(!output.has_errors(), "{:#?}", output.diagnostics);
+
+        let create = check(
+            "module test; fn main() -> Int32 { let created: Result<DynamicArray<Int32>, Int32> = buffer_create(0usize); match created { Ok(values) => { return buffer_length(values) as Int32 } Error(status) => { return status } } }",
+        );
+        assert!(!create.has_errors(), "{:#?}", create.diagnostics);
+
+        let nested = check(
+            "module test; fn main(values: write DynamicArray<DynamicArray<Int32>>, item: DynamicArray<Int32>) { let appended: Bool = buffer_append(values, item); let cleared: Bool = buffer_clear_move(values); if !appended { } if !cleared { } }",
+        );
+        assert!(!nested.has_errors(), "{:#?}", nested.diagnostics);
+    }
+
+    #[test]
     fn validates_buffer_and_slice_index_iteration() {
         let output = check(
             "module test; fn update(values: write Slice<Int32>) { for index in values.indices { values[index] = values[index] + 1 } }",
@@ -9767,6 +13192,217 @@ mod tests {
             owning_array.diagnostics
         );
 
+        let owning_array_move_into = check(
+            "module test; fn mutate(values: write Buffer<[Buffer<Int32>; 2]>, first: Buffer<Int32>, second: Buffer<Int32>, output_first: Buffer<Int32>, output_second: Buffer<Int32>) { let item: [Buffer<Int32>; 2] = [first, second]; let output: [Buffer<Int32>; 2] = [output_first, output_second]; buffer_append(values, item); let removed: Bool = buffer_remove_move_into(values, 0usize, output); let inserted: Bool = buffer_insert_move_from(values, 0usize, output); let popped: Bool = buffer_pop_move_into(values, output); let pop_status: Int32 = buffer_pop_move_into_status(values, output); if !removed { } if !inserted { } if !popped { } if pop_status == 0 { } }",
+        );
+        assert!(
+            !owning_array_move_into.has_errors(),
+            "expected fixed owning Buffer array move operations to be accepted, got {:?}",
+            owning_array_move_into.diagnostics
+        );
+
+        let owning_string_array = check(
+            "module test; fn mutate(values: write Buffer<[OwnedString; 2]>, first: OwnedString, second: OwnedString) { let item: [OwnedString; 2] = [first, second]; buffer_append(values, item); let resized: Bool = buffer_resize_move(values, 1usize); let removed: Int32 = buffer_remove_drop_status(values, 0usize); let cleared: Bool = buffer_clear_move(values); }",
+        );
+        assert!(
+            !owning_string_array.has_errors(),
+            "expected owning string array element to be accepted, got {:?}",
+            owning_string_array.diagnostics
+        );
+
+        let owning_enum_string_array = check(
+            "module test; @repr(C) enum Event { Idle, Text([OwnedString; 2]), Done } fn mutate(values: write Buffer<Event>, first: OwnedString, second: OwnedString) { let item: [OwnedString; 2] = [first, second]; buffer_append(values, Event.Text(item)); let resized: Bool = buffer_resize_move(values, 1usize); let removed: Int32 = buffer_remove_drop_status(values, 0usize); let cleared: Bool = buffer_clear_move(values); }",
+        );
+        assert!(
+            !owning_enum_string_array.has_errors(),
+            "expected enum owning string array element to be accepted, got {:?}",
+            owning_enum_string_array.diagnostics
+        );
+
+        let owning_enum_carrier_array = check(
+            "module test; @repr(C) enum Event { Idle, Text([Option<OwnedString>; 2]), Done } fn mutate(values: write Buffer<Event>, first: OwnedString, second: OwnedString) { let item: [Option<OwnedString>; 2] = [Some(first), None]; buffer_append(values, Event.Text(item)); let second_item: [Option<OwnedString>; 2] = [None, Some(second)]; buffer_append(values, Event.Text(second_item)); let resized: Bool = buffer_resize_move(values, 1usize); let removed: Int32 = buffer_remove_drop_status(values, 0usize); let cleared: Bool = buffer_clear_move(values); }",
+        );
+        assert!(
+            !owning_enum_carrier_array.has_errors(),
+            "expected enum carrier array element to be accepted, got {:?}",
+            owning_enum_carrier_array.diagnostics
+        );
+
+        let nested_carrier_enum_array = check(
+            "module test; @repr(C) enum Event { Idle, Text([Option<Option<OwnedString>>; 2]), Done } fn mutate(values: write Buffer<Event>) { let resized: Bool = buffer_resize_move(values, 1usize); if !resized { } }",
+        );
+        assert!(
+            !nested_carrier_enum_array.has_errors(),
+            "two-level nested carrier inside enum array should be accepted, got {:?}",
+            nested_carrier_enum_array.diagnostics
+        );
+
+        let deeply_nested_carrier_enum_array = check(
+            "module test; @repr(C) enum Event { Idle, Text([Option<Option<Option<OwnedString>>>; 2]), Done } fn mutate(values: write Buffer<Event>) { let resized: Bool = buffer_resize_move(values, 1usize); if !resized { } }",
+        );
+        assert!(
+            !deeply_nested_carrier_enum_array.has_errors(),
+            "three-level nested carrier should use the general path ABI, got {:?}",
+            deeply_nested_carrier_enum_array.diagnostics
+        );
+
+        let deeply_nested_carrier_enum_array_move_into = check(
+            "module test; @repr(C) enum Event { Idle, Text([Option<Option<Option<OwnedString>>>; 2]), Done } fn mutate(values: write Buffer<Event>, output: write Event) { let removed: Bool = buffer_remove_move_into(values, 0usize, output); let removed_status: Int32 = buffer_remove_move_into_status(values, 99usize, output); let popped: Bool = buffer_pop_move_into(values, output); let pop_status: Int32 = buffer_pop_move_into_status(values, output); if !removed { } if removed_status == 0 { } if !popped { } if pop_status == 0 { } }",
+        );
+        assert!(
+            !deeply_nested_carrier_enum_array_move_into.has_errors(),
+            "three-level nested carrier move-into/pop should be accepted, got {:?}",
+            deeply_nested_carrier_enum_array_move_into.diagnostics
+        );
+
+        let mixed_max_carrier_enum_move_into = check(
+            "module test; @repr(C) enum Event { Idle, Text([Result<Option<Result<Option<Result<Option<OwnedString>, Int32>>, Int32>>, Int32>; 2]), Done } fn mutate(values: write Buffer<Event>, output: write Event) { let removed: Bool = buffer_remove_move_into(values, 0usize, output); let removed_status: Int32 = buffer_remove_move_into_status(values, 99usize, output); let popped: Bool = buffer_pop_move_into(values, output); let pop_status: Int32 = buffer_pop_move_into_status(values, output); if !removed { } if removed_status == 0 { } if !popped { } if pop_status == 0 { } }",
+        );
+        assert!(
+            !mixed_max_carrier_enum_move_into.has_errors(),
+            "maximum mixed Result/Option carrier move-into/pop should be accepted, got {:?}",
+            mixed_max_carrier_enum_move_into.diagnostics
+        );
+
+        let overlong_carrier_enum_array = check(
+            "module test; @repr(C) enum Event { Idle, Text([Option<Option<Option<Option<Option<Option<Option<OwnedString>>>>>>>; 2]), Done } fn mutate(values: write Buffer<Event>) { let resized: Bool = buffer_resize_move(values, 1usize); if !resized { } }",
+        );
+        assert!(
+            overlong_carrier_enum_array.has_errors(),
+            "seven-level nested carrier must remain outside the bounded path ABI"
+        );
+
+        let overlong_carrier_enum_move_into = check(
+            "module test; @repr(C) enum Event { Idle, Text([Option<Option<Option<Option<Option<Option<Option<OwnedString>>>>>>>; 2]), Done } fn mutate(values: write Buffer<Event>, output: write Event) { let removed: Bool = buffer_remove_move_into(values, 0usize, output); let removed_status: Int32 = buffer_remove_move_into_status(values, 99usize, output); let popped: Bool = buffer_pop_move_into(values, output); let pop_status: Int32 = buffer_pop_move_into_status(values, output); if !removed { } if removed_status == 0 { } if !popped { } if pop_status == 0 { } }",
+        );
+        assert!(
+            overlong_carrier_enum_move_into
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == "J0301")
+                .count()
+                >= 4,
+            "expected one J0301 guard per overlong move operation, got {:?}",
+            overlong_carrier_enum_move_into.diagnostics
+        );
+
+        let owning_carrier_array = check(
+            "module test; fn mutate(values: write Buffer<[Option<OwnedString>; 2]>, first: OwnedString, second: OwnedString) { let item: [Option<OwnedString>; 2] = [Some(first), None]; buffer_append(values, item); let second_item: [Option<OwnedString>; 2] = [None, Some(second)]; buffer_append(values, second_item); let resized: Int32 = buffer_resize_move_status(values, 3usize); let removed: Bool = buffer_remove_drop(values, 0usize); let cleared: Bool = buffer_clear_move(values); }",
+        );
+        assert!(
+            !owning_carrier_array.has_errors(),
+            "expected direct carrier array element to be accepted, got {:?}",
+            owning_carrier_array.diagnostics
+        );
+
+        let owning_carrier_array_move_into = check(
+            "module test; fn mutate(values: write Buffer<[Option<OwnedString>; 2]>, output: write [Option<OwnedString>; 2]) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); let status: Int32 = buffer_remove_move_into_status(values, 0usize, output); }",
+        );
+        assert!(
+            !owning_carrier_array_move_into.has_errors(),
+            "expected direct carrier array move-into to be accepted, got {:?}",
+            owning_carrier_array_move_into.diagnostics
+        );
+
+        let owning_carrier_array_pop_move_into = check(
+            "module test; fn mutate(values: write Buffer<[Option<OwnedString>; 2]>, output: write [Option<OwnedString>; 2]) { let moved: Bool = buffer_pop_move_into(values, output); let status: Int32 = buffer_pop_move_into_status(values, output); if !moved { } if status == 0 { } }",
+        );
+        assert!(
+            !owning_carrier_array_pop_move_into.has_errors(),
+            "expected direct carrier array pop_move_into to be accepted, got {:?}",
+            owning_carrier_array_pop_move_into.diagnostics
+        );
+
+        let owning_carrier_array_insert_move_from = check(
+            "module test; fn mutate(values: write Buffer<[Option<OwnedString>; 2]>, incoming: [Option<OwnedString>; 2], status_incoming: [Option<OwnedString>; 2]) { let moved: Bool = buffer_insert_move_from(values, 0usize, incoming); let status: Int32 = buffer_insert_move_from_status(values, 99usize, status_incoming); if !moved { } if status == 0 { } }",
+        );
+        assert!(
+            !owning_carrier_array_insert_move_from.has_errors(),
+            "expected direct carrier array insert_move_from to be accepted, got {:?}",
+            owning_carrier_array_insert_move_from.diagnostics
+        );
+
+        let owning_result_carrier_move_into = check(
+            "module test; fn mutate(values: write Buffer<Result<OwnedString, Int32>>, output: write Result<OwnedString, Int32>) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); let status: Int32 = buffer_remove_move_into_status(values, 0usize, output); let popped: Bool = buffer_pop_move_into(values, output); let pop_status: Int32 = buffer_pop_move_into_status(values, output); if !moved { } if status == 0 { } if !popped { } if pop_status == 0 { } }",
+        );
+        assert!(
+            !owning_result_carrier_move_into.has_errors(),
+            "expected Result<OwnedString, Int32> carrier move-into to be accepted, got {:?}",
+            owning_result_carrier_move_into.diagnostics
+        );
+
+        let owning_option_carrier_move_into = check(
+            "module test; fn mutate(values: write Buffer<Option<OwnedString>>, output: write Option<OwnedString>) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); let status: Int32 = buffer_remove_move_into_status(values, 0usize, output); let popped: Bool = buffer_pop_move_into(values, output); let pop_status: Int32 = buffer_pop_move_into_status(values, output); if !moved { } if status == 0 { } if !popped { } if pop_status == 0 { } }",
+        );
+        assert!(
+            !owning_option_carrier_move_into.has_errors(),
+            "expected Option<OwnedString> carrier move-into to be accepted, got {:?}",
+            owning_option_carrier_move_into.diagnostics
+        );
+
+        let owning_option_carrier_insert_move_from = check(
+            "module test; fn mutate(values: write Buffer<Option<OwnedString>>, incoming: Option<OwnedString>, status_incoming: Option<OwnedString>) { let moved: Bool = buffer_insert_move_from(values, 0usize, incoming); let status: Int32 = buffer_insert_move_from_status(values, 99usize, status_incoming); if !moved { } if status == 0 { } }",
+        );
+        assert!(
+            !owning_option_carrier_insert_move_from.has_errors(),
+            "expected Option<OwnedString> carrier insert_move_from to be accepted, got {:?}",
+            owning_option_carrier_insert_move_from.diagnostics
+        );
+
+        let owning_result_carrier_insert_move_from = check(
+            "module test; fn mutate(values: write Buffer<Result<OwnedString, Int32>>, incoming: Result<OwnedString, Int32>, status_incoming: Result<OwnedString, Int32>) { let moved: Bool = buffer_insert_move_from(values, 0usize, incoming); let status: Int32 = buffer_insert_move_from_status(values, 99usize, status_incoming); if !moved { } if status == 0 { } }",
+        );
+        assert!(
+            !owning_result_carrier_insert_move_from.has_errors(),
+            "expected Result<OwnedString, Int32> carrier insert_move_from to be accepted, got {:?}",
+            owning_result_carrier_insert_move_from.diagnostics
+        );
+
+        let nested_owning_carrier_array = check(
+            "module test; fn mutate(values: write Buffer<Buffer<[Option<OwnedString>; 2]>>, inner: Buffer<[Option<OwnedString>; 2]>, first: OwnedString, second: OwnedString) { let item: [Option<OwnedString>; 2] = [Some(first), Some(second)]; buffer_append(inner, item); buffer_append_move(values, inner); let resized: Int32 = buffer_resize_move_status(values, 2usize); let removed: Bool = buffer_remove_drop(values, 0usize); let cleared: Bool = buffer_clear_move(values); }",
+        );
+        assert!(
+            !nested_owning_carrier_array.has_errors(),
+            "expected nested carrier array element to be accepted, got {:?}",
+            nested_owning_carrier_array.diagnostics
+        );
+
+        let nested_owning_carrier_array_move_into = check(
+            "module test; fn mutate(values: write Buffer<Buffer<[Option<OwnedString>; 2]>>, output: Buffer<[Option<OwnedString>; 2]>) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); let status: Int32 = buffer_remove_move_into_status(values, 0usize, output); let popped: Bool = buffer_pop_move_into(values, output); let pop_status: Int32 = buffer_pop_move_into_status(values, output); }",
+        );
+        assert!(
+            !nested_owning_carrier_array_move_into.has_errors(),
+            "expected nested carrier array move-into/pop to be accepted, got {:?}",
+            nested_owning_carrier_array_move_into.diagnostics
+        );
+
+        let nested_owning_carrier_matrix = check(
+            "module test; fn mutate(values: write Buffer<Buffer<[[Option<OwnedString>; 2]; 2]>>, inner: Buffer<[[Option<OwnedString>; 2]; 2]>, first: OwnedString, second: OwnedString) { let item: [[Option<OwnedString>; 2]; 2] = [[Some(first), None], [None, Some(second)]]; buffer_append(inner, item); buffer_append_move(values, inner); let resized: Int32 = buffer_resize_move_status(values, 2usize); let removed: Bool = buffer_remove_drop(values, 0usize); let cleared: Bool = buffer_clear_move(values); }",
+        );
+        assert!(
+            !nested_owning_carrier_matrix.has_errors(),
+            "expected nested carrier matrix element to be accepted, got {:?}",
+            nested_owning_carrier_matrix.diagnostics
+        );
+
+        let nested_owning_carrier_matrix_move_into = check(
+            "module test; fn mutate(values: write Buffer<Buffer<[[Option<OwnedString>; 2]; 2]>>, output: Buffer<[[Option<OwnedString>; 2]; 2]>) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); let status: Int32 = buffer_remove_move_into_status(values, 0usize, output); let popped: Bool = buffer_pop_move_into(values, output); let pop_status: Int32 = buffer_pop_move_into_status(values, output); }",
+        );
+        assert!(
+            !nested_owning_carrier_matrix_move_into.has_errors(),
+            "expected nested carrier matrix move-into/pop to be accepted, got {:?}",
+            nested_owning_carrier_matrix_move_into.diagnostics
+        );
+
+        let nested_owning_array = check(
+            "module test; fn mutate(values: write Buffer<Buffer<[Buffer<OwnedString>; 2]>>, inner: Buffer<[Buffer<OwnedString>; 2]>, first: Buffer<OwnedString>, second: Buffer<OwnedString>) { let item: [Buffer<OwnedString>; 2] = [first, second]; buffer_append(inner, item); buffer_append_move(values, inner); let grown: Int32 = buffer_resize_move_status(values, 2usize); let moved: Result<Buffer<[Buffer<OwnedString>; 2]>, Int32> = buffer_remove_move(values, 0usize); let cleared: Bool = buffer_clear_move(values); if grown == 0 { if cleared { } } }",
+        );
+        assert!(
+            !nested_owning_array.has_errors(),
+            "expected nested owning fixed Buffer array to be accepted, got {:?}",
+            nested_owning_array.diagnostics
+        );
+
         let nested_owning = check(
             "module test; fn mutate(values: write Buffer<Buffer<Int32>>, inner: Buffer<Int32>) { buffer_append(values, inner); }",
         );
@@ -9819,6 +13455,42 @@ mod tests {
             !owned_string_pop_into.has_errors(),
             "expected Buffer<OwnedString> pop_move_into to be accepted, got {:?}",
             owned_string_pop_into.diagnostics
+        );
+
+        let owned_string_insert_move_from = check(
+            "module test; fn mutate(values: write Buffer<OwnedString>, incoming: OwnedString, status_incoming: OwnedString) { let moved: Bool = buffer_insert_move_from(values, 0usize, incoming); let status: Int32 = buffer_insert_move_from_status(values, 99usize, status_incoming); if !moved { } if status == 0 { } }",
+        );
+        assert!(
+            !owned_string_insert_move_from.has_errors(),
+            "expected Buffer<OwnedString> insert_move_from to be accepted, got {:?}",
+            owned_string_insert_move_from.diagnostics
+        );
+
+        let nested_owning_option_carrier_insert_move_from = check(
+            "module test; fn mutate(values: write Buffer<Buffer<Option<OwnedString>>>, incoming: Buffer<Option<OwnedString>>, status_incoming: Buffer<Option<OwnedString>>) { let moved: Bool = buffer_insert_move_from(values, 0usize, incoming); let status: Int32 = buffer_insert_move_from_status(values, 99usize, status_incoming); if !moved { } if status == 0 { } }",
+        );
+        assert!(
+            !nested_owning_option_carrier_insert_move_from.has_errors(),
+            "expected nested Buffer<Option<OwnedString>> insert_move_from to be accepted, got {:?}",
+            nested_owning_option_carrier_insert_move_from.diagnostics
+        );
+
+        let nested_owning_result_carrier_insert_move_from = check(
+            "module test; fn mutate(values: write Buffer<Buffer<Result<OwnedString, Int32>>>, incoming: Buffer<Result<OwnedString, Int32>>, status_incoming: Buffer<Result<OwnedString, Int32>>) { let moved: Bool = buffer_insert_move_from(values, 0usize, incoming); let status: Int32 = buffer_insert_move_from_status(values, 99usize, status_incoming); if !moved { } if status == 0 { } }",
+        );
+        assert!(
+            !nested_owning_result_carrier_insert_move_from.has_errors(),
+            "expected nested Buffer<Result<OwnedString, Int32>> insert_move_from to be accepted, got {:?}",
+            nested_owning_result_carrier_insert_move_from.diagnostics
+        );
+
+        let nested_owning_string_insert_move_from = check(
+            "module test; fn mutate(values: write Buffer<Buffer<OwnedString>>, incoming: Buffer<OwnedString>, status_incoming: Buffer<OwnedString>) { let moved: Bool = buffer_insert_move_from(values, 0usize, incoming); let status: Int32 = buffer_insert_move_from_status(values, 99usize, status_incoming); if !moved { } if status == 0 { } }",
+        );
+        assert!(
+            !nested_owning_string_insert_move_from.has_errors(),
+            "expected nested Buffer<OwnedString> insert_move_from to be accepted, got {:?}",
+            nested_owning_string_insert_move_from.diagnostics
         );
 
         let nested_owned_string_remove_into = check(
@@ -9920,6 +13592,45 @@ mod tests {
             !owning_enum_remove_move_into.has_errors(),
             "expected owning enum remove_move_into to be accepted, got {:?}",
             owning_enum_remove_move_into.diagnostics
+        );
+
+        let owning_enum_record_remove_move_into = check(
+            "module test; @repr(C) struct Entry { values: Buffer<Int32>, id: Int32 } @repr(C) enum Event { Idle, Ready(Entry), Done } fn mutate(values: write Buffer<Event>, output: write Event) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); let status: Int32 = buffer_remove_move_into_status(values, 0usize, output); }",
+        );
+        assert!(
+            !owning_enum_record_remove_move_into.has_errors(),
+            "expected enum record owning payload remove_move_into to be accepted, got {:?}",
+            owning_enum_record_remove_move_into.diagnostics
+        );
+
+        let owning_enum_generic_record_remove_move_into = check(
+            "module test; @repr(C) struct Frame<T> { payload: T, marker: Int32 } @repr(C) enum Event { Idle, Ready(Frame<Buffer<Int32>>), Done } fn mutate(values: write Buffer<Event>, output: write Event) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); }",
+        );
+        assert!(
+            !owning_enum_generic_record_remove_move_into.has_errors(),
+            "expected generic enum record owning payload remove_move_into to be accepted, got {:?}",
+            owning_enum_generic_record_remove_move_into.diagnostics
+        );
+
+        let owning_enum_record_array_remove_move_into = check(
+            "module test; @repr(C) struct Entry { values: Buffer<Int32>, id: Int32 } @repr(C) enum Event { Idle, Pair([Entry; 2]), Done } fn mutate(values: write Buffer<Event>, output: write Event) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); let popped: Bool = buffer_pop_move_into(values, output); if !moved { } if !popped { } }",
+        );
+        assert!(
+            !owning_enum_record_array_remove_move_into.has_errors(),
+            "expected enum record-array owning payload move-into to be accepted, got {:?}",
+            owning_enum_record_array_remove_move_into.diagnostics
+        );
+
+        let copy_only_enum_record_remove_move_into = check(
+            "module test; @repr(C) struct Plain { id: Int32 } @repr(C) enum Event { Idle, Ready(Plain), Done } fn mutate(values: write Buffer<Event>, output: write Event) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); }",
+        );
+        assert!(
+            copy_only_enum_record_remove_move_into
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "expected copy-only enum record move_into to be rejected, got {:?}",
+            copy_only_enum_record_remove_move_into.diagnostics
         );
 
         let nested_remove_move_into = check(
@@ -10080,6 +13791,51 @@ mod tests {
             direct_record_clear.diagnostics
         );
 
+        let record_named_enum = check(
+            "module test; @repr(C) enum Payload { Empty, Ready(Buffer<Int32>), Nested(Buffer<Buffer<Int32>>), Done } @repr(C) struct Entry { id: Int32, payload: Payload } fn mutate(values: write Buffer<Entry>) { let ok: Bool = buffer_clear_move(values); let status: Int32 = buffer_remove_drop_status(values, 0usize); }",
+        );
+        assert!(
+            !record_named_enum.has_errors(),
+            "expected named owning enum record field to be accepted, got {:?}",
+            record_named_enum.diagnostics
+        );
+
+        let record_nested_named_enum = check(
+            "module test; @repr(C) struct Detail { id: Int32, values: Buffer<Int32> } @repr(C) enum Payload { Empty, Detail(Detail), Pair([Detail; 2]), Done } @repr(C) struct Entry { payload: Payload } fn mutate(values: write Buffer<Entry>) { let ok: Bool = buffer_clear_move(values); let status: Int32 = buffer_remove_drop_status(values, 0usize); }",
+        );
+        assert!(
+            !record_nested_named_enum.has_errors(),
+            "expected bounded record payload in named owning enum to be accepted, got {:?}",
+            record_nested_named_enum.diagnostics
+        );
+
+        let record_nested_record_carrier_enum = check(
+            "module test; @repr(C) struct Detail { values: Option<Buffer<Int32>> } @repr(C) enum Payload { Empty, Detail(Detail) } @repr(C) struct Entry { payload: Payload } fn mutate(values: write Buffer<Entry>) { buffer_clear_move(values); }",
+        );
+        assert!(
+            !record_nested_record_carrier_enum.has_errors(),
+            "expected nested record carrier enum to be accepted, got {:?}",
+            record_nested_record_carrier_enum.diagnostics
+        );
+
+        let record_nested_carrier_enum = check(
+            "module test; @repr(C) enum Payload { Empty, Ready(Option<Buffer<Int32>>) } @repr(C) struct Entry { payload: Payload } fn mutate(values: write Buffer<Entry>) { buffer_clear_move(values); }",
+        );
+        assert!(
+            !record_nested_carrier_enum.has_errors(),
+            "expected nested carrier enum record field to be accepted, got {:?}",
+            record_nested_carrier_enum.diagnostics
+        );
+
+        let nested_record_carrier_create = check(
+            "module test; @repr(C) struct Detail { selected: Option<Buffer<Int32>>, outcome: Result<Buffer<Int32>, Int32> } @repr(C) enum Payload { Empty, Detail(Detail), Done } @repr(C) struct Entry { payload: Payload } fn main() -> Int32 { let created: Result<Buffer<Entry>, Int32> = buffer_create(0usize); match created { Ok(values) => { buffer_clear_move(values); return 0 } Error(status) => { return status } } }",
+        );
+        assert!(
+            !nested_record_carrier_create.has_errors(),
+            "expected nested record carrier constructor to be accepted, got {:?}",
+            nested_record_carrier_create.diagnostics
+        );
+
         let non_c_record_clear = check(
             "module test; struct Entry { values: Buffer<Int32> } fn mutate(values: write Buffer<Buffer<Entry>>) { buffer_clear_move(values); }",
         );
@@ -10103,6 +13859,54 @@ mod tests {
             "expected copy-safe element diagnostic, got {:?}",
             invalid.diagnostics
         );
+    }
+
+    #[test]
+    fn validates_nested_named_enum_owning_buffer_contract() {
+        let output = check(
+            "module test; @repr(C) enum Inner { Empty, Text(OwnedString), Done } @repr(C) enum Outer { Idle, Nested(Inner), Done } fn mutate(values: write Buffer<Outer>, output: write Outer) { let nested: Inner = Inner.Empty; let value: Outer = Outer.Nested(nested); buffer_append(values, value); buffer_remove_move_into(values, 0usize, output); buffer_resize_move(values, 1usize); buffer_clear_move(values); }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn validates_named_enum_nested_inside_owning_record_contract() {
+        let output = check(
+            "module test; @repr(C) enum Inner { Empty, Text(OwnedString), Done } @repr(C) enum Outer { Idle, Nested(Inner), Done } @repr(C) struct Entry { id: Int32, payload: Outer } fn mutate(values: write Buffer<Entry>) { buffer_clear_move(values); buffer_remove_drop(values, 0usize); }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn validates_nested_named_enum_record_move_into_contract() {
+        let output = check(
+            "module test; @repr(C) enum Inner { Empty, Values(Buffer<Int32>), Done } @repr(C) enum Outer { Idle, Nested(Inner), Done } @repr(C) struct Entry { id: Int32, payload: Outer } fn mutate(values: write Buffer<Entry>, output: write Entry) { let moved: Bool = buffer_remove_move_into(values, 0usize, output); let status: Int32 = buffer_remove_move_into_status(values, 0usize, output); let popped: Bool = buffer_pop_move_into(values, output); let pop_status: Int32 = buffer_pop_move_into_status(values, output); if !moved { } if status == 0 { } if !popped { } if pop_status == 0 { } }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn validates_nested_named_enum_record_insert_move_contract() {
+        let output = check(
+            "module test; @repr(C) enum Inner { Empty, Values(Buffer<Int32>), Done } @repr(C) enum Outer { Idle, Nested(Inner), Done } @repr(C) struct Entry { id: Int32, payload: Outer } fn mutate(values: write Buffer<Entry>, incoming: Entry, status_source: Entry) { let moved: Bool = buffer_insert_move_from(values, 0usize, incoming); let status: Int32 = buffer_insert_move_from_status(values, 1usize, status_source); if !moved { } if status == 0 { } }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn validates_deep_nested_named_enum_owning_buffer_contract() {
+        let output = check(
+            "module test; @repr(C) enum Leaf { Empty, Text(OwnedString), Done } @repr(C) enum Middle { Idle, Nested(Leaf), Done } @repr(C) enum Outer { Idle, Nested(Middle), Done } fn mutate(values: write Buffer<Outer>, output: write Outer) { let leaf: Leaf = Leaf.Empty; let middle: Middle = Middle.Nested(leaf); let value: Outer = Outer.Nested(middle); buffer_append(values, value); buffer_remove_move_into(values, 0usize, output); buffer_resize_move(values, 1usize); buffer_clear_move(values); }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn validates_max_bounded_named_enum_owning_buffer_contract() {
+        let output = check(
+            "module test; @repr(C) enum Leaf { Empty, Text(OwnedString), Done } @repr(C) enum Level5 { Idle, Nested(Leaf), Done } @repr(C) enum Level4 { Idle, Nested(Level5), Done } @repr(C) enum Level3 { Idle, Nested(Level4), Done } @repr(C) enum Level2 { Idle, Nested(Level3), Done } @repr(C) enum Level1 { Idle, Nested(Level2), Done } @repr(C) enum Outer { Idle, Nested(Level1), Done } fn mutate(values: write Buffer<Outer>, output: write Outer) { let leaf: Leaf = Leaf.Empty; let level5: Level5 = Level5.Nested(leaf); let level4: Level4 = Level4.Nested(level5); let level3: Level3 = Level3.Nested(level4); let level2: Level2 = Level2.Nested(level3); let level1: Level1 = Level1.Nested(level2); let value: Outer = Outer.Nested(level1); buffer_append(values, value); buffer_remove_move_into(values, 0usize, output); buffer_resize_move(values, 1usize); buffer_clear_move(values); }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
 
     #[test]
@@ -10321,6 +14125,33 @@ mod tests {
             nested_record_chain_status.diagnostics
         );
 
+        let nested_record_named_enum = check(
+            "module test; @repr(C) enum Inner { Empty, Values(Buffer<Int32>), Done } @repr(C) enum Outer { Idle, Nested(Inner), Done } @repr(C) struct Entry { id: Int32, payload: Outer } fn mutate(values: write Buffer<Buffer<Entry>>) { let removed: Bool = buffer_remove_drop(values, 0usize); let status: Int32 = buffer_clear_move_status(values); if !removed { } if status == 0 { } }",
+        );
+        assert!(
+            !nested_record_named_enum.has_errors(),
+            "expected nested named enum record chain to be accepted, got {:#?}",
+            nested_record_named_enum.diagnostics
+        );
+
+        let nested_record_named_enum_move = check(
+            "module test; @repr(C) enum Inner { Empty, Values(Buffer<Int32>), Done } @repr(C) enum Outer { Idle, Nested(Inner), Done } @repr(C) struct Entry { id: Int32, payload: Outer } fn mutate(values: write Buffer<Buffer<Entry>>, incoming: Buffer<Entry>, remove_output: Buffer<Entry>, pop_output: Buffer<Entry>, status_remove_output: Buffer<Entry>, status_pop_output: Buffer<Entry>, status_incoming: Buffer<Entry>) { let removed: Bool = buffer_remove_move_into(values, 0usize, remove_output); let inserted: Bool = buffer_insert_move_from(values, 0usize, incoming); let popped: Bool = buffer_pop_move_into(values, pop_output); let remove_status: Int32 = buffer_remove_move_into_status(values, 99usize, status_remove_output); let pop_status: Int32 = buffer_pop_move_into_status(values, status_pop_output); let insert_status: Int32 = buffer_insert_move_from_status(values, 99usize, status_incoming); if !removed { } if !inserted { } if !popped { } if remove_status == 0 { } if pop_status == 0 { } if insert_status == 0 { } }",
+        );
+        assert!(
+            !nested_record_named_enum_move.has_errors(),
+            "expected nested named enum move operations to be accepted, got {:#?}",
+            nested_record_named_enum_move.diagnostics
+        );
+
+        let triple_nested_record_named_enum_move = check(
+            "module test; @repr(C) enum Inner { Empty, Values(Buffer<Int32>), Done } @repr(C) enum Outer { Idle, Nested(Inner), Done } @repr(C) struct Entry { id: Int32, payload: Outer } fn mutate(values: write Buffer<Buffer<Buffer<Entry>>>, incoming: Buffer<Buffer<Entry>>, output: Buffer<Buffer<Entry>>) { let removed: Bool = buffer_remove_move_into(values, 0usize, output); let inserted: Bool = buffer_insert_move_from(values, 0usize, incoming); let popped: Bool = buffer_pop_move_into(values, output); let remove_status: Int32 = buffer_remove_move_into_status(values, 99usize, output); let pop_status: Int32 = buffer_pop_move_into_status(values, output); let insert_status: Int32 = buffer_insert_move_from_status(values, 99usize, incoming); if !removed { } if !inserted { } if !popped { } if remove_status == 0 { } if pop_status == 0 { } if insert_status == 0 { } }",
+        );
+        assert!(
+            !triple_nested_record_named_enum_move.has_errors(),
+            "expected triple nested named enum move operations to be accepted, got {:#?}",
+            triple_nested_record_named_enum_move.diagnostics
+        );
+
         let direct_buffer_carrier_remove = check(
             "module test; fn mutate(values: write Buffer<Option<Buffer<Int32>>>) { buffer_remove_drop(values, 0usize); }",
         );
@@ -10394,6 +14225,15 @@ mod tests {
             !nested_owning_record_drop_remove.has_errors(),
             "expected nested owning record remove_drop to be accepted, got {:#?}",
             nested_owning_record_drop_remove.diagnostics
+        );
+
+        let nested_owned_string_carrier_drop_remove = check(
+            "module test; fn mutate(values: write Buffer<Buffer<Option<OwnedString>>>) { buffer_remove_drop(values, 0usize); let status: Int32 = buffer_remove_drop_status(values, 0usize); }",
+        );
+        assert!(
+            !nested_owned_string_carrier_drop_remove.has_errors(),
+            "expected nested OwnedString carrier remove_drop to be accepted, got {:#?}",
+            nested_owned_string_carrier_drop_remove.diagnostics
         );
 
         let owning_record_carrier_drop_remove = check(
@@ -10530,6 +14370,24 @@ mod tests {
     }
 
     #[test]
+    fn checks_retained_label_text_update_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let root: Int32 = ui_app_begin(\"UI\", 640, 420, 0xF6F8FCu32); let panel: Int32 = ui_app_panel(root, 560, 260, 0xFFFFFFu32, 16, 12, 8, 0, 1); let label: Int32 = ui_app_label(panel, \"Heading\", 480, 32, 0x111827u32, 0xFFFFFFu32, 8, 1); let updated: Bool = ui_app_label_set_text(label, \"Updated\"); if updated { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check("module test; fn main() { ui_app_label_set_text(1, 42) }");
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
     fn checks_retained_row_contract_signature() {
         let output = check(
             "module test; fn main() -> Int32 { let root: Int32 = ui_app_begin(\"UI\", 640, 420, 0xF6F8FCu32); let row: Int32 = ui_app_row(root, 600, 80, 8, 12, 0, 1); let button: Int32 = ui_app_button(row, \"Run\", 1, 140, 40, 0xFFFFFFu32, 0x168EF5u32, 8, 0); let row_closed: Bool = ui_app_end(row); let root_closed: Bool = ui_app_end(root); if row > 0 && button > 0 && row_closed && root_closed { return ui_app_run() } return 1 }",
@@ -10578,9 +14436,273 @@ mod tests {
     }
 
     #[test]
+    fn checks_windows_ui_list_exact_read_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let legacy: Bool = ui_list_read_item_exact(20, 0, output, length); let retained: Bool = ui_app_list_read_item_exact(30, 1, output, length); if legacy || retained { return 1 } return length[0] as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var wrong: [UInt64; 1] = [0u64]; ui_list_read_item_exact(10, 0, output, wrong) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
     fn checks_retained_table_read_signature() {
         let output = check(
             "module test; fn main() -> Int32 { var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let copied: UIntSize = ui_app_table_read_cell(31, 0, 0, output); return copied as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_table_pair_index_revision_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let found: Int32 = ui_app_table_index_find_pair_text_if_revision(31, 0, 1, \"Task\", \"Open\", 0u64); return found }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_table_int_index_revision_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let app_found: Int32 = ui_app_table_index_find_int_if_revision(31, 0, 42i64, 0u64); let event_found: Int32 = ui_table_index_find_int_if_revision(7, 0, 42i64, 0u64); return app_found + event_found }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_table_uint_index_revision_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let app_found: Int32 = ui_app_table_index_find_uint_if_revision(31, 0, 42u64, 0u64); let event_found: Int32 = ui_table_index_find_uint_if_revision(7, 0, 42u64, 0u64); return app_found + event_found }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_table_float_index_revision_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let app_found: Int32 = ui_app_table_index_find_float_if_revision(31, 0, 4.25f64, 0u64); let event_found: Int32 = ui_table_index_find_float_if_revision(7, 0, 4.25f64, 0u64); return app_found + event_found }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_table_bool_index_revision_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let app_found: Int32 = ui_app_table_index_find_bool_if_revision(31, 0, true, 0u64); let event_found: Int32 = ui_table_index_find_bool_if_revision(7, 0, false, 0u64); return app_found + event_found }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_revision_guarded_ui_selection_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let app_list: Bool = ui_app_list_set_index_if_revision(1, 0, 0u64); let app_table: Bool = ui_app_table_set_selected_row_if_revision(2, 0, 0u64); let event_list: Bool = ui_list_set_index_if_revision(3, 0, 0u64); let event_table: Bool = ui_table_set_selected_row_if_revision(4, 0, 0u64); if app_list && app_table && event_list && event_table { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_revision_guarded_retained_collection_writes() {
+        let output = check(
+            "module test; fn main() -> Int32 { let list: Bool = ui_app_list_set_item(1, 0, \"Edited\"); let guarded_list: Bool = ui_app_list_set_item_if_revision(1, 0, \"Current\", 0u64); let guarded_table: Bool = ui_app_table_cell_if_revision(2, 0, 1, \"Done\", 0u64); if list && guarded_list && guarded_table { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { ui_app_list_set_item_if_revision(1, 0, \"Edited\", \"wrong\") }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_revision_guarded_retained_collection_removals() {
+        let output = check(
+            "module test; fn main() -> Int32 { let list: Bool = ui_app_list_remove_item(1, 0); let guarded_list: Bool = ui_app_list_remove_item_if_revision(1, 0, 0u64); let table: Bool = ui_app_table_remove_row(2, 0); let guarded_table: Bool = ui_app_table_remove_row_if_revision(2, 0, 0u64); if list && guarded_list && table && guarded_table { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { ui_app_table_remove_row_if_revision(2, 0, \"wrong\") }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_revision_guarded_retained_ui_reorder_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let list: Bool = ui_app_list_move_item(1, 0, 1); let guarded_list: Bool = ui_app_list_move_item_if_revision(1, 1, 0, 0u64); let table: Bool = ui_app_table_move_row(2, 0, 1); let guarded_table: Bool = ui_app_table_move_row_if_revision(2, 1, 0, 0u64); if list && guarded_list && table && guarded_table { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { ui_app_list_move_item_if_revision(1, 0, 1, \"wrong\") }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_revision_guarded_retained_table_insertions() {
+        let output = check(
+            "module test; fn main() -> Int32 { let table: Bool = ui_app_table_insert_row(2, 0); let guarded: Bool = ui_app_table_insert_row_if_revision(2, 1, 0u64); if table && guarded { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { ui_app_table_insert_row_if_revision(2, 0, \"wrong\") }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_revision_guarded_retained_list_insertions() {
+        let output = check(
+            "module test; fn main() -> Int32 { let list: Bool = ui_app_list_insert_item(1, 0, \"Inserted\"); let guarded: Bool = ui_app_list_insert_item_if_revision(1, 1, \"Guarded\", 0u64); if list && guarded { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { ui_app_list_insert_item_if_revision(1, 0, \"Inserted\", \"wrong\") }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_revision_guarded_ui_selection_reads_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let app_list: Int32 = ui_app_list_index_if_revision(1, 0u64); let app_table: Int32 = ui_app_table_selected_row_if_revision(2, 0u64); let event_list: Int32 = ui_list_index_if_revision(3, 0u64); let event_table: Int32 = ui_table_selected_row_if_revision(4, 0u64); return app_list + app_table + event_list + event_table }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_revision_guarded_ui_select_reads_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let app_select: Int32 = ui_app_select_index_if_revision(1, 0u64); let event_select: Int32 = ui_select_index_if_revision(2, 0u64); return app_select + event_select }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_revision_guarded_ui_checkbox_read_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let checked: Int32 = ui_checked_if_revision(1, 0u64); return checked }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_event_table_pair_index_revision_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let found: Int32 = ui_table_index_find_pair_text_if_revision(31, 0, 1, \"Task\", \"Open\", 0u64); return found }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_table_exact_read_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let exact: Bool = ui_app_table_read_cell_exact(31, 0, 0, output, length); if exact { return length[0] as Int32 } return -1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var wrong: [UInt64; 1] = [0u64]; ui_app_table_read_cell_exact(31, 0, 0, output, wrong) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_event_ui_exact_read_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let list: Bool = ui_list_read_item_exact(31, 0, output, length); let table: Bool = ui_table_read_cell_exact(32, 0, 0, output, length); if list && table { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_ui_input_read_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let length: UIntSize = ui_app_input_length(10); var bytes: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var text_length: [UIntSize; 1] = [0usize]; let copied: UIntSize = ui_app_input_read(10, bytes); let exact: Bool = ui_app_input_read_exact(10, bytes, text_length); let guarded: Bool = ui_app_input_read_exact_if_revision(10, bytes, text_length, 0u64); let committed: Bool = ui_app_commit_app_state_if_revision(10, 0u64); if exact && guarded && committed { return (length + copied) as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var bytes: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var wrong: [UInt64; 1] = [0u64]; ui_app_input_read_exact(10, bytes, wrong) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_revision_guarded_ui_exact_reads() {
+        let output = check(
+            "module test; fn main() -> Int32 { var bytes: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let app_list: Bool = ui_app_list_read_item_exact_if_revision(1, 0, bytes, length, 0u64); let app_table: Bool = ui_app_table_read_cell_exact_if_revision(2, 0, 0, bytes, length, 0u64); let event_list: Bool = ui_list_read_item_exact_if_revision(3, 0, bytes, length, 0u64); let event_table: Bool = ui_table_read_cell_exact_if_revision(4, 0, 0, bytes, length, 0u64); if app_list && app_table && event_list && event_table { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_revision_guarded_ui_count_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let app_list: Int32 = ui_app_list_count_if_revision(1, 0u64); let app_table: Int32 = ui_app_table_row_count_if_revision(2, 0u64); let event_list: Int32 = ui_list_count_if_revision(3, 0u64); let event_table: Int32 = ui_table_row_count_if_revision(4, 0u64); return app_list + app_table + event_list + event_table }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10594,9 +14716,129 @@ mod tests {
     }
 
     #[test]
+    fn checks_retained_ui_list_filter_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let exact: Bool = ui_app_list_filter_text(10, 11, \"Open\"); let exact_guarded: Bool = ui_app_list_filter_text_if_revision(10, 11, \"Open\", 3u64); let modes: Bool = ui_app_list_filter_text_ex(10, 11, \"pen\", 5); let modes_guarded: Bool = ui_app_list_filter_text_ex_if_revision(10, 11, \"pen\", 5, 3u64); if exact && exact_guarded && modes && modes_guarded { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_ui_list_page_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let page: Bool = ui_app_list_page(10, 11, 0, 10); let guarded: Bool = ui_app_list_page_if_revision(10, 11, 0, 10, 3u64); if page && guarded { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_ui_list_sort_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let sort: Bool = ui_app_list_sort_text(10, false); let guarded: Bool = ui_app_list_sort_text_if_revision(10, true, 3u64); if sort && guarded { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_ui_list_callback_signatures() {
+        let output = check(
+            "module test; fn keep(source: Int32, index: Int32) -> Bool { return index == 0 } fn main() -> Int32 { let filtered: Bool = ui_app_list_filter_callback(10, 11, keep); let guarded: Bool = ui_app_list_filter_callback_if_revision(10, 11, keep, 3u64); if filtered && guarded { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_ui_table_callback_signatures() {
+        let output = check(
+            "module test; fn keep(source: Int32, index: Int32) -> Bool { return index == 0 } fn main() -> Int32 { let filtered: Bool = ui_app_table_filter_callback(10, 11, keep); let guarded: Bool = ui_app_table_filter_callback_if_revision(10, 11, keep, 3u64); if filtered && guarded { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_model_callback_revision_signatures() {
+        let output = check(
+            "module test; fn keep(source: Int32, index: Int32) -> Bool { return index == 0 } fn main() -> Int32 { let list_ok: Bool = app_list_filter_callback_if_revision(10, 11, keep, 3u64); let table_ok: Bool = app_table_filter_callback_if_revision(20, 21, keep, 3u64); if list_ok || table_ok { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_model_sort_callback_revision_signatures() {
+        let output = check(
+            "module test; fn compare(source: Int32, left: Int32, right: Int32) -> Int32 { return right - left } fn main() -> Int32 { let list_ok: Bool = app_list_sort_callback_if_revision(10, compare, 3u64); let table_ok: Bool = app_table_sort_callback_if_revision(20, compare, 3u64); if list_ok || table_ok { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_model_json_import_revision_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let list_ok: Bool = app_list_import_json_exact_if_revision(10, input, 2usize, 3u64); let table_ok: Bool = app_table_import_json_exact_if_revision(20, input, 2usize, 3u64); if list_ok || table_ok { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_model_csv_import_revision_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let imported: Bool = app_table_import_csv_if_revision(20, input, 2usize, 3u64); if imported { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_model_json_file_import_revision_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let list_ok: Bool = app_list_import_json_file_if_revision(10, \"target/list.json\", 3u64); let table_ok: Bool = app_table_import_json_file_if_revision(20, \"target/table.json\", 3u64); if list_ok || table_ok { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_model_csv_list_import_revision_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let caller: Bool = app_list_import_csv(10, input, 2usize); let guarded: Bool = app_list_import_csv_if_revision(10, input, 2usize, 3u64); let file: Bool = app_list_import_csv_file(10, \"target/list.csv\"); let file_guarded: Bool = app_list_import_csv_file_if_revision(10, \"target/list.csv\", 3u64); if caller || guarded || file || file_guarded { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_model_csv_file_import_revision_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let plain: Bool = app_table_import_csv_file(20, \"target/table.csv\"); let guarded: Bool = app_table_import_csv_file_if_revision(20, \"target/table.csv\", 3u64); if plain || guarded { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_model_durable_export_revision_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let list_csv: Bool = app_list_export_csv_file_durable_if_revision(10, \"target/list.csv\", \"target/list.tmp\", 3u64); let list_json: Bool = app_list_export_json_file_durable_if_revision(10, \"target/list.json\", \"target/list.json.tmp\", 3u64); let table_csv: Bool = app_table_export_csv_file_durable_if_revision(20, \"target/table.csv\", \"target/table.tmp\", 3u64); let table_json: Bool = app_table_export_json_file_durable_if_revision(20, \"target/table.json\", \"target/table.json.tmp\", 3u64); if list_csv || list_json || table_csv || table_json { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_retained_ui_table_text_filter_mode_revision_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let filtered: Bool = ui_app_table_filter_text_ex_if_revision(10, 11, 0, \"pen\", 1, 3u64); if filtered { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
     fn checks_windows_ui_app_collection_binding_signatures() {
         let output = check(
             "module test; fn main() -> Int32 { ui_list_bind_app(20, 0); ui_list_refresh_app(20); ui_table_bind_app(30, 0, 2); ui_table_refresh_app(30); ui_refresh_bindings(); return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_guarded_batch_refresh_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let revision: UInt64 = app_data_revision(); let refreshed: Bool = ui_refresh_bindings_if_revision(revision); if refreshed { return 0 } return 1 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10613,6 +14855,14 @@ mod tests {
     fn checks_windows_ui_input_read_signatures() {
         let output = check(
             "module test; fn read_input(output: write Slice<UInt8>) -> UIntSize { return ui_input_read(10, output) } fn main() -> Int32 { ui_window(\"UI\", 640, 360, 0xF6F8FCu32); ui_text_input(\"Text\", 10, 20, 80, 300, 36, 0x111827u32, 0xFFFFFFu32, 8); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let copied: UIntSize = ui_input_read(10, output); let length: UIntSize = ui_input_length(10); return (copied + length) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_state_read_key_exact_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var bytes: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let ok: Bool = app_state_read_key_exact(0, bytes, length); if ok { return length[0] as Int32 } return 0 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10638,9 +14888,41 @@ mod tests {
     }
 
     #[test]
+    fn checks_windows_ui_input_guarded_exact_read_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let copied: Bool = ui_input_read_exact_if_revision(10, output, length, 0u64); if copied { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
     fn checks_windows_ui_input_app_state_binding_signatures() {
         let output = check(
-            "module test; fn main() -> Int32 { ui_text_input(\"Text\", 10, 20, 80, 300, 36, 0x111827u32, 0xFFFFFFu32, 8); ui_input_bind_app_state(10, \"note\"); ui_input_refresh_app_state(10); return 0 }",
+            "module test; fn main() -> Int32 { ui_text_input(\"Text\", 10, 20, 80, 300, 36, 0x111827u32, 0xFFFFFFu32, 8); ui_input_bind_app_state(10, \"note\"); let exact: Bool = ui_input_bind_app_state_exact(10, \"note\"); ui_input_refresh_app_state(10); if exact { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_input_exact_refresh_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let refreshed: Bool = ui_input_refresh_app_state_exact(10); let guarded: Bool = ui_input_refresh_app_state_if_revision(10, app_data_revision()); if refreshed && guarded { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_guarded_control_refresh_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let revision: UInt64 = app_data_revision(); let checkbox: Bool = ui_checkbox_refresh_app_state_if_revision(10, revision); let select: Bool = ui_select_refresh_app_state_if_revision(20, revision); let list: Bool = ui_list_refresh_app_state_if_revision(30, revision); let table: Bool = ui_table_refresh_app_state_if_revision(40, revision); let retained: Bool = ui_app_refresh_app_state_if_revision(50, revision); let commit_checkbox: Bool = ui_checkbox_commit_app_state_if_revision(10, revision); let commit_select: Bool = ui_select_commit_app_state_if_revision(20, revision); let commit_list: Bool = ui_list_commit_app_state_if_revision(30, revision); let commit_table: Bool = ui_table_commit_app_state_if_revision(40, revision); if checkbox && select && list && table && retained && commit_checkbox && commit_select && commit_list && commit_table { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_input_guarded_commit_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let revision: UInt64 = app_data_revision(); let committed: Bool = ui_input_commit_app_state_if_revision(10, revision); if committed { return 0 } return 1 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10648,7 +14930,15 @@ mod tests {
     #[test]
     fn checks_windows_ui_control_app_state_binding_signatures() {
         let output = check(
-            "module test; fn main() -> Int32 { ui_checkbox(\"Enabled\", 10, 0, 0, 220, 36, 0x111827u32, 0x168EF5u32, 8); ui_select(20, 0, 42, 220, 36, 0x111827u32, 0xFFFFFFu32); ui_select_option(20, \"First\"); ui_list(30, 0, 80, 220, 120, 0x111827u32, 0xFFFFFFu32); ui_list_item(30, \"First\"); ui_table(40, 0, 80, 220, 120, 0x111827u32, 0xFFFFFFu32); ui_table_column(40, 0, \"Name\", 160); ui_table_cell(40, 0, 0, \"First\"); let enabled: Bool = ui_checkbox_bind_app_state(10, \"enabled\"); ui_checkbox_refresh_app_state(10); let choice: Bool = ui_select_bind_app_state(20, \"choice\"); ui_select_refresh_app_state(20); let list: Bool = ui_list_bind_app_state(30, \"list_choice\"); ui_list_refresh_app_state(30); let table: Bool = ui_table_bind_app_state(40, \"table_choice\"); ui_table_refresh_app_state(40); let retained: Bool = ui_app_bind_app_state(30, \"list_choice\"); ui_app_refresh_app_state(30); if enabled && choice && list && table && retained { return 0 } return 1 }",
+            "module test; fn main() -> Int32 { ui_checkbox(\"Enabled\", 10, 0, 0, 220, 36, 0x111827u32, 0x168EF5u32, 8); ui_select(20, 0, 42, 220, 36, 0x111827u32, 0xFFFFFFu32); ui_select_option(20, \"First\"); ui_list(30, 0, 80, 220, 120, 0x111827u32, 0xFFFFFFu32); ui_list_item(30, \"First\"); ui_table(40, 0, 80, 220, 120, 0x111827u32, 0xFFFFFFu32); ui_table_column(40, 0, \"Name\", 160); ui_table_cell(40, 0, 0, \"First\"); let enabled: Bool = ui_checkbox_bind_app_state(10, \"enabled\"); ui_checkbox_refresh_app_state(10); let enabled_exact: Bool = ui_checkbox_refresh_app_state_exact(10); let choice: Bool = ui_select_bind_app_state(20, \"choice\"); ui_select_refresh_app_state(20); let choice_exact: Bool = ui_select_refresh_app_state_exact(20); let list: Bool = ui_list_bind_app_state(30, \"list_choice\"); ui_list_refresh_app_state(30); let list_exact: Bool = ui_list_refresh_app_state_exact(30); let table: Bool = ui_table_bind_app_state(40, \"table_choice\"); ui_table_refresh_app_state(40); let table_exact: Bool = ui_table_refresh_app_state_exact(40); let retained: Bool = ui_app_bind_app_state(30, \"list_choice\"); ui_app_refresh_app_state(30); if enabled && choice && list && table && retained { if enabled_exact && choice_exact && list_exact && table_exact { return 0 } } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_windows_ui_retained_exact_app_state_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let root: Int32 = ui_app_begin(\"UI\", 640, 420, 0xF6F8FCu32); let panel: Int32 = ui_app_panel(root, 560, 260, 0xFFFFFFu32, 16, 12, 8, 0, 1); let input: Int32 = ui_app_text_input(panel, \"Name\", 10, 240, 36, 0x111827u32, 0xFFFFFFu32, 8, 1); let bound: Bool = ui_app_bind_app_state_exact(input, \"name\"); let refreshed: Bool = ui_app_refresh_app_state_exact(input); if bound { if refreshed { return 0 } } return 1 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10665,6 +14955,86 @@ mod tests {
     fn checks_file_flush_builtin_signature() {
         let output = check(
             "module test; fn main() -> Int32 { let flushed: Bool = file_flush(\"target/test.tmp\"); if flushed { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_flush_path_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; let flushed: Bool = file_flush_path(path, 4usize); if flushed { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_delete_path_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; let deleted: Bool = file_delete_path(path, 4usize); if deleted { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_exists_path_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; let exists: Bool = file_exists_path(path, 4usize); if exists { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_path_valid_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; let valid: Bool = file_path_valid(path, 4usize); if valid { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_lock_path_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 4] = [108u8, 111u8, 99u8, 107u8]; let token: UIntSize = file_lock_path(path, 4usize); if token == 0usize { return 1 } let unlocked: Bool = file_unlock(token); if unlocked { return 0 } return 2 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_lock_path_retry_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 4] = [108u8, 111u8, 99u8, 107u8]; let token: UIntSize = file_lock_path_retry(path, 4usize, 2usize, 1usize); if token == 0usize { return 1 } let unlocked: Bool = file_unlock(token); if unlocked { return 0 } return 2 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_replace_atomic_paths_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var source: [UInt8; 3] = [116u8, 109u8, 112u8]; var target: [UInt8; 3] = [111u8, 117u8, 116u8]; let replaced: Bool = file_replace_atomic_paths(source, 3usize, target, 3usize); if replaced { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_write_atomic_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 4] = [65u8, 66u8, 67u8, 68u8]; let committed: Bool = file_write_atomic(\"target/temp\", \"target/output\", input, 3usize); if committed { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_write_atomic_durable_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 4] = [65u8, 66u8, 67u8, 68u8]; let committed: Bool = file_write_atomic_durable(\"target/temp\", \"target/output\", \"target\", input, 3usize); if committed { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_directory_flush_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let flushed: Bool = directory_flush(\"target\"); if flushed { return 0 } return 1 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10706,9 +15076,125 @@ mod tests {
     }
 
     #[test]
+    fn checks_native_file_open_exact_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let chosen: Bool = ui_file_open_exact(\"Choose source\", path, length); if chosen { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var path: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var wrong: [UInt64; 1] = [0u64]; ui_file_open_exact(\"Choose source\", path, wrong) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_native_file_save_exact_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let chosen: Bool = ui_file_save_exact(\"Choose destination\", path, length); if chosen { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var path: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var wrong: [UInt64; 1] = [0u64]; ui_file_save_exact(\"Choose destination\", path, wrong) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_native_file_save_suggested_exact_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let chosen: Bool = ui_file_save_suggested_exact(\"Export tasks\", \"tasks\", \"csv\", path, length); if chosen { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var path: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var wrong: UInt64 = 1u64; var length: [UIntSize; 1] = [0usize]; ui_file_save_suggested_exact(\"Export tasks\", \"tasks\", wrong, path, length) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_native_file_open_extension_exact_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let chosen: Bool = ui_file_open_extension_exact(\"Import CSV\", \"csv\", path, length); if chosen { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var path: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var wrong: UInt64 = 1u64; var length: [UIntSize; 1] = [0usize]; ui_file_open_extension_exact(\"Import CSV\", wrong, path, length) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
+    fn checks_native_file_save_extension_exact_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let chosen: Bool = ui_file_save_extension_exact(\"Export CSV\", \"tasks\", \"csv\", path, length); if chosen { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check(
+            "module test; fn main() { var path: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var wrong: UInt64 = 1u64; var length: [UIntSize; 1] = [0usize]; ui_file_save_extension_exact(\"Export CSV\", \"tasks\", wrong, path, length) }",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "J0301"),
+            "{:?}",
+            invalid.diagnostics
+        );
+    }
+
+    #[test]
     fn checks_process_argument_builtin_signatures() {
         let output = check(
             "module test; fn main() -> Int32 { let count: UIntSize = process_arg_count(); var output: [UInt8; 1] = [0u8]; let length: UIntSize = process_arg_read(0usize, output); return length as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_site_server_process_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let handle: UInt64 = site_server_start_with_webroot(18081u16, path, 0usize); let running: Bool = site_server_is_running(handle); let stopped: Bool = site_server_stop(handle, 2000u32); if running || stopped { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_native_directory_picker_and_input_setter_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 31] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let chosen: Bool = ui_directory_open_exact(\"Choose directory\", path, length); let applied: Bool = ui_set_input_text_exact(13, path, length[0]); if chosen || applied { return length[0] as Int32 } return 0 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10730,6 +15216,30 @@ mod tests {
     }
 
     #[test]
+    fn checks_file_read_at_path_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 34] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let length: UIntSize = file_read_at_path(path, 1usize, 2usize, output); return length as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_mtime_unix_nanos_path_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; let modified: UInt64 = file_mtime_unix_nanos_path(path, 4usize); return modified as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_file_write_prefix_path_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var path: [UInt8; 4] = [116u8, 101u8, 115u8, 116u8]; var input: [UInt8; 3] = [97u8, 98u8, 99u8]; let length: UIntSize = file_write_prefix_path(path, 4usize, input, 2usize); return length as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
     fn checks_file_write_at_builtin_signature() {
         let output = check(
             "module test; fn main() -> Int32 { var input: [UInt8; 3] = [97u8, 98u8, 99u8]; let length: UIntSize = file_write_at(\"target/text.txt\", 2usize, input); return length as Int32 }",
@@ -10741,6 +15251,14 @@ mod tests {
     fn checks_directory_list_ex_builtin_signature() {
         let output = check(
             "module test; fn main() -> Int32 { var names: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var kinds: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let count: UIntSize = directory_list_ex(\"target\", names, kinds); return count as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_directory_list_ex_exact_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var names: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var names_length: [UIntSize; 1] = [0usize]; var kinds: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; var item_count: [UIntSize; 1] = [0usize]; let listed: Bool = directory_list_ex_exact(\"target\", names, names_length, kinds, item_count); if listed { return names_length[0] as Int32 } return item_count[0] as Int32 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10764,7 +15282,7 @@ mod tests {
     #[test]
     fn checks_app_state_builtin_signatures() {
         let output = check(
-            "module test; fn main() -> Int32 { app_state_clear(); let a: Bool = app_state_set_int(\"minutes\", 42 as Int64); let b: Bool = app_state_set_uint(\"total\", 7u64); let c: Bool = app_state_set_bool(\"done\", true); let d: Bool = app_state_set_text(\"name\", \"Focus\"); let count: Int32 = app_state_count(); let first_kind: Int32 = app_state_type_at(0); let exists: Bool = app_state_exists(\"name\"); let missing: Bool = app_state_exists(\"missing\"); let removed: Bool = app_state_remove(\"missing\"); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let key: UIntSize = app_state_read_key(0, output); let text: UIntSize = app_state_read_text(\"name\", output); let signed: Int64 = app_state_get_int(\"minutes\"); let unsigned: UInt64 = app_state_get_uint(\"total\"); let done: Bool = app_state_get_bool(\"done\"); let saved: Bool = app_state_save(\"target/state.json\"); let loaded: Bool = app_state_load(\"target/state.json\"); if !exists { return 1 } if missing { return 2 } return (text + key + (signed as UIntSize) + (unsigned as UIntSize) + (count as UIntSize) + (first_kind as UIntSize)) as Int32 }",
+            "module test; fn main() -> Int32 { app_state_clear(); let a: Bool = app_state_set_int(\"minutes\", 42 as Int64); let b: Bool = app_state_set_uint(\"total\", 7u64); let c: Bool = app_state_set_bool(\"done\", true); let d: Bool = app_state_set_text(\"name\", \"Focus\"); let count: Int32 = app_state_count(); let first_kind: Int32 = app_state_type_at(0); let exists: Bool = app_state_exists(\"name\"); let missing: Bool = app_state_exists(\"missing\"); let removed: Bool = app_state_remove(\"missing\"); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let key: UIntSize = app_state_read_key(0, output); let text: UIntSize = app_state_read_text(\"name\", output); let signed: Int64 = app_state_get_int(\"minutes\"); let unsigned: UInt64 = app_state_get_uint(\"total\"); let done: Bool = app_state_get_bool(\"done\"); let saved: Bool = app_state_save(\"target/state.json\"); let loaded: Bool = app_state_load(\"target/state.json\"); let durable: Bool = app_state_save_atomic_durable(\"target/state.durable.tmp\", \"target/state.durable.json\", \"target\"); let guarded: Bool = app_state_save_atomic_durable_if_revision(\"target/state.guarded.tmp\", \"target/state.guarded.json\", \"target\", app_state_revision()); if !exists { return 1 } if missing { return 2 } if !durable || !guarded { return 3 } return (text + key + (signed as UIntSize) + (unsigned as UIntSize) + (count as UIntSize) + (first_kind as UIntSize)) as Int32 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10788,7 +15306,39 @@ mod tests {
     #[test]
     fn checks_app_data_persistence_signatures() {
         let output = check(
-            "module test; fn main() -> Int32 { var output: [UInt8; 1] = [0u8]; var length: [UIntSize; 1] = [0usize]; var journal_stats: [UIntSize; 2] = [0usize, 0usize]; var journal_plan: [UIntSize; 3] = [0usize, 0usize, 0usize]; let saved: Bool = app_data_save(\"target/app-data.jdn\"); let atomic: Bool = app_data_save_atomic(\"target/app-data.tmp\", \"target/app-data.jdn\"); let tx_atomic: Bool = app_data_tx_save_atomic(\"target/app-data.tx.tmp\", \"target/app-data.jdn\"); let durable: Bool = app_data_tx_commit_durable(\"target/app-data.durable.tmp\", \"target/app-data.durable.jdn\", \"target/app-data.durable.lock\"); let journal: Bool = app_data_journal_append(\"target/app-data.journal\", \"target/app-data.scratch\"); let recovered: Bool = app_data_journal_recover(\"target/app-data.journal\", \"target/app-data.scratch\"); let compacted: Bool = app_data_journal_recover_compact(\"target/app-data.journal\", \"target/app-data.scratch\", \"target/app-data.tmp\"); let loaded: Bool = app_data_load(\"target/app-data.jdn\"); let exact_saved: Bool = app_data_write_exact(output, length); let exact_loaded: Bool = app_data_load_exact(output, length[0]); let frame_length: UIntSize = app_data_journal_frame_length_durable(\"target/app-data.journal\", \"target/app-data.lock\", 0usize); let latest: Bool = app_data_journal_read_latest_frame_exact_durable(\"target/app-data.journal\", \"target/app-data.lock\", output, length); let stats: Bool = app_data_journal_stats_durable(\"target/app-data.journal\", \"target/app-data.lock\", journal_stats); let plan: Bool = app_data_journal_maintenance_plan_durable(\"target/app-data.journal\", \"target/app-data.lock\", 4096usize, 8usize, journal_plan); let needed: Bool = app_data_journal_compact_if_needed_durable(\"target/app-data.journal\", \"target/app-data.scratch\", \"target/app-data.tmp\", \"target/app-data.lock\", 4096usize, 8usize); if saved && atomic && tx_atomic && durable && journal && recovered && compacted && loaded && exact_saved && exact_loaded && frame_length >= 0usize && latest && stats && plan && needed { return 0 } return 1 }",
+            "module test; fn main() -> Int32 { var output: [UInt8; 1] = [0u8]; var length: [UIntSize; 1] = [0usize]; var journal_stats: [UIntSize; 2] = [0usize, 0usize]; var journal_plan: [UIntSize; 3] = [0usize, 0usize, 0usize]; let saved: Bool = app_data_save(\"target/app-data.jdn\"); let atomic: Bool = app_data_save_atomic(\"target/app-data.tmp\", \"target/app-data.jdn\"); let tx_atomic: Bool = app_data_tx_save_atomic(\"target/app-data.tx.tmp\", \"target/app-data.jdn\"); let durable: Bool = app_data_tx_commit_durable(\"target/app-data.durable.tmp\", \"target/app-data.durable.jdn\", \"target/app-data.durable.lock\"); let durable_if_revision: Bool = app_data_tx_commit_durable_if_revision(\"target/app-data.durable-if.tmp\", \"target/app-data.durable-if.jdn\", \"target/app-data.durable-if.lock\", 0u64); let durable_directory: Bool = app_data_tx_commit_durable_directory(\"target/app-data.durable-dir.tmp\", \"target/app-data.durable-dir.jdn\", \"target\", \"target/app-data.durable-dir.lock\"); let durable_directory_if_revision: Bool = app_data_tx_commit_durable_directory_if_revision(\"target/app-data.durable-dir-if.tmp\", \"target/app-data.durable-dir-if.jdn\", \"target\", \"target/app-data.durable-dir-if.lock\", 0u64); let journal: Bool = app_data_journal_append(\"target/app-data.journal\", \"target/app-data.scratch\"); let recovered: Bool = app_data_journal_recover(\"target/app-data.journal\", \"target/app-data.scratch\"); let compacted: Bool = app_data_journal_recover_compact(\"target/app-data.journal\", \"target/app-data.scratch\", \"target/app-data.tmp\"); let loaded: Bool = app_data_load(\"target/app-data.jdn\"); let exact_saved: Bool = app_data_write_exact(output, length); let exact_loaded: Bool = app_data_load_exact(output, length[0]); let frame_length: UIntSize = app_data_journal_frame_length_durable(\"target/app-data.journal\", \"target/app-data.lock\", 0usize); let latest: Bool = app_data_journal_read_latest_frame_exact_durable(\"target/app-data.journal\", \"target/app-data.lock\", output, length); let stats: Bool = app_data_journal_stats_durable(\"target/app-data.journal\", \"target/app-data.lock\", journal_stats); let plan: Bool = app_data_journal_maintenance_plan_durable(\"target/app-data.journal\", \"target/app-data.lock\", 4096usize, 8usize, journal_plan); let needed: Bool = app_data_journal_compact_if_needed_durable(\"target/app-data.journal\", \"target/app-data.scratch\", \"target/app-data.tmp\", \"target/app-data.lock\", 4096usize, 8usize); if saved && atomic && tx_atomic && durable && durable_if_revision && durable_directory && durable_directory_if_revision && journal && recovered && compacted && loaded && exact_saved && exact_loaded && frame_length >= 0usize && latest && stats && plan && needed { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_data_snapshot_length_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let length: UIntSize = app_data_snapshot_length(); if length >= 0usize { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_data_snapshot_length_if_revision_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let revision: UInt64 = app_data_revision(); let length: UIntSize = app_data_snapshot_length_if_revision(revision); if length >= 0usize { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_data_durable_retry_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let committed: Bool = app_data_tx_commit_durable_retry(\"target/app-data.durable.tmp\", \"target/app-data.durable.jdn\", \"target/app-data.durable.lock\", 3usize, 20usize); if committed { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_data_durable_retry_if_revision_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { let committed: Bool = app_data_tx_commit_durable_retry_if_revision(\"target/app-data.durable.tmp\", \"target/app-data.durable.jdn\", \"target/app-data.durable.lock\", 7u64, 3usize, 20usize); if committed { return 0 } return 1 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10796,7 +15346,34 @@ mod tests {
     #[test]
     fn checks_app_list_builtin_signatures() {
         let output = check(
-            "module test; fn main() -> Int32 { app_list_clear(0); let pushed: Bool = app_list_push_text(0, \"Focus\"); var query: [UInt8; 2] = [70u8, 79u8]; let pushed_bytes: Bool = app_list_push_text_bytes(0, query, 2usize); let count: Int32 = app_list_count(0); let sorted: Bool = app_list_sort_text(0, false); let found: Int32 = app_list_find_text(0, \"Focus\", 0); let filtered: Bool = app_list_filter_text(0, 1, \"Focus\"); let filtered_ex: Bool = app_list_filter_text_ex(0, 1, \"FO\", 5); let filtered_bytes: Bool = app_list_filter_text_ex_bytes(0, 1, query, 2usize, 5); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let copied: UIntSize = app_list_read_text(0, 0, output); let exported: UIntSize = app_list_export_csv(0, output); let updated: Bool = app_list_set_text(0, 0, \"Done\"); let updated_bytes: Bool = app_list_set_text_bytes(0, 0, query, 2usize); let removed: Bool = app_list_remove(0, 0); let saved: Bool = app_list_save(0, \"target/list.json\"); let atomic: Bool = app_list_save_atomic(0, \"target/list.tmp\", \"target/list.json\"); let loaded: Bool = app_list_load(0, \"target/list.json\"); if !pushed { return 1 } if !pushed_bytes { return 2 } if !sorted { return 3 } if !filtered { return 4 } if !filtered_ex { return 5 } if !filtered_bytes { return 6 } if !updated || !updated_bytes { return 7 } return count + found + (copied as Int32) + (exported as Int32) }",
+            "module test; fn main() -> Int32 { app_list_clear(0); let pushed: Bool = app_list_push_text(0, \"Focus\"); var query: [UInt8; 2] = [70u8, 79u8]; let pushed_bytes: Bool = app_list_push_text_bytes(0, query, 2usize); let inserted: Bool = app_list_insert_text(0, 0, \"Start\"); let inserted_if_revision: Bool = app_list_insert_text_if_revision(0, 1, \"Guarded\", 0u64); let inserted_bytes: Bool = app_list_insert_text_bytes(0, 2, query, 2usize); let inserted_bytes_if_revision: Bool = app_list_insert_text_bytes_if_revision(0, 3, query, 2usize, 0u64); let count: Int32 = app_list_count(0); let sorted: Bool = app_list_sort_text(0, false); let found: Int32 = app_list_find_text(0, \"Focus\", 0); let filtered: Bool = app_list_filter_text(0, 1, \"Focus\"); let filtered_ex: Bool = app_list_filter_text_ex(0, 1, \"FO\", 5); let filtered_bytes: Bool = app_list_filter_text_ex_bytes(0, 1, query, 2usize, 5); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let copied: UIntSize = app_list_read_text(0, 0, output); let exported: UIntSize = app_list_export_csv(0, output); let updated: Bool = app_list_set_text(0, 0, \"Done\"); let updated_if_revision: Bool = app_list_set_text_if_revision(0, 0, \"Done\", 0u64); let updated_bytes: Bool = app_list_set_text_bytes(0, 0, query, 2usize); let updated_bytes_if_revision: Bool = app_list_set_text_bytes_if_revision(0, 0, query, 2usize, 0u64); let removed: Bool = app_list_remove(0, 0); let saved: Bool = app_list_save(0, \"target/list.json\"); let atomic: Bool = app_list_save_atomic(0, \"target/list.tmp\", \"target/list.json\"); let loaded: Bool = app_list_load(0, \"target/list.json\"); if !pushed { return 1 } if !pushed_bytes { return 2 } if !inserted { return 3 } if !inserted_if_revision { return 4 } if !inserted_bytes { return 5 } if !inserted_bytes_if_revision { return 6 } if !sorted { return 7 } if !filtered { return 8 } if !filtered_ex { return 9 } if !filtered_bytes { return 10 } if !updated { return 11 } if !updated_if_revision { return 12 } if !updated_bytes { return 13 } if !updated_bytes_if_revision { return 14 } return count + found + (copied as Int32) + (exported as Int32) }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_revision_guarded_collection_clear_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let list: Bool = app_list_clear_if_revision(0, 1u64); let table: Bool = app_table_clear_if_revision(1, 1u64); if list && table { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let invalid = check("module test; fn main() { app_list_clear_if_revision(0) }");
+        assert!(invalid.has_errors(), "{:?}", invalid.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_exact_export_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let list_csv: Bool = app_list_export_csv_exact(0, output, length); let list_json: Bool = app_list_export_json_exact(0, output, length); let table_csv: Bool = app_table_export_csv_exact(0, output, length); let table_json: Bool = app_table_export_json_exact(0, output, length); if list_csv || list_json || table_csv || table_json { return 1 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_app_csv_file_export_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { let list_ok: Bool = app_list_export_csv_file_durable(0, \"target/list.csv\", \"target/list.tmp\"); let table_ok: Bool = app_table_export_csv_file_durable(0, \"target/table.csv\", \"target/table.tmp\"); if list_ok || table_ok { return 1 } return 0 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10804,7 +15381,7 @@ mod tests {
     #[test]
     fn checks_app_table_builtin_signatures() {
         let output = check(
-            "module test; fn main() -> Int32 { app_table_clear(0); app_table_clear(1); let type_set: Bool = app_table_set_column_type(0, 0, 1); let float_type_set: Bool = app_table_set_column_type(0, 1, 4); let kind: Int32 = app_table_column_type(0, 0); let valid: Bool = app_table_validate(0); let appended: Bool = app_table_append_row(0); let set: Bool = app_table_set_cell(0, 0, 0, \"42\"); let set_int: Bool = app_table_set_int(0, 0, 0, 42 as Int64); let set_uint: Bool = app_table_set_uint(0, 0, 0, 7u64); let set_float: Bool = app_table_set_float(0, 0, 1, 1.25f64); let set_bool: Bool = app_table_set_bool(0, 0, 0, true); let rows: Int32 = app_table_row_count(0); let sorted: Bool = app_table_sort_text(0, 0, false); let sorted_int: Bool = app_table_sort_int(0, 0, false); let sorted_uint: Bool = app_table_sort_uint(0, 0, false); let sorted_float: Bool = app_table_sort_float(0, 1, false); let sorted_bool: Bool = app_table_sort_bool(0, 0, false); let found: Int32 = app_table_find_text(0, 0, \"42\", 0); let filtered: Bool = app_table_filter_text(0, 1, 0, \"42\"); let filtered_ex: Bool = app_table_filter_text_ex(0, 1, 0, \"2\", 1); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let copied: UIntSize = app_table_read_cell(0, 0, 0, output); let typed_int: Int64 = app_table_read_int(0, 0, 0); let typed_uint: UInt64 = app_table_read_uint(0, 0, 0); let typed_float: Float64 = app_table_read_float(0, 0, 1); let typed_bool: Bool = app_table_read_bool(0, 0, 0); let removed: Bool = app_table_remove_row(0, 0); let schema_saved: Bool = app_table_save_schema(0, \"target/schema.json\"); let schema_atomic: Bool = app_table_save_schema_atomic(0, \"target/schema.tmp\", \"target/schema.json\"); let schema_loaded: Bool = app_table_load_schema(0, \"target/schema.json\"); let saved: Bool = app_table_save(0, \"target/table.json\"); let atomic: Bool = app_table_save_atomic(0, \"target/table.tmp\", \"target/table.json\"); let loaded: Bool = app_table_load(0, \"target/table.json\"); if !type_set || !float_type_set || !valid || !appended || !set || !set_int || !set_uint || !set_float || !set_bool || !schema_saved || !schema_atomic || !schema_loaded { return 1 } if typed_bool { return 2 } return rows + (copied as Int32) + found + (typed_int as Int32) + (typed_uint as Int32) + (typed_float as Int32) + kind }",
+            "module test; fn main() -> Int32 { app_table_clear(0); app_table_clear(1); let type_set: Bool = app_table_set_column_type(0, 0, 1); let float_type_set: Bool = app_table_set_column_type(0, 1, 4); let kind: Int32 = app_table_column_type(0, 0); let valid: Bool = app_table_validate(0); let appended: Bool = app_table_append_row(0); let set: Bool = app_table_set_cell(0, 0, 0, \"42\"); let set_if_revision: Bool = app_table_set_cell_if_revision(0, 0, 0, \"42\", 0u64); var query: [UInt8; 2] = [52u8, 50u8]; let set_bytes_if_revision: Bool = app_table_set_cell_bytes_if_revision(0, 0, 0, query, 2usize, 0u64); let set_int: Bool = app_table_set_int(0, 0, 0, 42 as Int64); let set_uint: Bool = app_table_set_uint(0, 0, 0, 7u64); let set_float: Bool = app_table_set_float(0, 0, 1, 1.25f64); let set_bool: Bool = app_table_set_bool(0, 0, 0, true); let rows: Int32 = app_table_row_count(0); let sorted: Bool = app_table_sort_text(0, 0, false); let sorted_int: Bool = app_table_sort_int(0, 0, false); let sorted_uint: Bool = app_table_sort_uint(0, 0, false); let sorted_float: Bool = app_table_sort_float(0, 1, false); let sorted_bool: Bool = app_table_sort_bool(0, 0, false); let found: Int32 = app_table_find_text(0, 0, \"42\", 0); let filtered: Bool = app_table_filter_text(0, 1, 0, \"42\"); let filtered_ex: Bool = app_table_filter_text_ex(0, 1, 0, \"2\", 1); var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let copied: UIntSize = app_table_read_cell(0, 0, 0, output); let typed_int: Int64 = app_table_read_int(0, 0, 0); let typed_uint: UInt64 = app_table_read_uint(0, 0, 0); let typed_float: Float64 = app_table_read_float(0, 0, 1); let typed_bool: Bool = app_table_read_bool(0, 0, 0); let removed: Bool = app_table_remove_row(0, 0); let schema_saved: Bool = app_table_save_schema(0, \"target/schema.json\"); let schema_atomic: Bool = app_table_save_schema_atomic(0, \"target/schema.tmp\", \"target/schema.json\"); let schema_loaded: Bool = app_table_load_schema(0, \"target/schema.json\"); let saved: Bool = app_table_save(0, \"target/table.json\"); let atomic: Bool = app_table_save_atomic(0, \"target/table.tmp\", \"target/table.json\"); let loaded: Bool = app_table_load(0, \"target/table.json\"); if !type_set || !float_type_set || !valid || !appended || !set || !set_if_revision || !set_bytes_if_revision || !set_int || !set_uint || !set_float || !set_bool || !schema_saved || !schema_atomic || !schema_loaded { return 1 } if typed_bool { return 2 } return rows + (copied as Int32) + found + (typed_int as Int32) + (typed_uint as Int32) + (typed_float as Int32) + kind }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10828,7 +15405,7 @@ mod tests {
     #[test]
     fn checks_app_table_typed_query_signatures() {
         let output = check(
-            "module test; fn main() -> Int32 { let i: Int32 = app_table_find_int(0, 0, 42 as Int64, 0); let u: Int32 = app_table_find_uint(0, 1, 7u64, 0); let f: Int32 = app_table_find_float(0, 2, 1.25f64, 0); let b: Int32 = app_table_find_bool(0, 3, true, 0); return i + u + f + b }",
+            "module test; fn main() -> Int32 { let i: Int32 = app_table_find_int(0, 0, 42 as Int64, 0); let u: Int32 = app_table_find_uint(0, 1, 7u64, 0); let f: Int32 = app_table_find_float(0, 2, 1.25f64, 0); let b: Int32 = app_table_find_bool(0, 3, true, 0); let gi: Int32 = app_table_index_find_int_if_revision(0, 0, 42 as Int64, 0u64); let gu: Int32 = app_table_index_find_uint_if_revision(0, 1, 7u64, 0u64); let gf: Int32 = app_table_index_find_float_if_revision(0, 2, 1.25f64, 0u64); let gb: Int32 = app_table_index_find_bool_if_revision(0, 3, true, 0u64); let gt: Int32 = app_table_index_find_text_if_revision(0, 4, \"Task\", 0u64); return i + u + f + b + gi + gu + gf + gb + gt }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10852,7 +15429,7 @@ mod tests {
     #[test]
     fn checks_app_table_index_signatures() {
         let output = check(
-            "module test; fn main() -> Int32 { let built: Bool = app_table_index_build(0, 0); let built_i: Bool = app_table_index_build_int(0, 0); let built_u: Bool = app_table_index_build_uint(0, 0); let built_f: Bool = app_table_index_build_float(0, 0); let built_b: Bool = app_table_index_build_bool(0, 0); let valid: Bool = app_table_index_is_valid(0, 0); let found: Int32 = app_table_index_find_text(0, 0, \"Task\"); let found_i: Int32 = app_table_index_find_int(0, 0, 1 as Int64); let found_u: Int32 = app_table_index_find_uint(0, 0, 1u64); let found_f: Int32 = app_table_index_find_float(0, 0, 1.0f64); let found_b: Int32 = app_table_index_find_bool(0, 0, true); let cleared: Bool = app_table_index_clear(0); if built && built_i && built_u && built_f && built_b && valid && cleared { return found + found_i + found_u + found_f + found_b } return -1 }",
+            "module test; fn main() -> Int32 { var rows: [Int32; 4] = [0, 0, 0, 0]; let built: Bool = app_table_index_build(0, 0); let built_i: Bool = app_table_index_build_int(0, 0); let built_u: Bool = app_table_index_build_uint(0, 0); let built_f: Bool = app_table_index_build_float(0, 0); let built_b: Bool = app_table_index_build_bool(0, 0); let valid: Bool = app_table_index_is_valid(0, 0); let found: Int32 = app_table_index_find_text(0, 0, \"Task\"); let found_pair: Int32 = app_table_index_find_pair_text_if_revision(0, 0, 1, \"Task\", \"Open\", 0u64); let found_i: Int32 = app_table_index_find_int(0, 0, 1 as Int64); let found_u: Int32 = app_table_index_find_uint(0, 0, 1u64); let found_f: Int32 = app_table_index_find_float(0, 0, 1.0f64); let found_b: Int32 = app_table_index_find_bool(0, 0, true); let range_i: UIntSize = app_table_index_collect_int_range_if_revision(0, 0, 0 as Int64, 10 as Int64, rows, 0u64); let range_u: UIntSize = app_table_index_collect_uint_range_if_revision(0, 0, 0u64, 10u64, rows, 0u64); let range_f: UIntSize = app_table_index_collect_float_range_if_revision(0, 0, 0.0f64, 10.0f64, rows, 0u64); let cleared: Bool = app_table_index_clear(0); if built && built_i && built_u && built_f && built_b && valid && cleared { return found + found_pair + found_i + found_u + found_f + found_b + (range_i + range_u + range_f) as Int32 } return -1 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -10946,6 +15523,14 @@ mod tests {
     }
 
     #[test]
+    fn checks_app_collection_json_import_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let list_imported: Bool = app_list_import_json_exact(0, input, 2usize); let table_imported: Bool = app_table_import_json_exact(0, input, 2usize); if list_imported || table_imported { return 1 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
     fn checks_json_object_field_string_builtin_signature() {
         let output = check(
             "module test; fn main() -> Int32 { var output: [UInt8; 32] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let member: UIntSize = json_object_field_string(\"name\", \"Ada\", output); return member as Int32 }",
@@ -11012,9 +15597,38 @@ mod tests {
     #[test]
     fn checks_bounded_scheduler_builtin_signatures() {
         let output = check(
-            "module test; fn main() -> Int32 { app_scheduler_clear(); let created: Bool = app_scheduler_set(7, 100 as Int64, 60u64); var due: [Int32; 4] = [0, 0, 0, 0]; let count: UIntSize = app_scheduler_poll(100 as Int64, due); let removed: Bool = app_scheduler_cancel(7); let active: UIntSize = app_scheduler_count(); if created && count == 1usize && removed && active == 0usize { return due[0] } return 1 }",
+            "module test; fn main() -> Int32 { app_scheduler_clear(); let created: Bool = app_scheduler_set(7, 100 as Int64, 60u64); var due: [Int32; 4] = [0, 0, 0, 0]; var exact_count: [UIntSize; 1] = [99usize]; var next_due: [Int64; 1] = [0 as Int64]; var has_due: [Bool; 1] = [false]; let next: Bool = app_scheduler_next_due_exact(next_due, has_due); let exact: Bool = app_scheduler_poll_exact(100 as Int64, due, exact_count); let removed: Bool = app_scheduler_cancel(7); let active: UIntSize = app_scheduler_count(); if created && next && has_due[0] && next_due[0] == 100 as Int64 && exact && exact_count[0] == 1usize && removed && active == 0usize { return due[0] } return 1 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_scheduler_snapshot_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { var snapshot: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; var snapshot_length: [UIntSize; 1] = [0usize]; let wrote: Bool = app_scheduler_write_exact(snapshot, snapshot_length); let loaded: Bool = app_scheduler_load_exact(snapshot, snapshot_length[0]); if wrote && loaded { return 0 } return 1 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_ui_event_queue_builtin_signatures() {
+        let output = check(
+            "module test; fn main() -> Int32 { ui_event_queue_clear(); let pending: UIntSize = ui_event_queue_count(); let capacity: UIntSize = ui_event_queue_capacity(); let dropped: UIntSize = ui_event_queue_dropped(); var events: [Int32; 2] = [0, 0]; var length: [UIntSize; 1] = [0usize]; let peeked: Bool = ui_event_queue_peek_exact(events, length); let polled: Bool = ui_event_queue_poll_exact(events, length); let batched: Bool = ui_event_queue_poll_batch_exact(events, 1usize, length); if peeked { if polled { if batched { return (pending + capacity + dropped + length[0]) as Int32 } } } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+
+        let wrong = check(
+            "module test; fn main() { var events: [UInt64; 2] = [0u64, 0u64]; var length: [UIntSize; 1] = [0usize]; ui_event_queue_poll_exact(events, length) }",
+        );
+        assert!(wrong.has_errors());
+        let wrong_peek = check(
+            "module test; fn main() { var events: [UInt64; 2] = [0u64, 0u64]; var length: [UIntSize; 1] = [0usize]; ui_event_queue_peek_exact(events, length) }",
+        );
+        assert!(wrong_peek.has_errors());
+        let wrong_batch = check(
+            "module test; fn main() { var events: [Int32; 2] = [0, 0]; var length: [UIntSize; 1] = [0usize]; ui_event_queue_poll_batch_exact(events, 1i32, length) }",
+        );
+        assert!(wrong_batch.has_errors());
     }
 
     #[test]
@@ -11034,6 +15648,30 @@ mod tests {
     }
 
     #[test]
+    fn checks_http_response_chunked_prefix_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var body: [UInt8; 8] = [65u8, 104u8, 111u8, 106u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let response: UIntSize = http_response_write_chunked_prefix(200u16, \"text/plain\", body, 4usize, output); return response as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_response_chunk_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var body: [UInt8; 4] = [79u8, 75u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let partial: UIntSize = http_response_write_chunk(body, false, output); let prefix: UIntSize = http_response_write_chunk_prefix(body, 2usize, false, output); let final_chunk: UIntSize = http_response_write_chunk(body, true, output); return (partial + prefix + final_chunk) as Int32 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_response_chunked_header_builtin_signature() {
+        let output = check(
+            r#"module test; fn main() -> Int32 { var output: [UInt8; 80] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let written: UIntSize = http_response_write_chunked_header(200u16, "text/plain", output); return written as Int32 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
     fn checks_http_response_reader_builtin_signatures() {
         let output = check(
             "module test; fn main() -> Int32 { var input: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let status: UInt16 = http_response_status(input); let bounded_status: UInt16 = http_response_status_prefix(input, 8usize); let header: UIntSize = http_response_header(input, \"Content-Type\", output); let bounded_header: UIntSize = http_response_header_prefix(input, 8usize, \"Content-Type\", output); let body: UIntSize = http_response_body(input, output); let bounded_body: UIntSize = http_response_body_prefix(input, 8usize, output); return (status as Int32) + (bounded_status as Int32) + (header + bounded_header + body + bounded_body) as Int32 }",
@@ -11045,6 +15683,38 @@ mod tests {
     fn checks_http_response_exact_builtin_signatures() {
         let output = check(
             "module test; fn main() -> Int32 { var input: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let header: Bool = http_response_header_exact(input, \"Content-Type\", output, length); let body: Bool = http_response_body_exact(input, output, length); if header { return length[0] as Int32 } if body { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_request_header_exact_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let header: Bool = http_request_header_exact(input, \"Cookie\", output, length); if header { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_request_body_exact_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let body: Bool = http_request_body_exact(input, output, length); if body { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_request_body_exact_prefix_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let body: Bool = http_request_body_exact_prefix(input, 12usize, output, length); if body { return length[0] as Int32 } return 0 }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_request_target_decode_exact_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var input: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var length: [UIntSize; 1] = [0usize]; let decoded: Bool = http_request_target_decode_exact(input, output, length); if decoded { return length[0] as Int32 } return 0 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -11068,7 +15738,7 @@ mod tests {
     #[test]
     fn checks_http_router_builtin_signatures_active() {
         let output = check(
-            r#"module test; fn main() -> Int32 { var body: [UInt8; 1] = [79u8]; var input: [UInt8; 1] = [0u8]; var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; http_router_clear(); let added: Bool = http_router_add("GET", "/", 200u16, "text/plain", body); let prefix_added: Bool = http_router_add_prefix("GET", "/api/", 200u16, "text/plain", body); let removed: Bool = http_router_remove("GET", "/"); let prefix_removed: Bool = http_router_remove_prefix("GET", "/api/"); let count: UIntSize = http_router_count(); let written: UIntSize = http_router_respond(input, output); if added && prefix_added && removed && prefix_removed && count == 0usize { return written as Int32 } return 0 }"#,
+            r#"module test; fn main() -> Int32 { var body: [UInt8; 1] = [79u8]; var input: [UInt8; 1] = [0u8]; var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; http_router_clear(); let added: Bool = http_router_add("GET", "/", 200u16, "text/plain", body); let prefix_added: Bool = http_router_add_prefix("GET", "/api/", 200u16, "text/plain", body); let removed: Bool = http_router_remove("GET", "/"); let prefix_removed: Bool = http_router_remove_prefix("GET", "/api/"); let count: UIntSize = http_router_count(); let written: UIntSize = http_router_respond(input, output); let chunked: UIntSize = http_router_respond_chunked(input, output); let chunked_prefix: UIntSize = http_router_respond_chunked_prefix(input, 1usize, output); if added && prefix_added && removed && prefix_removed && count == 0usize { return (written + chunked + chunked_prefix) as Int32 } return 0 }"#,
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -11077,6 +15747,14 @@ mod tests {
     fn checks_http_keep_alive_builtin_signatures_active() {
         let output = check(
             r#"module test; fn main() -> Int32 { var body: [UInt8; 1] = [79u8]; var input: [UInt8; 1] = [0u8]; var output: [UInt8; 140] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let keep: Bool = http_request_keep_alive(input); let response: UIntSize = http_response_write_ex(200u16, "text/plain", body, true, output); if keep { return response as Int32 } return 0 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_response_prefix_keep_alive_builtin_signature() {
+        let output = check(
+            "module test; fn main() -> Int32 { var body: [UInt8; 2] = [79u8, 75u8]; var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let written: UIntSize = http_response_write_prefix_ex(200u16, \"text/plain\", body, 1usize, true, output); return written as Int32 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -11098,9 +15776,17 @@ mod tests {
     }
 
     #[test]
+    fn checks_http_response_cookie_policy_builtin_signature() {
+        let output = check(
+            r#"module test; fn main() -> Int32 { var body: [UInt8; 1] = [79u8]; var output: [UInt8; 1] = [0u8]; let written: UIntSize = http_response_write_cookie_policy(200u16, "text/plain", "sid", "abc", "/", "example.test", 3600i64, 1u32, 3u32, body, true, output); return written as Int32 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
     fn checks_http_session_builtin_signatures_active() {
         let output = check(
-            r#"module test; fn main() -> Int32 { let listener: UIntSize = net_tcp_listen(38125u16); let session: UIntSize = http_session_open(listener, 2u32, 1024u32, 1024u32); let tls_session: UIntSize = http_session_open_tls(listener, 2u32, 1024u32, 1024u32, "cert.pem", "key.pem"); let state: UInt32 = http_session_step(session, 1u32); let closed: Bool = http_session_close(session); let tls_closed: Bool = http_session_close(tls_session); if closed && tls_closed { return state as Int32 } return 0 }"#,
+            r#"module test; fn main() -> Int32 { var request: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let listener: UIntSize = net_tcp_listen(38125u16); let session: UIntSize = http_session_open(listener, 2u32, 1024u32, 1024u32); let connection: UIntSize = http_session_accept(session, 1u32); let request_length: UIntSize = http_session_receive_request(connection, 1u32, request); let sent: Bool = http_session_send(connection, request); let sent_prefix: Bool = http_session_send_prefix(connection, request, request_length); let connection_closed: Bool = http_session_close_connection(connection); let chunked_session: UIntSize = http_session_open_chunked(listener, 2u32, 1024u32, 1024u32); let tls_session: UIntSize = http_session_open_tls(listener, 2u32, 1024u32, 1024u32, "cert.pem", "key.pem"); let tls_chunked_session: UIntSize = http_session_open_tls_chunked(listener, 2u32, 1024u32, 1024u32, "cert.pem", "key.pem"); let state: UInt32 = http_session_step(session, 1u32); let closed: Bool = http_session_close(session); let chunked_closed: Bool = http_session_close(chunked_session); let tls_closed: Bool = http_session_close(tls_session); let tls_chunked_closed: Bool = http_session_close(tls_chunked_session); if closed && chunked_closed && tls_closed && tls_chunked_closed && connection_closed && sent && sent_prefix { return (state + request_length as UInt32) as Int32 } return 0 }"#,
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -11117,6 +15803,30 @@ mod tests {
     fn checks_http_request_writer_prefix_builtin_signature() {
         let output = check(
             r#"module test; fn main() -> Int32 { var body: [UInt8; 4] = [65u8, 104u8, 111u8, 106u8]; var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let request: UIntSize = http_request_write_prefix("POST", "/hello", "localhost", body, 2usize, output); return request as Int32 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_request_writer_prefix_connection_mode_signature() {
+        let output = check(
+            r#"module test; fn main() -> Int32 { var body: [UInt8; 4] = [65u8, 104u8, 111u8, 106u8]; var output: [UInt8; 4] = [0u8, 0u8, 0u8, 0u8]; let request: UIntSize = http_request_write_prefix_ex("POST", "/hello", "localhost", body, 2usize, 1u32, output); return request as Int32 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn accepts_borrowed_http_request_host_for_repeated_clients() {
+        let output = check(
+            r#"module test; fn emit_request(host: read String, body: read Slice<UInt8>, output: write Slice<UInt8>) -> UIntSize { return http_request_write_prefix_ex("GET", "/healthz", host, body, 0usize, 1u32, output) } fn main() -> Int32 { return 0 }"#,
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn checks_http_request_cookie_block_builtin_signature() {
+        let output = check(
+            r#"module test; fn main() -> Int32 { var body: [UInt8; 2] = [79u8, 75u8]; var output: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let request: UIntSize = http_request_write_cookie_block("POST", "/tasks", "localhost", "sid=abc123; theme=dark", body, output); return request as Int32 }"#,
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -11157,7 +15867,7 @@ mod tests {
     #[test]
     fn checks_tcp_builtin_signatures() {
         let output = check(
-            "module test; fn main() -> Int32 { let listener: UIntSize = net_tcp_listen(38123u16); let connected: UIntSize = net_tcp_connect(\"127.0.0.1\", 38123u16); let named: UIntSize = net_tcp_connect_dns(\"localhost\", 38123u16); let accepted: UIntSize = net_tcp_accept(listener); let timed: Bool = net_socket_set_timeout(accepted, 1000u32); var request: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var response: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let sent: UIntSize = net_tcp_send(connected, request); let received: UIntSize = net_tcp_receive(accepted, response); let closed: Bool = net_socket_close(connected); return (listener + connected + named + accepted + sent + received) as Int32 }",
+            "module test; fn main() -> Int32 { var bind_address: [UInt8; 7] = [48u8, 46u8, 48u8, 46u8, 48u8, 46u8, 48u8]; let bound: UIntSize = net_tcp_listen_on(bind_address, 38122u16); let prefixed: UIntSize = net_tcp_listen_on_prefix(bind_address, 7usize, 38121u16); let listener: UIntSize = net_tcp_listen(38123u16); let connected: UIntSize = net_tcp_connect(\"127.0.0.1\", 38123u16); let named: UIntSize = net_tcp_connect_dns(\"localhost\", 38123u16); let accepted: UIntSize = net_tcp_accept(listener); let timed: Bool = net_socket_set_timeout(accepted, 1000u32); var request: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; var response: [UInt8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]; let sent: UIntSize = net_tcp_send(connected, request); let received: UIntSize = net_tcp_receive(accepted, response); let closed: Bool = net_socket_close(connected); return (bound + prefixed + listener + connected + named + accepted + sent + received) as Int32 }",
         );
         assert!(!output.has_errors(), "{:?}", output.diagnostics);
     }
@@ -11425,6 +16135,43 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code == "J0314")
         );
+    }
+
+    #[test]
+    fn infers_return_only_generic_from_explicit_binding_type() {
+        let output = check(
+            "module test; fn make<T>() -> T {} fn main() { let value: Int32 = make(); let flag: Bool = make() }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+        assert_eq!(output.monomorphizations.len(), 2);
+    }
+
+    #[test]
+    fn defers_generic_buffer_pop_until_move_safe_materialization() {
+        let output = check(
+            "module test; fn pop<T>(values: write Buffer<T>) -> Result<T, Int32> { return buffer_pop(values) } fn take(values: write Buffer<Buffer<Int32>>) -> Result<Buffer<Int32>, Int32> { return pop(values) }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+        assert!(output.monomorphizations.iter().any(|instance| {
+            instance
+                .arguments
+                .iter()
+                .any(|ty| matches!(output.types.kind(*ty), Some(TypeKind::Buffer(_))))
+        }));
+    }
+
+    #[test]
+    fn defers_generic_buffer_remove_until_move_safe_materialization() {
+        let output = check(
+            "module test; fn remove<T>(values: write Buffer<T>, index: UIntSize) -> Result<T, Int32> { return buffer_remove_move(values, index) } fn take(values: write Buffer<Buffer<Int32>>) -> Result<Buffer<Int32>, Int32> { return remove(values, 0usize) }",
+        );
+        assert!(!output.has_errors(), "{:?}", output.diagnostics);
+        assert!(output.monomorphizations.iter().any(|instance| {
+            instance
+                .arguments
+                .iter()
+                .any(|ty| matches!(output.types.kind(*ty), Some(TypeKind::Buffer(_))))
+        }));
     }
 
     #[test]

@@ -1,0 +1,373 @@
+module app_data_buffer_project.main
+import jadren.app.data.load_exact_buffer
+import jadren.app.data.load_file_buffer
+import jadren.app.data.load_file_if_revision_buffer
+import jadren.app.data.load_exact_if_revision_buffer
+import jadren.app.data.revision
+import jadren.app.data.save_atomic_durable_buffer
+import jadren.app.data.save_atomic_durable_if_revision_buffer
+import jadren.app.data.snapshot_length
+import jadren.app.data.write_exact_buffer
+import jadren.app.data.write_exact_if_revision_buffer
+import jadren.app.fs.delete
+import jadren.app.fs.dir_create
+import jadren.app.fs.exists
+import jadren.app.list.count
+import jadren.app.list.push_text
+import jadren.app.state.clear
+import jadren.app.state.get_int
+import jadren.app.state.set_int
+import jadren.app.state.set_text
+import jadren.app.table.append_row
+import jadren.app.table.read_cell
+import jadren.app.table.set_cell
+import jadren.app.table.set_column_name
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+fn main() -> Int32 {
+    var status: Int32 = 0i32
+    dir_create("target/app-data-buffer-smoke")
+    if exists("target/app-data-buffer-smoke/model.data") {
+        if ! delete("target/app-data-buffer-smoke/model.data") {
+            status = 30
+        }
+    }
+    if status == 0 {
+        if exists("target/app-data-buffer-smoke/model.tmp") {
+            if ! delete("target/app-data-buffer-smoke/model.tmp") {
+                status = 31
+            }
+        }
+    }
+    if status == 0 {
+        if exists("target/app-data-buffer-smoke/guarded.data") {
+            if ! delete("target/app-data-buffer-smoke/guarded.data") {
+                status = 32
+            }
+        }
+    }
+    if status == 0 {
+        if exists("target/app-data-buffer-smoke/guarded.tmp") {
+            if ! delete("target/app-data-buffer-smoke/guarded.tmp") {
+                status = 33
+            }
+        }
+    }
+    clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    if status == 0 {
+        if ! set_int("selected",
+        7i64) {
+            status = 1
+        }
+    }
+    if status == 0 {
+        if ! set_text("mode",
+        "focus") {
+            status = 2
+        }
+    }
+    if status == 0 {
+        if ! push_text(0,
+        "First task") {
+            status = 3
+        }
+    }
+    if status == 0 {
+        if ! push_text(0,
+        "Second task") {
+            status = 4
+        }
+    }
+    if status == 0 {
+        if ! set_column_name(0,
+        0,
+        "title") {
+            status = 5
+        }
+    }
+    if status == 0 {
+        if ! append_row(0) {
+            status = 6
+        }
+    }
+    if status == 0 {
+        if ! set_cell(0,
+        0,
+        0,
+        "Build") {
+            status = 7
+        }
+    }
+    let expected_length: UIntSize = snapshot_length()
+    if status == 0 {
+        if expected_length == 0usize {
+            status = 8
+        }
+    }
+    if status == 0 {
+        if expected_length > 2048usize {
+            status = 9
+        }
+    }
+    let created: Result<Buffer<UInt8>,
+    Int32> = buffer_create(2048usize)
+    match created {
+        Error(error) => {
+            if status == 0 {
+                status = error
+            }
+        }
+        Ok(snapshot) => {
+            if ! buffer_resize(snapshot, 2048usize) {
+                if status == 0 { status = 10 }
+            }
+            var snapshot_length_value:[UIntSize;
+            1] =[999usize]
+            if status == 0 {
+                if ! write_exact_buffer(snapshot,
+                2048usize,
+                snapshot_length_value) {
+                    status = 10
+                }
+            }
+            if status == 0 {
+                if snapshot_length_value[0] != expected_length {
+                    status = 11
+                }
+            }
+            let guarded_revision: UInt64 = revision()
+            if status == 0 {
+                if ! write_exact_if_revision_buffer(snapshot,
+                2048usize,
+                snapshot_length_value,
+                guarded_revision,
+                ) {
+                    status = 12
+                }
+            }
+            if status == 0 {
+                if ! save_atomic_durable_buffer("target/app-data-buffer-smoke/model.tmp",
+                "target/app-data-buffer-smoke/model.data",
+                "target/app-data-buffer-smoke",
+                snapshot,
+                2048usize,
+                ) {
+                    status = 13
+                }
+            }
+            if status == 0 {
+                if ! exists("target/app-data-buffer-smoke/model.data") {
+                    status = 14
+                }
+            }
+            if status == 0 {
+                if ! save_atomic_durable_if_revision_buffer("target/app-data-buffer-smoke/guarded.tmp",
+                "target/app-data-buffer-smoke/guarded.data",
+                "target/app-data-buffer-smoke",
+                snapshot,
+                2048usize,
+                guarded_revision,
+                ) {
+                    status = 15
+                }
+            }
+            if status == 0 {
+                if ! exists("target/app-data-buffer-smoke/guarded.data") {
+                    status = 16
+                }
+            }
+            if status == 0 {
+                if ! set_int("selected",
+                8i64) {
+                    status = 17
+                }
+            }
+            if status == 0 {
+                if save_atomic_durable_if_revision_buffer("target/app-data-buffer-smoke/guarded.tmp",
+                "target/app-data-buffer-smoke/guarded.data",
+                "target/app-data-buffer-smoke",
+                snapshot,
+                2048usize,
+                guarded_revision,
+                ) {
+                    status = 18
+                }
+            }
+            if status == 0 {
+                clear()
+                app_list_clear(0)
+                app_table_clear(0)
+                if ! load_file_buffer("target/app-data-buffer-smoke/model.data",
+                snapshot,
+                2048usize,
+                ) {
+                    status = 19
+                }
+            }
+            if status == 0 {
+                if get_int("selected") != 7i64 {
+                    status = 20
+                }
+            }
+            if status == 0 {
+                if count(0) != 2 {
+                    status = 21
+                }
+            }
+            var cell:[UInt8;
+            5] =[0u8,
+            0u8,
+            0u8,
+            0u8,
+            0u8]
+            if status == 0 {
+                if read_cell(0,
+                0,
+                0,
+                cell) != 5usize {
+                    status = 22
+                }
+            }
+            if status == 0 {
+                if cell[0] != 66u8 {
+                    status = 23
+                }
+            }
+            let stale_revision: UInt64 = revision()
+            if status == 0 {
+                if ! set_int("selected",
+                9i64) {
+                    status = 24
+                }
+            }
+            if status == 0 {
+                if load_file_if_revision_buffer("target/app-data-buffer-smoke/guarded.data",
+                snapshot,
+                2048usize,
+                stale_revision,
+                ) {
+                    status = 25
+                }
+            }
+            if status == 0 {
+                if get_int("selected") != 9i64 {
+                    status = 26
+                }
+            }
+            if status == 0 {
+                let current_revision: UInt64 = revision()
+                if ! load_file_if_revision_buffer("target/app-data-buffer-smoke/guarded.data",
+                snapshot,
+                2048usize,
+                current_revision,
+                ) {
+                    status = 27
+                }
+            }
+            if status == 0 {
+                if get_int("selected") != 7i64 {
+                    status = 28
+                }
+            }
+            // Malformed input must not mutate the restored complete model.
+            snapshot[0] = 0u8
+            if status == 0 {
+                if load_exact_buffer(snapshot,
+                snapshot_length_value[0]) {
+                    status = 29
+                }
+            }
+            if status == 0 {
+                if get_int("selected") != 7i64 {
+                    status = 34
+                }
+            }
+            let short_created: Result<Buffer<UInt8>,
+            Int32> = buffer_create(4usize)
+            match short_created {
+                Error(error) => {
+                    if status == 0 {
+                        status = error
+                    }
+                }
+                Ok(short) => {
+                    if ! buffer_resize(short, 4usize) {
+                        if status == 0 { status = 35 }
+                    }
+                    if status == 0 {
+                        if load_exact_buffer(short,
+                        snapshot_length_value[0]) {
+                            status = 35
+                        }
+                    }
+                    if status == 0 {
+                        if get_int("selected") != 7i64 {
+                            status = 36
+                        }
+                    }
+                    if status == 0 {
+                        let short_revision: UInt64 = revision()
+                        if load_exact_if_revision_buffer(short,
+                        snapshot_length_value[0],
+                        short_revision,
+                        ) {
+                            status = 37
+                        }
+                    }
+                    if status == 0 {
+                        if get_int("selected") != 7i64 {
+                            status = 38
+                        }
+                    }
+                    if status == 0 {
+                        snapshot_length_value[0] = 501usize
+                        short[0] = 91u8
+                        if write_exact_buffer(short,
+                        5usize,
+                        snapshot_length_value) {
+                            status = 50
+                        }
+                    }
+                    if status == 0 {
+                        if short[0] != 91u8 {
+                            status = 51
+                        }
+                    }
+                    if status == 0 {
+                        if snapshot_length_value[0] != 501usize {
+                            status = 52
+                        }
+                    }
+                }
+            }
+        }
+    }
+    clear()
+    app_list_clear(0)
+    app_table_clear(0)
+    if status == 0 {
+        if ! delete("target/app-data-buffer-smoke/model.data") {
+            status = 37
+        }
+    }
+    if status == 0 {
+        if ! delete("target/app-data-buffer-smoke/guarded.data") {
+            status = 38
+        }
+    }
+    if status == 0 {
+        if exists("target/app-data-buffer-smoke/model.data") {
+            status = 39
+        }
+    }
+    if status == 0 {
+        if exists("target/app-data-buffer-smoke/guarded.data") {
+            status = 40
+        }
+    }
+    return status
+}

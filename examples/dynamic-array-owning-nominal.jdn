@@ -1,0 +1,60 @@
+module examples.dynamic_array_owning_nominal
+
+// A DynamicArray of a generic C-layout nominal can model a typed application
+// row with an owning text field.  The source alias still uses the existing
+// field-table stride/drop ABI; no collection-specific descriptor is added.
+@repr(C)
+struct Row<T> {
+    id: Int32,
+    value: T
+}
+
+fn main() -> Int32 {
+    let rows_created: Result<DynamicArray<Row<OwnedString>>, Int32> = buffer_create(0usize)
+    let first_created: Result<OwnedString, Int32> = string_owned_from("first")
+    var result_code: Int32 = 0
+
+    match rows_created {
+        Ok(rows) => {
+            match first_created {
+                Ok(first) => {
+                    let first_row: Row<OwnedString> = Row { id: 1, value: first }
+                    if !buffer_append(rows, first_row) { result_code = 1 }
+                    if buffer_length(rows) != 1usize { result_code = 2 }
+                    if rows[0].id != 1 { result_code = 3 }
+                    if string_owned_length(rows[0].value) != 5usize { result_code = 4 }
+                    if !buffer_reserve(rows, 4usize) { result_code = 5 }
+                    if buffer_capacity(rows) < 4usize { result_code = 6 }
+                    if rows[0].id != 1 { result_code = 7 }
+                    if string_owned_length(rows[0].value) != 5usize { result_code = 8 }
+
+                    let grow_status: Int32 = buffer_resize_move_status(rows, 2usize)
+                    if grow_status != 0 { result_code = 9 }
+                    if buffer_length(rows) != 2usize { result_code = 10 }
+                    if rows[1].id != 0 { result_code = 11 }
+                    if string_owned_length(rows[1].value) != 0usize { result_code = 12 }
+
+                    if !buffer_remove_drop(rows, 0usize) { result_code = 13 }
+                    if buffer_length(rows) != 1usize { result_code = 14 }
+                    let second_created: Result<OwnedString, Int32> = string_owned_from("second")
+                    match second_created {
+                        Ok(second) => {
+                            let second_row: Row<OwnedString> = Row { id: 2, value: second }
+                            if !buffer_append(rows, second_row) { result_code = 15 }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                    if buffer_length(rows) != 2usize { result_code = 16 }
+                    if rows[1].id != 2 { result_code = 17 }
+                    if string_owned_length(rows[1].value) != 6usize { result_code = 18 }
+                    let clear_status: Int32 = buffer_clear_move_status(rows)
+                    if clear_status != 0 { result_code = clear_status }
+                    if buffer_length(rows) != 0usize { result_code = 19 }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

@@ -1,0 +1,12 @@
+version = 1
+manifest_fingerprint = "f24742f076b3f0c2"
+
+[package]
+name = "network-api-buffer-server-project"
+version = "0.1.0"
+edition = "2026"
+
+[[dependency]]
+name = "jadren-network"
+requirement = ""
+source = "path:../../stdlib/network"

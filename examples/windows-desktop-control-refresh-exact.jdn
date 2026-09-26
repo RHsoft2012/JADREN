@@ -1,0 +1,61 @@
+module examples.windows_desktop_control_refresh_exact
+
+// Exact control refresh reads the typed app_state value first.  A failed read
+// (wrong kind or out-of-range index) must leave the native projection intact.
+@export(name: "jadren_ui_on_click", abi: "C")
+pub fn on_click(event_id: Int32) -> Int32 {
+    return event_id
+}
+
+fn main() -> Int32 {
+    app_state_clear()
+
+    ui_checkbox("Enabled", 10, 0, 0, 220, 36,
+                0x111827u32, 0x18C964u32, 8)
+    ui_select(20, 0, 42, 220, 36, 0x111827u32, 0xFFFFFFu32)
+    ui_select_option(20, "First")
+    ui_select_option(20, "Second")
+    ui_list(30, 0, 84, 220, 120, 0x111827u32, 0xFFFFFFu32)
+    ui_list_item(30, "First")
+    ui_list_item(30, "Second")
+    ui_table(40, 0, 210, 320, 120, 0x111827u32, 0xFFFFFFu32)
+    ui_table_column(40, 0, "Name", 180)
+    ui_table_cell(40, 0, 0, "First")
+    ui_table_cell(40, 1, 0, "Second")
+
+    if !ui_checkbox_bind_app_state(10, "enabled") { return 1 }
+    if !ui_select_bind_app_state(20, "choice") { return 2 }
+    if !ui_list_bind_app_state(30, "list_choice") { return 3 }
+    if !ui_table_bind_app_state(40, "table_choice") { return 4 }
+
+    if !app_state_set_bool("enabled", true) { return 5 }
+    if !app_state_set_int("choice", 1 as Int64) { return 6 }
+    if !app_state_set_int("list_choice", 1 as Int64) { return 7 }
+    if !app_state_set_int("table_choice", 1 as Int64) { return 8 }
+    if !ui_checkbox_refresh_app_state_exact(10) { return 9 }
+    if !ui_select_refresh_app_state_exact(20) { return 10 }
+    if !ui_list_refresh_app_state_exact(30) { return 11 }
+    if !ui_table_refresh_app_state_exact(40) { return 12 }
+    if ui_checked(10) != 1 { return 13 }
+    if ui_select_index(20) != 1 { return 14 }
+    if ui_list_index(30) != 1 { return 15 }
+    if ui_table_selected_row(40) != 1 { return 16 }
+
+    // Wrong kinds and invalid indexes are rejected without changing the
+    // successful projections above.
+    if !app_state_set_int("enabled", 7 as Int64) { return 17 }
+    if ui_checkbox_refresh_app_state_exact(10) { return 18 }
+    if ui_checked(10) != 1 { return 19 }
+    if !app_state_set_int("choice", 99 as Int64) { return 20 }
+    if ui_select_refresh_app_state_exact(20) { return 21 }
+    if ui_select_index(20) != 1 { return 22 }
+    if !app_state_set_int("list_choice", 99 as Int64) { return 23 }
+    if ui_list_refresh_app_state_exact(30) { return 24 }
+    if ui_list_index(30) != 1 { return 25 }
+    if !app_state_set_int("table_choice", 99 as Int64) { return 26 }
+    if ui_table_refresh_app_state_exact(40) { return 27 }
+    if ui_table_selected_row(40) != 1 { return 28 }
+
+    app_state_clear()
+    return 0
+}

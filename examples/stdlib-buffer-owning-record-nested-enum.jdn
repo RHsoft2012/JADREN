@@ -1,0 +1,61 @@
+module examples.stdlib_buffer_owning_record_nested_enum
+
+// A C-layout record may contain a named enum whose owning payload is itself
+// carried by another named enum. The field table stores the outer/inner tag
+// path without adding hidden metadata to the record.
+@repr(C)
+enum Inner {
+    Empty,
+    Values(Buffer<Int32>),
+    Done
+}
+
+@repr(C)
+enum Outer {
+    Idle,
+    Nested(Inner),
+    Done
+}
+
+@repr(C)
+struct Entry {
+    id: Int32,
+    payload: Outer
+}
+
+fn main() -> Int32 {
+    let entries_created: Result<Buffer<Entry>, Int32> = buffer_create(0usize)
+    let values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+    var result_code: Int32 = 0
+
+    match entries_created {
+        Ok(entries) => {
+            match values_created {
+                Ok(values) => {
+                    if !buffer_append(values, 42) { result_code = 1 }
+                    let inner: Inner = Inner.Values(values)
+                    let item: Entry = Entry { id: 1, payload: Outer.Nested(inner) }
+                    if !buffer_append(entries, item) { result_code = 2 }
+                    if buffer_length(entries) != 1usize { result_code = 3 }
+                    if !buffer_remove_drop(entries, 0usize) { result_code = 4 }
+                    if buffer_length(entries) != 0usize { result_code = 5 }
+                    let clear_values_created: Result<Buffer<Int32>, Int32> = buffer_create(0usize)
+                    match clear_values_created {
+                        Ok(clear_values) => {
+                            if !buffer_append(clear_values, 84) { result_code = 6 }
+                            let clear_inner: Inner = Inner.Values(clear_values)
+                            let clear_item: Entry = Entry { id: 2, payload: Outer.Nested(clear_inner) }
+                            if !buffer_append(entries, clear_item) { result_code = 7 }
+                            let clear_status: Int32 = buffer_clear_move_status(entries)
+                            if clear_status != 0 { result_code = clear_status }
+                        }
+                        Error(status) => { result_code = status }
+                    }
+                }
+                Error(status) => { result_code = status }
+            }
+        }
+        Error(status) => { result_code = status }
+    }
+    return result_code
+}

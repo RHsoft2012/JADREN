@@ -1,0 +1,78 @@
+module examples.http_response_chunk_stream
+
+// Each call creates one bounded wire frame in caller-owned storage. The
+// program deliberately checks the bytes and the no-partial-write failures;
+// sending remains explicit through net_tcp_send_all_prefix or a reactor.
+fn main() -> Int32 {
+    var first: [UInt8; 4] = [65u8, 66u8, 67u8, 68u8]
+    var second: [UInt8; 3] = [88u8, 89u8, 90u8]
+    var output: [UInt8; 16] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    var header_output: [UInt8; 80] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
+    let header_length: UIntSize = http_response_write_chunked_header(
+        200u16, "text/plain", header_output)
+    if header_length != 73usize { return 1 }
+    if header_output[0] != 72u8 { return 1 }
+    if header_output[15] != 13u8 { return 1 }
+    if header_output[43] != 84u8 { return 1 }
+    if header_output[69] != 13u8 { return 1 }
+    if header_output[72] != 10u8 { return 1 }
+    var short_header: [UInt8; 72] = [77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8]
+    if http_response_write_chunked_header(200u16, "text/plain", short_header) != 0usize {
+        return 1
+    }
+    if short_header[0] != 77u8 { return 1 }
+    let first_length: UIntSize = http_response_write_chunk(first, false, output)
+    if first_length != 9usize { return 1 }
+    if output[0] != 52u8 { return 2 }
+    if output[1] != 13u8 { return 2 }
+    if output[2] != 10u8 { return 2 }
+    if output[3] != 65u8 { return 3 }
+    if output[6] != 68u8 { return 3 }
+    if output[7] != 13u8 { return 3 }
+    if output[8] != 10u8 { return 3 }
+
+    let prefix_length: UIntSize = http_response_write_chunk_prefix(first, 2usize, false, output)
+    if prefix_length != 7usize { return 4 }
+    if output[0] != 50u8 { return 4 }
+    if output[3] != 65u8 { return 4 }
+    if output[4] != 66u8 { return 4 }
+
+    let final_length: UIntSize = http_response_write_chunk(second, true, output)
+    if final_length != 13usize { return 5 }
+    if output[0] != 51u8 { return 6 }
+    if output[1] != 13u8 { return 6 }
+    if output[2] != 10u8 { return 6 }
+    if output[3] != 88u8 { return 7 }
+    if output[5] != 90u8 { return 7 }
+    if output[6] != 13u8 { return 7 }
+    if output[7] != 10u8 { return 7 }
+    if output[8] != 48u8 { return 8 }
+    if output[9] != 13u8 { return 8 }
+    if output[10] != 10u8 { return 8 }
+    if output[11] != 13u8 { return 8 }
+    if output[12] != 10u8 { return 8 }
+
+    var empty: [UInt8; 0] = []
+    var sentinel: [UInt8; 8] = [77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8, 77u8]
+    if http_response_write_chunk(empty, false, sentinel) != 0usize {
+        return 9
+    }
+    if sentinel[0] != 77u8 { return 10 }
+    if http_response_write_chunk(first, false, sentinel) != 0usize {
+        return 11
+    }
+    if sentinel[0] != 77u8 { return 12 }
+    if http_response_write_chunk_prefix(first, 5usize, false, sentinel) != 0usize {
+        return 13
+    }
+    if sentinel[0] != 77u8 { return 14 }
+    let empty_final_length: UIntSize = http_response_write_chunk(empty, true, output)
+    if empty_final_length != 5usize { return 15 }
+    if output[0] != 48u8 { return 16 }
+    if output[1] != 13u8 { return 16 }
+    if output[2] != 10u8 { return 16 }
+    if output[3] != 13u8 { return 16 }
+    if output[4] != 10u8 { return 16 }
+    return 0
+}
