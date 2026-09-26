@@ -112,3 +112,11 @@ jobs:
           exit_code=$?
           set -e
           test "$exit_code" -eq 42
+
+      - name: Build and run Linux prefix-builder runtime fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +"$RUST_TOOLCHAIN" run --locked -p jadren-cli -- build examples/native-linux-file-runtime-prefix-only.jdn --profile release -o "$RUNNER_TEMP/linux-file-runtime-prefix-only"
+          test -x "$RUNNER_TEMP/linux-file-runtime-prefix-only"
+          "$RUNNER_TEMP/linux-file-runtime-prefix-only"

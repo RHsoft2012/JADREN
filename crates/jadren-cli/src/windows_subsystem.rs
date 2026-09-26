@@ -46,6 +46,7 @@ pub(crate) fn requires_gui(modules: &[&Module], entry_index: usize) -> bool {
                     | "ui_app_begin"
                     | "ui_app_run"
                     | "ui_file_open_exact"
+                    | "ui_directory_open_exact"
                     | "ui_file_open_extension_exact"
                     | "ui_file_save_exact"
                     | "ui_file_save_suggested_exact"
@@ -184,12 +185,14 @@ mod tests {
 
     #[test]
     fn reachable_file_dialog_calls_select_gui() {
-        let entry = module(&[
-            ("jadren_entry", Linkage::Export, &[1]),
-            ("recursive_helper", Linkage::Internal, &[1, 2]),
-            ("ui_file_open_exact", Linkage::Import, &[]),
-        ]);
-        assert!(requires_gui(&[&entry], 0));
+        for dialog in ["ui_file_open_exact", "ui_directory_open_exact"] {
+            let entry = module(&[
+                ("jadren_entry", Linkage::Export, &[1]),
+                ("recursive_helper", Linkage::Internal, &[1, 2]),
+                (dialog, Linkage::Import, &[]),
+            ]);
+            assert!(requires_gui(&[&entry], 0), "{dialog}");
+        }
     }
 
     #[test]

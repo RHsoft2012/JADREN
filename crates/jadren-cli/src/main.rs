@@ -13157,6 +13157,7 @@ static int jadren_site_server_wide_append_decimal(wchar_t *output, int capacity,
 static int jadren_site_server_paths(wchar_t *server_path, int server_capacity,
                                     wchar_t *webroot, int webroot_capacity) {
     wchar_t module_path[4096];
+    wchar_t executable_directory[4096];
     DWORD module_length;
     int directory_length;
     int parent_length;
@@ -13174,6 +13175,10 @@ static int jadren_site_server_paths(wchar_t *server_path, int server_capacity,
         directory_length -= 1;
     }
     if (directory_length == 0) return 0;
+    for (index = 0; index < directory_length; ++index) {
+        executable_directory[index] = module_path[index];
+    }
+    executable_directory[directory_length] = 0;
     module_path[directory_length - 1] = 0;
     server_path[0] = 0;
     index = 0;
@@ -13200,9 +13205,8 @@ static int jadren_site_server_paths(wchar_t *server_path, int server_capacity,
         }
     }
     if (index == 0) {
-        module_path[directory_length - 1] = 0;
         if (!jadren_site_server_wide_append(webroot, webroot_capacity, &index,
-                                            module_path)) return 0;
+                                            executable_directory)) return 0;
     }
     return GetFileAttributesW(server_path) != INVALID_FILE_ATTRIBUTES;
 }
@@ -31419,6 +31423,7 @@ fn build_host_executable(arguments: &ExecutableArguments) -> Result<PathBuf, Str
                 | "string_equals"
                 | "string_builder_append"
                 | "string_builder_append_bytes"
+                | "string_builder_append_bytes_prefix"
                 | "string_owned_create"
                 | "string_owned_from"
                 | "string_owned_append"
