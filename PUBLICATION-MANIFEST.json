@@ -2,7 +2,7 @@
   "schema": "jadren-public-export-0.1",
   "default_language": "en",
   "source_policy": "explicit-allowlist",
-  "file_count": 1605,
+  "file_count": 1606,
   "files": [
     {
       "path": ".editorconfig",
@@ -19,14 +19,14 @@
     {
       "path": ".github/workflows/ci.yml",
       "source": "publication/public-ci/ci.yml",
-      "bytes": 4403,
-      "sha256": "5123711a50f650a8b00c578b197482e9af25c745663e4b052d5039edfdd922b7"
+      "bytes": 4841,
+      "sha256": "a3671388d1db98f0ced7f496401bb1f0f18f719b2ca0193d0f34304ae2109ae1"
     },
     {
       "path": ".github/workflows/sanitizers.yml",
       "source": "publication/public-ci/sanitizers.yml",
-      "bytes": 2340,
-      "sha256": "2119e5596baff579c06e7ac61d49b5704a09f6cf9c060b831d9a9a6c89c038b0"
+      "bytes": 3546,
+      "sha256": "6d0a0f336c4cd611364f0ade5e7ff7276c806609f4b7f3fefa57d7511a506d49"
     },
     {
       "path": ".gitignore",
@@ -115,8 +115,8 @@
     {
       "path": "crates/jadren-cli/src/main.rs",
       "source": "crates/jadren-cli/src/main.rs",
-      "bytes": 2437668,
-      "sha256": "9bbbced245e6b52eb62f557e2243997e7906eb47a0dfbc9a7d29fb2e450281c4"
+      "bytes": 2437894,
+      "sha256": "93970662324366d5fcf2ba1dbc81e85b87a63ab18e5e77cb6280390944a3ebfb"
     },
     {
       "path": "crates/jadren-cli/src/win32_desktop_runtime.c",
@@ -127,8 +127,8 @@
     {
       "path": "crates/jadren-cli/src/windows_subsystem.rs",
       "source": "crates/jadren-cli/src/windows_subsystem.rs",
-      "bytes": 7495,
-      "sha256": "80fa7ceaab99fd8f8d57230241ad6dcf63531ea1d029c112fb552c0850f6ac3e"
+      "bytes": 7649,
+      "sha256": "1c6da06d400733e0e50691f9e394bfb70f07e33e76fee2d86ef9e64644f0b20a"
     },
     {
       "path": "crates/jadren-cli/src/x11_desktop_runtime.c",
@@ -1088,7 +1088,7 @@
       "path": "editors/jadren-vscode/package.json",
       "source": "editors/jadren-vscode/package.json",
       "bytes": 10210,
-      "sha256": "c0667af00a7a5b3b37c1be86edccd07180eed8ea2d822103a09250341e91b39a"
+      "sha256": "79a16bfb5910390fd8e4bcd5afac493097896aacfade852d4813fa1a2996f51d"
     },
     {
       "path": "editors/jadren-vscode/snippets/jadren.json",
@@ -5277,6 +5277,12 @@
       "source": "examples/native-file-write-prefix-path.jdn",
       "bytes": 1492,
       "sha256": "22d6220b5feeee8d017be128509ba934d5adc637d361f78da7ab171bb42e4d37"
+    },
+    {
+      "path": "examples/native-linux-file-runtime-prefix-only.jdn",
+      "source": "examples/native-linux-file-runtime-prefix-only.jdn",
+      "bytes": 499,
+      "sha256": "1ce2dcd68fc96dbcd03ffda0e4ac7788b71a5b24563de754d76eb6ec4d9dd183"
     },
     {
       "path": "examples/nested-while-break.jdn",
